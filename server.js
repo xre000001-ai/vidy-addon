@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.10.1';
+const VERSION = '1.10.2';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -480,6 +480,14 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
     return out;
   });
 }
+const SUB_LANGS = { english: 'en', bangla: 'bn', bengali: 'bn', hindi: 'hi', japanese: 'ja', korean: 'ko', spanish: 'es', french: 'fr', german: 'de', portuguese: 'pt', italian: 'it', turkish: 'tr', arabic: 'ar', chinese: 'zh', mandarin: 'zh', thai: 'th', indonesian: 'id', malay: 'ms', tamil: 'ta', telugu: 'te', russian: 'ru' };
+function subLang(x) { // subtitle language code — schema-required on strict (TV) validators
+  const v = String(x.lang || x.language || '').trim().toLowerCase();
+  if (/^[a-z]{2}(-|$)/.test(v)) return v.slice(0, 2);
+  const s = v + ' ' + String(x.label || '').toLowerCase();
+  for (const k in SUB_LANGS) if (s.indexOf(k) >= 0) return SUB_LANGS[k];
+  return 'en';
+}
 // v1.9.0: shared quality-filter predicate — one() probes ONLY assets the filter would serve,
 // decorate keeps exactly the same set. Unknown quality and Auto-HLS always pass.
 function qPass(x, allow) {
@@ -491,7 +499,10 @@ function decorate(j, type, s, e, showTitle, cfg, srv) {
   cfg = cfg || DEFAULT_CFG;
   const headers = { 'User-Agent': UA, 'Referer': VIDY_REFERER };
   const order = { '2160p': 0, '1080p': 1, '720p': 2, '480p': 3, '360p': 4, 'Auto HLS': 5 };
-  let subs = (j.subtitles || []).slice(0, 40).map(x => ({ title: x.label || x.lang || x.language || 'Subtitle', url: x.url || x.file })).filter(x => x.url && /^https?:/.test(x.url));
+  // v1.10.2: TV apps validate the stream schema strictly — every subtitle object REQUIRES `lang`
+  // (missing lang rejected the whole addon response, e.g. tt9288030:2:2 on TV). Derive a 2-letter
+  // code from the upstream fields, fall back to the label text, then 'en' as the safe default.
+  let subs = (j.subtitles || []).slice(0, 40).map(x => ({ title: x.label || x.lang || x.language || 'Subtitle', url: x.url || x.file, lang: subLang(x) })).filter(x => x.url && /^https?:/.test(x.url));
   if (!cfg.sub) subs = [];
   const seen = {};
   const allow = Array.isArray(cfg.q) ? cfg.q : qToList(cfg.q);
