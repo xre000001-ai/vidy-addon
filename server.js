@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.7.8';
+const VERSION = '1.7.9';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -239,7 +239,6 @@ function catalogMeta(type, q, cfg, gn, skip) {
     url = TMDBP + '/' + (type === 'tv' ? 'tv/top_rated' : 'movie/popular') + '?language=en-US';
   }
   const one = () => directGet(url, 14000).then(b => {
-    if (process.env.DBG) console.error('[dbg] ' + url + ' → ' + b.slice(0, 160));
     const list = (JSON.parse(b).results || []).slice(0, cap);
     return Promise.all(list.map(x => tmdbMeta(x, type))).then(arr => arr.filter(Boolean));
   });
@@ -535,7 +534,7 @@ const server = http.createServer((req, res) => {
   try { p = decodeURIComponent(pRaw); } catch (eDec) { p = pRaw; } // ডিভাইস ':'-কে %3A-পাঠায় — ডিকোড-বাধ্যতামূলক
   let cfg = null;
   try {
-    const cm2 = p.match(/^\/cfg\/([A-Za-z0-9_-]+)(\/.*)$/);
+    const cm2 = p.match(/^\/cfg\/([^\/]+)(\/.*)$/); // যেকোনো-অক্ষর-সহ্য — ভাঙা-b64-ও decodeCfg-এর-catch-এ-ডিফল্ট-হয় (404-নয়)
     if (cm2) { cfg = decodeCfg(cm2[1]); p = cm2[2]; }
     else {
       const qs = new URL(req.url, 'http://x').searchParams;
