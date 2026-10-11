@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.1.1';
+const VERSION = '1.2.0';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -210,14 +210,14 @@ function catalogMeta(type, q) {
 }
 
 // ---------- tt → TMDB numeric (keyless) ----------
-function findTmdb(imdb, type) {
+function findTmdbInfo(imdb, type) {
   const key = 'find:' + imdb + ':' + type;
   const hit = memoGet(key, 86400000);
-  if (hit !== null && hit !== undefined) return Promise.resolve(hit);
+  if (hit) return Promise.resolve(hit);
   return dedupe(key, () => directGet(TMDBP + '/find/' + encodeURIComponent(imdb) + '?external_source=imdb_id', 12000).then(body => {
     const j = JSON.parse(body);
     const r = (type === 'series' ? (j.tv_results || []) : (j.movie_results || []))[0] || null;
-    if (r && r.id) { memoSet(key, r.id); return r.id; }
+    if (r && r.id) { const v = { id: r.id, name: r.name || r.title || '' }; memoSet(key, v); return v; }
     throw new Error('find-empty');
   }).catch(() =>
     // ফলব্যাক: Cinemeta টাইটেল → keyless search (বছর-মিল-অগ্রাধিকার, না-মিললেও শীর্ষ-১)
@@ -231,11 +231,23 @@ function findTmdb(imdb, type) {
         let pick = null;
         for (const x of list) { if (year && String(x.release_date || x.first_air_date || '').slice(0, 4) === year.slice(0, 4)) { pick = x; break; } }
         if (!pick) pick = list[0];
-        if (pick && pick.id) { memoSet(key, pick.id); return pick.id; }
+        if (pick && pick.id) { const v = { id: pick.id, name: pick.name || pick.title || name }; memoSet(key, v); return v; }
         throw new Error('search-empty');
       });
     })
-  ).catch(e => { memoSet(key, -1); throw e; })); // নেগেটিভ-ক্যাশ — বারবার-ধীর-ব্যর্থতা-নয়
+  ).catch(e => { memoSet(key, { id: -1, name: '' }); throw e; })); // নেগেটিভ-ক্যাশ — বারবার-ধীর-ব্যর্থতা-নয়
+}
+function findTmdb(imdb, type) { return findTmdbInfo(imdb, type).then(v => v.id); }
+function nameForTmdb(tmdbId, type) {
+  const key = 'nm:' + type + ':' + tmdbId;
+  const hit = memoGet(key, 86400000);
+  if (hit) return Promise.resolve(hit);
+  return dedupe(key, () => directGet(TMDBP + '/' + (type === 'series' ? 'tv/' : 'movie/') + tmdbId, 10000).then(b => {
+    const j = JSON.parse(b);
+    const v = j.name || j.title || '';
+    memoSet(key, v);
+    return v;
+  }).catch(() => { memoSet(key, ''); return ''; }));
 }
 
 // ---------- seed (direct-first → 429-এ pool-race) ----------
@@ -265,7 +277,7 @@ function pathGet(url, via, px, timeoutMs) {
 }
 
 // ---------- sources ----------
-function getSources(tmdbId, type, s, e) {
+function getSources(tmdbId, type, s, e, title) {
   const key = ['src', tmdbId, type, s || '', e || ''].join('|');
   const hit = memoGet(key, 10800000);
   if (hit) return Promise.resolve(hit);
@@ -281,7 +293,7 @@ function getSources(tmdbId, type, s, e) {
         const ct = await pathGet(u, sc.via, sc.px, 12000);
         const j = JSON.parse(vidyDecrypt(ct, sc.seed, tmdbId));
         if (j.sources && j.sources.length) {
-          const out = decorate(j, type, s, e);
+          const out = decorate(j, type, s, e, title || '');
           memoSet(key, out);
           return out;
         }
@@ -291,16 +303,19 @@ function getSources(tmdbId, type, s, e) {
     throw lastErr || new Error('no-sources');
   });
 }
-function decorate(j, type, s, e) {
+function decorate(j, type, s, e, showTitle) {
   const headers = { 'User-Agent': UA, 'Referer': VIDY_REFERER };
   const order = { '2160p': 0, '1080p': 1, '720p': 2, '480p': 3, '360p': 4, 'Auto HLS': 5 };
   const subs = (j.subtitles || []).slice(0, 40).map(x => ({ title: x.label || x.lang || x.language || 'Subtitle', url: x.url || x.file })).filter(x => x.url && /^https?:/.test(x.url));
   const seen = {};
   const cards = (j.sources || []).filter(x => x.url && /^https?:/.test(x.url) && !seen[x.url] && (seen[x.url] = 1)).sort((a, b) => (order[a.quality] ?? 9) - (order[b.quality] ?? 9)).map(x => {
     const q = String(x.quality || 'Auto').replace('p', '');
+    const line2 = type === 'tv' ? '\u2b21 S' + s + 'E' + e + ' \u00b7 Vidy' + (subs.length ? ' \u00b7 Subs: ' + subs.length : '') : '\u2b21 Movie \u00b7 Vidy';
+    const txt = '\u29c9 ' + (showTitle || 'Vidy') + '\n' + line2;
     return {
       name: '\u25eb ' + q.replace('Auto HLS', 'Auto') + ' \u25eb',
-      title: '\u29c9 Vidy' + (type === 'tv' ? ' \u00b7 S' + s + 'E' + e : ' \u00b7 Movie') + (subs.length ? ' \u00b7 \u09b8\u09be\u09ac: ' + subs.length : '') + '\n\u2b21 ' + q + (q === 'Auto HLS' ? '' : 'p'),
+      title: txt,
+      description: txt,
       quality: q === 'Auto HLS' ? '' : q,
       url: x.url,
       headers: headers,
@@ -366,31 +381,31 @@ const server = http.createServer((req, res) => {
     // ── tmdb-নেটিভ-আইডি-স্ট্রিম (Nuvio-মোড):
     if ((m = p.match(/^\/stream\/movie\/tmdb(\d+)\.json$/))) {
       const t0 = Date.now();
-      return getSources(Number(m[1]), 'movie').then(
+      return nameForTmdb(Number(m[1]), 'movie').then(nm => getSources(Number(m[1]), 'movie', null, null, nm)).then(
         cards => { logReq(p, Date.now() - t0, (cards || []).length); sendJson(res, 200, { streams: cards || [] }); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message); sendJson(res, 200, { streams: [] }); });
     }
     if ((m = p.match(/^\/stream\/series\/tmdb(\d+):?(?:(\d+):(\d+))?\.json$/))) {
       const t0 = Date.now();
-      return getSources(Number(m[1]), 'tv', Number(m[2] || 1), Number(m[3] || 1)).then(
+      return nameForTmdb(Number(m[1]), 'series').then(nm => getSources(Number(m[1]), 'tv', Number(m[2] || 1), Number(m[3] || 1), nm)).then(
         cards => { logReq(p, Date.now() - t0, (cards || []).length); sendJson(res, 200, { streams: cards || [] }); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message); sendJson(res, 200, { streams: [] }); });
     }
     if ((m = p.match(/^\/stream\/movie\/(tt\d+)\.json$/))) {
       const t0 = Date.now();
-      return findTmdb(m[1], 'movie').then(id => (id && id > 0) ? getSources(id, 'movie') : Promise.resolve([])).then(
+      return findTmdbInfo(m[1], 'movie').then(info => (info && info.id > 0) ? getSources(info.id, 'movie', null, null, info.name) : Promise.resolve([])).then(
         cards => { logReq(p, Date.now() - t0, (cards || []).length); sendJson(res, 200, { streams: cards || [] }); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message); sendJson(res, 200, { streams: [] }); });
     }
     if ((m = p.match(/^\/stream\/series\/(tt\d+):(\d+):(\d+)\.json$/))) {
       const t0 = Date.now();
-      return findTmdb(m[1], 'series').then(id => (id && id > 0) ? getSources(id, 'tv', Number(m[2]), Number(m[3])) : Promise.resolve([])).then(
+      return findTmdbInfo(m[1], 'series').then(info => (info && info.id > 0) ? getSources(info.id, 'tv', Number(m[2]), Number(m[3]), info.name) : Promise.resolve([])).then(
         cards => { logReq(p, Date.now() - t0, (cards || []).length); sendJson(res, 200, { streams: cards || [] }); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message); sendJson(res, 200, { streams: [] }); });
     }
     if ((m = p.match(/^\/stream\/series\/(tt\d+)\.json$/))) { // সেফটি-নেট: s:e-ছাড়া কল → S1E1
       const t0 = Date.now();
-      return findTmdb(m[1], 'series').then(id => (id && id > 0) ? getSources(id, 'tv', 1, 1) : Promise.resolve([])).then(
+      return findTmdbInfo(m[1], 'series').then(info => (info && info.id > 0) ? getSources(info.id, 'tv', 1, 1, info.name) : Promise.resolve([])).then(
         cards => { logReq(p + ' [no-s:e]', Date.now() - t0, (cards || []).length); sendJson(res, 200, { streams: cards || [] }); },
         e => { logReq(p + ' [no-s:e]', Date.now() - t0, 0, e && e.message); sendJson(res, 200, { streams: [] }); });
     }
