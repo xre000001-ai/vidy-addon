@@ -10,13 +10,13 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.6.2';
+const VERSION = '1.7.0';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
 const TMDBP = 'https://db.wecollege.net/3';
 const CINEMETA = 'https://v3-cinemeta.strem.io';
-const SERVERS = ['miami', 'atlanta', 'seattle', 'boise'];
+const SERVERS = ['miami', 'atlanta', 'seattle', 'boise', 'phoenix', 'dallas', 'austin']; // আসল-সার্ভার-পরিবার (phoenix/dallas/austin — লাইভ-প্রোব-আবিষ্কৃত)
 let POOL = [];
 try { POOL = JSON.parse(fs.readFileSync(path.join(__dirname, 'vidy_proxy_pool.json'), 'utf8')); } catch (e) {}
 
@@ -473,7 +473,7 @@ function manifest(cfg) {
     id: 'community.xre.vidy',
     version: VERSION,
     name: 'Vidy',
-    description: 'Stream-only: movies & series via Vidy — up to 4K, original audio, subtitles. Server name on every card; the healthiest server is always tried first.',
+    description: 'Stream-only: movies & series via Vidy — up to 4K, original audio, subtitles. 7 servers scanned in parallel (Miami·Boise·Atlanta·Phoenix·Dallas·Austin·Seattle); every card shows its server.',
     author: 'xre000001-ai',
     resources: ['stream'],
     types: ['movie', 'series'],

@@ -102,7 +102,7 @@ h1 .g{color:var(--acc)}
   <div class="card">
     <div class="eyebrow">Servers</div>
     <div class="heading">Streaming servers</div>
-    <p class="muted">Miami · Boise · Atlanta are the primary trio and always deliver streams — Seattle stays as backup. The healthiest server is always tried first, and every card shows which server it plays from.</p>
+    <p class="muted">Miami · Boise · Atlanta are the primary trio and always deliver streams — Phoenix, Dallas and Austin add extra feeds (Phoenix mirrors 1080p, Austin carries audio variants), Seattle stays as backup. All selected servers are scanned in parallel and every card shows which server it plays from.</p>
     <div class="rows" id="srvRows"></div>
   </div>
 
@@ -124,7 +124,7 @@ h1 .g{color:var(--acc)}
 <script>
 (function(){
   var RES=[[2160,"4K"],[1080,"1080p"],[720,"720p"],[480,"480p"],[360,"360p"]];
-  var SRVS=[["miami","Miami","Primary · always-on workhorse"],["boise","Boise","Primary · always-on workhorse"],["atlanta","Atlanta","Primary · always-on workhorse"],["seattle","Seattle","Backup · single-quality feed"]];
+  var SRVS=[["miami","Miami","Primary · always-on workhorse"],["boise","Boise","Primary · up to 4K"],["atlanta","Atlanta","Primary · official subtitles"],["phoenix","Phoenix","Extra · 1080p mirror"],["dallas","Dallas","Extra · Auto-HLS feed"],["austin","Austin","Extra · audio variants (Hindi/English)"],["seattle","Seattle","Backup · Auto-HLS feed"]];
   var st={q:[],sub:1,srv:[]};
   function b64u(o){return btoa(unescape(encodeURIComponent(JSON.stringify(o)))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');}
   function base(){return location.origin;}
