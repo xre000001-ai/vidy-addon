@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.6.1';
+const VERSION = '1.6.2';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -375,7 +375,9 @@ function getSources(tmdbId, type, s, e, title, cfg) {
       } else { deadJ = r.j; deadSrv = r.srv; srvBump(r.srv, -1); }
     };
     // সব-নির্বাচিত-সার্ভার-একসাথে-সমান্তরাল — কোনো-আগে-থামা-নয়: "সবগুলা-সোর্স = সবগুলা-স্ট্রিম"
-    const rs = await Promise.all(allow.map(one));
+    // সবাই-একসাথে-ফেল-করলে (যেমন-upstream-সাময়িক-http_500) ১.৫-সে-পরে-এক-বার-অটো-রিট্রাই:
+    let rs = await Promise.all(allow.map(one));
+    if (!rs.some(r => r.ok)) { await new Promise(r2 => setTimeout(r2, 1500)); force = true; rs = rs.concat(await Promise.all(allow.map(one))); }
     rs.forEach(absorb);
     // মার্জ: প্রতি-রেজোলিউশন-বাকেটে-সবচেয়ে-সাবসমৃদ্ধ-ভ্যারিয়েন্ট-জেতে (ডাব-রেজোলিউশন-এক-কার্ড):
     const byQ = {};
