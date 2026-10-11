@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.7.5';
+const VERSION = '1.7.6';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -329,7 +329,7 @@ function playable(u) {
   if (!u || !/^https?:/.test(u)) return Promise.resolve(false);
   return new Promise(resolve => {
     const mod = u.indexOf('http:') === 0 ? http : https;
-    const req = mod.get(u, { headers: { 'User-Agent': UA, 'Accept': '*/*', 'Referer': VIDY_REFERER, 'Connection': 'close' }, timeout: 5000, agent: u.protocol === 'http:' ? HAGENTP : SAGENTP }, res => {
+    const req = mod.get(u, { headers: { 'User-Agent': UA, 'Accept': '*/*', 'Referer': VIDY_REFERER, 'Connection': 'close' }, timeout: 3500, agent: u.protocol === 'http:' ? HAGENTP : SAGENTP }, res => {
       const ok = res.statusCode === 200;
       res.destroy(); // শুধু-স্ট্যাটাস-দরকার — প্লেলিস্ট-বডি (৩০০KB-পর্যন্ত) টানা-বৃথা
       resolve(ok);
@@ -338,7 +338,7 @@ function playable(u) {
     req.on('error', () => resolve(false));
   });
 }
-function getSources(tmdbId, type, s, e, title, cfg) {
+function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টাইটেলের-প্রমিস — sources-সমান্তরালে-ছোটা-হয়
   const qsig = (Array.isArray(cfg && cfg.q) ? cfg.q.slice().sort((a, b) => a - b).join('.') : String((cfg && cfg.q) || '')) + ':' + ((cfg && cfg.sub) === 0 ? 0 : 1) + ':' + ((cfg && Array.isArray(cfg.srv) && cfg.srv.length) ? cfg.srv.slice().sort().join('.') : '');
   const key = ['src', VERSION, tmdbId, type, s || '', e || '', qsig].join('|'); // VERSION+cfg-ভার্সনড — ভিন্ন-ফিল্টার-ভিন্ন-ক্যাশ
   const hit = memoGet(key, 10800000);
@@ -405,6 +405,17 @@ function getSources(tmdbId, type, s, e, title, cfg) {
       if (!pick) { pick = deadJ; pickSrv = deadSrv; }
       if (pick) out = decorate(pick, type, s, e, title || '', cfg, pickSrv);
     }
+    // টাইটেল-প্রমিস-সমান্তরালে-ছুটেছিল → সর্বোচ্চ ৪০০ms-অপেক্ষা, এসে-গেলে-কার্ডে-বসাও (memoSet-এর-আগে-ই):
+    if (titleP && out.length) {
+      const nm = await Promise.race([titleP.catch(() => ''), new Promise(r => setTimeout(() => r(''), 400))]);
+      if (nm) {
+        const PRE = '\u29c9 Vidy\n'; // খালি-টাইটেলের-ফলব্যাক-সারি — সম্পূর্ণ-সারি-রিপ্লেস (আংশিক-নয়)
+        out = out.map(c => {
+          const t2 = c.title.indexOf(PRE) === 0 ? '\u29c9 ' + nm + '\n' + c.title.slice(PRE.length) : c.title;
+          return Object.assign({}, c, { title: t2, description: t2 });
+        });
+      }
+    }
     // দৈত্য-সার্ভার-কেউ-এই-পাসে-মিসিং-হলে (transient) ক্যাশ-নয় — পরের-চেষ্টায়-আবার-স্ক্যান-হবে:
     const giantsMissing = rs.some(r => GIANT.indexOf(r.srv) >= 0 && (!r.j || !r.ok));
     if (out.length && !giantsMissing) memoSet(key, out);
@@ -430,11 +441,10 @@ function decorate(j, type, s, e, showTitle, cfg, srv) {
     const sd = ((srv || 'vidy').charAt(0).toUpperCase() + (srv || 'vidy').slice(1)); // কার্ডে-সার্ভার-নাম
     const line2 = type === 'tv' ? '\u2b21 S' + s + 'E' + e + (subs.length ? ' \u00b7 Subs: ' + subs.length : '') : '\u2b21 Movie';
     const txt = '\u29c9 ' + (showTitle || 'Vidy') + '\n' + line2;
-    const desc = q === 'Auto HLS' ? txt + '\n\u27f3 Auto quality ladder \u00b7 fixed selection in-app' : txt;
     return {
       name: '\u25eb ' + q.replace('Auto HLS', 'Auto') + ' \u00b7 ' + sd + ' \u25eb',
       title: txt,
-      description: desc,
+      description: txt,
       quality: q === 'Auto HLS' ? '' : q,
       url: x.url,
       headers: headers,
@@ -552,13 +562,15 @@ const server = http.createServer((req, res) => {
     // ── tmdb-নেটিভ-আইডি-স্ট্রিম (Nuvio-মোড):
     if ((m = p.match(/^\/stream\/movie\/tmdb(\d+)\.json$/))) {
       const t0 = Date.now();
-      return nameForTmdb(Number(m[1]), 'movie').then(nm => getSources(Number(m[1]), 'movie', null, null, nm, cfg)).then(
+      const tp = nameForTmdb(Number(m[1]), 'movie'); // টাইটেল-আর-sources-একসাথে-ছোটা — টাইটেল-শুধু-কার্ডের-জন্য
+      return getSources(Number(m[1]), 'movie', null, null, '', cfg, tp).then(
         cards => { logReq(p, Date.now() - t0, (cards || []).length); sendJson(res, 200, { streams: cards || [] }); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message); sendJson(res, 200, { streams: [] }); });
     }
     if ((m = p.match(/^\/stream\/series\/tmdb(\d+):?(?:(\d+):(\d+))?\.json$/))) {
       const t0 = Date.now();
-      return nameForTmdb(Number(m[1]), 'series').then(nm => getSources(Number(m[1]), 'tv', Number(m[2] || 1), Number(m[3] || 1), nm, cfg)).then(
+      const tp = nameForTmdb(Number(m[1]), 'series');
+      return getSources(Number(m[1]), 'tv', Number(m[2] || 1), Number(m[3] || 1), '', cfg, tp).then(
         cards => { logReq(p, Date.now() - t0, (cards || []).length); sendJson(res, 200, { streams: cards || [] }); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message); sendJson(res, 200, { streams: [] }); });
     }
