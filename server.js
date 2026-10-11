@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.10.3';
+const VERSION = '1.11.0';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -320,6 +320,88 @@ function pathGet(url, via, px, timeoutMs) {
   return via === 'proxy' && px ? proxiedGet(px, url, timeoutMs) : directGet(url, timeoutMs);
 }
 
+// ---------- NetHex parallel source (separate source; NEXBASE env, empty = off) ----------
+// vidy servers + NetHex (MovieBox direct-MP4) run in parallel; NetHex cards (♧, distinct style)
+// are appended after the vidy cards. Any NetHex failure/timeout/slow = vidy cards alone, never an error.
+const NEXBASE = (process.env.NEXBASE || '').replace(/\/$/, '');
+const NXDEADLINE = Number(process.env.NXDEADLINE || 20000); // absolute cap for the whole call
+const NXEXTRA = Number(process.env.NXEXTRA || 1000); // vidy answered from cache -> hold at most this for NetHex (cache-hit calls must stay instant)
+const NXCOLDX = Number(process.env.NXCOLDX || 4000); // vidy did a cold scan -> NetHex rode the scan in parallel, so it earned a longer hold on the FIRST cold request
+const NXHARD = Number(process.env.NXHARD || 11200); // absolute response deadline — worst case must stay under the ~12s gateway cut
+const NXCACHE = new Map(); // nx:imdb:s:e -> {ts, v} — NetHex links are signed/fresh + it caches 30min itself
+async function nxStreams(imdb, type, s, e) {
+  if (!NEXBASE || !imdb) return [];
+  const k = 'nx:' + imdb + ':' + (type === 'series' ? (s || 1) + ':' + (e || 1) : 'm');
+  const h = NXCACHE.get(k);
+  if (h && (Date.now() - h.ts) < 1800000) return h.v;
+  try {
+    const path2 = type === 'series' ? encodeURIComponent(imdb + ':' + (s || 1) + ':' + (e || 1)) : encodeURIComponent(imdb);
+    const b = await directGet(NEXBASE + '/stream/' + type + '/' + path2 + '.json', 25000);
+    const arr = (JSON.parse(b).streams || []).filter(x => x && typeof x.url === 'string' && /^https?:/.test(x.url)).map(x => {
+      const q2 = (/(\d{3,4})p/.exec(String(x.name || '')) || [])[1] || '';
+      const lang = String(x._lang || '').replace(/\s*dub\s*$/i, '').trim();
+      const langTxt = (!lang || /^original/i.test(lang)) ? '' : ' \u00b7 ' + lang;
+      const info = String(x.description || '').trim(); // nethex-rich line: size/codec/duration/dub/year/subs
+      const H2 = { 'User-Agent': UA, 'Referer': 'https://movieboxonline.net/' };
+      return {
+        name: '\u2667 ' + (q2 ? q2 + 'p' : '') + langTxt + ' \u2739' + (String(x.name || '').split('\u2739')[1] || ' NetHex'),
+        title: info || String(x.name || ''),
+        description: info || String(x.name || ''),
+        quality: q2,
+        url: String(x.url),
+        headers: H2,
+        behaviorHints: { notWebReady: false, proxyHeaders: { request: Object.assign({}, H2, { 'Origin': 'https://movieboxonline.net' }) } }
+      };
+    });
+    if (arr.length) { // empty is NEVER cached — a rate-limited/slow NetHex window must not poison the key for 30min (same rule as inside NetHex itself); the next tap re-fetches
+      if (NXCACHE.size > 300) NXCACHE.clear();
+      NXCACHE.set(k, { ts: Date.now(), v: arr });
+    }
+    return arr;
+  } catch (e2) { return []; } // NetHex down/slow/empty → silently nothing, vidy never breaks
+}
+async function tmdbToImdb(tmdbId, type) { // NetHex is tt-only — translate tmdb-native ids through the mirror
+  const k = 't2i:' + type + ':' + tmdbId;
+  const hit = memoGet(k, 86400000);
+  if (hit) return hit;
+  try {
+    const b = await directGet(TMDBP + '/' + (type === 'tv' ? 'tv/' : 'movie/') + tmdbId + '/external_ids', 10000);
+    const v = JSON.parse(b).imdb_id || '';
+    if (v) memoSet(k, v);
+    return v;
+  } catch (e) { return ''; }
+}
+function nxFor(type, id, s, e) { // starts the parallel fetch immediately; null when source is off
+  if (!NEXBASE) return null;
+  if (/^tt\d+$/.test(id)) return nxStreams(id, type, s, e);
+  return tmdbToImdb(id, type).then(v => v ? nxStreams(v, type, s, e) : []);
+}
+function nxPrewarm(imdb, s, e) { // series tap → quietly fetch the next 3 episodes' NetHex into NXCACHE (binge tap-2 = instant)
+  if (!NEXBASE) return;
+  for (let k = 1; k <= 3; k++) {
+    nxStreams(imdb, 'series', s, e + k).catch(() => {});
+  }
+}
+async function withNx(cardsP, nxP, cfg, t0) {
+  const cards = await cardsP;
+  if (!nxP) return cards;
+  try {
+    const el = Date.now() - t0;
+    // FIRST-COLD-REQUEST goal: everything resolves on tap-1. NetHex starts with the vidy scan,
+    // so on a cold call it already had `el` ms — the hold tops it up toward the hard deadline.
+    // vidy answered from cache (<400ms) -> instant-path: only NXEXTRA (a cold NetHex resolve
+    // catches the next tap via its own background re-resolve + cache).
+    const grace = el < 400 ? NXEXTRA : Math.max(0, Math.min(NXCOLDX, NXHARD - el));
+    const left = Math.max(0, Math.min(NXDEADLINE, el + grace) - el);
+    const nx = await Promise.race([nxP.catch(() => []), new Promise(r => setTimeout(() => r(null), Math.max(0, left)))]);
+    if (nx && nx.length) {
+      const allow = Array.isArray(cfg && cfg.q) ? cfg.q : qToList(cfg && cfg.q);
+      return cards.concat(nx.filter(x => qPass(x, allow))); // same quality filter discipline, appended last
+    }
+  } catch (e) {}
+  return cards;
+}
+
 // ---------- sources ----------
 // সার্ভার-স্কোর: যেটা-ভালো-চলে-সেটাই-সবসময়-আগে (ফাইলে-জমে — রিস্টার্টেও-মনে-থাকে):
 const SRV_SCORE = (() => { try { return JSON.parse(fs.readFileSync(path.join(__dirname, 'vidy_server_scores.json'), 'utf8')); } catch (e) { return {}; } })();
@@ -609,7 +691,7 @@ const server = http.createServer((req, res) => {
     if (!cfg) cfg = Object.assign({}, DEFAULT_CFG, { g: [], srv: [] });
     if (p === '/' || p === '/config' || p === '/configure') return sendFile2(res, 'config.html');
     if (p === '/manifest.json') return sendJson(res, 200, manifest(cfg));
-    if (p === '/_health') return sendJson(res, 200, { ok: 1, version: VERSION, pool: POOL.length, memo: memo.size });
+    if (p === '/_health') return sendJson(res, 200, { ok: 1, version: VERSION, pool: POOL.length, memo: memo.size, nx: NEXBASE ? 1 : 0 });
     if (p === '/_pool') return sendJson(res, 200, POOL);
     if (p === '/_log') return sendJson(res, 200, reqLog.slice(-40).reverse());
     if (p === '/_servers') return sendJson(res, 200, { order: srvOrder(), scores: SRV_SCORE }); // কনফিগ-পেজের-লাইভ-হেলথ
@@ -634,32 +716,40 @@ const server = http.createServer((req, res) => {
     if ((m = p.match(/^\/stream\/movie\/tmdb(\d+)\.json$/))) {
       const t0 = Date.now();
       const tp = nameForTmdb(Number(m[1]), 'movie'); // টাইটেল-আর-sources-একসাথে-ছোটা — টাইটেল-শুধু-কার্ডের-জন্য
-      return getSources(Number(m[1]), 'movie', null, null, '', cfg, tp).then(
+      const nxP = nxFor('movie', String(m[1]), 0, 0);
+      return withNx(getSources(Number(m[1]), 'movie', null, null, '', cfg, tp), nxP, cfg, t0).then(
         cards => { logReq(p, Date.now() - t0, (cards || []).length); sendJson(res, 200, { streams: cards || [] }); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message); sendJson(res, 200, { streams: [] }); });
     }
     if ((m = p.match(/^\/stream\/series\/tmdb(\d+):?(?:(\d+):(\d+))?\.json$/))) {
       const t0 = Date.now();
       const tp = nameForTmdb(Number(m[1]), 'series');
-      return getSources(Number(m[1]), 'tv', Number(m[2] || 1), Number(m[3] || 1), '', cfg, tp).then(
+      const nxP = nxFor('series', String(m[1]), Number(m[2] || 1), Number(m[3] || 1));
+      nxPrewarm(String(m[1]), Number(m[2] || 1), Number(m[3] || 1));
+      return withNx(getSources(Number(m[1]), 'tv', Number(m[2] || 1), Number(m[3] || 1), '', cfg, tp), nxP, cfg, t0).then(
         cards => { logReq(p, Date.now() - t0, (cards || []).length); sendJson(res, 200, { streams: cards || [] }); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message); sendJson(res, 200, { streams: [] }); });
     }
     if ((m = p.match(/^\/stream\/movie\/(tt\d+)\.json$/))) {
       const t0 = Date.now();
-      return findTmdbInfo(m[1], 'movie').then(info => (info && info.id > 0) ? getSources(info.id, 'movie', null, null, info.name, cfg) : Promise.resolve([])).then(
+      const nxP = nxFor('movie', m[1], 0, 0);
+      return withNx(findTmdbInfo(m[1], 'movie').then(info => (info && info.id > 0) ? getSources(info.id, 'movie', null, null, info.name, cfg) : Promise.resolve([])), nxP, cfg, t0).then(
         cards => { logReq(p, Date.now() - t0, (cards || []).length); sendJson(res, 200, { streams: cards || [] }); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message); sendJson(res, 200, { streams: [] }); });
     }
     if ((m = p.match(/^\/stream\/series\/(tt\d+):(\d+):(\d+)\.json$/))) {
       const t0 = Date.now();
-      return findTmdbInfo(m[1], 'series').then(info => (info && info.id > 0) ? getSources(info.id, 'tv', Number(m[2]), Number(m[3]), info.name, cfg) : Promise.resolve([])).then(
+      const nxP = nxFor('series', m[1], Number(m[2]), Number(m[3]));
+      nxPrewarm(m[1], Number(m[2]), Number(m[3]));
+      return withNx(findTmdbInfo(m[1], 'series').then(info => (info && info.id > 0) ? getSources(info.id, 'tv', Number(m[2]), Number(m[3]), info.name, cfg) : Promise.resolve([])), nxP, cfg, t0).then(
         cards => { logReq(p, Date.now() - t0, (cards || []).length); sendJson(res, 200, { streams: cards || [] }); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message); sendJson(res, 200, { streams: [] }); });
     }
     if ((m = p.match(/^\/stream\/series\/(tt\d+)\.json$/))) { // সেফটি-নেট: s:e-ছাড়া কল → S1E1
       const t0 = Date.now();
-      return findTmdbInfo(m[1], 'series').then(info => (info && info.id > 0) ? getSources(info.id, 'tv', 1, 1, info.name, cfg) : Promise.resolve([])).then(
+      const nxP = nxFor('series', m[1], 1, 1);
+      nxPrewarm(m[1], 1, 1);
+      return withNx(findTmdbInfo(m[1], 'series').then(info => (info && info.id > 0) ? getSources(info.id, 'tv', 1, 1, info.name, cfg) : Promise.resolve([])), nxP, cfg, t0).then(
         cards => { logReq(p + ' [no-s:e]', Date.now() - t0, (cards || []).length); sendJson(res, 200, { streams: cards || [] }); },
         e => { logReq(p + ' [no-s:e]', Date.now() - t0, 0, e && e.message); sendJson(res, 200, { streams: [] }); });
     }
