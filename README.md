@@ -5,7 +5,7 @@ Users stream directly from the CDN — the add-on only resolves tokens and links
 
 ## Features
 
-- **7 servers scanned in parallel** — Miami · Boise · Atlanta (giant primaries, always listed first and given the longest budget), Phoenix (1080p mirror), Dallas (Auto-HLS), Austin (audio variants), Seattle (backup Auto)
+- **16 servers scanned in parallel** — Miami · Boise · Atlanta (giant primaries, ~32 sources on a 12-title sample, listed first, longest budget); veterans Phoenix (1080p mirror), Dallas (Auto-HLS), Austin (audio variants), Seattle (backup Auto); nine extras discovered from the official player bundle: Delhi (Hindi & English audio), Munich, Paris (most consistent single feed), Orlando, Reno, Oakland, Vegas, Cancun, Tampa
 - **Every card shows its server**: `◫ 1080 · Atlanta ◫`
 - Up to **4K** · subtitle tracks attached per-card (English-SDH etc. on official prints)
 - **Original-audio aware**: subtitle-rich (official) variants win ties; dub prints (0 subs) lose

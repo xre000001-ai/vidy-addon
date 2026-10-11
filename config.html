@@ -102,7 +102,7 @@ h1 .g{color:var(--acc)}
   <div class="card">
     <div class="eyebrow">Servers</div>
     <div class="heading">Streaming servers</div>
-    <p class="muted">Miami, Boise and Atlanta are the giant primaries — their cards always sit on top, every stream they carry is listed. Phoenix, Dallas and Austin add extra feeds (Phoenix mirrors 1080p, Austin carries audio variants), Seattle stays as backup. All selected servers are scanned in parallel and every card shows which server it plays from.</p>
+    <p class="muted">Miami, Boise and Atlanta are the giant primaries — their cards always sit on top, every stream they carry is listed. Nine extra feeds discovered from the official player: Delhi (Hindi &amp; English audio), Munich, Paris, Orlando, Reno, Oakland, Vegas, Cancun and Tampa, alongside the veteran extras Phoenix, Dallas, Austin and Seattle. All selected servers are scanned in parallel and every card shows which server it plays from.</p>
     <div class="rows" id="srvRows"></div>
   </div>
 
@@ -124,12 +124,12 @@ h1 .g{color:var(--acc)}
 <script>
 (function(){
   var RES=[[2160,"4K"],[1080,"1080p"],[720,"720p"],[480,"480p"],[360,"360p"]];
-  var SRVS=[["miami","Miami","Primary · always-on workhorse"],["boise","Boise","Primary · up to 4K"],["atlanta","Atlanta","Primary · official subtitles"],["phoenix","Phoenix","Extra · 1080p mirror"],["dallas","Dallas","Extra · Auto-HLS feed"],["austin","Austin","Extra · audio variants (Hindi/English)"],["seattle","Seattle","Backup · Auto-HLS feed"]];
-  var st={q:[],sub:1,srv:[]};
+  var SRVS=[["miami","Miami","Primary · always-on workhorse"],["boise","Boise","Primary · up to 4K"],["atlanta","Atlanta","Primary · official subtitles"],["phoenix","Phoenix","Extra · 1080p mirror"],["dallas","Dallas","Extra · Auto-HLS feed"],["austin","Austin","Extra · audio variants (Hindi/English)"],["seattle","Seattle","Backup · Auto-HLS feed"],["delhi","Delhi","Extra · multi-audio (Hindi/English)"],["munich","Munich","Extra · 1080p (EU)"],["paris","Paris","Extra · always-on single feed"],["orlando","Orlando","Extra · 1080p feed"],["reno","Reno","Extra · Auto-HLS feed"],["oakland","Oakland","Extra · Auto-HLS feed"],["vegas","Vegas","Extra · Vidara feed"],["cancun","Cancun","Extra · Vimeos feed"],["tampa","Tampa","Extra · Auto-HLS feed"]];
+  var st={q:[],sub:1,srv:SRVS.map(function(x){return x[0];})}; /* allowlist: every server ON by default */
   function b64u(o){return btoa(unescape(encodeURIComponent(JSON.stringify(o)))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');}
   function base(){return location.origin;}
   function rebuild(){
-    var cfg={q:st.q.slice(),sub:st.sub,srv:st.srv.slice()};
+    var cfg={q:st.q.slice(),sub:st.sub,srv:st.srv.length===SRVS.length?[]:st.srv.slice()}; /* [] = scan all servers */
     var u=base()+'/cfg/'+b64u(cfg)+'/manifest.json';
     document.getElementById('url').value=u;
     document.getElementById('inst').href='stremio://'+u.replace(/^https?:\/\//,'');
@@ -167,11 +167,11 @@ h1 .g{color:var(--acc)}
     var swel=r.querySelector('.sw');
     r.onclick=function(){
       var i=st.srv.indexOf(sd[0]);
-      if(i>=0){st.srv.splice(i,1);swel.classList.add('on');r.classList.remove('off');}
-      else{
-        var left=SRVS.filter(function(x){return x[0]!==sd[0]&&st.srv.indexOf(x[0])<0;}).length;
-        if(left===0)return toast('Keep at least one server');
-        st.srv.push(sd[0]);swel.classList.remove('on');r.classList.add('off');
+      if(i>=0){ /* turning OFF */
+        if(st.srv.length===1)return toast('Keep at least one server');
+        st.srv.splice(i,1);swel.classList.remove('on');r.classList.add('off');
+      }else{ /* turning ON */
+        st.srv.push(sd[0]);swel.classList.add('on');r.classList.remove('off');
       }
       rebuild();
     };

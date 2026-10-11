@@ -10,13 +10,14 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.9.0';
+const VERSION = '1.10.0';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
 const TMDBP = 'https://db.wecollege.net/3';
 const CINEMETA = 'https://v3-cinemeta.strem.io';
-const SERVERS = ['miami', 'atlanta', 'seattle', 'boise', 'phoenix', 'dallas', 'austin']; // আসল-সার্ভার-পরিবার (phoenix/dallas/austin — লাইভ-প্রোব-আবিষ্কৃত)
+const SERVERS = ['miami', 'atlanta', 'seattle', 'boise', 'phoenix', 'dallas', 'austin', 'delhi', 'munich', 'cancun', 'vegas', 'oakland', 'orlando', 'paris', 'reno', 'tampa']; // full server family — 7 veterans + 9 discovered from the official player bundle (live-probed)
+const GIANT = ['miami', 'boise', 'atlanta']; // giant primaries — carry ~32 sources across a 12-title sample (new servers top out at ~13, measured 10-11 Oct 2026)
 let POOL = [];
 try { POOL = JSON.parse(fs.readFileSync(path.join(__dirname, 'vidy_proxy_pool.json'), 'utf8')); } catch (e) {}
 
@@ -325,7 +326,6 @@ function pathGet(url, via, px, timeoutMs) {
 const SRV_SCORE = (() => { try { return JSON.parse(fs.readFileSync(path.join(__dirname, 'vidy_server_scores.json'), 'utf8')); } catch (e) { return {}; } })();
 const SRV_CACHE = new Map(); // [srvc|VERSION|tmdb|type|s|e|srv] → {ts, j, ok, ns} — ফিল্টার-ভ্যারিয়েন্ট-আর-স্ক্যান-পুনরাবৃত্তি-করে-না
 const SRV_NEG = new Map(); // বাড়তি-সার্ভারের-সাম্প্রতিক-ব্যর্থতা (৯০সে) — ভ্যারিয়েন্ট-যেন-একই-মরা-সার্ভারে-বাজেট-না-পোড়ায়
-const SRV_EXTRAS = ['phoenix', 'dallas', 'austin', 'seattle']; // দৈত্যরা-সবসময়-লাইভ-রিট্রাই-ই-হয়
 function srvBump(srv, d) {
   SRV_SCORE[srv] = Math.max(-20, Math.min(20, (SRV_SCORE[srv] || 0) + d));
   try { fs.writeFileSync(path.join(__dirname, 'vidy_server_scores.json'), JSON.stringify(SRV_SCORE)); } catch (e) {}
@@ -371,7 +371,7 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
       }
       const nt = SRV_NEG.get(ck);
       if (nt) {
-        const ttl = SRV_EXTRAS.indexOf(srv) >= 0 ? 90000 : 45000; // দৈত্য ৪৫সে (এপিসোড-কী-ভিত্তিক — নতুন-এপিসোডে-সবসময়-লাইভ), বাড়তি ৯০সে
+        const ttl = GIANT.indexOf(srv) >= 0 ? 45000 : 90000; // giants retry after 45s (per-episode key — fresh episodes always scan live), extras after 90s
         if ((Date.now() - nt) < ttl) return { srv, neg: true };
       }
       // এক-সার্ভার-সম্পূর্ণ-মূল্যায়ন (seed+sources+প্রোব):
@@ -394,7 +394,7 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
         const nfit = ok ? decorate(j, type, s, e, title || '', cfg, srv).length : 0;
         if (ok) { // শুধু-বাঁচা-ফল-ক্যাশ-হয় (মৃত/খালি-কখনো-নয়):
           SRV_CACHE.set(ck, { ts: Date.now(), j, ok: true, ns });
-          if (SRV_CACHE.size > 200) SRV_CACHE.clear();
+          if (SRV_CACHE.size > 400) SRV_CACHE.clear();
         } else SRV_NEG.set(ck, Date.now()); // মৃত-অ্যাসেট-ও-সাম্প্রতিক-ব্যর্থতা — ভ্যারিয়েন্ট-বারবার-প্রোব-করে-বাজেট-পোড়াবে-না
         return { srv, j, ok, ns, nfit };
       } catch (er) {
@@ -414,7 +414,6 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
     };
     // সব-নির্বাচিত-সার্ভার-একসাথে-সমান্তরাল — কোনো-আগে-থামা-নয়: "সবগুলা-সোর্স = সবগুলা-স্ট্রিম"
     // প্রতি-সার্ভার-হার্ড-বাজেট: দৈত্য-ত্রয়ী (miami/boise/atlanta) ১০.৫সে — ধীর-হলেও-ফল-সহ্য-করবে; বাকিরা ৭.৫সে:
-    const GIANT = ['miami', 'boise', 'atlanta'];
     // v1.9.0 fix: the timeout timer used to fire even when one() had already won the race,
     // negative-caching healthy servers for 45-90s after every scan (empty-card windows).
     // Now the neg write only happens when the timeout genuinely fires first.
@@ -437,7 +436,7 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
     rs.forEach(absorb);
     // মার্জ: কোনো-ক্রস-সার্ভার-ডিউপ-নয় — প্রতিটা-সার্ভারের-প্রতিটা-স্ট্রিম-কার্ড-থাকবে;
     // ক্রম: দৈত্য-সার্ভার (miami→boise→atlanta) সবার-উপরে, তারপর-বাড়তি, ভেতরে-রেজোলিউশন-বড়→ছোট:
-    const PRIO = ['miami', 'boise', 'atlanta', 'phoenix', 'dallas', 'austin', 'seattle'];
+    const PRIO = ['miami', 'boise', 'atlanta', 'phoenix', 'dallas', 'austin', 'seattle', 'delhi', 'munich', 'paris', 'orlando', 'reno', 'oakland', 'vegas', 'cancun', 'tampa'];
     const prio = v => { const i = PRIO.indexOf(v); return i < 0 ? 99 : i; };
     const all = [];
     for (const r of rs) {
@@ -535,7 +534,7 @@ function parseCfgFromObj(o) {
     if (['pop', 'top', 'new'].indexOf(o.sort) >= 0) c.sort = o.sort;
     if (['2020', '2010', '2000'].indexOf(o.era) >= 0) c.era = o.era;
     if (Array.isArray(o.g)) c.g = o.g.map(String).map(x => x.trim()).filter(Boolean).slice(0, 4);
-    if (Array.isArray(o.srv)) c.srv = o.srv.map(x => String(x).toLowerCase()).filter(x => SERVERS.indexOf(x) >= 0).slice(0, 4);
+    if (Array.isArray(o.srv)) c.srv = o.srv.map(x => String(x).toLowerCase()).filter(x => SERVERS.indexOf(x) >= 0).slice(0, 16);
   }
   return c;
 }
@@ -547,7 +546,7 @@ function manifest(cfg) {
     id: 'community.xre.vidy',
     version: VERSION,
     name: 'Vidy',
-    description: 'Stream-only: movies & series via Vidy — up to 4K, original audio, subtitles. 7 servers scanned in parallel (Miami·Boise·Atlanta·Phoenix·Dallas·Austin·Seattle); every card shows its server.',
+    description: 'Stream-only: movies & series via Vidy — up to 4K, original audio, subtitles. 16 servers scanned in parallel (Miami·Boise·Atlanta primaries + Phoenix·Dallas·Austin·Seattle·Delhi·Munich·Cancun·Vegas·Oakland·Orlando·Paris·Reno·Tampa); every card shows its server.',
     author: 'xre000001-ai',
     resources: ['stream'],
     types: ['movie', 'series'],
