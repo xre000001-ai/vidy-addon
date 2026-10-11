@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.6.0';
+const VERSION = '1.6.1';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -374,22 +374,29 @@ function getSources(tmdbId, type, s, e, title, cfg) {
         srvBump(r.srv, r.nfit > 0 ? (r.ns >= 5 ? 2 : 1) : 0); // ভালো-সার্ভার-সবসময়-আগে
       } else { deadJ = r.j; deadSrv = r.srv; srvBump(r.srv, -1); }
     };
-    // জোড়া-জোড়া-সমান্তরাল — সিরিয়াল-অপেক্ষা-নয় (miami/boise/atlanta-ত্রয়ী-প্রায়-সবসময়-প্রথম-জোড়ায়-ই-শেষ):
-    for (let i = 0; i < allow.length; i += 2) {
-      const rs = await Promise.all(allow.slice(i, i + 2).map(one));
-      rs.forEach(absorb);
-      if (bestFit && (bestFitNs >= 5 || bestFitN >= 4)) break; // সমৃদ্ধ/অফিসিয়াল-প্রিন্ট → থামো
-      if (bestFit && Date.now() - t0 > 9000) break; // গেটওয়ে-বাজেট — যা-পাওয়া-গেছে
+    // সব-নির্বাচিত-সার্ভার-একসাথে-সমান্তরাল — কোনো-আগে-থামা-নয়: "সবগুলা-সোর্স = সবগুলা-স্ট্রিম"
+    const rs = await Promise.all(allow.map(one));
+    rs.forEach(absorb);
+    // মার্জ: প্রতি-রেজোলিউশন-বাকেটে-সবচেয়ে-সাবসমৃদ্ধ-ভ্যারিয়েন্ট-জেতে (ডাব-রেজোলিউশন-এক-কার্ড):
+    const byQ = {};
+    for (const r of rs) {
+      if (!r.j || !r.ok) continue;
+      for (const c of decorate(r.j, type, s, e, title || '', cfg, r.srv)) {
+        const k = c.quality || 'Auto';
+        if (!byQ[k] || r.ns > byQ[k].ns) byQ[k] = { card: c, ns: r.ns };
+      }
     }
-    let pick = bestFit, pickSrv = bestFitSrv; // আগে-রেজোলিউশন-মেলা, না-থাকলে-সাবসমৃদ্ধ
-    if (!pick) { pick = bestAny; pickSrv = bestAnySrv; }
-    if (!pick) { pick = deadJ; pickSrv = deadSrv; }
-    if (pick) {
-      const out = decorate(pick, type, s, e, title || '', cfg, pickSrv);
-      if (out.length) memoSet(key, out); // খালি-ফল-কখনো-ক্যাশ-নয় (পয়জন-আটকাতে)
-      return out;
+    const rank = c => (c.quality ? parseInt(c.quality, 10) || 0 : -1); // Auto-সবার-শেষে
+    let out = Object.keys(byQ).map(k => byQ[k].card).sort((a, b) => rank(b) - rank(a));
+    // কোনো-কার্ড-ফিট-করেনি (অদ্ভুত-লেবেল) → সবচেয়ে-সাবসমৃদ্ধ/শেষ-ভরসা-সেট:
+    if (!out.length) {
+      let pick = bestAny, pickSrv = bestAnySrv;
+      if (!pick) { pick = deadJ; pickSrv = deadSrv; }
+      if (pick) out = decorate(pick, type, s, e, title || '', cfg, pickSrv);
     }
-    throw lastErr || new Error('no-sources');
+    if (out.length) memoSet(key, out); // খালি-ফল-কখনো-ক্যাশ-নয় (পয়জন-আটকাতে)
+    if (!out.length && lastErr) throw lastErr;
+    return out;
   });
 }
 function decorate(j, type, s, e, showTitle, cfg, srv) {
