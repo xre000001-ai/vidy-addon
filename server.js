@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.11.0';
+const VERSION = '1.11.1';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -336,7 +336,9 @@ async function nxStreams(imdb, type, s, e) {
   if (h && (Date.now() - h.ts) < 1800000) return h.v;
   try {
     const path2 = type === 'series' ? encodeURIComponent(imdb + ':' + (s || 1) + ':' + (e || 1)) : encodeURIComponent(imdb);
+    const t3 = Date.now();
     const b = await directGet(NEXBASE + '/stream/' + type + '/' + path2 + '.json', 25000);
+    if (process.env.VDBG) console.error('[nxdbg] nethex ' + type + '/' + path2 + ' -> ' + (Date.now() - t3) + 'ms');
     const arr = (JSON.parse(b).streams || []).filter(x => x && typeof x.url === 'string' && /^https?:/.test(x.url)).map(x => {
       const q2 = (/(\d{3,4})p/.exec(String(x.name || '')) || [])[1] || '';
       const lang = String(x._lang || '').replace(/\s*dub\s*$/i, '').trim();
@@ -358,28 +360,36 @@ async function nxStreams(imdb, type, s, e) {
       NXCACHE.set(k, { ts: Date.now(), v: arr });
     }
     return arr;
-  } catch (e2) { return []; } // NetHex down/slow/empty → silently nothing, vidy never breaks
+  } catch (e2) { if (process.env.VDBG) console.error('[nxdbg] nethex ERR: ' + String(e2 && e2.message).slice(0, 80)); return []; } // NetHex down/slow/empty → silently nothing, vidy never breaks
 }
+const T2IFLIGHT = new Map(); // dedupe concurrent tmdb→imdb translations (tap + prewarm share one mirror call)
 async function tmdbToImdb(tmdbId, type) { // NetHex is tt-only — translate tmdb-native ids through the mirror
   const k = 't2i:' + type + ':' + tmdbId;
   const hit = memoGet(k, 86400000);
   if (hit) return hit;
-  try {
-    const b = await directGet(TMDBP + '/' + (type === 'tv' ? 'tv/' : 'movie/') + tmdbId + '/external_ids', 10000);
-    const v = JSON.parse(b).imdb_id || '';
-    if (v) memoSet(k, v);
-    return v;
-  } catch (e) { return ''; }
+  const fl = T2IFLIGHT.get(k);
+  if (fl) return fl;
+  const pr = (async () => {
+    try {
+      const b = await directGet(TMDBP + '/' + (type === 'tv' || type === 'series' ? 'tv/' : 'movie/') + tmdbId + '/external_ids', 10000);
+      const v = JSON.parse(b).imdb_id || '';
+      if (v) memoSet(k, v);
+      return v;
+    } catch (e) { return ''; }
+    finally { T2IFLIGHT.delete(k); }
+  })();
+  T2IFLIGHT.set(k, pr);
+  return pr;
 }
 function nxFor(type, id, s, e) { // starts the parallel fetch immediately; null when source is off
   if (!NEXBASE) return null;
   if (/^tt\d+$/.test(id)) return nxStreams(id, type, s, e);
   return tmdbToImdb(id, type).then(v => v ? nxStreams(v, type, s, e) : []);
 }
-function nxPrewarm(imdb, s, e) { // series tap → quietly fetch the next 3 episodes' NetHex into NXCACHE (binge tap-2 = instant)
+function nxPrewarm(type, id, s, e) { // series tap → quietly fetch the next 3 episodes' NetHex into NXCACHE (binge tap-2 = instant)
   if (!NEXBASE) return;
   for (let k = 1; k <= 3; k++) {
-    nxStreams(imdb, 'series', s, e + k).catch(() => {});
+    nxFor(type, id, s, e + k).catch(() => {});
   }
 }
 async function withNx(cardsP, nxP, cfg, t0) {
@@ -387,13 +397,14 @@ async function withNx(cardsP, nxP, cfg, t0) {
   if (!nxP) return cards;
   try {
     const el = Date.now() - t0;
+    if (process.env.VDBG) console.error('[nxdbg] withNx el=' + el + 'ms grace-pending');
     // FIRST-COLD-REQUEST goal: everything resolves on tap-1. NetHex starts with the vidy scan,
     // so on a cold call it already had `el` ms — the hold tops it up toward the hard deadline.
     // vidy answered from cache (<400ms) -> instant-path: only NXEXTRA (a cold NetHex resolve
     // catches the next tap via its own background re-resolve + cache).
     const grace = el < 400 ? NXEXTRA : Math.max(0, Math.min(NXCOLDX, NXHARD - el));
     const left = Math.max(0, Math.min(NXDEADLINE, el + grace) - el);
-    const nx = await Promise.race([nxP.catch(() => []), new Promise(r => setTimeout(() => r(null), Math.max(0, left)))]);
+    const nx = await Promise.race([nxP.then(v => { if (process.env.VDBG) console.error('[nxdbg] nxP resolved: ' + (v || []).length + ' cards at ' + (Date.now() - t0) + 'ms'); return v; }).catch(() => []), new Promise(r => setTimeout(() => { if (process.env.VDBG) console.error('[nxdbg] nxP TIMED OUT at ' + (Date.now() - t0) + 'ms'); r(null); }, Math.max(0, left)))]);
     if (nx && nx.length) {
       const allow = Array.isArray(cfg && cfg.q) ? cfg.q : qToList(cfg && cfg.q);
       return cards.concat(nx.filter(x => qPass(x, allow))); // same quality filter discipline, appended last
@@ -725,7 +736,7 @@ const server = http.createServer((req, res) => {
       const t0 = Date.now();
       const tp = nameForTmdb(Number(m[1]), 'series');
       const nxP = nxFor('series', String(m[1]), Number(m[2] || 1), Number(m[3] || 1));
-      nxPrewarm(String(m[1]), Number(m[2] || 1), Number(m[3] || 1));
+      nxPrewarm('series', String(m[1]), Number(m[2] || 1), Number(m[3] || 1));
       return withNx(getSources(Number(m[1]), 'tv', Number(m[2] || 1), Number(m[3] || 1), '', cfg, tp), nxP, cfg, t0).then(
         cards => { logReq(p, Date.now() - t0, (cards || []).length); sendJson(res, 200, { streams: cards || [] }); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message); sendJson(res, 200, { streams: [] }); });
@@ -740,7 +751,7 @@ const server = http.createServer((req, res) => {
     if ((m = p.match(/^\/stream\/series\/(tt\d+):(\d+):(\d+)\.json$/))) {
       const t0 = Date.now();
       const nxP = nxFor('series', m[1], Number(m[2]), Number(m[3]));
-      nxPrewarm(m[1], Number(m[2]), Number(m[3]));
+      nxPrewarm('series', m[1], Number(m[2]), Number(m[3]));
       return withNx(findTmdbInfo(m[1], 'series').then(info => (info && info.id > 0) ? getSources(info.id, 'tv', Number(m[2]), Number(m[3]), info.name, cfg) : Promise.resolve([])), nxP, cfg, t0).then(
         cards => { logReq(p, Date.now() - t0, (cards || []).length); sendJson(res, 200, { streams: cards || [] }); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message); sendJson(res, 200, { streams: [] }); });
@@ -748,7 +759,7 @@ const server = http.createServer((req, res) => {
     if ((m = p.match(/^\/stream\/series\/(tt\d+)\.json$/))) { // সেফটি-নেট: s:e-ছাড়া কল → S1E1
       const t0 = Date.now();
       const nxP = nxFor('series', m[1], 1, 1);
-      nxPrewarm(m[1], 1, 1);
+      nxPrewarm('series', m[1], 1, 1);
       return withNx(findTmdbInfo(m[1], 'series').then(info => (info && info.id > 0) ? getSources(info.id, 'tv', 1, 1, info.name, cfg) : Promise.resolve([])), nxP, cfg, t0).then(
         cards => { logReq(p + ' [no-s:e]', Date.now() - t0, (cards || []).length); sendJson(res, 200, { streams: cards || [] }); },
         e => { logReq(p + ' [no-s:e]', Date.now() - t0, 0, e && e.message); sendJson(res, 200, { streams: [] }); });
