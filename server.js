@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.3.0';
+const VERSION = '1.3.1';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -315,8 +315,8 @@ function getSources(tmdbId, type, s, e, title, cfg) {
     for (const srv of SERVERS) {
       try {
         const sc = await getSeed(tmdbId, force);
-        const q = { mediaType: type, tmdbId: String(tmdbId), enc: '2', seed: sc.seed };
-        if (type === 'tv') { q.s = String(s); q.e = String(e); }
+        const q = { mediaType: type, tmdbId: String(tmdbId), enc: '2', seed: sc.seed, title: title || '' };
+        if (type === 'tv') { q.seasonId = String(s || 1); q.episodeId = String(e || 1); } // ভুল-ছিল s/e — upstream-এগুলো-উপেক্ষা-করত → সবসময়-EP1
         const u = API + '/' + srv + '/sources?' + new URLSearchParams(q).toString();
         const ct = await pathGet(u, sc.via, sc.px, 12000);
         const j = JSON.parse(vidyDecrypt(ct, sc.seed, tmdbId));
