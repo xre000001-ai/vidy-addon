@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.7.4';
+const VERSION = '1.7.5';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -93,6 +93,8 @@ function vidyDecrypt(b64ct, seed, tmdbId) {
 // ---------- fetch (direct + CONNECT-প্রক্সি) ----------
 const HAGENT = new http.Agent({ keepAlive: true, maxSockets: 32 }); // কানেকশন-পুনঃব্যবহার — ঠান্ডা-কল-দ্রুত
 const SAGENT = new https.Agent({ keepAlive: true, maxSockets: 32 });
+const HAGENTP = new http.Agent({ keepAlive: false, maxSockets: 16 }); // প্রোব-একবার-ই-চলে — ক্লিন-ক্লোজ
+const SAGENTP = new https.Agent({ keepAlive: false, maxSockets: 16 });
 function directGet(url, timeoutMs) {
   return new Promise((resolve, reject) => {
     const u = new URL(url);
@@ -286,7 +288,7 @@ function nameForTmdb(tmdbId, type) {
 let seedCache = { key: null, seed: null, via: 'direct', px: null, ts: 0 };
 let seedInflight = null; // প্যারালাল-জোড়ায়-এক-ই-সিড-কল-শেয়ার-হোক
 function getSeed(tmdbId, force) {
-  if (!force && seedCache.seed && seedCache.key === tmdbId && (Date.now() - seedCache.ts) < 20000) {
+  if (!force && seedCache.seed && seedCache.key === tmdbId && (Date.now() - seedCache.ts) < 45000) { // বিংগে-বান্ধব — সিড-পুনর্ব্যবহার
     return Promise.resolve(seedCache);
   }
   if (!force && seedInflight && seedInflight.key === tmdbId && (Date.now() - seedInflight.ts) < 8000) return seedInflight.p;
@@ -327,9 +329,10 @@ function playable(u) {
   if (!u || !/^https?:/.test(u)) return Promise.resolve(false);
   return new Promise(resolve => {
     const mod = u.indexOf('http:') === 0 ? http : https;
-    const req = mod.get(u, { headers: { 'User-Agent': UA, 'Accept': '*/*', 'Referer': VIDY_REFERER }, timeout: 5000, agent: u.protocol === 'http:' ? HAGENT : SAGENT }, res => {
-      res.resume();
-      resolve(res.statusCode === 200);
+    const req = mod.get(u, { headers: { 'User-Agent': UA, 'Accept': '*/*', 'Referer': VIDY_REFERER, 'Connection': 'close' }, timeout: 5000, agent: u.protocol === 'http:' ? HAGENTP : SAGENTP }, res => {
+      const ok = res.statusCode === 200;
+      res.destroy(); // শুধু-স্ট্যাটাস-দরকার — প্লেলিস্ট-বডি (৩০০KB-পর্যন্ত) টানা-বৃথা
+      resolve(ok);
     });
     req.on('timeout', () => { req.destroy(new Error('timeout')); });
     req.on('error', () => resolve(false));
@@ -427,10 +430,11 @@ function decorate(j, type, s, e, showTitle, cfg, srv) {
     const sd = ((srv || 'vidy').charAt(0).toUpperCase() + (srv || 'vidy').slice(1)); // কার্ডে-সার্ভার-নাম
     const line2 = type === 'tv' ? '\u2b21 S' + s + 'E' + e + (subs.length ? ' \u00b7 Subs: ' + subs.length : '') : '\u2b21 Movie';
     const txt = '\u29c9 ' + (showTitle || 'Vidy') + '\n' + line2;
+    const desc = q === 'Auto HLS' ? txt + '\n\u27f3 Auto quality ladder \u00b7 fixed selection in-app' : txt;
     return {
       name: '\u25eb ' + q.replace('Auto HLS', 'Auto') + ' \u00b7 ' + sd + ' \u25eb',
       title: txt,
-      description: txt,
+      description: desc,
       quality: q === 'Auto HLS' ? '' : q,
       url: x.url,
       headers: headers,
