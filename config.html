@@ -29,28 +29,18 @@ h1 .g{color:var(--acc)}
 .eyebrow::before{content:'';width:5px;height:5px;border-radius:50%;background:var(--acc2)}
 .heading{font-size:19px;font-weight:850;letter-spacing:-.2px;margin:7px 0 4px}
 .muted{color:var(--mut);font-size:13px;line-height:1.6}
-.rows{margin-top:12px;display:flex;flex-direction:column;gap:9px}
-.src{display:flex;gap:14px;align-items:center;padding:15px 16px;cursor:pointer;user-select:none;background:#000;border:1px solid rgba(255,255,255,.07);border-radius:16px;transition:border-color .2s}
-.src:hover{border-color:rgba(91,228,155,.4)}
-.src.off{opacity:.34;filter:grayscale(.55)}
-.tile{width:42px;height:42px;flex:none;border-radius:12px;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:16px;color:#dff7ea;background:linear-gradient(135deg,#1d7a48,#0d3f25)}
-.s-body{flex:1;min-width:0}
-.s-name{font-weight:800;font-size:14.5px}
-.s-sub{color:var(--dim);font-size:11.5px;margin-top:1px}
-.sw{position:relative;width:46px;height:26px;border-radius:999px;flex:none;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.14);cursor:pointer;transition:background .2s,border-color .2s}
-.sw::after{content:"";position:absolute;top:2px;left:2px;width:20px;height:20px;border-radius:50%;background:#8b93a7;transition:transform .2s,background .2s}
-.sw.on{background:rgba(91,228,155,.2);border-color:rgba(91,228,155,.55)}
-.sw.on::after{transform:translateX(20px);background:#5be49b;box-shadow:0 0 10px rgba(91,228,155,.8)}
 .frow{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 2px;border-bottom:1px solid rgba(255,255,255,.05)}
 .frow:last-child{border:0}
 .flab{font-weight:700;font-size:13.5px}
 .fhint{color:var(--mut);font-size:11.5px;margin-top:1px}
-.radios{display:flex;gap:0;background:var(--card2);border:1px solid rgba(91,228,155,.22);border-radius:11px;padding:3px;flex:none}
-.rt{border:0;background:transparent;color:var(--mut);border-radius:9px;padding:7px 13px;font-size:12px;font-weight:800;cursor:pointer}
-.rt.active{background:#123526;color:#bdf5da}
 .chips{display:flex;gap:7px;flex-wrap:wrap;margin-top:12px}
 .chip{font-size:11.5px;padding:6px 13px;border-radius:999px;border:1px solid rgba(91,228,155,.25);color:var(--mut);cursor:pointer;font-weight:700;user-select:none;transition:all .15s}
 .chip.on{background:rgba(91,228,155,.14);border-color:rgba(91,228,155,.6);color:#bdf5da}
+.chip.all{border-style:dashed}
+.sw{position:relative;width:46px;height:26px;border-radius:999px;flex:none;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.14);cursor:pointer;transition:background .2s,border-color .2s}
+.sw::after{content:"";position:absolute;top:2px;left:2px;width:20px;height:20px;border-radius:50%;background:#8b93a7;transition:transform .2s,background .2s}
+.sw.on{background:rgba(91,228,155,.2);border-color:rgba(91,228,155,.55)}
+.sw.on::after{transform:translateX(20px);background:#5be49b;box-shadow:0 0 10px rgba(91,228,155,.8)}
 .urlrow{display:flex;gap:9px;margin-top:14px}
 .url{flex:1;background:var(--card2);border:1px solid rgba(91,228,155,.2);border-radius:12px;padding:12px 13px;color:#cfe9db;font:11.5px/1.45 ui-monospace,Menlo,Consolas,monospace;word-break:break-all;outline:none}
 .url:focus{border-color:#5be49b}
@@ -68,60 +58,35 @@ h1 .g{color:var(--acc)}
 .foot{margin-top:26px;display:flex;justify-content:space-between;color:var(--dim);font-size:11px;letter-spacing:.08em;flex-wrap:wrap;gap:8px}
 .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%) translateY(18px);background:#10141c;border:1px solid rgba(91,228,155,.4);color:#bdf5da;border-radius:12px;padding:9px 18px;font-size:13px;font-weight:700;opacity:0;pointer-events:none;transition:all .25s}
 .toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
-@media(max-width:520px){h1{font-size:25px}.tag{display:none}.radios{flex-wrap:wrap}}
+@media(max-width:520px){h1{font-size:25px}.tag{display:none}}
 </style>
 </head>
 <body>
 <div class="wrap">
   <div class="top">
     <div class="wordmark"><div class="lgx">V</div><b>VIDY</b></div>
-    <div class="tag">Add-on</div>
+    <div class="tag">Stream-only</div>
   </div>
 
-  <h1>Filter the library.<br><span class="g">Press play.</span></h1>
-  <p class="sub">Korean &amp; Chinese dramas plus movies — up to <b>4K</b> with subtitles. Streams play <b>direct from CDN to your device</b>. Configure your pack below.</p>
+  <h1>Pick your quality.<br><span class="g">Press play.</span></h1>
+  <p class="sub">Movies &amp; series — up to <b>4K</b>, original audio, subtitles. Streams play <b>direct from CDN to your device</b>. Every card shows its <b>server</b>; the healthiest server is always tried first.</p>
 
   <div class="card">
-    <div class="eyebrow">Catalogs</div>
-    <div class="heading">Include in my pack</div>
-    <div class="rows" id="catRows"></div>
-  </div>
-
-  <div class="card">
-    <div class="eyebrow">Browse filters</div>
-    <div class="heading">Catalog defaults</div>
-    <p class="muted">Applied to catalog grids. You can still filter per-catalog inside the app (genre dropdown) and search anything.</p>
+    <div class="eyebrow">Playback</div>
+    <div class="heading">Quality &amp; subtitles</div>
+    <div class="flab" style="margin-top:10px">Resolutions</div>
+    <div class="fhint">Select any combination — unselected heights are hidden from results · Auto stays always</div>
+    <div class="chips" id="qChips"></div>
     <div style="margin-top:8px">
-      <div class="frow"><div><div class="flab">Language</div><div class="fhint">Catalog content origin</div></div>
-        <div class="radios" id="rLang"></div></div>
-      <div class="frow"><div><div class="flab">Sort</div><div class="fhint">Default ordering</div></div>
-        <div class="radios" id="rSort"></div></div>
-      <div class="frow"><div><div class="flab">Era</div><div class="fhint">Minimum release period</div></div>
-        <div class="radios" id="rEra"></div></div>
-    </div>
-    <div class="flab" style="margin-top:14px">Quick genres</div>
-    <div class="fhint">Pins genre into the default grid · in-app genre dropdown always available</div>
-    <div id="gTvLab" class="flab" style="margin-top:10px;font-size:10px;letter-spacing:.14em;color:#4e6e5d">K-DRAMA &amp; C-DRAMA</div>
-    <div class="chips" id="gChipsTv"></div>
-    <div id="gMvLab" class="flab" style="margin-top:10px;font-size:10px;letter-spacing:.14em;color:#4e6e5d">MOVIES</div>
-    <div class="chips" id="gChipsMv"></div>
-  </div>
-
-  <div class="card">
-    <div class="eyebrow">Streams</div>
-    <div class="heading">Playback</div>
-    <div style="margin-top:8px">
-      <div class="frow"><div><div class="flab">Max quality</div><div class="fhint">Hides higher cards</div></div>
-        <div class="radios" id="rQ"></div></div>
       <div class="frow"><div><div class="flab">Subtitles</div><div class="fhint">Attach subtitle tracks when the source has them</div></div>
         <div class="sw on" id="swSub"></div></div>
     </div>
     <div class="prev">
       <div class="dot"></div>
-      <div class="t" id="pv">◫ 1080 ◫
+      <div class="t" id="pv">◫ 1080 · Atlanta ◫
 ⧉ Queen of Tears
 ⬡ S1E1 · Subs: 31</div>
-      <div class="q" id="pvq">1080</div>
+      <div class="q" id="pvq">All</div>
     </div>
   </div>
 
@@ -132,7 +97,7 @@ h1 .g{color:var(--acc)}
     <div class="urlrow"><button class="copy" id="cp">Copy URL</button><a class="install" id="inst" href="#">Install in Stremio / Nuvio</a></div>
     <div class="steps">
       <div class="step"><i>1</i><span>Open your app → Add-ons → paste the URL</span></div>
-      <div class="step"><i>2</i><span>Open the Vidy catalog, use the genre dropdown or search</span></div>
+      <div class="step"><i>2</i><span>Search any title — stream cards show quality and server</span></div>
       <div class="step"><i>3</i><span>Play any card — direct stream, no proxy in the middle</span></div>
     </div>
   </div>
@@ -142,66 +107,48 @@ h1 .g{color:var(--acc)}
 <div class="toast" id="toast">Copied</div>
 <script>
 (function(){
-  var GENRES_TV=["Drama","Comedy","Action & Adventure","Crime","Mystery","Sci-Fi & Fantasy","Animation","Family","Documentary","War & Politics","Kids","Reality"];
-  var GENRES_MV=["Action","Comedy","Thriller","Romance","Drama","Crime","Sci-Fi","Horror","Mystery","Fantasy","Animation","Adventure"];
-  var st={cat:{kd:1,mv:1},lang:"",sort:"pop",era:"",g:[],q:0,sub:1};
+  var RES=[[2160,"4K"],[1080,"1080p"],[720,"720p"],[480,"480p"],[360,"360p"]];
+  var st={q:[],sub:1};
   function b64u(o){return btoa(unescape(encodeURIComponent(JSON.stringify(o)))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');}
   function base(){return location.origin;}
   function rebuild(){
-    var cfg={q:st.q,sub:st.sub,cat:(st.cat.kd?'kd':'')+(st.cat.mv?'mv':''),lang:st.lang,sort:st.sort,era:st.era,g:st.g.slice()};
+    var cfg={q:st.q.slice(),sub:st.sub};
     var u=base()+'/cfg/'+b64u(cfg)+'/manifest.json';
     document.getElementById('url').value=u;
     document.getElementById('inst').href='stremio://'+u.replace(/^https?:\/\//,'');
-    var top=st.q?[2160,1080,720,480,360].filter(function(x){return x<=st.q;})[0]:1080;
-    document.getElementById('pvq').textContent=String(top);
-    document.getElementById('pv').textContent='◫ '+top+' ◫\n⧉ Queen of Tears\n⬡ S1E1'+(st.sub?' · Subs: 31':'');
+    var top=st.q.length?String(Math.max.apply(null,st.q)):'1080';
+    var sel=st.q.length?st.q.slice().sort(function(a,b){return b-a;}).join(', '):'All';
+    document.getElementById('pvq').textContent=sel;
+    document.getElementById('pv').textContent='\u25eb '+top+' \u00b7 Atlanta \u25eb\n\u29c9 Queen of Tears\n\u2b21 S1E1'+(st.sub?' \u00b7 Subs: 31':'');
   }
-  function radios(id,opts,key,isNum){
-    var el=document.getElementById(id);
-    opts.forEach(function(o){
-      var b=document.createElement('button');b.className='rt'+((isNum?st[key]===o.v:st[key]===o.v)?' active':'');b.textContent=o.l;
-      b.onclick=function(){st[key]=o.v;[].forEach.call(el.children,function(c){c.classList.remove('active');});b.classList.add('active');rebuild();};
-      el.appendChild(b);
+  var qc=document.getElementById('qChips');
+  var all=document.createElement('div');
+  all.className='chip all';all.textContent='All';
+  all.onclick=function(){st.q=[];draw();rebuild();};
+  qc.appendChild(all);
+  RES.forEach(function(r){
+    var c=document.createElement('div');c.className='chip';c.textContent=r[1];c.dataset.h=r[0];
+    c.onclick=function(){
+      var i=st.q.indexOf(r[0]);
+      if(i>=0){st.q.splice(i,1);}else{st.q.push(r[0]);}
+      if(st.q.length===RES.length)st.q=[]; /* selecting every height = All */
+      draw();rebuild();
+    };
+    qc.appendChild(c);
+  });
+  function draw(){
+    all.classList.toggle('on',st.q.length===0);
+    [].forEach.call(qc.querySelectorAll('.chip[data-h]'),function(c){
+      c.classList.toggle('on',st.q.indexOf(Number(c.dataset.h))>=0);
     });
   }
-  radios('rLang',[{v:'',l:'All'},{v:'ko',l:'Korean'},{v:'zh',l:'Chinese'}],'lang');
-  radios('rSort',[{v:'pop',l:'Popular'},{v:'top',l:'Top rated'},{v:'new',l:'Newest'}],'sort');
-  radios('rEra',[{v:'',l:'All'},{v:'2020',l:'2020s'},{v:'2010',l:'2010s'},{v:'2000',l:'2000s'}],'era');
-  radios('rQ',[{v:0,l:'All'},{v:2160,l:'4K'},{v:1080,l:'1080p'},{v:720,l:'720p'},{v:480,l:'480p'}],'q',1);
-  function mkChips(id,list){
-    var gc=document.getElementById(id);
-    gc.innerHTML='';
-    list.forEach(function(g){
-      var c=document.createElement('div');c.className='chip'+(st.g.indexOf(g)>=0?' on':'');c.textContent=g;
-      c.onclick=function(){var i=st.g.indexOf(g);if(i>=0){st.g.splice(i,1);c.classList.remove('on');}else{if(st.g.length>=3)return toast('Up to 3 genres');st.g.push(g);c.classList.add('on');}rebuild();};
-      gc.appendChild(c);
-    });
-  }
-  function drawChips(){
-    document.getElementById('gTvLab').style.display=st.cat.kd?'':'none';
-    document.getElementById('gChipsTv').style.display=st.cat.kd?'':'none';
-    document.getElementById('gMvLab').style.display=st.cat.mv?'':'none';
-    document.getElementById('gChipsMv').style.display=st.cat.mv?'':'none';
-    if(st.cat.kd)mkChips('gChipsTv',GENRES_TV);
-    if(st.cat.mv)mkChips('gChipsMv',GENRES_MV);
-  }
-  [['swSub','sub'] ].forEach(function(){});
   var sw=document.getElementById('swSub');
   sw.onclick=function(){st.sub=st.sub?0:1;sw.classList.toggle('on',!!st.sub);rebuild();};
-  var cats=[['kd','K-Drama','Korean & Chinese series · grid + search + genre filters'],['mv','Movies','Movies · grid + search + genre filters']];
-  var cr=document.getElementById('catRows');
-  cats.forEach(function(cdef){
-    var r=document.createElement('div');r.className='src';
-    r.innerHTML='<div class="tile">'+cdef[1][0]+'</div><div class="s-body"><div class="s-name">'+cdef[1]+'</div><div class="s-sub">'+cdef[2]+'</div></div><div class="sw on"></div>';
-    var swel=r.querySelector('.sw');
-    r.onclick=function(){st.cat[cdef[0]]=st.cat[cdef[0]]?0:1;swel.classList.toggle('on',!!st.cat[cdef[0]]);r.classList.toggle('off',!st.cat[cdef[0]]);if(!st.cat.kd&&!st.cat.mv){st.cat[cdef[0]]=1;swel.classList.add('on');r.classList.remove('off');return toast('Keep at least one catalog');}drawChips();rebuild();};
-    cr.appendChild(r);
-  });
   var tt=document.getElementById('toast');
   function toast(m){tt.textContent=m;tt.classList.add('on');setTimeout(function(){tt.classList.remove('on');},1400);}
   document.getElementById('cp').onclick=function(){var i=document.getElementById('url');i.select();try{document.execCommand('copy');}catch(e){}if(navigator.clipboard)navigator.clipboard.writeText(i.value).catch(function(){});toast('Copied');};
   fetch(base()+'/_health').then(function(r){return r.json();}).then(function(h){document.getElementById('ver').textContent='v'+h.version+' · pool '+h.pool;}).catch(function(){});
-  drawChips();
+  draw();
   rebuild();
 })();
 </script>

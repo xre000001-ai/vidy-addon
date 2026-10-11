@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.4.0';
+const VERSION = '1.5.0';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -305,6 +305,13 @@ function pathGet(url, via, px, timeoutMs) {
 }
 
 // ---------- sources ----------
+// সার্ভার-স্কোর: যেটা-ভালো-চলে-সেটাই-সবসময়-আগে (ফাইলে-জমে — রিস্টার্টেও-মনে-থাকে):
+const SRV_SCORE = (() => { try { return JSON.parse(fs.readFileSync(path.join(__dirname, 'vidy_server_scores.json'), 'utf8')); } catch (e) { return {}; } })();
+function srvBump(srv, d) {
+  SRV_SCORE[srv] = Math.max(-20, Math.min(20, (SRV_SCORE[srv] || 0) + d));
+  try { fs.writeFileSync(path.join(__dirname, 'vidy_server_scores.json'), JSON.stringify(SRV_SCORE)); } catch (e) {}
+}
+const srvOrder = () => SERVERS.slice().sort((a, b) => (SRV_SCORE[b] || 0) - (SRV_SCORE[a] || 0));
 // প্রথম-সোর্স-URL-বাঁচা-কি-না (master-m3u8-ছোট — সস্তা-GET; Referer-ছাড়া-CDN-403-দেয়):
 function playable(u) {
   if (!u || !/^https?:/.test(u)) return Promise.resolve(false);
@@ -319,15 +326,18 @@ function playable(u) {
   });
 }
 function getSources(tmdbId, type, s, e, title, cfg) {
-  const key = ['src', VERSION, tmdbId, type, s || '', e || ''].join('|'); // VERSION-ভার্সনড — নতুন-ডিপ্লয়ে-পুরনো-(ডাব)-ক্যাশ-মরে
+  const qs = (Array.isArray(cfg && cfg.q) ? cfg.q.slice().sort((a, b) => a - b).join('.') : String((cfg && cfg.q) || '')) + ':' + ((cfg && cfg.sub) === 0 ? 0 : 1);
+  const key = ['src', VERSION, tmdbId, type, s || '', e || '', qs].join('|'); // VERSION+cfg-ভার্সনড — ভিন্ন-ফিল্টার-ভিন্ন-ক্যাশ
   const hit = memoGet(key, 10800000);
   if (hit) return Promise.resolve(hit);
   return dedupe(key, async () => {
     let lastErr = null;
     let force = false;
-    let best = null; // সবচেয়ে-সাবসমৃদ্ধ-সেট = অফিসিয়াল-প্রিন্ট = মূল-অডিও (ডাব-প্রিন্টে-সাব-থাকে-না)
+    let bestFit = null; let bestFitSrv = null; let bestFitN = -1; let bestFitNs = -1; // cfg-মেলা: বেশি-কার্ড, টাইতে-বেশি-সাব
+    let bestAny = null; let bestAnySrv = null; let bestAnyNs = -1; // সবচেয়ে-সাবসমৃদ্ধ (মূল-অডিওর-চিহ্ন)
     let deadJ = null;
-    for (const srv of SERVERS) {
+    let deadSrv = null;
+    for (const srv of srvOrder()) {
       try {
         const sc = await getSeed(tmdbId, force);
         const q = { mediaType: type, tmdbId: String(tmdbId), enc: '2', seed: sc.seed, title: title || '' };
@@ -338,41 +348,47 @@ function getSources(tmdbId, type, s, e, title, cfg) {
         if (j.sources && j.sources.length) {
           if (await playable((j.sources[0] || {}).url)) { // নষ্ট-অ্যাসেট (যেমন-SquidGame-E5-400) → পরের-সার্ভার
             const ns = (j.subtitles || []).length;
-            if (!best || ns > (best.subtitles || []).length) best = j;
-            if (ns >= 5) break; // অফিসিয়াল-প্রিন্ট-পাওয়া-গেছে → থামো
-          } else deadJ = j;
+            const nfit = decorate(j, type, s, e, title || '', cfg, srv).length; // cfg-মেলা-কার্ড-সংখ্যা (Auto-সহ)
+            if (nfit > 0 && (nfit > bestFitN || (nfit === bestFitN && ns > bestFitNs))) { bestFit = j; bestFitSrv = srv; bestFitN = nfit; bestFitNs = ns; }
+            if (ns > bestAnyNs) { bestAny = j; bestAnySrv = srv; bestAnyNs = ns; }
+            srvBump(srv, nfit > 0 ? (ns >= 5 ? 2 : 1) : 0); // ভালো-সার্ভার-সবসময়-আগে
+            if (nfit > 0 && ns >= 5) break; // অফিসিয়াল-প্রিন্ট+ফিট → থামো
+          } else { deadJ = j; deadSrv = srv; srvBump(srv, -1); }
           force = true; continue;
         }
         force = true; // খালি-ফল → seed-হয়তো-একবারই-চলে — পরের-সার্ভারে-তাজা
-      } catch (er) { lastErr = er; force = true; }
+      } catch (er) { lastErr = er; force = true; srvBump(srv, -1); }
     }
-    const pick = best || deadJ;
+    let pick = bestFit, pickSrv = bestFitSrv; // আগে-রেজোলিউশন-মেলা, না-থাকলে-সাবসমৃদ্ধ
+    if (!pick) { pick = bestAny; pickSrv = bestAnySrv; }
+    if (!pick) { pick = deadJ; pickSrv = deadSrv; }
     if (pick) {
-      const out = decorate(pick, type, s, e, title || '', cfg);
-      memoSet(key, out);
+      const out = decorate(pick, type, s, e, title || '', cfg, pickSrv);
+      if (out.length) memoSet(key, out); // খালি-ফল-কখনো-ক্যাশ-নয় (পয়জন-আটকাতে)
       return out;
     }
     throw lastErr || new Error('no-sources');
   });
 }
-function decorate(j, type, s, e, showTitle, cfg) {
+function decorate(j, type, s, e, showTitle, cfg, srv) {
   cfg = cfg || DEFAULT_CFG;
   const headers = { 'User-Agent': UA, 'Referer': VIDY_REFERER };
   const order = { '2160p': 0, '1080p': 1, '720p': 2, '480p': 3, '360p': 4, 'Auto HLS': 5 };
   let subs = (j.subtitles || []).slice(0, 40).map(x => ({ title: x.label || x.lang || x.language || 'Subtitle', url: x.url || x.file })).filter(x => x.url && /^https?:/.test(x.url));
   if (!cfg.sub) subs = [];
   const seen = {};
-  const maxq = Number(cfg.q) || 0;
+  const allow = Array.isArray(cfg.q) ? cfg.q : qToList(cfg.q);
   const cards = (j.sources || []).filter(x => x.url && /^https?:/.test(x.url) && !seen[x.url] && (seen[x.url] = 1)).filter(x => {
-    if (!maxq) return true;
+    if (!allow.length) return true;
     const h = parseInt(String(x.quality || '0'), 10) || 0;
-    return !h || h <= maxq; // Auto-HLS সবসময় রাখা-হয়
+    return !h || allow.indexOf(h) >= 0; // Auto-HLS সবসময় রাখা-হয়
   }).sort((a, b) => (order[a.quality] ?? 9) - (order[b.quality] ?? 9)).map(x => {
     const q = String(x.quality || 'Auto').replace('p', '');
+    const sd = ((srv || 'vidy').charAt(0).toUpperCase() + (srv || 'vidy').slice(1)); // কার্ডে-সার্ভার-নাম
     const line2 = type === 'tv' ? '\u2b21 S' + s + 'E' + e + (subs.length ? ' \u00b7 Subs: ' + subs.length : '') : '\u2b21 Movie';
     const txt = '\u29c9 ' + (showTitle || 'Vidy') + '\n' + line2;
     return {
-      name: '\u25eb ' + q.replace('Auto HLS', 'Auto') + ' \u25eb',
+      name: '\u25eb ' + q.replace('Auto HLS', 'Auto') + ' \u00b7 ' + sd + ' \u25eb',
       title: txt,
       description: txt,
       quality: q === 'Auto HLS' ? '' : q,
@@ -394,11 +410,20 @@ function genreIds(type, names) {
   return (Array.isArray(names) ? names : names ? [names] : []).map(n => String(n).trim().toLowerCase())
     .map(n => (gl.find(g2 => g2[0].toLowerCase() === n) || [0, 0])[1]).filter(Boolean);
 }
+const QH = [2160, 1080, 720, 480, 360];
+function qToList(q) { // মাল্টি-রেজোলিউশন: অ্যারে/কমা-লিস্ট → ঠিক-ওইগুলো; সংখ্যা → ≤n-ক্যাপ (পুরনো-cfg); 0/খালি → সব
+  const pick = [];
+  const add = x => { const h = Number(x); if (QH.indexOf(h) >= 0 && pick.indexOf(h) < 0) pick.push(h); };
+  if (Array.isArray(q)) { q.forEach(add); return pick; }
+  if (typeof q === 'string' && q.indexOf(',') >= 0) { q.split(',').forEach(add); return pick; }
+  const n = Math.min(2160, Math.max(0, Number(q) || 0));
+  return n ? QH.filter(h => h <= n) : [];
+}
 const DEFAULT_CFG = { q: 0, sub: 1, cat: 'kd,mv', lang: '', sort: 'pop', era: '', g: [] };
 function parseCfgFromObj(o) {
   const c = Object.assign({}, DEFAULT_CFG, { g: [] });
   if (o) {
-    if (o.q) c.q = Math.min(2160, Math.max(0, Number(o.q) || 0));
+    if (o.q !== undefined && o.q !== null && o.q !== '') c.q = qToList(o.q);
     if (o.sub === 0 || o.sub === '0') c.sub = 0;
     if (typeof o.cat === 'string' && o.cat) c.cat = o.cat;
     if (o.lang === 'ko' || o.lang === 'zh') c.lang = o.lang;
@@ -412,21 +437,16 @@ function decodeCfg(b64) {
   try { return parseCfgFromObj(JSON.parse(Buffer.from(b64, 'base64url').toString('utf8'))); } catch (e) { return Object.assign({}, DEFAULT_CFG, { g: [] }); }
 }
 function manifest(cfg) {
-  cfg = cfg || DEFAULT_CFG;
-  const cats = [];
-  if (cfg.cat.indexOf('kd') >= 0) cats.push({ type: 'series', id: 'vidy-kdrama', name: 'Vidy K-Drama', extraSupported: ['search', 'genre', 'skip'], extraRequired: [], extra: [{ name: 'genre', options: GENRES_TV.map(g => g[0]) }, { name: 'skip' }] });
-  if (cfg.cat.indexOf('mv') >= 0) cats.push({ type: 'movie', id: 'vidy-movies', name: 'Vidy Movies', extraSupported: ['search', 'genre', 'skip'], extraRequired: [], extra: [{ name: 'genre', options: GENRES_MV.map(g => g[0]) }, { name: 'skip' }] });
   return {
     id: 'community.xre.vidy',
     version: VERSION,
     name: 'Vidy',
-    description: 'Korean/Chinese drama & movies via Vidy — up to 4K, subtitles. Token-fetch uses trained-proxy rotation on rate-limit; streams play direct.',
+    description: 'Stream-only: movies & series via Vidy — up to 4K, original audio, subtitles. Server name on every card; the healthiest server is always tried first.',
     author: 'xre000001-ai',
-    resources: ['catalog', 'stream'],
+    resources: ['stream'],
     types: ['movie', 'series'],
     idPrefixes: ['tt', 'tmdb'],
-    catalogs: cats,
-    background: 'https://images.metahub.space/background/medium/tt0903747/bg'
+    catalogs: []
   };
 }
 
@@ -458,7 +478,7 @@ const server = http.createServer((req, res) => {
     if (cm2) { cfg = decodeCfg(cm2[1]); p = cm2[2]; }
     else {
       const qs = new URL(req.url, 'http://x').searchParams;
-      if ([...qs.keys()].length) cfg = parseCfgFromObj({ q: qs.get('maxq'), sub: qs.get('sub') === '0' ? 0 : 1, cat: qs.get('cat') || '', lang: qs.get('lang') || '', sort: qs.get('sort') || '', era: qs.get('era') || '', g: (qs.get('g') || '').split(',').filter(Boolean) });
+      if ([...qs.keys()].length) cfg = parseCfgFromObj({ q: qs.get('q') || qs.get('maxq'), sub: qs.get('sub') === '0' ? 0 : 1, cat: qs.get('cat') || '', lang: qs.get('lang') || '', sort: qs.get('sort') || '', era: qs.get('era') || '', g: (qs.get('g') || '').split(',').filter(Boolean) });
     }
     if (!cfg) cfg = Object.assign({}, DEFAULT_CFG, { g: [] });
     if (p === '/' || p === '/config' || p === '/configure') return sendFile2(res, 'config.html');
