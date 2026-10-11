@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.7.1';
+const VERSION = '1.7.3';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -375,30 +375,33 @@ function getSources(tmdbId, type, s, e, title, cfg) {
       } else { deadJ = r.j; deadSrv = r.srv; srvBump(r.srv, -1); }
     };
     // সব-নির্বাচিত-সার্ভার-একসাথে-সমান্তরাল — কোনো-আগে-থামা-নয়: "সবগুলা-সোর্স = সবগুলা-স্ট্রিম"
-    // প্রতি-সার্ভার-হার্ড-বাজেট ৮.৫সে (ধীরতম-ও-ওয়ালটাইম-টেনে-গেটওয়ে-টাইমআউট-আনতে-পারে-না):
-    const budget = srv => Promise.race([one(srv), new Promise(r => setTimeout(() => r({ srv, err: new Error('srv-budget') }), 8500))]);
+    // প্রতি-সার্ভার-হার্ড-বাজেট: দৈত্য-ত্রয়ী (miami/boise/atlanta) ১০.৫সে — ধীর-হলেও-ফল-সহ্য-করবে; বাকিরা ৭.৫সে:
+    const GIANT = ['miami', 'boise', 'atlanta'];
+    const budget = srv => Promise.race([one(srv), new Promise(r => setTimeout(() => r({ srv, err: new Error('srv-budget') }), GIANT.indexOf(srv) >= 0 ? 10500 : 7500))]);
     // সবাই-একসাথে-ফেল-করলে (যেমন-upstream-সাময়িক-http_500) ১.৫-সে-পরে-এক-বার-অটো-রিট্রাই:
     let rs = await Promise.all(allow.map(budget));
     if (!rs.some(r => r.ok)) { await new Promise(r2 => setTimeout(r2, 1500)); force = true; rs = rs.concat(await Promise.all(allow.map(budget))); }
     rs.forEach(absorb);
-    // মার্জ: প্রতি-রেজোলিউশন-বাকেটে-সবচেয়ে-সাবসমৃদ্ধ-ভ্যারিয়েন্ট-জেতে (ডাব-রেজোলিউশন-এক-কার্ড):
-    const byQ = {};
+    // মার্জ: কোনো-ক্রস-সার্ভার-ডিউপ-নয় — প্রতিটা-সার্ভারের-প্রতিটা-স্ট্রিম-কার্ড-থাকবে;
+    // ক্রম: দৈত্য-সার্ভার (miami→boise→atlanta) সবার-উপরে, তারপর-বাড়তি, ভেতরে-রেজোলিউশন-বড়→ছোট:
+    const PRIO = ['miami', 'boise', 'atlanta', 'phoenix', 'dallas', 'austin', 'seattle'];
+    const prio = v => { const i = PRIO.indexOf(v); return i < 0 ? 99 : i; };
+    const all = [];
     for (const r of rs) {
       if (!r.j || !r.ok) continue;
-      for (const c of decorate(r.j, type, s, e, title || '', cfg, r.srv)) {
-        const k = c.quality || 'Auto';
-        if (!byQ[k] || r.ns > byQ[k].ns) byQ[k] = { card: c, ns: r.ns };
-      }
+      for (const c of decorate(r.j, type, s, e, title || '', cfg, r.srv)) all.push({ c, srv: r.srv });
     }
-    const rank = c => (c.quality ? parseInt(c.quality, 10) || 0 : -1); // Auto-সবার-শেষে
-    let out = Object.keys(byQ).map(k => byQ[k].card).sort((a, b) => rank(b) - rank(a));
+    all.sort((a, b) => prio(a.srv) - prio(b.srv) || (parseInt(b.c.quality, 10) || 0) - (parseInt(a.c.quality, 10) || 0));
+    let out = all.map(x => x.c);
     // কোনো-কার্ড-ফিট-করেনি (অদ্ভুত-লেবেল) → সবচেয়ে-সাবসমৃদ্ধ/শেষ-ভরসা-সেট:
     if (!out.length) {
       let pick = bestAny, pickSrv = bestAnySrv;
       if (!pick) { pick = deadJ; pickSrv = deadSrv; }
       if (pick) out = decorate(pick, type, s, e, title || '', cfg, pickSrv);
     }
-    if (out.length) memoSet(key, out); // খালি-ফল-কখনো-ক্যাশ-নয় (পয়জন-আটকাতে)
+    // দৈত্য-সার্ভার-কেউ-এই-পাসে-মিসিং-হলে (transient) ক্যাশ-নয় — পরের-চেষ্টায়-আবার-স্ক্যান-হবে:
+    const giantsMissing = rs.some(r => GIANT.indexOf(r.srv) >= 0 && (!r.j || !r.ok));
+    if (out.length && !giantsMissing) memoSet(key, out);
     if (!out.length && lastErr) throw lastErr;
     return out;
   });
