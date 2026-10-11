@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Vidy — Configure</title>
+<style>
+:root{
+  --bg:#000000; --card:rgba(255,255,255,.028); --card2:#0a0d14; --line:rgba(255,255,255,.07); --line2:rgba(139,255,170,.18);
+  --txt:#f2eee6; --dim:#8b8f9a; --mut:#5b6070;
+  --acc:#5be49b; --acc2:#2fbd74; --btn:#21a45d; --ok:#3ddc84;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:var(--bg);color:var(--txt);font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased}
+body{min-height:100vh;background:radial-gradient(760px 340px at 50% -160px, rgba(60,220,140,.07), transparent 68%),radial-gradient(520px 380px at 90% 8%, rgba(40,160,100,.04), transparent 70%);padding:42px 18px 60px}
+.wrap{max-width:640px;margin:0 auto}
+.top{display:flex;align-items:center;justify-content:space-between;margin-bottom:38px}
+.wordmark{display:flex;align-items:center;gap:11px}
+.lgx{width:34px;height:34px;border-radius:10px;background:linear-gradient(135deg,#21a45d,#0c5a33);display:flex;align-items:center;justify-content:center;font-weight:900;font-size:17px;color:#eafff3;box-shadow:0 0 18px rgba(60,220,140,.35)}
+.wordmark b{font-weight:900;letter-spacing:.26em;font-size:14px}
+.tag{font-size:10px;letter-spacing:.24em;color:var(--acc);border:1px solid rgba(91,228,155,.35);border-radius:999px;padding:5px 12px;text-transform:uppercase;font-weight:700}
+h1{font-size:30px;line-height:1.18;font-weight:850;letter-spacing:-.3px;margin-bottom:10px}
+h1 .g{color:var(--acc)}
+.sub{color:var(--mut);max-width:540px;margin-bottom:32px;font-size:14px}
+.sub b{color:var(--txt);font-weight:600}
+.card{background:linear-gradient(180deg,rgba(255,255,255,.022),rgba(255,255,255,.006)),#000;border:1px solid rgba(255,255,255,.075);border-radius:18px;padding:20px;margin-top:14px;transition:border-color .18s;position:relative;overflow:hidden}
+.card:hover{border-color:var(--line2)}
+.eyebrow{display:flex;align-items:center;gap:7px;font-size:10.5px;color:var(--acc);text-transform:uppercase;letter-spacing:1.6px;font-weight:800}
+.eyebrow::before{content:'';width:5px;height:5px;border-radius:50%;background:var(--acc2)}
+.heading{font-size:19px;font-weight:850;letter-spacing:-.2px;margin:7px 0 4px}
+.muted{color:var(--mut);font-size:13px;line-height:1.6}
+.rows{margin-top:12px;display:flex;flex-direction:column;gap:9px}
+.src{display:flex;gap:14px;align-items:center;padding:15px 16px;cursor:pointer;user-select:none;background:#000;border:1px solid rgba(255,255,255,.07);border-radius:16px;transition:border-color .2s}
+.src:hover{border-color:rgba(91,228,155,.4)}
+.src.off{opacity:.34;filter:grayscale(.55)}
+.tile{width:42px;height:42px;flex:none;border-radius:12px;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:16px;color:#dff7ea;background:linear-gradient(135deg,#1d7a48,#0d3f25)}
+.s-body{flex:1;min-width:0}
+.s-name{font-weight:800;font-size:14.5px}
+.s-sub{color:var(--dim);font-size:11.5px;margin-top:1px}
+.sw{position:relative;width:46px;height:26px;border-radius:999px;flex:none;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.14);cursor:pointer;transition:background .2s,border-color .2s}
+.sw::after{content:"";position:absolute;top:2px;left:2px;width:20px;height:20px;border-radius:50%;background:#8b93a7;transition:transform .2s,background .2s}
+.sw.on{background:rgba(91,228,155,.2);border-color:rgba(91,228,155,.55)}
+.sw.on::after{transform:translateX(20px);background:#5be49b;box-shadow:0 0 10px rgba(91,228,155,.8)}
+.frow{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 2px;border-bottom:1px solid rgba(255,255,255,.05)}
+.frow:last-child{border:0}
+.flab{font-weight:700;font-size:13.5px}
+.fhint{color:var(--mut);font-size:11.5px;margin-top:1px}
+.radios{display:flex;gap:0;background:var(--card2);border:1px solid rgba(91,228,155,.22);border-radius:11px;padding:3px;flex:none}
+.rt{border:0;background:transparent;color:var(--mut);border-radius:9px;padding:7px 13px;font-size:12px;font-weight:800;cursor:pointer}
+.rt.active{background:#123526;color:#bdf5da}
+.chips{display:flex;gap:7px;flex-wrap:wrap;margin-top:12px}
+.chip{font-size:11.5px;padding:6px 13px;border-radius:999px;border:1px solid rgba(91,228,155,.25);color:var(--mut);cursor:pointer;font-weight:700;user-select:none;transition:all .15s}
+.chip.on{background:rgba(91,228,155,.14);border-color:rgba(91,228,155,.6);color:#bdf5da}
+.urlrow{display:flex;gap:9px;margin-top:14px}
+.url{flex:1;background:var(--card2);border:1px solid rgba(91,228,155,.2);border-radius:12px;padding:12px 13px;color:#cfe9db;font:11.5px/1.45 ui-monospace,Menlo,Consolas,monospace;word-break:break-all;outline:none}
+.url:focus{border-color:#5be49b}
+.copy{background:var(--btn);color:#fff;border:0;border-radius:12px;padding:0 18px;font-weight:800;font-size:13px;cursor:pointer}
+.copy:hover{filter:brightness(1.1)}
+.install{display:block;text-align:center;margin-top:10px;background:linear-gradient(135deg,#21a45d,#167a43);color:#fff;text-decoration:none;border-radius:12px;padding:13px;font-weight:850;font-size:14px;letter-spacing:.03em}
+.install:hover{filter:brightness(1.08)}
+.steps{display:flex;gap:16px;margin-top:14px;flex-wrap:wrap}
+.step{display:flex;gap:8px;align-items:flex-start;color:var(--mut);font-size:12px;max-width:190px}
+.step i{font-style:normal;width:17px;height:17px;flex:none;border-radius:6px;background:var(--card2);border:1px solid rgba(91,228,155,.25);color:var(--acc);font-size:9.5px;display:flex;align-items:center;justify-content:center;font-weight:800;margin-top:2px}
+.prev{background:#05070b;border:1px solid rgba(255,255,255,.07);border-radius:14px;padding:15px 16px;margin-top:12px;display:flex;align-items:center;gap:13px}
+.prev .dot{width:8px;height:8px;border-radius:50%;background:#2fbd74;box-shadow:0 0 8px rgba(91,228,155,.8);flex:none}
+.prev .t{flex:1;font-size:13px;line-height:1.6;font-weight:700;white-space:pre-line}
+.prev .q{background:rgba(91,228,155,.14);color:#5be49b;border:1px solid rgba(91,228,155,.35);border-radius:7px;padding:2px 8px;font-size:11.5px;font-weight:800}
+.foot{margin-top:26px;display:flex;justify-content:space-between;color:var(--dim);font-size:11px;letter-spacing:.08em;flex-wrap:wrap;gap:8px}
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%) translateY(18px);background:#10141c;border:1px solid rgba(91,228,155,.4);color:#bdf5da;border-radius:12px;padding:9px 18px;font-size:13px;font-weight:700;opacity:0;pointer-events:none;transition:all .25s}
+.toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
+@media(max-width:520px){h1{font-size:25px}.tag{display:none}.radios{flex-wrap:wrap}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div class="wordmark"><div class="lgx">V</div><b>VIDY</b></div>
+    <div class="tag">Add-on</div>
+  </div>
+
+  <h1>Filter the library.<br><span class="g">Press play.</span></h1>
+  <p class="sub">Korean &amp; Chinese dramas plus movies — up to <b>4K</b> with subtitles. Streams play <b>direct from CDN to your device</b>. Configure your pack below.</p>
+
+  <div class="card">
+    <div class="eyebrow">Catalogs</div>
+    <div class="heading">Include in my pack</div>
+    <div class="rows" id="catRows"></div>
+  </div>
+
+  <div class="card">
+    <div class="eyebrow">Browse filters</div>
+    <div class="heading">Catalog defaults</div>
+    <p class="muted">Applied to catalog grids. You can still filter per-catalog inside the app (genre dropdown) and search anything.</p>
+    <div style="margin-top:8px">
+      <div class="frow"><div><div class="flab">Language</div><div class="fhint">Catalog content origin</div></div>
+        <div class="radios" id="rLang"></div></div>
+      <div class="frow"><div><div class="flab">Sort</div><div class="fhint">Default ordering</div></div>
+        <div class="radios" id="rSort"></div></div>
+      <div class="frow"><div><div class="flab">Era</div><div class="fhint">Minimum release period</div></div>
+        <div class="radios" id="rEra"></div></div>
+    </div>
+    <div class="flab" style="margin-top:14px">Quick genres</div>
+    <div class="fhint">Pins genre into the default grid · in-app genre dropdown always available</div>
+    <div id="gTvLab" class="flab" style="margin-top:10px;font-size:10px;letter-spacing:.14em;color:#4e6e5d">K-DRAMA &amp; C-DRAMA</div>
+    <div class="chips" id="gChipsTv"></div>
+    <div id="gMvLab" class="flab" style="margin-top:10px;font-size:10px;letter-spacing:.14em;color:#4e6e5d">MOVIES</div>
+    <div class="chips" id="gChipsMv"></div>
+  </div>
+
+  <div class="card">
+    <div class="eyebrow">Streams</div>
+    <div class="heading">Playback</div>
+    <div style="margin-top:8px">
+      <div class="frow"><div><div class="flab">Max quality</div><div class="fhint">Hides higher cards</div></div>
+        <div class="radios" id="rQ"></div></div>
+      <div class="frow"><div><div class="flab">Subtitles</div><div class="fhint">Attach subtitle tracks when the source has them</div></div>
+        <div class="sw on" id="swSub"></div></div>
+    </div>
+    <div class="prev">
+      <div class="dot"></div>
+      <div class="t" id="pv">◫ 1080 ◫
+⧉ Queen of Tears
+⬡ S1E1 · Vidy · Subs: 31</div>
+      <div class="q" id="pvq">1080</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="eyebrow">Install</div>
+    <div class="heading">Your configured URL</div>
+    <div class="urlrow"><input class="url" id="url" readonly></div>
+    <div class="urlrow"><button class="copy" id="cp">Copy URL</button><a class="install" id="inst" href="#">Install in Stremio / Nuvio</a></div>
+    <div class="steps">
+      <div class="step"><i>1</i><span>Open your app → Add-ons → paste the URL</span></div>
+      <div class="step"><i>2</i><span>Open the Vidy catalog, use the genre dropdown or search</span></div>
+      <div class="step"><i>3</i><span>Play any card — direct stream, no proxy in the middle</span></div>
+    </div>
+  </div>
+
+  <div class="foot"><span>VIDY · stream-only</span><span id="ver"></span></div>
+</div>
+<div class="toast" id="toast">Copied</div>
+<script>
+(function(){
+  var GENRES_TV=["Drama","Comedy","Action & Adventure","Crime","Mystery","Sci-Fi & Fantasy","Animation","Family","Documentary","War & Politics","Kids","Reality"];
+  var GENRES_MV=["Action","Comedy","Thriller","Romance","Drama","Crime","Sci-Fi","Horror","Mystery","Fantasy","Animation","Adventure"];
+  var st={cat:{kd:1,mv:1},lang:"",sort:"pop",era:"",g:[],q:0,sub:1};
+  function b64u(o){return btoa(unescape(encodeURIComponent(JSON.stringify(o)))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');}
+  function base(){return location.origin;}
+  function rebuild(){
+    var cfg={q:st.q,sub:st.sub,cat:(st.cat.kd?'kd':'')+(st.cat.mv?'mv':''),lang:st.lang,sort:st.sort,era:st.era,g:st.g.slice()};
+    var u=base()+'/cfg/'+b64u(cfg)+'/manifest.json';
+    document.getElementById('url').value=u;
+    document.getElementById('inst').href='stremio://'+u.replace(/^https?:\/\//,'');
+    var top=st.q?[2160,1080,720,480,360].filter(function(x){return x<=st.q;})[0]:1080;
+    document.getElementById('pvq').textContent=String(top);
+    document.getElementById('pv').textContent='◫ '+top+' ◫\n⧉ Queen of Tears\n⬡ S1E1 · Vidy'+(st.sub?' · Subs: 31':'');
+  }
+  function radios(id,opts,key,isNum){
+    var el=document.getElementById(id);
+    opts.forEach(function(o){
+      var b=document.createElement('button');b.className='rt'+((isNum?st[key]===o.v:st[key]===o.v)?' active':'');b.textContent=o.l;
+      b.onclick=function(){st[key]=o.v;[].forEach.call(el.children,function(c){c.classList.remove('active');});b.classList.add('active');rebuild();};
+      el.appendChild(b);
+    });
+  }
+  radios('rLang',[{v:'',l:'All'},{v:'ko',l:'Korean'},{v:'zh',l:'Chinese'}],'lang');
+  radios('rSort',[{v:'pop',l:'Popular'},{v:'top',l:'Top rated'},{v:'new',l:'Newest'}],'sort');
+  radios('rEra',[{v:'',l:'All'},{v:'2020',l:'2020s'},{v:'2010',l:'2010s'},{v:'2000',l:'2000s'}],'era');
+  radios('rQ',[{v:0,l:'All'},{v:2160,l:'4K'},{v:1080,l:'1080p'},{v:720,l:'720p'},{v:480,l:'480p'}],'q',1);
+  function mkChips(id,list){
+    var gc=document.getElementById(id);
+    gc.innerHTML='';
+    list.forEach(function(g){
+      var c=document.createElement('div');c.className='chip'+(st.g.indexOf(g)>=0?' on':'');c.textContent=g;
+      c.onclick=function(){var i=st.g.indexOf(g);if(i>=0){st.g.splice(i,1);c.classList.remove('on');}else{if(st.g.length>=3)return toast('Up to 3 genres');st.g.push(g);c.classList.add('on');}rebuild();};
+      gc.appendChild(c);
+    });
+  }
+  function drawChips(){
+    document.getElementById('gTvLab').style.display=st.cat.kd?'':'none';
+    document.getElementById('gChipsTv').style.display=st.cat.kd?'':'none';
+    document.getElementById('gMvLab').style.display=st.cat.mv?'':'none';
+    document.getElementById('gChipsMv').style.display=st.cat.mv?'':'none';
+    if(st.cat.kd)mkChips('gChipsTv',GENRES_TV);
+    if(st.cat.mv)mkChips('gChipsMv',GENRES_MV);
+  }
+  [['swSub','sub'] ].forEach(function(){});
+  var sw=document.getElementById('swSub');
+  sw.onclick=function(){st.sub=st.sub?0:1;sw.classList.toggle('on',!!st.sub);rebuild();};
+  var cats=[['kd','K-Drama','Korean & Chinese series · grid + search + genre filters'],['mv','Movies','Movies · grid + search + genre filters']];
+  var cr=document.getElementById('catRows');
+  cats.forEach(function(cdef){
+    var r=document.createElement('div');r.className='src';
+    r.innerHTML='<div class="tile">'+cdef[1][0]+'</div><div class="s-body"><div class="s-name">'+cdef[1]+'</div><div class="s-sub">'+cdef[2]+'</div></div><div class="sw on"></div>';
+    var swel=r.querySelector('.sw');
+    r.onclick=function(){st.cat[cdef[0]]=st.cat[cdef[0]]?0:1;swel.classList.toggle('on',!!st.cat[cdef[0]]);r.classList.toggle('off',!st.cat[cdef[0]]);if(!st.cat.kd&&!st.cat.mv){st.cat[cdef[0]]=1;swel.classList.add('on');r.classList.remove('off');return toast('Keep at least one catalog');}drawChips();rebuild();};
+    cr.appendChild(r);
+  });
+  var tt=document.getElementById('toast');
+  function toast(m){tt.textContent=m;tt.classList.add('on');setTimeout(function(){tt.classList.remove('on');},1400);}
+  document.getElementById('cp').onclick=function(){var i=document.getElementById('url');i.select();try{document.execCommand('copy');}catch(e){}if(navigator.clipboard)navigator.clipboard.writeText(i.value).catch(function(){});toast('Copied');};
+  fetch(base()+'/_health').then(function(r){return r.json();}).then(function(h){document.getElementById('ver').textContent='v'+h.version+' · pool '+h.pool;}).catch(function(){});
+  drawChips();
+  rebuild();
+})();
+</script>
+</body>
+</html>
