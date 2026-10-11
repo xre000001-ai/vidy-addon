@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.8.4';
+const VERSION = '1.9.0';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -365,14 +365,14 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
     const allow = srvOrder().filter(srv => !cfg || !Array.isArray(cfg.srv) || !cfg.srv.length || cfg.srv.indexOf(srv) >= 0); // cfg-সার্ভার-সাবসেট
     const one = async srv => {
       const ck = ['srvc', VERSION, tmdbId, type, s || '', e || '', srv].join('|');
+      const ch = SRV_CACHE.get(ck);
+      if (ch && (Date.now() - ch.ts) < 600000) { // ১০মিন-raw-ক্যাশ-হিট → seed/sources/প্রোব-সব-স্কিপ (নেগের-আগে — ক্যাশ-হিট-কখনো-প্রোব-ই-করে-না)
+        return { srv, j: ch.j, ok: ch.ok, ns: ch.ns, nfit: ch.ok ? decorate(ch.j, type, s, e, title || '', cfg, srv).length : 0 };
+      }
       const nt = SRV_NEG.get(ck);
       if (nt) {
         const ttl = SRV_EXTRAS.indexOf(srv) >= 0 ? 90000 : 45000; // দৈত্য ৪৫সে (এপিসোড-কী-ভিত্তিক — নতুন-এপিসোডে-সবসময়-লাইভ), বাড়তি ৯০সে
         if ((Date.now() - nt) < ttl) return { srv, neg: true };
-      }
-      const ch = SRV_CACHE.get(ck);
-      if (ch && (Date.now() - ch.ts) < 600000) { // ১০মিন-raw-ক্যাশ-হিট → seed/sources/প্রোব-সব-স্কিপ
-        return { srv, j: ch.j, ok: ch.ok, ns: ch.ns, nfit: ch.ok ? decorate(ch.j, type, s, e, title || '', cfg, srv).length : 0 };
       }
       // এক-সার্ভার-সম্পূর্ণ-মূল্যায়ন (seed+sources+প্রোব):
       try {
@@ -386,7 +386,10 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
           SRV_NEG.set(ck, Date.now()); // সব-সার্ভার (টিটিএল-ভেদে) — একই-এপিসোডে-বারবার-হাতুড়ে-নয়
           force = true; return { srv, empty: true };
         }
-        const ok = await playable((j.sources[0] || {}).url); // নষ্ট-অ্যাসেট (যেমন-SquidGame-E5-400) ধরা
+        // v1.9.0 filter-aware probing: never spend probe time on assets the filter will discard.
+        const allowD = Array.isArray(cfg && cfg.q) ? cfg.q : qToList(cfg && cfg.q);
+        const pass = (j.sources || []).filter(x => x.url && /^https?:/.test(x.url) && qPass(x, allowD));
+        const ok = pass.length ? await playable(pass[0].url) : true; // zero filter-matches -> probe skipped entirely
         const ns = (j.subtitles || []).length;
         const nfit = ok ? decorate(j, type, s, e, title || '', cfg, srv).length : 0;
         if (ok) { // শুধু-বাঁচা-ফল-ক্যাশ-হয় (মৃত/খালি-কখনো-নয়):
@@ -412,10 +415,20 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
     // সব-নির্বাচিত-সার্ভার-একসাথে-সমান্তরাল — কোনো-আগে-থামা-নয়: "সবগুলা-সোর্স = সবগুলা-স্ট্রিম"
     // প্রতি-সার্ভার-হার্ড-বাজেট: দৈত্য-ত্রয়ী (miami/boise/atlanta) ১০.৫সে — ধীর-হলেও-ফল-সহ্য-করবে; বাকিরা ৭.৫সে:
     const GIANT = ['miami', 'boise', 'atlanta'];
-    const budget = srv => Promise.race([one(srv), new Promise(r => setTimeout(() => {
-      SRV_NEG.set(ckFor(srv), Date.now()); // বাজেট-টাইমআউট-ও-সাম্প্রতিক-ব্যর্থতা — ভ্যারিয়েন্ট-পোড়া-বাজেট-পুনরাবৃত্তি-নয়
-      r({ srv, err: new Error('srv-budget') });
-    }, GIANT.indexOf(srv) >= 0 ? 10500 : 7500))]);
+    // v1.9.0 fix: the timeout timer used to fire even when one() had already won the race,
+    // negative-caching healthy servers for 45-90s after every scan (empty-card windows).
+    // Now the neg write only happens when the timeout genuinely fires first.
+    const budget = srv => {
+      let done = false;
+      return Promise.race([
+        one(srv).then(r => { done = true; return r; }),
+        new Promise(r => setTimeout(() => {
+          if (done) return; // one() won — server is healthy, no neg
+          SRV_NEG.set(ckFor(srv), Date.now()); // genuine budget timeout — recent-failure marker
+          r({ srv, err: new Error('srv-budget') });
+        }, GIANT.indexOf(srv) >= 0 ? 10500 : 7500))
+      ]);
+    };
     // সবাই-একসাথে-ফেল-করলে (যেমন-upstream-সাময়িক-http_500) ১.৫-সে-পরে-এক-বার-অটো-রিট্রাই:
     let rs = await Promise.all(allow.map(budget));
     if (!rs.some(r => r.ok) && Date.now() - t0 < 8000) { // রিট্রাই-পাস-শুধু-বাজেটের-ভেতরে-থাকলে — গেটওয়ে-কাটা-যাবে-না
@@ -454,9 +467,17 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
     const giantsMissing = rs.some(r => GIANT.indexOf(r.srv) >= 0 && (!r.j || !r.ok));
     if (out.length && !giantsMissing) memoSet(key, out);
     else if (out.length) memoShort.set(key, { ts: Date.now(), v: out }); // দৈত্য-মিসিং → ৬০সে-ক্ষণস্থায়ী
+    if (process.env.VDBG) console.error('[vdbg] ' + qsig + ' | ' + rs.map(r => r.srv + ':' + (r.neg ? 'neg' : r.err ? 'err' : r.empty ? 'empty' : 'ok' + r.nfit + '/' + (r.j && r.j.sources || []).length)).join(' '));
     if (!out.length && lastErr) throw lastErr;
     return out;
   });
+}
+// v1.9.0: shared quality-filter predicate — one() probes ONLY assets the filter would serve,
+// decorate keeps exactly the same set. Unknown quality and Auto-HLS always pass.
+function qPass(x, allow) {
+  if (!allow || !allow.length) return true;
+  const h = parseInt(String(x.quality || '0'), 10) || 0;
+  return !h || allow.indexOf(h) >= 0;
 }
 function decorate(j, type, s, e, showTitle, cfg, srv) {
   cfg = cfg || DEFAULT_CFG;
@@ -466,11 +487,7 @@ function decorate(j, type, s, e, showTitle, cfg, srv) {
   if (!cfg.sub) subs = [];
   const seen = {};
   const allow = Array.isArray(cfg.q) ? cfg.q : qToList(cfg.q);
-  const cards = (j.sources || []).filter(x => x.url && /^https?:/.test(x.url) && !seen[x.url] && (seen[x.url] = 1)).filter(x => {
-    if (!allow.length) return true;
-    const h = parseInt(String(x.quality || '0'), 10) || 0;
-    return !h || allow.indexOf(h) >= 0; // Auto-HLS সবসময় রাখা-হয়
-  }).sort((a, b) => (order[a.quality] ?? 9) - (order[b.quality] ?? 9)).map(x => {
+  const cards = (j.sources || []).filter(x => x.url && /^https?:/.test(x.url) && !seen[x.url] && (seen[x.url] = 1)).filter(x => qPass(x, allow)).sort((a, b) => (order[a.quality] ?? 9) - (order[b.quality] ?? 9)).map(x => {
     const q = String(x.quality || 'Auto').replace('p', '');
     const sd = ((srv || 'vidy').charAt(0).toUpperCase() + (srv || 'vidy').slice(1)); // কার্ডে-সার্ভার-নাম
     const line2 = type === 'tv' ? '\u2b21 S' + s + 'E' + e + (subs.length ? ' \u00b7 Subs: ' + subs.length : '') : '\u2b21 Movie';
