@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.10.0';
+const VERSION = '1.10.1';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -160,7 +160,6 @@ function proxiedGet(px, url, timeoutMs) {
           if (!headTxt) { headTxt += d2.toString('latin1'); if (headTxt.indexOf('\r\n\r\n') < 0) return; const j = headTxt.indexOf('\r\n\r\n'); chunks.push(Buffer.from(headTxt.slice(j + 4), 'latin1')); headTxt = headTxt.slice(0, j); }
           else chunks.push(d2);
         });
-        tl.on('error', bail);
         tl.on('close', () => {
           clearTimeout(hardTo);
           const raw = Buffer.concat(chunks);
@@ -332,11 +331,16 @@ function srvBump(srv, d) {
 }
 const srvOrder = () => SERVERS.slice().sort((a, b) => (SRV_SCORE[b] || 0) - (SRV_SCORE[a] || 0));
 // প্রথম-সোর্স-URL-বাঁচা-কি-না (master-m3u8-ছোট — সস্তা-GET; Referer-ছাড়া-CDN-403-দেয়):
-function playable(u) {
+function playable(u, hop) {
   if (!u || !/^https?:/.test(u)) return Promise.resolve(false);
   return new Promise(resolve => {
     const mod = u.indexOf('http:') === 0 ? http : https;
     const req = mod.get(u, { headers: { 'User-Agent': UA, 'Accept': '*/*', 'Referer': VIDY_REFERER, 'Connection': 'close' }, timeout: 3500, agent: u.protocol === 'http:' ? HAGENTP : SAGENTP }, res => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location && (hop || 0) < 2) { // a redirect is served by a live server — follow it
+        const loc = new URL(res.headers.location, u).toString();
+        res.resume();
+        return resolve(playable(loc, (hop || 0) + 1));
+      }
       const ok = res.statusCode === 200;
       res.destroy(); // শুধু-স্ট্যাটাস-দরকার — প্লেলিস্ট-বডি (৩০০KB-পর্যন্ত) টানা-বৃথা
       resolve(ok);
@@ -363,14 +367,14 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
     const t0 = Date.now();
     const ckFor = srv => ['srvc', VERSION, tmdbId, type, s || '', e || '', srv].join('|');
     const allow = srvOrder().filter(srv => !cfg || !Array.isArray(cfg.srv) || !cfg.srv.length || cfg.srv.indexOf(srv) >= 0); // cfg-সার্ভার-সাবসেট
-    const one = async srv => {
+    const one = async (srv, negBypass) => {
       const ck = ['srvc', VERSION, tmdbId, type, s || '', e || '', srv].join('|');
       const ch = SRV_CACHE.get(ck);
       if (ch && (Date.now() - ch.ts) < 600000) { // ১০মিন-raw-ক্যাশ-হিট → seed/sources/প্রোব-সব-স্কিপ (নেগের-আগে — ক্যাশ-হিট-কখনো-প্রোব-ই-করে-না)
         return { srv, j: ch.j, ok: ch.ok, ns: ch.ns, nfit: ch.ok ? decorate(ch.j, type, s, e, title || '', cfg, srv).length : 0 };
       }
       const nt = SRV_NEG.get(ck);
-      if (nt) {
+      if (nt && !negBypass) { // negBypass: the in-call retry re-probes servers that just errored in this same call (their neg was written seconds ago)
         const ttl = GIANT.indexOf(srv) >= 0 ? 45000 : 90000; // giants retry after 45s (per-episode key — fresh episodes always scan live), extras after 90s
         if ((Date.now() - nt) < ttl) return { srv, neg: true };
       }
@@ -417,21 +421,26 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
     // v1.9.0 fix: the timeout timer used to fire even when one() had already won the race,
     // negative-caching healthy servers for 45-90s after every scan (empty-card windows).
     // Now the neg write only happens when the timeout genuinely fires first.
-    const budget = srv => {
+    const budget = (srv, negBypass) => {
       let done = false;
+      let fire = null;
+      const tmo = setTimeout(() => {
+        if (done || !fire) return; // one() won — server is healthy, no neg
+        SRV_NEG.set(ckFor(srv), Date.now()); // genuine budget timeout — recent-failure marker
+        fire({ srv, err: new Error('srv-budget') });
+      }, GIANT.indexOf(srv) >= 0 ? 10500 : 7500);
       return Promise.race([
-        one(srv).then(r => { done = true; return r; }),
-        new Promise(r => setTimeout(() => {
-          if (done) return; // one() won — server is healthy, no neg
-          SRV_NEG.set(ckFor(srv), Date.now()); // genuine budget timeout — recent-failure marker
-          r({ srv, err: new Error('srv-budget') });
-        }, GIANT.indexOf(srv) >= 0 ? 10500 : 7500))
+        one(srv, negBypass).then(r => { done = true; clearTimeout(tmo); return r; }), // timer cleared on win — no dangling timeouts
+        new Promise(r => { fire = r; })
       ]);
     };
-    // সবাই-একসাথে-ফেল-করলে (যেমন-upstream-সাময়িক-http_500) ১.৫-সে-পরে-এক-বার-অটো-রিট্রাই:
-    let rs = await Promise.all(allow.map(budget));
-    if (!rs.some(r => r.ok) && Date.now() - t0 < 8000) { // রিট্রাই-পাস-শুধু-বাজেটের-ভেতরে-থাকলে — গেটওয়ে-কাটা-যাবে-না
-      await new Promise(r2 => setTimeout(r2, 1200)); force = true; rs = rs.concat(await Promise.all(allow.map(budget)));
+    // সবাই-একসাথে-ফেল-করলে (যেমন-upstream-সাময়িক-http_500) ১.২-সে-পরে-এক-বার-অটো-রিট্রাই:
+    let rs = await Promise.all(allow.map(s => budget(s)));
+    if (!rs.some(r => r.ok) && Date.now() - t0 < 7000) { // gate 7s (was 8s): a 7.5s extras-budget first pass used to slip under and push the retry past the gateway cut
+      await new Promise(r2 => setTimeout(r2, 1200)); force = true;
+      const failed = {};
+      rs.forEach(r => { if (r.err) failed[r.srv] = 1; }); // only genuine errors retry — empty/dead stay negative-cached
+      rs = rs.concat(await Promise.all(allow.map(srv => budget(srv, failed[srv]))));
     }
     rs.forEach(absorb);
     // মার্জ: কোনো-ক্রস-সার্ভার-ডিউপ-নয় — প্রতিটা-সার্ভারের-প্রতিটা-স্ট্রিম-কার্ড-থাকবে;
