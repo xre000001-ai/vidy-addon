@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.0.1';
+const VERSION = '1.1.0';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -185,6 +185,30 @@ function racePool(url, n, timeoutMs) {
   });
 }
 
+// ---------- catalog/search (keyless TMDB) ----------
+function tmdbMeta(x, type) {
+  return directGet(TMDBP + '/' + (type === 'tv' ? 'tv/' : 'movie/') + x.id + '/external_ids', 10000).then(b => {
+    const e = JSON.parse(b);
+    return e.imdb_id || null;
+  }).catch(() => null).then(imdb => imdb ? {
+    id: imdb,
+    type: type === 'tv' ? 'series' : 'movie',
+    name: x.name || x.title || '',
+    poster: x.poster_path ? 'https://image.tmdb.org/t/p/w300' + x.poster_path : undefined,
+    description: (x.overview || '').slice(0, 200) || undefined,
+    releaseInfo: String(x.first_air_date || x.release_date || '').slice(0, 4) || undefined
+  } : null);
+}
+function catalogMeta(type, q) {
+  const url = q
+    ? TMDBP + '/search/' + type + '?query=' + encodeURIComponent(q)
+    : TMDBP + '/' + (type === 'tv' ? 'tv/top_rated' : 'movie/popular');
+  return directGet(url, 12000).then(b => {
+    const list = (JSON.parse(b).results || []).slice(0, 14);
+    return Promise.all(list.map(x => tmdbMeta(x, type))).then(arr => arr.filter(Boolean));
+  });
+}
+
 // ---------- tt → TMDB numeric (keyless) ----------
 function findTmdb(imdb, type) {
   const key = 'find:' + imdb + ':' + type;
@@ -295,10 +319,13 @@ function manifest() {
     name: 'Vidy',
     description: 'Korean/Chinese drama & movies via Vidy — up to 4K, subtitles. Token-fetch uses trained-proxy rotation on rate-limit; streams play direct.',
     author: 'xre000001-ai',
-    resources: ['stream'],
+    resources: ['catalog', 'stream'],
     types: ['movie', 'series'],
-    idPrefixes: ['tt'],
-    catalogs: [],
+    idPrefixes: ['tt', 'tmdb'],
+    catalogs: [
+      { type: 'series', id: 'vidy-kdrama', name: 'Vidy K-Drama', extraSupported: ['search'], extraRequired: ['search'] },
+      { type: 'movie', id: 'vidy-movies', name: 'Vidy Movies', extraSupported: ['search'], extraRequired: ['search'] }
+    ],
     background: 'https://images.metahub.space/background/medium/tt0903747/bg'
   };
 }
@@ -322,6 +349,31 @@ const server = http.createServer((req, res) => {
     if (p === '/_pool') return sendJson(res, 200, POOL);
     if (p === '/_log') return sendJson(res, 200, reqLog.slice(-40).reverse());
     let m;
+    // সব-পথ-লগ (৪০৪-ও-দৃশ্যমান-হোক):
+    logReq(p, 0, -1, 'route-in');
+    // ── catalog (অ্যাডন-পেজের-ভেতরে-সার্চ/গ্রিড):
+    if ((m = p.match(/^\/catalog\/(series|movie)\/(vidy-kdrama|vidy-movies)(?:\/search=(.*))?\.json$/))) {
+      const type = m[1] === 'series' ? 'tv' : 'movie';
+      const q = m[3] ? decodeURIComponent(m[3]) : '';
+      const t0 = Date.now();
+      return catalogMeta(type, q).then(metas => {
+        logReq(p, Date.now() - t0, metas.length);
+        sendJson(res, 200, { metas });
+      }, e => { logReq(p, Date.now() - t0, 0, e && e.message); sendJson(res, 200, { metas: [] }); });
+    }
+    // ── tmdb-নেটিভ-আইডি-স্ট্রিম (Nuvio-মোড):
+    if ((m = p.match(/^\/stream\/movie\/tmdb(\d+)\.json$/))) {
+      const t0 = Date.now();
+      return getSources(Number(m[1]), 'movie').then(
+        cards => { logReq(p, Date.now() - t0, (cards || []).length); sendJson(res, 200, { streams: cards || [] }); },
+        e => { logReq(p, Date.now() - t0, 0, e && e.message); sendJson(res, 200, { streams: [] }); });
+    }
+    if ((m = p.match(/^\/stream\/series\/tmdb(\d+):?(?:(\d+):(\d+))?\.json$/))) {
+      const t0 = Date.now();
+      return getSources(Number(m[1]), 'tv', Number(m[2] || 1), Number(m[3] || 1)).then(
+        cards => { logReq(p, Date.now() - t0, (cards || []).length); sendJson(res, 200, { streams: cards || [] }); },
+        e => { logReq(p, Date.now() - t0, 0, e && e.message); sendJson(res, 200, { streams: [] }); });
+    }
     if ((m = p.match(/^\/stream\/movie\/(tt\d+)\.json$/))) {
       const t0 = Date.now();
       return findTmdb(m[1], 'movie').then(id => (id && id > 0) ? getSources(id, 'movie') : Promise.resolve([])).then(
