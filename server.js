@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.0.0';
+const VERSION = '1.0.1';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -189,28 +189,29 @@ function racePool(url, n, timeoutMs) {
 function findTmdb(imdb, type) {
   const key = 'find:' + imdb + ':' + type;
   const hit = memoGet(key, 86400000);
-  if (hit) return Promise.resolve(hit);
+  if (hit !== null && hit !== undefined) return Promise.resolve(hit);
   return dedupe(key, () => directGet(TMDBP + '/find/' + encodeURIComponent(imdb) + '?external_source=imdb_id', 12000).then(body => {
     const j = JSON.parse(body);
     const r = (type === 'series' ? (j.tv_results || []) : (j.movie_results || []))[0] || null;
     if (r && r.id) { memoSet(key, r.id); return r.id; }
     throw new Error('find-empty');
-  }).catch(e => {
-    if (e.code === 429) throw e;
-    // ফলব্যাক: Cinemeta টাইটেল → keyless search
-    return directGet(CINEMETA + '/meta/' + type + '/' + encodeURIComponent(imdb) + '.json', 15000).then(b2 => {
+  }).catch(() =>
+    // ফলব্যাক: Cinemeta টাইটেল → keyless search (বছর-মিল-অগ্রাধিকার, না-মিললেও শীর্ষ-১)
+    directGet(CINEMETA + '/meta/' + type + '/' + encodeURIComponent(imdb) + '.json', 15000).then(b2 => {
       const m = (JSON.parse(b2).meta || {});
       const name = m.name || '';
-      const year = (m.releaseInfo || m.year || '');
+      const year = String(m.releaseInfo || m.year || '');
+      if (!name) throw new Error('cinemeta-empty');
       return directGet(TMDBP + '/search/' + (type === 'series' ? 'tv' : 'movie') + '?query=' + encodeURIComponent(name), 12000).then(b3 => {
         const list = (JSON.parse(b3).results || []);
-        let pick = list[0];
-        for (const x of list) { if (year && String(x.release_date || x.first_air_date || '').slice(0, 4) === String(year).slice(0, 4)) { pick = x; break; } }
+        let pick = null;
+        for (const x of list) { if (year && String(x.release_date || x.first_air_date || '').slice(0, 4) === year.slice(0, 4)) { pick = x; break; } }
+        if (!pick) pick = list[0];
         if (pick && pick.id) { memoSet(key, pick.id); return pick.id; }
         throw new Error('search-empty');
       });
-    });
-  }));
+    })
+  ).catch(e => { memoSet(key, -1); throw e; })); // নেগেটিভ-ক্যাশ — বারবার-ধীর-ব্যর্থতা-নয়
 }
 
 // ---------- seed (direct-first → 429-এ pool-race) ----------
@@ -303,6 +304,11 @@ function manifest() {
 }
 
 // ---------- HTTP ----------
+const reqLog = [];
+function logReq(path, ms, n, err) {
+  reqLog.push({ t: new Date().toISOString().slice(11, 19), path: path.slice(0, 60), ms, n, err: err || undefined });
+  if (reqLog.length > 40) reqLog.shift();
+}
 function sendJson(res, code, obj) {
   const b = Buffer.from(JSON.stringify(obj));
   res.writeHead(code, { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'cache-control': 'no-store' });
@@ -314,16 +320,25 @@ const server = http.createServer((req, res) => {
     if (p === '/manifest.json') return sendJson(res, 200, manifest());
     if (p === '/_health') return sendJson(res, 200, { ok: 1, version: VERSION, pool: POOL.length, memo: memo.size });
     if (p === '/_pool') return sendJson(res, 200, POOL);
+    if (p === '/_log') return sendJson(res, 200, reqLog.slice(-40).reverse());
     let m;
     if ((m = p.match(/^\/stream\/movie\/(tt\d+)\.json$/))) {
-      return findTmdb(m[1], 'movie').then(id => getSources(id, 'movie')).then(
-        cards => sendJson(res, 200, { streams: cards || [] }),
-        () => sendJson(res, 200, { streams: [] }));
+      const t0 = Date.now();
+      return findTmdb(m[1], 'movie').then(id => (id && id > 0) ? getSources(id, 'movie') : Promise.resolve([])).then(
+        cards => { logReq(p, Date.now() - t0, (cards || []).length); sendJson(res, 200, { streams: cards || [] }); },
+        e => { logReq(p, Date.now() - t0, 0, e && e.message); sendJson(res, 200, { streams: [] }); });
     }
     if ((m = p.match(/^\/stream\/series\/(tt\d+):(\d+):(\d+)\.json$/))) {
-      return findTmdb(m[1], 'series').then(id => getSources(id, 'tv', Number(m[2]), Number(m[3]))).then(
-        cards => sendJson(res, 200, { streams: cards || [] }),
-        () => sendJson(res, 200, { streams: [] }));
+      const t0 = Date.now();
+      return findTmdb(m[1], 'series').then(id => (id && id > 0) ? getSources(id, 'tv', Number(m[2]), Number(m[3])) : Promise.resolve([])).then(
+        cards => { logReq(p, Date.now() - t0, (cards || []).length); sendJson(res, 200, { streams: cards || [] }); },
+        e => { logReq(p, Date.now() - t0, 0, e && e.message); sendJson(res, 200, { streams: [] }); });
+    }
+    if ((m = p.match(/^\/stream\/series\/(tt\d+)\.json$/))) { // সেফটি-নেট: s:e-ছাড়া কল → S1E1
+      const t0 = Date.now();
+      return findTmdb(m[1], 'series').then(id => (id && id > 0) ? getSources(id, 'tv', 1, 1) : Promise.resolve([])).then(
+        cards => { logReq(p + ' [no-s:e]', Date.now() - t0, (cards || []).length); sendJson(res, 200, { streams: cards || [] }); },
+        e => { logReq(p + ' [no-s:e]', Date.now() - t0, 0, e && e.message); sendJson(res, 200, { streams: [] }); });
     }
     sendJson(res, 404, { error: 'not found' });
   } catch (e) { sendJson(res, 500, { error: String(e && e.message) }); }
