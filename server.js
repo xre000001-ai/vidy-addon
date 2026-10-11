@@ -464,7 +464,7 @@ function sendJson(res, code, obj) {
 function sendFile2(res, name) {
   try {
     const b = fs.readFileSync(path.join(__dirname, name));
-    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'access-control-allow-origin': '*' });
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'access-control-allow-origin': '*', 'cache-control': 'no-store' }); // CDN-ক্যাশ-নয় — নতুন-ডিপ্লয়ে-সাথে-সাথে-নতুন-পেজ
     return res.end(b);
   } catch (e) { return sendJson(res, 500, { error: 'missing ' + name }); }
 }
