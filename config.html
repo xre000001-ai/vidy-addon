@@ -120,7 +120,7 @@ h1 .g{color:var(--acc)}
       <div class="dot"></div>
       <div class="t" id="pv">◫ 1080 ◫
 ⧉ Queen of Tears
-⬡ S1E1 · Vidy · Subs: 31</div>
+⬡ S1E1 · Subs: 31</div>
       <div class="q" id="pvq">1080</div>
     </div>
   </div>
@@ -154,7 +154,7 @@ h1 .g{color:var(--acc)}
     document.getElementById('inst').href='stremio://'+u.replace(/^https?:\/\//,'');
     var top=st.q?[2160,1080,720,480,360].filter(function(x){return x<=st.q;})[0]:1080;
     document.getElementById('pvq').textContent=String(top);
-    document.getElementById('pv').textContent='◫ '+top+' ◫\n⧉ Queen of Tears\n⬡ S1E1 · Vidy'+(st.sub?' · Subs: 31':'');
+    document.getElementById('pv').textContent='◫ '+top+' ◫\n⧉ Queen of Tears\n⬡ S1E1'+(st.sub?' · Subs: 31':'');
   }
   function radios(id,opts,key,isNum){
     var el=document.getElementById(id);

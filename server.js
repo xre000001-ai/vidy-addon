@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.3.1';
+const VERSION = '1.3.2';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -345,7 +345,7 @@ function decorate(j, type, s, e, showTitle, cfg) {
     return !h || h <= maxq; // Auto-HLS সবসময় রাখা-হয়
   }).sort((a, b) => (order[a.quality] ?? 9) - (order[b.quality] ?? 9)).map(x => {
     const q = String(x.quality || 'Auto').replace('p', '');
-    const line2 = type === 'tv' ? '\u2b21 S' + s + 'E' + e + ' \u00b7 Vidy' + (subs.length ? ' \u00b7 Subs: ' + subs.length : '') : '\u2b21 Movie \u00b7 Vidy';
+    const line2 = type === 'tv' ? '\u2b21 S' + s + 'E' + e + (subs.length ? ' \u00b7 Subs: ' + subs.length : '') : '\u2b21 Movie';
     const txt = '\u29c9 ' + (showTitle || 'Vidy') + '\n' + line2;
     return {
       name: '\u25eb ' + q.replace('Auto HLS', 'Auto') + ' \u25eb',
