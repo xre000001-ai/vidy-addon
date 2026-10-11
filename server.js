@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.10.2';
+const VERSION = '1.10.3';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -480,7 +480,7 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
     return out;
   });
 }
-const SUB_LANGS = { english: 'en', bangla: 'bn', bengali: 'bn', hindi: 'hi', japanese: 'ja', korean: 'ko', spanish: 'es', french: 'fr', german: 'de', portuguese: 'pt', italian: 'it', turkish: 'tr', arabic: 'ar', chinese: 'zh', mandarin: 'zh', thai: 'th', indonesian: 'id', malay: 'ms', tamil: 'ta', telugu: 'te', russian: 'ru' };
+const SUB_LANGS = { english: 'en', bangla: 'bn', bengali: 'bn', hindi: 'hi', japanese: 'ja', korean: 'ko', spanish: 'es', french: 'fr', german: 'de', portuguese: 'pt', italian: 'it', turkish: 'tr', arabic: 'ar', chinese: 'zh', mandarin: 'zh', thai: 'th', indonesian: 'id', malay: 'ms', tamil: 'ta', telugu: 'te', russian: 'ru', urdu: 'ur', malayalam: 'ml', marathi: 'mr', punjabi: 'pa', kannada: 'kn', nepali: 'ne', sinhala: 'si', filipino: 'tl', tagalog: 'tl', bhojpuri: 'bh', persian: 'fa', farsi: 'fa', vietnamese: 'vi' };
 function subLang(x) { // subtitle language code — schema-required on strict (TV) validators
   const v = String(x.lang || x.language || '').trim().toLowerCase();
   if (/^[a-z]{2}(-|$)/.test(v)) return v.slice(0, 2);
@@ -502,7 +502,8 @@ function decorate(j, type, s, e, showTitle, cfg, srv) {
   // v1.10.2: TV apps validate the stream schema strictly — every subtitle object REQUIRES `lang`
   // (missing lang rejected the whole addon response, e.g. tt9288030:2:2 on TV). Derive a 2-letter
   // code from the upstream fields, fall back to the label text, then 'en' as the safe default.
-  let subs = (j.subtitles || []).slice(0, 40).map(x => ({ title: x.label || x.lang || x.language || 'Subtitle', url: x.url || x.file, lang: subLang(x) })).filter(x => x.url && /^https?:/.test(x.url));
+  // v1.10.3 hardening: strict (TV) validators require url/title/lang to be real strings — a numeric label or non-string url from upstream would reject the whole response (same class as the 1.10.2 lang bug). Coerce here, never emit raw.
+  let subs = (j.subtitles || []).slice(0, 40).map(x => ({ title: String(x.label || x.lang || x.language || 'Subtitle'), url: String(x.url || x.file || ''), lang: subLang(x) })).filter(x => x.url && /^https?:/.test(x.url) && x.lang);
   if (!cfg.sub) subs = [];
   const seen = {};
   const allow = Array.isArray(cfg.q) ? cfg.q : qToList(cfg.q);
@@ -516,7 +517,7 @@ function decorate(j, type, s, e, showTitle, cfg, srv) {
       title: txt,
       description: txt,
       quality: q === 'Auto HLS' ? '' : q,
-      url: x.url,
+      url: String(x.url),
       headers: headers,
       behaviorHints: { notWebReady: true, proxyHeaders: { request: headers } },
       subtitles: subs
