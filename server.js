@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.7.3';
+const VERSION = '1.7.4';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -22,6 +22,7 @@ try { POOL = JSON.parse(fs.readFileSync(path.join(__dirname, 'vidy_proxy_pool.js
 
 // ---------- মেমো + ডিডুপ ----------
 const memo = new Map(); // key → {ts, v}
+const memoShort = new Map(); // আংশিক-ফলের-৬০সে-ক্যাশ — স্ট্যাম্পিড-আটকায়, দ্রুত-নিজে-ই-সেরে-ওঠে
 const pending = new Map();
 function memoGet(k, ttl) { const h = memo.get(k); return h && (Date.now() - h.ts) < ttl ? h.v : null; }
 function memoSet(k, v) { memo.set(k, { ts: Date.now(), v }); if (memo.size > 3000) memo.clear(); }
@@ -339,6 +340,8 @@ function getSources(tmdbId, type, s, e, title, cfg) {
   const key = ['src', VERSION, tmdbId, type, s || '', e || '', qsig].join('|'); // VERSION+cfg-ভার্সনড — ভিন্ন-ফিল্টার-ভিন্ন-ক্যাশ
   const hit = memoGet(key, 10800000);
   if (hit) return Promise.resolve(hit);
+  const hitS = memoShort.get(key);
+  if (hitS && (Date.now() - hitS.ts) < 60000) return Promise.resolve(hitS.v);
   return dedupe(key, async () => {
     let lastErr = null;
     let force = false;
@@ -402,6 +405,7 @@ function getSources(tmdbId, type, s, e, title, cfg) {
     // দৈত্য-সার্ভার-কেউ-এই-পাসে-মিসিং-হলে (transient) ক্যাশ-নয় — পরের-চেষ্টায়-আবার-স্ক্যান-হবে:
     const giantsMissing = rs.some(r => GIANT.indexOf(r.srv) >= 0 && (!r.j || !r.ok));
     if (out.length && !giantsMissing) memoSet(key, out);
+    else if (out.length) memoShort.set(key, { ts: Date.now(), v: out }); // দৈত্য-মিসিং → ৬০সে-ক্ষণস্থায়ী
     if (!out.length && lastErr) throw lastErr;
     return out;
   });
