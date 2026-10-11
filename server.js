@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.7.0';
+const VERSION = '1.7.1';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -375,9 +375,11 @@ function getSources(tmdbId, type, s, e, title, cfg) {
       } else { deadJ = r.j; deadSrv = r.srv; srvBump(r.srv, -1); }
     };
     // সব-নির্বাচিত-সার্ভার-একসাথে-সমান্তরাল — কোনো-আগে-থামা-নয়: "সবগুলা-সোর্স = সবগুলা-স্ট্রিম"
+    // প্রতি-সার্ভার-হার্ড-বাজেট ৮.৫সে (ধীরতম-ও-ওয়ালটাইম-টেনে-গেটওয়ে-টাইমআউট-আনতে-পারে-না):
+    const budget = srv => Promise.race([one(srv), new Promise(r => setTimeout(() => r({ srv, err: new Error('srv-budget') }), 8500))]);
     // সবাই-একসাথে-ফেল-করলে (যেমন-upstream-সাময়িক-http_500) ১.৫-সে-পরে-এক-বার-অটো-রিট্রাই:
-    let rs = await Promise.all(allow.map(one));
-    if (!rs.some(r => r.ok)) { await new Promise(r2 => setTimeout(r2, 1500)); force = true; rs = rs.concat(await Promise.all(allow.map(one))); }
+    let rs = await Promise.all(allow.map(budget));
+    if (!rs.some(r => r.ok)) { await new Promise(r2 => setTimeout(r2, 1500)); force = true; rs = rs.concat(await Promise.all(allow.map(budget))); }
     rs.forEach(absorb);
     // মার্জ: প্রতি-রেজোলিউশন-বাকেটে-সবচেয়ে-সাবসমৃদ্ধ-ভ্যারিয়েন্ট-জেতে (ডাব-রেজোলিউশন-এক-কার্ড):
     const byQ = {};
