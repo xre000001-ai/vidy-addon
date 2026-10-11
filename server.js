@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.7.6';
+const VERSION = '1.7.7';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -386,7 +386,9 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
     const budget = srv => Promise.race([one(srv), new Promise(r => setTimeout(() => r({ srv, err: new Error('srv-budget') }), GIANT.indexOf(srv) >= 0 ? 10500 : 7500))]);
     // সবাই-একসাথে-ফেল-করলে (যেমন-upstream-সাময়িক-http_500) ১.৫-সে-পরে-এক-বার-অটো-রিট্রাই:
     let rs = await Promise.all(allow.map(budget));
-    if (!rs.some(r => r.ok)) { await new Promise(r2 => setTimeout(r2, 1500)); force = true; rs = rs.concat(await Promise.all(allow.map(budget))); }
+    if (!rs.some(r => r.ok) && Date.now() - t0 < 8000) { // রিট্রাই-পাস-শুধু-বাজেটের-ভেতরে-থাকলে — গেটওয়ে-কাটা-যাবে-না
+      await new Promise(r2 => setTimeout(r2, 1200)); force = true; rs = rs.concat(await Promise.all(allow.map(budget)));
+    }
     rs.forEach(absorb);
     // মার্জ: কোনো-ক্রস-সার্ভার-ডিউপ-নয় — প্রতিটা-সার্ভারের-প্রতিটা-স্ট্রিম-কার্ড-থাকবে;
     // ক্রম: দৈত্য-সার্ভার (miami→boise→atlanta) সবার-উপরে, তারপর-বাড়তি, ভেতরে-রেজোলিউশন-বড়→ছোট:
