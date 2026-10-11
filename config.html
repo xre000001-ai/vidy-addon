@@ -37,6 +37,15 @@ h1 .g{color:var(--acc)}
 .chip{font-size:11.5px;padding:6px 13px;border-radius:999px;border:1px solid rgba(91,228,155,.25);color:var(--mut);cursor:pointer;font-weight:700;user-select:none;transition:all .15s}
 .chip.on{background:rgba(91,228,155,.14);border-color:rgba(91,228,155,.6);color:#bdf5da}
 .chip.all{border-style:dashed}
+.rows{margin-top:12px;display:flex;flex-direction:column;gap:9px}
+.src{display:flex;gap:14px;align-items:center;padding:15px 16px;cursor:pointer;user-select:none;background:#000;border:1px solid rgba(255,255,255,.07);border-radius:16px;transition:border-color .2s}
+.src:hover{border-color:rgba(91,228,155,.4)}
+.src.off{opacity:.34;filter:grayscale(.55)}
+.tile{width:42px;height:42px;flex:none;border-radius:12px;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:15px;color:#dff7ea;background:linear-gradient(135deg,#1d7a48,#0d3f25)}
+.s-body{flex:1;min-width:0}
+.s-name{font-weight:800;font-size:14.5px;display:flex;align-items:center;gap:8px}
+.s-sub{color:var(--dim);font-size:11.5px;margin-top:1px}
+.score{font-size:10px;font-weight:800;color:var(--acc);background:rgba(91,228,155,.12);border:1px solid rgba(91,228,155,.3);border-radius:999px;padding:1px 8px}
 .sw{position:relative;width:46px;height:26px;border-radius:999px;flex:none;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.14);cursor:pointer;transition:background .2s,border-color .2s}
 .sw::after{content:"";position:absolute;top:2px;left:2px;width:20px;height:20px;border-radius:50%;background:#8b93a7;transition:transform .2s,background .2s}
 .sw.on{background:rgba(91,228,155,.2);border-color:rgba(91,228,155,.55)}
@@ -91,6 +100,13 @@ h1 .g{color:var(--acc)}
   </div>
 
   <div class="card">
+    <div class="eyebrow">Servers</div>
+    <div class="heading">Streaming servers</div>
+    <p class="muted">Miami · Boise · Atlanta are the primary trio and always deliver streams — Seattle stays as backup. The healthiest server is always tried first, and every card shows which server it plays from.</p>
+    <div class="rows" id="srvRows"></div>
+  </div>
+
+  <div class="card">
     <div class="eyebrow">Install</div>
     <div class="heading">Your configured URL</div>
     <div class="urlrow"><input class="url" id="url" readonly></div>
@@ -108,11 +124,12 @@ h1 .g{color:var(--acc)}
 <script>
 (function(){
   var RES=[[2160,"4K"],[1080,"1080p"],[720,"720p"],[480,"480p"],[360,"360p"]];
-  var st={q:[],sub:1};
+  var SRVS=[["miami","Miami","Primary · always-on workhorse"],["boise","Boise","Primary · always-on workhorse"],["atlanta","Atlanta","Primary · always-on workhorse"],["seattle","Seattle","Backup · single-quality feed"]];
+  var st={q:[],sub:1,srv:[]};
   function b64u(o){return btoa(unescape(encodeURIComponent(JSON.stringify(o)))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');}
   function base(){return location.origin;}
   function rebuild(){
-    var cfg={q:st.q.slice(),sub:st.sub};
+    var cfg={q:st.q.slice(),sub:st.sub,srv:st.srv.slice()};
     var u=base()+'/cfg/'+b64u(cfg)+'/manifest.json';
     document.getElementById('url').value=u;
     document.getElementById('inst').href='stremio://'+u.replace(/^https?:\/\//,'');
@@ -142,6 +159,31 @@ h1 .g{color:var(--acc)}
       c.classList.toggle('on',st.q.indexOf(Number(c.dataset.h))>=0);
     });
   }
+  var sr=document.getElementById('srvRows');
+  var scoreMap={};
+  SRVS.forEach(function(sd){
+    var r=document.createElement('div');r.className='src';
+    r.innerHTML='<div class="tile">'+sd[1].charAt(0)+'</div><div class="s-body"><div class="s-name">'+sd[1]+' <span class="score" id="sc-'+sd[0]+'" style="display:none"></span></div><div class="s-sub">'+sd[2]+'</div></div><div class="sw on"></div>';
+    var swel=r.querySelector('.sw');
+    r.onclick=function(){
+      var i=st.srv.indexOf(sd[0]);
+      if(i>=0){st.srv.splice(i,1);swel.classList.add('on');r.classList.remove('off');}
+      else{
+        var left=SRVS.filter(function(x){return x[0]!==sd[0]&&st.srv.indexOf(x[0])<0;}).length;
+        if(left===0)return toast('Keep at least one server');
+        st.srv.push(sd[0]);swel.classList.remove('on');r.classList.add('off');
+      }
+      rebuild();
+    };
+    sr.appendChild(r);
+  });
+  fetch(base()+'/_servers').then(function(r){return r.json();}).then(function(d){
+    (d.order||[]).forEach(function(n){scoreMap[n]=d.scores[n]||0;});
+    SRVS.forEach(function(sd){
+      var el=document.getElementById('sc-'+sd[0]);
+      if(el&&scoreMap[sd[0]]!==undefined){el.style.display='';el.textContent='\u25b2 '+scoreMap[sd[0]];}
+    });
+  }).catch(function(){});
   var sw=document.getElementById('swSub');
   sw.onclick=function(){st.sub=st.sub?0:1;sw.classList.toggle('on',!!st.sub);rebuild();};
   var tt=document.getElementById('toast');

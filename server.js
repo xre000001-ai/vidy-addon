@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.5.1';
+const VERSION = '1.6.0';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -90,11 +90,13 @@ function vidyDecrypt(b64ct, seed, tmdbId) {
 }
 
 // ---------- fetch (direct + CONNECT-প্রক্সি) ----------
+const HAGENT = new http.Agent({ keepAlive: true, maxSockets: 32 }); // কানেকশন-পুনঃব্যবহার — ঠান্ডা-কল-দ্রুত
+const SAGENT = new https.Agent({ keepAlive: true, maxSockets: 32 });
 function directGet(url, timeoutMs) {
   return new Promise((resolve, reject) => {
     const u = new URL(url);
     const mod = u.protocol === 'http:' ? http : https;
-    const req = mod.get(url, { headers: { 'User-Agent': UA, 'Accept': '*/*' }, timeout: timeoutMs }, res => {
+    const req = mod.get(url, { headers: { 'User-Agent': UA, 'Accept': '*/*' }, timeout: timeoutMs, agent: u.protocol === 'http:' ? HAGENT : SAGENT }, res => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
         res.resume();
         return resolve(directGet(new URL(res.headers.location, url).toString(), timeoutMs));
@@ -242,6 +244,7 @@ function findTmdbInfo(imdb, type) {
   const key = 'find:' + imdb + ':' + type;
   const hit = memoGet(key, 86400000);
   if (hit) return Promise.resolve(hit);
+  if (memoGet(key + ':empty', 1800000)) return Promise.reject(new Error('find-empty-cached')); // নিশ্চিত-খালি → ৩০মিন-মাত্র
   return dedupe(key, () => directGet(TMDBP + '/find/' + encodeURIComponent(imdb) + '?external_source=imdb_id', 12000).then(body => {
     const j = JSON.parse(body);
     const r = (type === 'series' ? (j.tv_results || []) : (j.movie_results || []))[0] || null;
@@ -263,7 +266,7 @@ function findTmdbInfo(imdb, type) {
         throw new Error('search-empty');
       });
     })
-  ).catch(e => { memoSet(key, { id: -1, name: '' }); throw e; })); // নেগেটিভ-ক্যাশ — বারবার-ধীর-ব্যর্থতা-নয়
+  ).catch(e => { if (e && e.message === 'find-empty') memoSet(key + ':empty', 1); throw e; })); // নেগেটিভ-ক্যাশ-শুধু-নিশ্চিত-খালিতে; নেটওয়ার্ক/429-এ-কখনো-নয়
 }
 function findTmdb(imdb, type) { return findTmdbInfo(imdb, type).then(v => v.id); }
 function nameForTmdb(tmdbId, type) {
@@ -280,25 +283,31 @@ function nameForTmdb(tmdbId, type) {
 
 // ---------- seed (direct-first → 429-এ pool-race) ----------
 let seedCache = { key: null, seed: null, via: 'direct', px: null, ts: 0 };
+let seedInflight = null; // প্যারালাল-জোড়ায়-এক-ই-সিড-কল-শেয়ার-হোক
 function getSeed(tmdbId, force) {
   if (!force && seedCache.seed && seedCache.key === tmdbId && (Date.now() - seedCache.ts) < 20000) {
     return Promise.resolve(seedCache);
   }
+  if (!force && seedInflight && seedInflight.key === tmdbId && (Date.now() - seedInflight.ts) < 8000) return seedInflight.p;
   const url = API + '/seed?mediaId=' + tmdbId;
-  return directGet(url, 6000).then(b => {
-    const j = JSON.parse(b);
-    if (!j.seed) throw Object.assign(new Error('seed-empty'), { code: 429 });
-    seedCache = { key: tmdbId, seed: j.seed, via: 'direct', px: null, ts: Date.now() };
-    return seedCache;
-  }).catch(e => {
-    if (e.code !== 429 && e.message !== 'seed-empty' && e.message !== 'timeout' && !/proxy|rate|http_5|ECONN|fetch/.test(e.message)) throw e;
-    return racePool(url, 5, 9000).then(w => {
+  const p = (async () => {
+    try {
+      const b = await directGet(url, 6000);
+      const j = JSON.parse(b);
+      if (!j.seed) throw Object.assign(new Error('seed-empty'), { code: 429 });
+      seedCache = { key: tmdbId, seed: j.seed, via: 'direct', px: null, ts: Date.now() };
+      return seedCache;
+    } catch (e) {
+      if (e.code !== 429 && e.message !== 'seed-empty' && e.message !== 'timeout' && !/proxy|rate|http_5|ECONN|fetch/.test(e.message)) throw e;
+      const w = await racePool(url, 5, 9000);
       const j = JSON.parse(w.body);
       if (!j.seed) throw new Error('seed-empty-proxy');
       seedCache = { key: tmdbId, seed: j.seed, via: 'proxy', px: w.px, ts: Date.now() };
       return seedCache;
-    });
-  });
+    }
+  })();
+  seedInflight = { key: tmdbId, p, ts: Date.now() };
+  return p;
 }
 function pathGet(url, via, px, timeoutMs) {
   return via === 'proxy' && px ? proxiedGet(px, url, timeoutMs) : directGet(url, timeoutMs);
@@ -317,7 +326,7 @@ function playable(u) {
   if (!u || !/^https?:/.test(u)) return Promise.resolve(false);
   return new Promise(resolve => {
     const mod = u.indexOf('http:') === 0 ? http : https;
-    const req = mod.get(u, { headers: { 'User-Agent': UA, 'Accept': '*/*', 'Referer': VIDY_REFERER }, timeout: 5000 }, res => {
+    const req = mod.get(u, { headers: { 'User-Agent': UA, 'Accept': '*/*', 'Referer': VIDY_REFERER }, timeout: 5000, agent: u.protocol === 'http:' ? HAGENT : SAGENT }, res => {
       res.resume();
       resolve(res.statusCode === 200);
     });
@@ -326,41 +335,51 @@ function playable(u) {
   });
 }
 function getSources(tmdbId, type, s, e, title, cfg) {
-  const qs = (Array.isArray(cfg && cfg.q) ? cfg.q.slice().sort((a, b) => a - b).join('.') : String((cfg && cfg.q) || '')) + ':' + ((cfg && cfg.sub) === 0 ? 0 : 1);
-  const key = ['src', VERSION, tmdbId, type, s || '', e || '', qs].join('|'); // VERSION+cfg-ভার্সনড — ভিন্ন-ফিল্টার-ভিন্ন-ক্যাশ
+  const qsig = (Array.isArray(cfg && cfg.q) ? cfg.q.slice().sort((a, b) => a - b).join('.') : String((cfg && cfg.q) || '')) + ':' + ((cfg && cfg.sub) === 0 ? 0 : 1) + ':' + ((cfg && Array.isArray(cfg.srv) && cfg.srv.length) ? cfg.srv.slice().sort().join('.') : '');
+  const key = ['src', VERSION, tmdbId, type, s || '', e || '', qsig].join('|'); // VERSION+cfg-ভার্সনড — ভিন্ন-ফিল্টার-ভিন্ন-ক্যাশ
   const hit = memoGet(key, 10800000);
   if (hit) return Promise.resolve(hit);
   return dedupe(key, async () => {
     let lastErr = null;
     let force = false;
-    let bestFit = null; let bestFitSrv = null; let bestFitN = -1; let bestFitNs = -1; // cfg-মেলা: বেশি-কার্ড, টাইতে-বেশি-সাব
+    let bestFit = null; let bestFitSrv = null; let bestFitN = -1; let bestFitNs = -1; // আগে-সাব-সমৃদ্ধতা (মূল-অডিও), টাইতে-বেশি-কার্ড
+    const nsB = n => Math.min(n, 5); // সাব-বাকেট (৪০-সাব-আর-৩১-সাব-সমান-মর্যাদা)
     let bestAny = null; let bestAnySrv = null; let bestAnyNs = -1; // সবচেয়ে-সাবসমৃদ্ধ (মূল-অডিওর-চিহ্ন)
     let deadJ = null;
     let deadSrv = null;
     const t0 = Date.now();
-    for (const srv of srvOrder()) {
+    const allow = srvOrder().filter(srv => !cfg || !Array.isArray(cfg.srv) || !cfg.srv.length || cfg.srv.indexOf(srv) >= 0); // cfg-সার্ভার-সাবসেট
+    const one = async srv => {
+      // এক-সার্ভার-সম্পূর্ণ-মূল্যায়ন (seed+sources+প্রোব):
       try {
-        if (bestFit && Date.now() - t0 > 9000) break; // গেটওয়ে-টাইমআউট-এড়াতে-সময়সীমা — যা-পাওয়া-গেছে-তাই
         const sc = await getSeed(tmdbId, force);
         const q = { mediaType: type, tmdbId: String(tmdbId), enc: '2', seed: sc.seed, title: title || '' };
         if (type === 'tv') { q.seasonId = String(s || 1); q.episodeId = String(e || 1); } // ভুল-ছিল s/e — upstream-এগুলো-উপেক্ষা-করত → সবসময়-EP1
         const u = API + '/' + srv + '/sources?' + new URLSearchParams(q).toString();
         const ct = await pathGet(u, sc.via, sc.px, 12000);
         const j = JSON.parse(vidyDecrypt(ct, sc.seed, tmdbId));
-        if (j.sources && j.sources.length) {
-          if (await playable((j.sources[0] || {}).url)) { // নষ্ট-অ্যাসেট (যেমন-SquidGame-E5-400) → পরের-সার্ভার
-            const ns = (j.subtitles || []).length;
-            const nfit = decorate(j, type, s, e, title || '', cfg, srv).length; // cfg-মেলা-কার্ড-সংখ্যা (Auto-সহ)
-            if (nfit > 0 && (nfit > bestFitN || (nfit === bestFitN && ns > bestFitNs))) { bestFit = j; bestFitSrv = srv; bestFitN = nfit; bestFitNs = ns; }
-            if (ns > bestAnyNs) { bestAny = j; bestAnySrv = srv; bestAnyNs = ns; }
-            srvBump(srv, nfit > 0 ? (ns >= 5 ? 2 : 1) : 0); // ভালো-সার্ভার-সবসময়-আগে
-            if (nfit > 0 && (ns >= 5 || (nfit >= 4 && ns >= 1))) break; // অফিসিয়াল/সমৃদ্ধ-প্রিন্ট → থামো
-            force = false; // seed-ঠিক-ছিল — পরের-সার্ভারে-একই-সিড
-            continue;
-          } else { deadJ = j; deadSrv = srv; srvBump(srv, -1); }
-        }
-        force = true; // খালি-ফল → seed-হয়তো-একবারই-চলে — পরের-সার্ভারে-তাজা
-      } catch (er) { lastErr = er; force = true; srvBump(srv, -1); }
+        if (!j.sources || !j.sources.length) { force = true; return { srv, empty: true }; }
+        const ok = await playable((j.sources[0] || {}).url); // নষ্ট-অ্যাসেট (যেমন-SquidGame-E5-400) ধরা
+        const ns = (j.subtitles || []).length;
+        const nfit = ok ? decorate(j, type, s, e, title || '', cfg, srv).length : 0;
+        return { srv, j, ok, ns, nfit };
+      } catch (er) { force = true; return { srv, err: er }; }
+    };
+    const absorb = r => {
+      if (r.err) { srvBump(r.srv, -1); lastErr = r.err; return; }
+      if (r.empty) { srvBump(r.srv, 0); return; }
+      if (r.ok) {
+        if (r.nfit > 0 && (nsB(r.ns) > nsB(bestFitNs) || (nsB(r.ns) === nsB(bestFitNs) && r.nfit > bestFitN))) { bestFit = r.j; bestFitSrv = r.srv; bestFitN = r.nfit; bestFitNs = r.ns; }
+        if (r.ns > bestAnyNs) { bestAny = r.j; bestAnySrv = r.srv; bestAnyNs = r.ns; }
+        srvBump(r.srv, r.nfit > 0 ? (r.ns >= 5 ? 2 : 1) : 0); // ভালো-সার্ভার-সবসময়-আগে
+      } else { deadJ = r.j; deadSrv = r.srv; srvBump(r.srv, -1); }
+    };
+    // জোড়া-জোড়া-সমান্তরাল — সিরিয়াল-অপেক্ষা-নয় (miami/boise/atlanta-ত্রয়ী-প্রায়-সবসময়-প্রথম-জোড়ায়-ই-শেষ):
+    for (let i = 0; i < allow.length; i += 2) {
+      const rs = await Promise.all(allow.slice(i, i + 2).map(one));
+      rs.forEach(absorb);
+      if (bestFit && (bestFitNs >= 5 || bestFitN >= 4)) break; // সমৃদ্ধ/অফিসিয়াল-প্রিন্ট → থামো
+      if (bestFit && Date.now() - t0 > 9000) break; // গেটওয়ে-বাজেট — যা-পাওয়া-গেছে
     }
     let pick = bestFit, pickSrv = bestFitSrv; // আগে-রেজোলিউশন-মেলা, না-থাকলে-সাবসমৃদ্ধ
     if (!pick) { pick = bestAny; pickSrv = bestAnySrv; }
@@ -422,7 +441,7 @@ function qToList(q) { // মাল্টি-রেজোলিউশন: অ্�
   const n = Math.min(2160, Math.max(0, Number(q) || 0));
   return n ? QH.filter(h => h <= n) : [];
 }
-const DEFAULT_CFG = { q: 0, sub: 1, cat: 'kd,mv', lang: '', sort: 'pop', era: '', g: [] };
+const DEFAULT_CFG = { q: 0, sub: 1, cat: 'kd,mv', lang: '', sort: 'pop', era: '', g: [], srv: [] };
 function parseCfgFromObj(o) {
   const c = Object.assign({}, DEFAULT_CFG, { g: [] });
   if (o) {
@@ -433,11 +452,12 @@ function parseCfgFromObj(o) {
     if (['pop', 'top', 'new'].indexOf(o.sort) >= 0) c.sort = o.sort;
     if (['2020', '2010', '2000'].indexOf(o.era) >= 0) c.era = o.era;
     if (Array.isArray(o.g)) c.g = o.g.map(String).map(x => x.trim()).filter(Boolean).slice(0, 4);
+    if (Array.isArray(o.srv)) c.srv = o.srv.map(x => String(x).toLowerCase()).filter(x => SERVERS.indexOf(x) >= 0).slice(0, 4);
   }
   return c;
 }
 function decodeCfg(b64) {
-  try { return parseCfgFromObj(JSON.parse(Buffer.from(b64, 'base64url').toString('utf8'))); } catch (e) { return Object.assign({}, DEFAULT_CFG, { g: [] }); }
+  try { return parseCfgFromObj(JSON.parse(Buffer.from(b64, 'base64url').toString('utf8'))); } catch (e) { return Object.assign({}, DEFAULT_CFG, { g: [], srv: [] }); }
 }
 function manifest(cfg) {
   return {
@@ -481,14 +501,15 @@ const server = http.createServer((req, res) => {
     if (cm2) { cfg = decodeCfg(cm2[1]); p = cm2[2]; }
     else {
       const qs = new URL(req.url, 'http://x').searchParams;
-      if ([...qs.keys()].length) cfg = parseCfgFromObj({ q: qs.get('q') || qs.get('maxq'), sub: qs.get('sub') === '0' ? 0 : 1, cat: qs.get('cat') || '', lang: qs.get('lang') || '', sort: qs.get('sort') || '', era: qs.get('era') || '', g: (qs.get('g') || '').split(',').filter(Boolean) });
+      if ([...qs.keys()].length) cfg = parseCfgFromObj({ q: qs.get('q') || qs.get('maxq'), sub: qs.get('sub') === '0' ? 0 : 1, cat: qs.get('cat') || '', lang: qs.get('lang') || '', sort: qs.get('sort') || '', era: qs.get('era') || '', g: (qs.get('g') || '').split(',').filter(Boolean), srv: (qs.get('srv') || '').split(',').filter(Boolean) });
     }
-    if (!cfg) cfg = Object.assign({}, DEFAULT_CFG, { g: [] });
+    if (!cfg) cfg = Object.assign({}, DEFAULT_CFG, { g: [], srv: [] });
     if (p === '/' || p === '/config' || p === '/configure') return sendFile2(res, 'config.html');
     if (p === '/manifest.json') return sendJson(res, 200, manifest(cfg));
     if (p === '/_health') return sendJson(res, 200, { ok: 1, version: VERSION, pool: POOL.length, memo: memo.size });
     if (p === '/_pool') return sendJson(res, 200, POOL);
     if (p === '/_log') return sendJson(res, 200, reqLog.slice(-40).reverse());
+    if (p === '/_servers') return sendJson(res, 200, { order: srvOrder(), scores: SRV_SCORE }); // কনফিগ-পেজের-লাইভ-হেলথ
     let m;
     // সব-পথ-লগ (৪০৪-ও-দৃশ্যমান-হোক):
     logReq(p, 0, -1, 'route-in');
