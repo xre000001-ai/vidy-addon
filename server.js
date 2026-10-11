@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.7.9';
+const VERSION = '1.8.4';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -279,12 +279,13 @@ function nameForTmdb(tmdbId, type) {
   const key = 'nm:' + type + ':' + tmdbId;
   const hit = memoGet(key, 86400000);
   if (hit) return Promise.resolve(hit);
+  if (memoGet(key + ':neg', 600000)) return Promise.resolve(''); // ব্যর্থ-লুকআপ-মাত্র-১০মিন — দিনভর-'Vidy'-টাইটেল-নয়
   return dedupe(key, () => directGet(TMDBP + '/' + (type === 'series' ? 'tv/' : 'movie/') + tmdbId, 10000).then(b => {
     const j = JSON.parse(b);
     const v = j.name || j.title || '';
     memoSet(key, v);
     return v;
-  }).catch(() => { memoSet(key, ''); return ''; }));
+  }).catch(() => { memoSet(key + ':neg', 1); return ''; }));
 }
 
 // ---------- seed (direct-first → 429-এ pool-race) ----------
@@ -322,6 +323,9 @@ function pathGet(url, via, px, timeoutMs) {
 // ---------- sources ----------
 // সার্ভার-স্কোর: যেটা-ভালো-চলে-সেটাই-সবসময়-আগে (ফাইলে-জমে — রিস্টার্টেও-মনে-থাকে):
 const SRV_SCORE = (() => { try { return JSON.parse(fs.readFileSync(path.join(__dirname, 'vidy_server_scores.json'), 'utf8')); } catch (e) { return {}; } })();
+const SRV_CACHE = new Map(); // [srvc|VERSION|tmdb|type|s|e|srv] → {ts, j, ok, ns} — ফিল্টার-ভ্যারিয়েন্ট-আর-স্ক্যান-পুনরাবৃত্তি-করে-না
+const SRV_NEG = new Map(); // বাড়তি-সার্ভারের-সাম্প্রতিক-ব্যর্থতা (৯০সে) — ভ্যারিয়েন্ট-যেন-একই-মরা-সার্ভারে-বাজেট-না-পোড়ায়
+const SRV_EXTRAS = ['phoenix', 'dallas', 'austin', 'seattle']; // দৈত্যরা-সবসময়-লাইভ-রিট্রাই-ই-হয়
 function srvBump(srv, d) {
   SRV_SCORE[srv] = Math.max(-20, Math.min(20, (SRV_SCORE[srv] || 0) + d));
   try { fs.writeFileSync(path.join(__dirname, 'vidy_server_scores.json'), JSON.stringify(SRV_SCORE)); } catch (e) {}
@@ -357,8 +361,19 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
     let deadJ = null;
     let deadSrv = null;
     const t0 = Date.now();
+    const ckFor = srv => ['srvc', VERSION, tmdbId, type, s || '', e || '', srv].join('|');
     const allow = srvOrder().filter(srv => !cfg || !Array.isArray(cfg.srv) || !cfg.srv.length || cfg.srv.indexOf(srv) >= 0); // cfg-সার্ভার-সাবসেট
     const one = async srv => {
+      const ck = ['srvc', VERSION, tmdbId, type, s || '', e || '', srv].join('|');
+      const nt = SRV_NEG.get(ck);
+      if (nt) {
+        const ttl = SRV_EXTRAS.indexOf(srv) >= 0 ? 90000 : 45000; // দৈত্য ৪৫সে (এপিসোড-কী-ভিত্তিক — নতুন-এপিসোডে-সবসময়-লাইভ), বাড়তি ৯০সে
+        if ((Date.now() - nt) < ttl) return { srv, neg: true };
+      }
+      const ch = SRV_CACHE.get(ck);
+      if (ch && (Date.now() - ch.ts) < 600000) { // ১০মিন-raw-ক্যাশ-হিট → seed/sources/প্রোব-সব-স্কিপ
+        return { srv, j: ch.j, ok: ch.ok, ns: ch.ns, nfit: ch.ok ? decorate(ch.j, type, s, e, title || '', cfg, srv).length : 0 };
+      }
       // এক-সার্ভার-সম্পূর্ণ-মূল্যায়ন (seed+sources+প্রোব):
       try {
         const sc = await getSeed(tmdbId, force);
@@ -367,14 +382,25 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
         const u = API + '/' + srv + '/sources?' + new URLSearchParams(q).toString();
         const ct = await pathGet(u, sc.via, sc.px, 12000);
         const j = JSON.parse(vidyDecrypt(ct, sc.seed, tmdbId));
-        if (!j.sources || !j.sources.length) { force = true; return { srv, empty: true }; }
+        if (!j.sources || !j.sources.length) {
+          SRV_NEG.set(ck, Date.now()); // সব-সার্ভার (টিটিএল-ভেদে) — একই-এপিসোডে-বারবার-হাতুড়ে-নয়
+          force = true; return { srv, empty: true };
+        }
         const ok = await playable((j.sources[0] || {}).url); // নষ্ট-অ্যাসেট (যেমন-SquidGame-E5-400) ধরা
         const ns = (j.subtitles || []).length;
         const nfit = ok ? decorate(j, type, s, e, title || '', cfg, srv).length : 0;
+        if (ok) { // শুধু-বাঁচা-ফল-ক্যাশ-হয় (মৃত/খালি-কখনো-নয়):
+          SRV_CACHE.set(ck, { ts: Date.now(), j, ok: true, ns });
+          if (SRV_CACHE.size > 200) SRV_CACHE.clear();
+        } else SRV_NEG.set(ck, Date.now()); // মৃত-অ্যাসেট-ও-সাম্প্রতিক-ব্যর্থতা — ভ্যারিয়েন্ট-বারবার-প্রোব-করে-বাজেট-পোড়াবে-না
         return { srv, j, ok, ns, nfit };
-      } catch (er) { force = true; return { srv, err: er }; }
+      } catch (er) {
+        SRV_NEG.set(ck, Date.now());
+        force = true; return { srv, err: er };
+      }
     };
     const absorb = r => {
+      if (r.neg) return; // নেগেটিভ-হিট — স্কোর-আর-শাস্তি-নয়
       if (r.err) { srvBump(r.srv, -1); lastErr = r.err; return; }
       if (r.empty) { srvBump(r.srv, 0); return; }
       if (r.ok) {
@@ -386,7 +412,10 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
     // সব-নির্বাচিত-সার্ভার-একসাথে-সমান্তরাল — কোনো-আগে-থামা-নয়: "সবগুলা-সোর্স = সবগুলা-স্ট্রিম"
     // প্রতি-সার্ভার-হার্ড-বাজেট: দৈত্য-ত্রয়ী (miami/boise/atlanta) ১০.৫সে — ধীর-হলেও-ফল-সহ্য-করবে; বাকিরা ৭.৫সে:
     const GIANT = ['miami', 'boise', 'atlanta'];
-    const budget = srv => Promise.race([one(srv), new Promise(r => setTimeout(() => r({ srv, err: new Error('srv-budget') }), GIANT.indexOf(srv) >= 0 ? 10500 : 7500))]);
+    const budget = srv => Promise.race([one(srv), new Promise(r => setTimeout(() => {
+      SRV_NEG.set(ckFor(srv), Date.now()); // বাজেট-টাইমআউট-ও-সাম্প্রতিক-ব্যর্থতা — ভ্যারিয়েন্ট-পোড়া-বাজেট-পুনরাবৃত্তি-নয়
+      r({ srv, err: new Error('srv-budget') });
+    }, GIANT.indexOf(srv) >= 0 ? 10500 : 7500))]);
     // সবাই-একসাথে-ফেল-করলে (যেমন-upstream-সাময়িক-http_500) ১.৫-সে-পরে-এক-বার-অটো-রিট্রাই:
     let rs = await Promise.all(allow.map(budget));
     if (!rs.some(r => r.ok) && Date.now() - t0 < 8000) { // রিট্রাই-পাস-শুধু-বাজেটের-ভেতরে-থাকলে — গেটওয়ে-কাটা-যাবে-না
