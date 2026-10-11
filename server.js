@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.3.3';
+const VERSION = '1.4.0';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -319,13 +319,14 @@ function playable(u) {
   });
 }
 function getSources(tmdbId, type, s, e, title, cfg) {
-  const key = ['src', tmdbId, type, s || '', e || ''].join('|');
+  const key = ['src', VERSION, tmdbId, type, s || '', e || ''].join('|'); // VERSION-ভার্সনড — নতুন-ডিপ্লয়ে-পুরনো-(ডাব)-ক্যাশ-মরে
   const hit = memoGet(key, 10800000);
   if (hit) return Promise.resolve(hit);
   return dedupe(key, async () => {
     let lastErr = null;
     let force = false;
-    let lastJ = null;
+    let best = null; // সবচেয়ে-সাবসমৃদ্ধ-সেট = অফিসিয়াল-প্রিন্ট = মূল-অডিও (ডাব-প্রিন্টে-সাব-থাকে-না)
+    let deadJ = null;
     for (const srv of SERVERS) {
       try {
         const sc = await getSeed(tmdbId, force);
@@ -336,16 +337,21 @@ function getSources(tmdbId, type, s, e, title, cfg) {
         const j = JSON.parse(vidyDecrypt(ct, sc.seed, tmdbId));
         if (j.sources && j.sources.length) {
           if (await playable((j.sources[0] || {}).url)) { // নষ্ট-অ্যাসেট (যেমন-SquidGame-E5-400) → পরের-সার্ভার
-            const out = decorate(j, type, s, e, title || '', cfg);
-            memoSet(key, out);
-            return out;
-          }
-          lastJ = j; force = true; continue;
+            const ns = (j.subtitles || []).length;
+            if (!best || ns > (best.subtitles || []).length) best = j;
+            if (ns >= 5) break; // অফিসিয়াল-প্রিন্ট-পাওয়া-গেছে → থামো
+          } else deadJ = j;
+          force = true; continue;
         }
         force = true; // খালি-ফল → seed-হয়তো-একবারই-চলে — পরের-সার্ভারে-তাজা
       } catch (er) { lastErr = er; force = true; }
     }
-    if (lastJ) return decorate(lastJ, type, s, e, title || '', cfg); // সব-প্রোব-ফেল → শেষ-সেট-দিয়ে-হলেও-হোক
+    const pick = best || deadJ;
+    if (pick) {
+      const out = decorate(pick, type, s, e, title || '', cfg);
+      memoSet(key, out);
+      return out;
+    }
     throw lastErr || new Error('no-sources');
   });
 }
