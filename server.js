@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.3.2';
+const VERSION = '1.3.3';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -305,6 +305,19 @@ function pathGet(url, via, px, timeoutMs) {
 }
 
 // ---------- sources ----------
+// প্রথম-সোর্স-URL-বাঁচা-কি-না (master-m3u8-ছোট — সস্তা-GET; Referer-ছাড়া-CDN-403-দেয়):
+function playable(u) {
+  if (!u || !/^https?:/.test(u)) return Promise.resolve(false);
+  return new Promise(resolve => {
+    const mod = u.indexOf('http:') === 0 ? http : https;
+    const req = mod.get(u, { headers: { 'User-Agent': UA, 'Accept': '*/*', 'Referer': VIDY_REFERER }, timeout: 7000 }, res => {
+      res.resume();
+      resolve(res.statusCode === 200);
+    });
+    req.on('timeout', () => { req.destroy(new Error('timeout')); });
+    req.on('error', () => resolve(false));
+  });
+}
 function getSources(tmdbId, type, s, e, title, cfg) {
   const key = ['src', tmdbId, type, s || '', e || ''].join('|');
   const hit = memoGet(key, 10800000);
@@ -312,6 +325,7 @@ function getSources(tmdbId, type, s, e, title, cfg) {
   return dedupe(key, async () => {
     let lastErr = null;
     let force = false;
+    let lastJ = null;
     for (const srv of SERVERS) {
       try {
         const sc = await getSeed(tmdbId, force);
@@ -321,13 +335,17 @@ function getSources(tmdbId, type, s, e, title, cfg) {
         const ct = await pathGet(u, sc.via, sc.px, 12000);
         const j = JSON.parse(vidyDecrypt(ct, sc.seed, tmdbId));
         if (j.sources && j.sources.length) {
-          const out = decorate(j, type, s, e, title || '', cfg);
-          memoSet(key, out);
-          return out;
+          if (await playable((j.sources[0] || {}).url)) { // নষ্ট-অ্যাসেট (যেমন-SquidGame-E5-400) → পরের-সার্ভার
+            const out = decorate(j, type, s, e, title || '', cfg);
+            memoSet(key, out);
+            return out;
+          }
+          lastJ = j; force = true; continue;
         }
         force = true; // খালি-ফল → seed-হয়তো-একবারই-চলে — পরের-সার্ভারে-তাজা
       } catch (er) { lastErr = er; force = true; }
     }
+    if (lastJ) return decorate(lastJ, type, s, e, title || '', cfg); // সব-প্রোব-ফেল → শেষ-সেট-দিয়ে-হলেও-হোক
     throw lastErr || new Error('no-sources');
   });
 }
