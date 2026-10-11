@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.7.7';
+const VERSION = '1.7.8';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -95,7 +95,7 @@ const HAGENT = new http.Agent({ keepAlive: true, maxSockets: 32 }); // কান
 const SAGENT = new https.Agent({ keepAlive: true, maxSockets: 32 });
 const HAGENTP = new http.Agent({ keepAlive: false, maxSockets: 16 }); // প্রোব-একবার-ই-চলে — ক্লিন-ক্লোজ
 const SAGENTP = new https.Agent({ keepAlive: false, maxSockets: 16 });
-function directGet(url, timeoutMs) {
+function directGet(url, timeoutMs, _re) {
   return new Promise((resolve, reject) => {
     const u = new URL(url);
     const mod = u.protocol === 'http:' ? http : https;
@@ -114,7 +114,11 @@ function directGet(url, timeoutMs) {
       });
     });
     req.on('timeout', () => { req.destroy(new Error('timeout')); });
-    req.on('error', reject);
+    req.on('error', e => {
+      // keep-alive-সকেট-নিঃশব্দে-মরলে (NAT/মিডলবক্স) নতুন-সকেট-দিয়ে-এক-বার-অটো-পুনঃচেষ্টা:
+      if (req.reusedSocket && !_re && (e.code === 'ECONNRESET' || e.code === 'EPIPE')) return resolve(directGet(url, timeoutMs, 1));
+      reject(e);
+    });
   });
 }
 function dechunk(buf) {
@@ -597,6 +601,8 @@ const server = http.createServer((req, res) => {
     sendJson(res, 404, { error: 'not found' });
   } catch (e) { sendJson(res, 500, { error: String(e && e.message) }); }
 });
+// অলস-keep-alive-সকেট-প্রতি-৬০সে-পুড়িয়ে-দেওয়া — দীর্ঘ-অলসতায়-NAT-যেগুলো-নিঃশব্দে-কেটে-দেয় (বিংগের-মধ্যে-তাজা-থাকে):
+setInterval(() => { try { HAGENT.destroy(); SAGENT.destroy(); } catch (e) {} }, 60000).unref();
 const PORT = Number(process.env.PORT || 7000);
 server.listen(PORT, '0.0.0.0', () => console.log('[vidy] ' + VERSION + ' on :' + PORT + ' | pool=' + POOL.length));
 
