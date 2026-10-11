@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.5.0';
+const VERSION = '1.5.1';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -317,7 +317,7 @@ function playable(u) {
   if (!u || !/^https?:/.test(u)) return Promise.resolve(false);
   return new Promise(resolve => {
     const mod = u.indexOf('http:') === 0 ? http : https;
-    const req = mod.get(u, { headers: { 'User-Agent': UA, 'Accept': '*/*', 'Referer': VIDY_REFERER }, timeout: 7000 }, res => {
+    const req = mod.get(u, { headers: { 'User-Agent': UA, 'Accept': '*/*', 'Referer': VIDY_REFERER }, timeout: 5000 }, res => {
       res.resume();
       resolve(res.statusCode === 200);
     });
@@ -337,8 +337,10 @@ function getSources(tmdbId, type, s, e, title, cfg) {
     let bestAny = null; let bestAnySrv = null; let bestAnyNs = -1; // সবচেয়ে-সাবসমৃদ্ধ (মূল-অডিওর-চিহ্ন)
     let deadJ = null;
     let deadSrv = null;
+    const t0 = Date.now();
     for (const srv of srvOrder()) {
       try {
+        if (bestFit && Date.now() - t0 > 9000) break; // গেটওয়ে-টাইমআউট-এড়াতে-সময়সীমা — যা-পাওয়া-গেছে-তাই
         const sc = await getSeed(tmdbId, force);
         const q = { mediaType: type, tmdbId: String(tmdbId), enc: '2', seed: sc.seed, title: title || '' };
         if (type === 'tv') { q.seasonId = String(s || 1); q.episodeId = String(e || 1); } // ভুল-ছিল s/e — upstream-এগুলো-উপেক্ষা-করত → সবসময়-EP1
@@ -352,9 +354,10 @@ function getSources(tmdbId, type, s, e, title, cfg) {
             if (nfit > 0 && (nfit > bestFitN || (nfit === bestFitN && ns > bestFitNs))) { bestFit = j; bestFitSrv = srv; bestFitN = nfit; bestFitNs = ns; }
             if (ns > bestAnyNs) { bestAny = j; bestAnySrv = srv; bestAnyNs = ns; }
             srvBump(srv, nfit > 0 ? (ns >= 5 ? 2 : 1) : 0); // ভালো-সার্ভার-সবসময়-আগে
-            if (nfit > 0 && ns >= 5) break; // অফিসিয়াল-প্রিন্ট+ফিট → থামো
+            if (nfit > 0 && (ns >= 5 || (nfit >= 4 && ns >= 1))) break; // অফিসিয়াল/সমৃদ্ধ-প্রিন্ট → থামো
+            force = false; // seed-ঠিক-ছিল — পরের-সার্ভারে-একই-সিড
+            continue;
           } else { deadJ = j; deadSrv = srv; srvBump(srv, -1); }
-          force = true; continue;
         }
         force = true; // খালি-ফল → seed-হয়তো-একবারই-চলে — পরের-সার্ভারে-তাজা
       } catch (er) { lastErr = er; force = true; srvBump(srv, -1); }
