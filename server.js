@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.1.0';
+const VERSION = '1.1.1';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -342,7 +342,9 @@ function sendJson(res, code, obj) {
   res.end(b);
 }
 const server = http.createServer((req, res) => {
-  const p = new URL(req.url, 'http://x').pathname;
+  let pRaw = new URL(req.url, 'http://x').pathname;
+  let p;
+  try { p = decodeURIComponent(pRaw); } catch (eDec) { p = pRaw; } // ডিভাইস ':'-কে %3A-পাঠায় — ডিকোড-বাধ্যতামূলক
   try {
     if (p === '/manifest.json') return sendJson(res, 200, manifest());
     if (p === '/_health') return sendJson(res, 200, { ok: 1, version: VERSION, pool: POOL.length, memo: memo.size });
