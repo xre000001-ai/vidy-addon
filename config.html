@@ -75,6 +75,12 @@ h1 .g{color:var(--acc)}
 .flab2{font-weight:750;font-size:13.5px}
 .fhint{color:var(--mut);font-size:11.5px;margin-top:1px}
 
+/* ── collapsible server summary ── */
+.srvsum{width:100%;display:flex;justify-content:space-between;align-items:center;background:rgba(255,255,255,.02);border:1px solid var(--line);border-radius:12px;padding:12px 14px;color:var(--dim);font-weight:750;font-size:12.5px;cursor:pointer;transition:border-color .18s;margin-top:4px}
+.srvsum:hover{border-color:rgba(91,228,155,.35);color:#bdf5da}
+.srvsum i{font-style:normal;color:var(--acc);transition:transform .18s;font-size:11px}
+.srvsum.open i{transform:rotate(90deg)}
+
 /* ── server rows (inside Vidy source) ── */
 .rows{margin-top:10px;display:flex;flex-direction:column;gap:8px}
 .srow{display:flex;gap:12px;align-items:center;padding:11px 13px;cursor:pointer;user-select:none;background:rgba(255,255,255,.014);border:1px solid rgba(255,255,255,.06);border-radius:14px;transition:border-color .18s}
@@ -151,8 +157,9 @@ h1 .g{color:var(--acc)}
       <div class="frow"><div><div class="flab2">Subtitles</div><div class="fhint">Attach subtitle tracks when the server has them</div></div>
         <div class="sw on" id="swSub"></div></div>
 
-      <div class="flab" style="margin-top:16px">Servers <em>· tap to toggle · scanned in parallel</em></div>
-      <div class="rows" id="srvRows"></div>
+      <div class="flab" style="margin-top:16px">Servers <em>· scanned in parallel</em></div>
+      <button class="srvsum" id="srvSum" type="button"><span id="srvCount">16 of 16 on</span><i>&#9656;</i></button>
+      <div class="rows" id="srvRows" style="display:none"></div>
     </div>
   </div>
 
@@ -161,8 +168,8 @@ h1 .g{color:var(--acc)}
     <div class="src-hd">
       <div class="tile nx">&#9827;</div>
       <div class="s-body">
-        <div class="s-name">NetHex <span class="badge n">moviebox · direct mp4</span></div>
-        <div class="s-sub">Dubs &amp; multi-audio catalogue · sizes &amp; codecs on every card</div>
+        <div class="s-name">MovieBox <span class="badge n">direct mp4 · dubs</span></div>
+        <div class="s-sub">Multi-audio catalogue · same unified card format</div>
       </div>
       <div class="sw nx on" id="swN"></div>
     </div>
@@ -235,12 +242,12 @@ h1 .g{color:var(--acc)}
     var vOn=st.v===1&&st.srv.length>0;
     var top=st.q.length?Math.max.apply(null,st.q):2160;
     document.getElementById('pvV').style.display=vOn?'':'none';
-    document.getElementById('pvVt').textContent='\u25eb '+(st.q.length?top+'p':'2160')+' \u00b7 '+(st.srv.length?'Miami':'—')+' \u25eb\n\u29c9 Vidy\n\u2b21 S1E1'+(st.sub?' \u00b7 Subs: 31':'');
+    document.getElementById('pvVt').textContent='\u25eb '+(st.q.length?top:'2160')+' \u00b7 '+(st.srv.length?'Miami':'—')+' \u25eb\n\u29c9 Queen of Tears\n\u2b21 S1E1'+(st.sub?' \u00b7 Subs: 31':'');
     document.getElementById('pvVq').textContent=qsel(st.q);
     var nq=st.nxq.length?Math.max.apply(null,st.nxq):1080;
-    var lang=st.nxl.length?st.nxl[0].charAt(0).toUpperCase()+st.nxl[0].slice(1):'Original';
+    var lang=st.nxl.length?' \u00b7 '+st.nxl[0].charAt(0).toUpperCase()+st.nxl[0].slice(1):'';
     document.getElementById('pvN').style.display=st.nx?'':'none';
-    document.getElementById('pvNt').textContent='\u2667 '+(st.nxq.length?nq+'p':'1080p')+(st.nxl.length?' \u00b7 '+lang:'')+' \u2739 NetHex\n\u25cb 1.4 GB \u00b7 H.264 \u00b7 24 min\n\u2317 MovieBox \u00b4 2008 \u203f 6 subs';
+    document.getElementById('pvNt').textContent='\u25eb '+nq+' \u00b7 MovieBox \u25eb\n\u29c9 Demon Slayer\n\u2b21 S1E5'+lang+' \u00b7 Subs: 6';
     document.getElementById('pvNq').textContent=qsel(st.nxq);
   }
 
@@ -315,6 +322,7 @@ h1 .g{color:var(--acc)}
       r.classList.toggle('off',!row);
       r.querySelector('.sw').classList.toggle('on',row);
     });
+    document.getElementById('srvCount').textContent=on?(st.srv.length+' of '+SRVS.length+' on'):'source off';
   }
   var swN=document.getElementById('swN'), cardN=document.getElementById('cardN');
   swN.onclick=function(){
@@ -325,6 +333,13 @@ h1 .g{color:var(--acc)}
     rebuild();
   };
 
+  /* servers collapsed by default — one row summary, expand on demand */
+  var srvSum=document.getElementById('srvSum'), srvRowsEl=document.getElementById('srvRows');
+  srvSum.onclick=function(){
+    var willOpen=srvRowsEl.style.display==='none';
+    srvRowsEl.style.display=willOpen?'':'none';
+    srvSum.classList.toggle('open',willOpen);
+  };
   /* server rows */
   var sr=document.getElementById('srvRows');
   SRVS.forEach(function(sd){

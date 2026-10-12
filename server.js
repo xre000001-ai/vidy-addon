@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.11.3';
+const VERSION = '1.11.4';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -356,17 +356,22 @@ async function nxStreams(imdb, type, s, e) {
     const t3 = Date.now();
     const b = await directGet(NEXBASE + '/stream/' + type + '/' + path2 + '.json', 25000);
     if (process.env.VDBG) console.error('[nxdbg] nethex ' + type + '/' + path2 + ' -> ' + (Date.now() - t3) + 'ms');
+    // v1.11.4: সব-সোর্সের-কার্ড-এক-ফরম্যাটে — ◫ QUALITY · SOURCE ◫ / ⧉ Title / ⬡ SsEe · Subs: n
+    // (vidy-কার্ডে-server-বসে, MovieBox-কার্ডে-source-নামটাই-ওই-ঘরে; ভাষা-তথ্য ⬡-লাইনে)
     const arr = (JSON.parse(b).streams || []).filter(x => x && typeof x.url === 'string' && /^https?:/.test(x.url)).map(x => {
-      const q2 = (/(\d{3,4})p/.exec(String(x.name || '')) || [])[1] || '';
+      const q2 = (/(\d{3,4})p/.exec(String(x.name || '')) || [])[1] || 'Auto';
       const lang = String(x._lang || '').replace(/\s*dub\s*$/i, '').trim();
-      const langTxt = (!lang || /^original/i.test(lang)) ? '' : ' \u00b7 ' + lang;
-      const info = String(x.description || '').trim(); // nethex-rich line: size/codec/duration/dub/year/subs
+      const dub = (!lang || /^original/i.test(lang)) ? '' : ' \u00b7 ' + lang;
+      const nSub = Number((/\u27e1\s*(\d+)\s*SUB/.exec(String(x.description || '')) || [])[1]) || 0;
+      const raw = (String(x.name || '').split('\u2739')[1] || '').replace(/\s*S\d+\s*-\s*S\d+.*$/i, '').trim() || 'MovieBox';
       const H2 = { 'User-Agent': UA, 'Referer': 'https://movieboxonline.net/' };
+      const line2 = (type === 'series' ? 'S' + (s || 1) + 'E' + (e || 1) : 'Movie') + dub + (nSub ? ' \u00b7 Subs: ' + nSub : '');
+      const txt = '\u29c9 ' + raw + '\n\u2b21 ' + line2;
       return {
-        name: '\u2667 ' + (q2 ? q2 + 'p' : '') + langTxt + ' \u2739' + (String(x.name || '').split('\u2739')[1] || ' NetHex'),
-        title: info || String(x.name || ''),
-        description: info || String(x.name || ''),
-        quality: q2,
+        name: '\u25eb ' + q2 + ' \u00b7 MovieBox \u25eb',
+        title: txt,
+        description: txt,
+        quality: q2 === 'Auto' ? '' : q2,
         _lang: lang,
         url: String(x.url),
         headers: H2,
@@ -732,7 +737,7 @@ function manifest(cfg) {
     id: 'community.xre.vidy',
     version: VERSION,
     name: 'Vidy',
-    description: 'Stream-only, two parallel sources: Vidy (16 servers, up to 4K, subtitles) + NetHex/MovieBox (direct-MP4 dubs) — every card shows its source & server; each source keeps its own filters (quality, audio language, servers).',
+    description: 'Stream-only, two parallel sources: Vidy (16 servers, up to 4K, subtitles) + MovieBox (direct-MP4 dubs & multi-audio) — every card in one unified format; each source keeps its own filters (quality, audio language, servers).',
     author: 'xre000001-ai',
     resources: ['stream'],
     types: ['movie', 'series'],
