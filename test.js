@@ -133,6 +133,13 @@ async function tap(label, url, checks) {
     ok(sj.subtitles.every(u3 => typeof u3.url === 'string' && /^https?:/.test(u3.url) && typeof u3.lang === 'string' && /^[a-z]{2,3}$/.test(u3.lang)), 'subtitles resource: lang codes sanitized');
     ok(sj.subtitles.length > 0, 'subtitles resource: MB tracks present (' + sj.subtitles.length + ')');
   } catch (e2) { ok(false, 'subtitles resource: ' + e2.message); }
+  // ── subtitles-রিসোর্স: series-সহ-s:e (পার্স-পথ-রিগ্রেশন-রক্ষা) ──
+  try {
+    let sj2 = await (await fetch(BASE + '/subtitles/series/tt0903747:2:1.json', { signal: AbortSignal.timeout(45000) })).json();
+    if (!sj2.subtitles.length) sj2 = await (await fetch(BASE + '/subtitles/series/tt0903747:2:1.json', { signal: AbortSignal.timeout(45000) })).json();
+    ok(Array.isArray(sj2.subtitles) && sj2.subtitles.every(u4 => /^[a-z]{2}$/.test(u4.id) && /^https?:/.test(u4.url)), 'subtitles series s:e: schema-safe (' + sj2.subtitles.length + ' tracks)');
+  } catch (e3) { ok(false, 'subtitles series s:e: ' + e3.message); }
+
   // ── safety-net: series without s:e → S1E1 ──
   await tap('series tt0903747 (no s:e safety-net)', BASE + '/stream/series/tt0903747.json', (s) => {
     ok(s.length === 0 || s.every(c => /\u29e0 S1E1/.test(c.description)), 'defaults to S1E1');

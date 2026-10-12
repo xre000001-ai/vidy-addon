@@ -357,7 +357,7 @@ let NEXBASE = (process.env.NEXBASE || '').replace(/\/$/, '');
 const NXDEADLINE = Number(process.env.NXDEADLINE || 20000); // absolute cap for the whole call
 const NXEXTRA = Number(process.env.NXEXTRA || 1000); // vidy answered from cache -> hold at most this for NetHex (cache-hit calls must stay instant)
 const NXCOLDX = Number(process.env.NXCOLDX || 4000); // vidy did a cold scan -> NetHex rode the scan in parallel, so it earned a longer hold on the FIRST cold request
-const NXHARD = Number(process.env.NXHARD || 11200); // absolute response deadline — worst case must stay under the ~12s gateway cut
+const NXHARD = Number(process.env.NXHARD || 9500); // absolute response deadline — রুট-সফট-ডেডলাইনের (৯.৮সে) ভেতরেই
 const NXCACHE = new Map(); // nx:imdb:s:e -> {ts, v} — NetHex links are signed/fresh + it caches 30min itself
 async function nxStreams(imdb, type, s, e) {
   if (!NEXBASE || !imdb) return [];
@@ -642,8 +642,6 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
     const olP = origLangForTmdb(tmdbId, type); // আসল-অডিও-ভাষা (TMDB) — সমান্তরালে
     let lastErr = null;
     let force = false;
-    let bestFit = null; let bestFitSrv = null; let bestFitN = -1; let bestFitNs = -1; // আগে-সাব-সমৃদ্ধতা (মূল-অডিও), টাইতে-বেশি-কার্ড
-    const nsB = n => Math.min(n, 5); // সাব-বাকেট (৪০-সাব-আর-৩১-সাব-সমান-মর্যাদা)
     let bestAny = null; let bestAnySrv = null; let bestAnyNs = -1; // সবচেয়ে-সাবসমৃদ্ধ (মূল-অডিওর-চিহ্ন)
     let deadJ = null;
     let deadSrv = null;
@@ -724,7 +722,6 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
       if (r.err) { srvBump(r.srv, -1); lastErr = r.err; return; }
       if (r.empty) { srvBump(r.srv, 0); return; }
       if (r.ok) {
-        if (r.nfit > 0 && (nsB(r.ns) > nsB(bestFitNs) || (nsB(r.ns) === nsB(bestFitNs) && r.nfit > bestFitN))) { bestFit = r.j; bestFitSrv = r.srv; bestFitN = r.nfit; bestFitNs = r.ns; }
         if (r.ns > bestAnyNs) { bestAny = r.j; bestAnySrv = r.srv; bestAnyNs = r.ns; }
         srvBump(r.srv, r.nfit > 0 ? (r.ns >= 5 ? 2 : 1) : 0); // ভালো-সার্ভার-সবসময়-আগে
       } else { deadJ = r.j; deadSrv = r.srv; srvBump(r.srv, -1); }
@@ -751,8 +748,8 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
     // সবাই-একসাথে-ফেল-করলে (যেমন-upstream-সাময়িক-http_500) ১.২-সে-পরে-এক-বার-অটো-রিট্রাই:
     let rs = await Promise.all(allow.map(s => budget(s)));
     if (DBG) console.error('[t1g] ALL-SERVERS el=' + (Date.now() - t0) + 'ms ok=' + rs.filter(r => r.ok).length + '/' + rs.length);
-    if (!rs.some(r => r.ok) && Date.now() - t0 < 7000) { // gate 7s (was 8s): a 7.5s extras-budget first pass used to slip under and push the retry past the gateway cut
-      await new Promise(r2 => setTimeout(r2, 1200)); force = true;
+    if (!rs.some(r => r.ok) && Date.now() - t0 < 3400) { // gate 3.4s (নতুন-বাজেটে-সমন্বয়): দ্রুত-সর্বব্যর্থতায়-রিট্রাই-এখনো-৯.৮সে-সীমার-ভেতরে-শেষ-হয়
+      await new Promise(r2 => setTimeout(r2, 800)); force = true;
       const failed = {};
       rs.forEach(r => { if (r.err) failed[r.srv] = 1; }); // only genuine errors retry — empty/dead stay negative-cached
       rs = rs.concat(await Promise.all(allow.map(srv => budget(srv, failed[srv]))));
@@ -761,9 +758,9 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
     // v1.11.5: এপি-মেটা (বছর+টাইটেল) এসে-গেলে-কার্ডে-বসাও — সর্বোচ্চ ১.৮সে-অপেক্ষা (স্ক্যান-চলার-সময়েই-সাধারণত-আসে):
     let EXT0 = null;
     try {
-      const [em, olc] = await Promise.all([ // দুই-মেটা-একসাথে — worst-case +১.৮সে (আগে-পরপর-দুই-রেসে +৩.৬সে)
-        Promise.race([epMetaP.catch(() => null), new Promise(r => setTimeout(() => r(null), 1800))]),
-        raceVal(olP, 1800) // আসল-ভাষা-নাম (hi→Hindi, bn→Bengali, ta→Tamil…)
+      const [em, olc] = await Promise.all([ // দুই-মেটা-একসাথে — worst-case +১.৫সে (স্ক্যান-বাজেটের-সাথে-মসৃণ)
+        Promise.race([epMetaP.catch(() => null), new Promise(r => setTimeout(() => r(null), 1500))]),
+        raceVal(olP, 1500) // আসল-ভাষা-নাম (hi→Hindi, bn→Bengali, ta→Tamil…)
       ]);
       if (em || olc) EXT0 = { year: (em && em.year) || '', epT: (em && em.epT) || '', audio: langName(olc) || '' };
     } catch (eE) {}
@@ -840,7 +837,7 @@ function qPass(x, allow) {
 function decorate(j, type, s, e, showTitle, cfg, srv, ext) {
   cfg = cfg || DEFAULT_CFG;
   const headers = { 'User-Agent': UA, 'Referer': VIDY_REFERER };
-  const order = { '2160p': 0, '1080p': 1, '720p': 2, '480p': 3, '360p': 4, 'Auto HLS': 5 };
+  const order = { '2160p': 0, '1080p': 1, '720p': 2, '480p': 3, '360p': 4 };
   // v1.11.14: payload-সাব-লিঙ্ক-মৃত-প্রমাণিত (api.playhq.net/sub → 400, ভেতরের-ডোমেইন-নিষ্ক্রিয়) — আর-সংযুক্ত-হয়-না;
   // কাজ-করা-MovieBox-ট্র্যাক-getSources-এর-মার্জ-স্তরে-সব-কার্ডে-বসে (mbSubs), cfg.sub=0-এ-দ্বার-বন্ধ
   const seen = {};
@@ -1052,10 +1049,11 @@ const server = http.createServer((req, res) => {
       if (!NEXBASE) return done2([]);
       // ক্যাশ-ম্যানেজমেন্ট-mbSubs-এর-ভেতরে (SUBS_CACHE) — রুট-শুধু-আকৃতি-ম্যাপ-করে
       (async () => {
-        let id2 = String(m[2]);
+        const pp0 = String(m[2]).split(':'); // [id, s?, e?] — s:e-আগেই-আলাদা (অনুবাদে-হারায়-না)
+        let id2 = pp0[0];
         if (/^tmdb\d+$/.test(id2)) { const iv = await tmdbToImdb(id2.slice(4), m[1] === 'series' ? 'tv' : 'movie'); if (!iv) return done2([]); id2 = iv; } // Nuvio-tmdb-আইডি
         const isTv = m[1] === 'series';
-        const canon = await mbSubs(id2, isTv ? 'tv' : 'movie', 1, 1); // এক-ফেচার-এক-আকৃতি — mbSubs-ই-ক্যাশ-লেখে
+        const canon = await mbSubs(id2, isTv ? 'tv' : 'movie', Number(pp0[1] || 1), Number(pp0[2] || 1)); // আসল-s:e
         done2(canon.map(x => ({ id: x.lang, url: x.url, lang: x.lang }))); // রিসোর্স-আকৃতি (স্ট্রিমিও-নেটিভ)
       })().catch(e2 => { if (DBG) console.error('[nxdbg] subs ERR: ' + String(e2 && e2.message).slice(0, 60)); done2([]); });
       return;
