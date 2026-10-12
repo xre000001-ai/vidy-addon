@@ -154,7 +154,7 @@ h1 .g{color:var(--acc)}
       <div class="chips" id="qChips"></div>
 
       <div class="flab" style="margin-top:16px">Preferences</div>
-      <div class="frow"><div><div class="flab2">Subtitles</div><div class="fhint">Attach subtitle tracks when the server has them</div></div>
+      <div class="frow"><div><div class="flab2">Subtitle tracks</div><div class="fhint">Attach subtitle files to streams when available</div></div>
         <div class="sw on" id="swSub"></div></div>
 
       <div class="flab" style="margin-top:16px">Servers <em>· scanned in parallel</em></div>
@@ -175,10 +175,10 @@ h1 .g{color:var(--acc)}
     </div>
 
     <div class="fzone">
-      <div class="flab">Resolutions <em>· nethex-only filter</em></div>
+      <div class="flab">Resolutions <em>· moviebox-only filter</em></div>
       <div class="chips" id="nqChips"></div>
 
-      <div class="flab" style="margin-top:16px">Audio languages <em>· nethex-only filter</em></div>
+      <div class="flab" style="margin-top:16px">Audio languages <em>· moviebox-only filter</em></div>
       <div class="chips" id="nlChips"></div>
       <div class="fhint" style="margin-top:9px">Nothing picked = every language stays. Cards carry their audio on the name line.</div>
     </div>
@@ -242,12 +242,12 @@ h1 .g{color:var(--acc)}
     var vOn=st.v===1&&st.srv.length>0;
     var top=st.q.length?Math.max.apply(null,st.q):2160;
     document.getElementById('pvV').style.display=vOn?'':'none';
-    document.getElementById('pvVt').textContent='\u25a5 1080 \u25a5\n\u29c9 Queen of Tears | 2024 |\n\u29e0 S1E1 \u2022 Episode Title'+(st.sub?' \u00b7 Subs: 31':'')+'\n\u229e Miami \u2317 Original';
+    document.getElementById('pvVt').textContent='\u29c9 Queen of Tears | 2024 |\n\u29e0 S1E1 \u2022 Episode Title\n\u229e Miami \u2317 Original';
     document.getElementById('pvVq').textContent=qsel(st.q);
     var nq=st.nxq.length?Math.max.apply(null,st.nxq):1080;
     var lang=st.nxl.length?st.nxl[0].charAt(0).toUpperCase()+st.nxl[0].slice(1):'Original';
     document.getElementById('pvN').style.display=st.nx?'':'none';
-    document.getElementById('pvNt').textContent='\u25a5 1080 \u25a5\n\u29c9 Demon Slayer | 2019 |\n\u29e0 S1E5 \u2022 Episode Title\n\u229e MovieBox \u2317 '+lang+' \u00b7 Subs: 6';
+    document.getElementById('pvNt').textContent='\u29c9 Demon Slayer | 2019 |\n\u29e0 S1E5 \u2022 Episode Title\n\u229e MovieBox \u2317 '+lang;
     document.getElementById('pvNq').textContent=qsel(st.nxq);
   }
 
@@ -280,7 +280,7 @@ h1 .g{color:var(--acc)}
   var drawQ=chipRow('qChips',st.q,rebuild);
   var drawNQ=chipRow('nqChips',st.nxq,rebuild);
 
-  /* language chips (nethex only) */
+  /* language chips (moviebox only) */
   var nlEl=document.getElementById('nlChips');
   var nlAll=document.createElement('div');
   nlAll.className='chip all';nlAll.textContent='All';
@@ -370,11 +370,10 @@ h1 .g{color:var(--acc)}
   document.getElementById('cp').onclick=function(){var i=document.getElementById('url');i.select();try{document.execCommand('copy');}catch(e){}if(navigator.clipboard)navigator.clipboard.writeText(i.value).catch(function(){});toast('Copied');};
 
   fetch(base()+'/_health').then(function(r){return r.json();}).then(function(h){
-    var t='v'+h.version+' \u00b7 pool '+h.pool+(h.nx?' \u00b7 nethex \u2713':' \u00b7 nethex \u2715');
+    var t='v'+h.version+' \u00b7 pool '+h.pool+(h.nx?' \u00b7 MovieBox \u2713':' \u00b7 MovieBox \u2715');
     document.getElementById('ver').textContent=t;
     document.getElementById('ver2').textContent=t;
   }).catch(function(){});
-  document.getElementById('ver2').textContent='';
 
   rebuild();
 })();

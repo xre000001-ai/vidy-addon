@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.11.6';
+const VERSION = '1.11.7';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -340,6 +340,7 @@ function pathGet(url, via, px, timeoutMs) {
 // ---------- NetHex parallel source (separate source; NEXBASE env, empty = off) ----------
 // vidy servers + NetHex (MovieBox direct-MP4) run in parallel; NetHex cards (♧, distinct style)
 // are appended after the vidy cards. Any NetHex failure/timeout/slow = vidy cards alone, never an error.
+const DBG = !!process.env.VDBG; // সব-debug-লগ-এই-এক-ফ্ল্যাগে-গেটেড (VDBG=1-এ-চালু)
 const NEXBASE = (process.env.NEXBASE || '').replace(/\/$/, '');
 const NXDEADLINE = Number(process.env.NXDEADLINE || 20000); // absolute cap for the whole call
 const NXEXTRA = Number(process.env.NXEXTRA || 1000); // vidy answered from cache -> hold at most this for NetHex (cache-hit calls must stay instant)
@@ -356,19 +357,18 @@ async function nxStreams(imdb, type, s, e) {
     const epP = epMetaForImdb(imdb, type, s, e); // বছর+এপি-টাইটেল — nethex-ফেচের-সমান্তরালে
     const t3 = Date.now();
     const b = await directGet(NEXBASE + '/stream/' + type + '/' + path2 + '.json', 25000);
-    if (process.env.VDBG) console.error('[nxdbg] nethex ' + type + '/' + path2 + ' -> ' + (Date.now() - t3) + 'ms');
-    // v1.11.5: চূড়ান্ত-ইউনিফর্ম-কার্ড — ▥ Q ▥ / ⧉ Title | Year | / ⧠ SsEe • EpTitle / ⊞ Source ⌗ Audio · Subs: n
+    if (DBG) console.error('[nxdbg] nethex ' + type + '/' + path2 + ' -> ' + (Date.now() - t3) + 'ms');
+    // v1.11.7: চূড়ান্ত-ইউনিফর্ম-কার্ড — ⧉ Title | Year | / ⧠ SsEe • EpTitle / ⊞ Server ⌗ Audio (resolution শুধু name-এ, Subs-লেখা নেই)
     const em = await Promise.race([epP.catch(() => null), new Promise(r => setTimeout(() => r(null), 1500))]);
     const arr = (JSON.parse(b).streams || []).filter(x => x && typeof x.url === 'string' && /^https?:/.test(x.url)).map(x => {
       const q2 = (/(\d{3,4})p/.exec(String(x.name || '')) || [])[1] || 'Auto';
       const lang = String(x._lang || '').replace(/\s*dub\s*$/i, '').trim();
       const audio = (!lang || /^original/i.test(lang)) ? 'Original' : lang;
-      const nSub = Number((/\u27e1\s*(\d+)\s*SUB/.exec(String(x.description || '')) || [])[1]) || 0;
       const yr = (/\u25f4\s*(\d{4})/.exec(String(x.description || '')) || [])[1] || (em && em.year) || '';
       const raw = (em && em.name) || (String(x.name || '').split('\u2739')[1] || '').replace(/\s*S\d+\s*-\s*S\d+.*$/i, '').trim() || 'MovieBox'; // শিরোনাম-ও-IMDb-সংগ্রহ
       const H2 = { 'User-Agent': UA, 'Referer': 'https://movieboxonline.net/' };
       const epLine = type === 'series' ? ('\u29e0 S' + (s || 1) + 'E' + (e || 1) + ((em && em.epT) ? ' \u2022 ' + em.epT : '')) : '\u29e0 Movie';
-      const txt = '\u25a5 ' + q2 + ' \u25a5\n\u29c9 ' + raw + (yr ? ' | ' + yr + ' |' : '') + '\n' + epLine + '\n\u229e MovieBox \u2317 ' + audio + (nSub ? ' \u00b7 Subs: ' + nSub : '');
+      const txt = '\u29c9 ' + raw + (yr ? ' | ' + yr + ' |' : '') + '\n' + epLine + '\n\u229e MovieBox \u2317 ' + audio;
       return {
         name: '\u25a5 ' + q2 + ' \u25a5',
         title: txt,
@@ -385,7 +385,7 @@ async function nxStreams(imdb, type, s, e) {
       NXCACHE.set(k, { ts: Date.now(), v: arr });
     }
     return arr;
-  } catch (e2) { if (process.env.VDBG) console.error('[nxdbg] nethex ERR: ' + String(e2 && e2.message).slice(0, 80)); return []; } // NetHex down/slow/empty → silently nothing, vidy never breaks
+  } catch (e2) { if (DBG) console.error('[nxdbg] nethex ERR: ' + String(e2 && e2.message).slice(0, 80)); return []; } // NetHex down/slow/empty → silently nothing, vidy never breaks
 }
 const T2IFLIGHT = new Map(); // dedupe concurrent tmdb→imdb translations (tap + prewarm share one mirror call)
 async function tmdbToImdb(tmdbId, type) { // NetHex is tt-only — translate tmdb-native ids through the mirror
@@ -453,11 +453,11 @@ function nxPrewarm(type, id, s, e) { // series tap → quietly fetch the next 3 
 async function withNx(cardsP, nxP, cfg, t0) {
   // v1.11.2: vidy-মেটা/স্ক্যান-মরলেও (cinemeta-empty / srv-budget / ৪২৯-ঝড়) nx-আর-অনাথ-নয় —
   // ফাঁকা-কার্ড-নিয়ে-nx-hold-তার-সম্পূর্ণ-বরাদ্দ-পায় (Westworld-tapে ১.৪সে-তে-ফাঁকা-উত্তর-গেছিল, nx ৯.৮সে-তে-১০-কার্ড-নিয়ে-এসেছিল-নষ্ট-হয়ে)
-  const cards = await cardsP.catch(e => { if (process.env.VDBG) console.error('[nxdbg] cardsP died: ' + String(e && e.message || e).slice(0, 90) + (e && e.stack ? ' | ' + String(e.stack).split('\n')[1].trim().slice(0, 90) : '')); return []; });
+  const cards = await cardsP.catch(e => { if (DBG) console.error('[nxdbg] cardsP died: ' + String(e && e.message || e).slice(0, 90) + (e && e.stack ? ' | ' + String(e.stack).split('\n')[1].trim().slice(0, 90) : '')); return []; });
   if (!nxP || (cfg && cfg.nx === 0)) return cards; // nx disabled per-source → zero hold, zero cards
   try {
     const el = Date.now() - t0;
-    if (process.env.VDBG) console.error('[nxdbg] withNx el=' + el + 'ms grace-pending');
+    if (DBG) console.error('[nxdbg] withNx el=' + el + 'ms grace-pending');
     // FIRST-COLD-REQUEST goal: everything resolves on tap-1. NetHex starts with the vidy scan,
     // so on a cold call it already had `el` ms — the hold tops it up toward the hard deadline.
     // vidy answered from cache (<400ms) -> instant-path: only NXEXTRA (a cold NetHex resolve
@@ -466,14 +466,14 @@ async function withNx(cardsP, nxP, cfg, t0) {
     // সম্পূর্ণ-হার্ড-বাজেট-ধরে-রাখো — nx-only-ব্যবহারকারীর-প্রথম-ঠান্ডা-ট্যাপ-কখনো-গ্যারান্টেড-ফাঁকা-ফেরত-পাবে-না
     const grace = cards.length === 0 ? Math.max(0, NXHARD - el) : (el < 400 ? NXEXTRA : Math.max(0, Math.min(NXCOLDX, NXHARD - el)));
     const left = Math.max(0, Math.min(NXDEADLINE, el + grace) - el);
-    const nx = await Promise.race([nxP.then(v => { if (process.env.VDBG) console.error('[nxdbg] nxP resolved: ' + (v || []).length + ' cards at ' + (Date.now() - t0) + 'ms'); return v; }).catch(() => []), new Promise(r => setTimeout(() => { if (process.env.VDBG) console.error('[nxdbg] nxP TIMED OUT at ' + (Date.now() - t0) + 'ms'); r(null); }, Math.max(0, left)))]);
+    const nx = await Promise.race([nxP.then(v => { if (DBG) console.error('[nxdbg] nxP resolved: ' + (v || []).length + ' cards at ' + (Date.now() - t0) + 'ms'); return v; }).catch(() => []), new Promise(r => setTimeout(() => { if (DBG) console.error('[nxdbg] nxP TIMED OUT at ' + (Date.now() - t0) + 'ms'); r(null); }, Math.max(0, left)))]);
     if (nx && nx.length) {
       // v1.11.3 per-source filters: NetHex answers to nxq/nxl (its OWN chips), NOT the vidy-side q
       const nxAllow = qToList(cfg && cfg.nxq);
       const nxSel = Array.isArray(cfg && cfg.nxl) ? cfg.nxl : [];
       return cards.concat(nx.filter(x => qPass(x, nxAllow) && nxLangPass(x, nxSel))); // appended last
     }
-  } catch (e) { if (process.env.VDBG) console.error('[nxdbg] withNx ERR: ' + String(e && e.message).slice(0, 80) + ' @ ' + String(e && e.stack).split('\n')[1].trim().slice(0, 100)); }
+  } catch (e) { if (DBG) console.error('[nxdbg] withNx ERR: ' + String(e && e.message).slice(0, 80) + ' @ ' + String(e && e.stack).split('\n')[1].trim().slice(0, 100)); }
   return cards;
 }
 
@@ -554,7 +554,7 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
       const tS = Date.now(); // try-এর-বাইরে — catch-ও-লগ-দেখাতে-পারে
       try {
         const sc = (sc0 && !force) ? sc0 : await getSeed(tmdbId, force);
-        if (process.env.VDBG) console.error('[t1g] ' + srv + ' seed=' + (Date.now() - tS) + 'ms via=' + sc.via);
+        if (DBG) console.error('[t1g] ' + srv + ' seed=' + (Date.now() - tS) + 'ms via=' + sc.via);
         const q = { mediaType: type, tmdbId: String(tmdbId), enc: '2', seed: sc.seed, title: title || '' };
         if (type === 'tv') { q.seasonId = String(s || 1); q.episodeId = String(e || 1); } // ভুল-ছিল s/e — upstream-এগুলো-উপেক্ষা-করত → সবসময়-EP1
         const u = API + '/' + srv + '/sources?' + new URLSearchParams(q).toString();
@@ -562,9 +562,9 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
         // প্রথম-সফল-টা-জেতে, হেরে-যাওয়া-টা-বাদ। প্রতি-সার্ভার-এখনো-এক-স্ক্যান-ফল-দেয়।
         const ct = await hedge2(() => pathGet(u, sc.via, sc.px, 12000), () => pathGet(u, sc.via, sc.px, 12000), 2500, 12500);
         const j = JSON.parse(vidyDecrypt(ct, sc.seed, tmdbId));
-        if (process.env.VDBG) console.error('[t1g] ' + srv + ' fetch=' + (Date.now() - tS) + 'ms n=' + (j.sources || []).length + ' keys=' + Object.keys((j.sources || [])[0] || {}).join(','));
+        if (DBG) console.error('[t1g] ' + srv + ' fetch=' + (Date.now() - tS) + 'ms n=' + (j.sources || []).length);
         if (!j.sources || !j.sources.length) {
-          if (process.env.VDBG) console.error('[t1g] ' + srv + ' EMPTY at ' + (Date.now() - tS) + 'ms');
+          if (DBG) console.error('[t1g] ' + srv + ' EMPTY at ' + (Date.now() - tS) + 'ms');
           SRV_NEG.set(ck, Date.now()); // সব-সার্ভার (টিটিএল-ভেদে) — একই-এপিসোডে-বারবার-হাতুড়ে-নয়
           force = true; return { srv, empty: true };
         }
@@ -576,14 +576,14 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
         const ok = pass.length > 1 ? await probeAny([pass[0].url, pass[1].url]) : (pass.length ? await playable(pass[0].url) : true); // zero filter-matches -> probe skipped entirely
         const ns = (j.subtitles || []).length;
         const nfit = ok ? decorate(j, type, s, e, title || '', cfg, srv).length : 0;
-        if (process.env.VDBG) console.error('[t1g] ' + srv + ' probe=' + (Date.now() - tS) + 'ms ok=' + ok + ' nfit=' + nfit + ' ns=' + ns);
+        if (DBG) console.error('[t1g] ' + srv + ' probe=' + (Date.now() - tS) + 'ms ok=' + ok + ' nfit=' + nfit + ' ns=' + ns);
         if (ok) { // শুধু-বাঁচা-ফল-ক্যাশ-হয় (মৃত/খালি-কখনো-নয়):
           SRV_CACHE.set(ck, { ts: Date.now(), j, ok: true, ns });
           if (SRV_CACHE.size > 400) SRV_CACHE.clear();
         } else SRV_NEG.set(ck, Date.now()); // মৃত-অ্যাসেট-ও-সাম্প্রতিক-ব্যর্থতা — ভ্যারিয়েন্ট-বারবার-প্রোব-করে-বাজেট-পোড়াবে-না
         return { srv, j, ok, ns, nfit };
       } catch (er) {
-        if (process.env.VDBG) console.error('[t1g] ' + srv + ' ERR at ' + (Date.now() - tS) + 'ms: ' + String(er && er.message).slice(0, 60));
+        if (DBG) console.error('[t1g] ' + srv + ' ERR at ' + (Date.now() - tS) + 'ms: ' + String(er && er.message).slice(0, 60));
         SRV_NEG.set(ck, Date.now());
         force = true; return { srv, err: er };
       }
@@ -608,7 +608,7 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
       let fire = null;
       const tmo = setTimeout(() => {
         if (done || !fire) return; // one() won — server is healthy, no neg
-        if (process.env.VDBG) console.error('[t1g] ' + srv + ' BUDGET-CUT');
+        if (DBG) console.error('[t1g] ' + srv + ' BUDGET-CUT');
         SRV_NEG.set(ckFor(srv), Date.now()); // genuine budget timeout — recent-failure marker
         fire({ srv, err: new Error('srv-budget') });
       }, GIANT.indexOf(srv) >= 0 ? (viaProxy ? 9500 : 6500) : (viaProxy ? 8000 : 4500)); // v1.11.2 পথ-সচেতন-বাজেট: সরাসরি-পথে 6.5/4.5সে (ঝুলন্ত-সার্ভার-কখনো-কার্ড-দেয়-না), প্রক্সি-পথে (৪২৯-উইন্ডো) 9.5/8সে — প্রক্সি-চেইনের-সফল-ফেচ ৪.৭-৬.৩সে-তে
@@ -619,7 +619,7 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
     };
     // সবাই-একসাথে-ফেল-করলে (যেমন-upstream-সাময়িক-http_500) ১.২-সে-পরে-এক-বার-অটো-রিট্রাই:
     let rs = await Promise.all(allow.map(s => budget(s)));
-    if (process.env.VDBG) console.error('[t1g] ALL-SERVERS el=' + (Date.now() - t0) + 'ms ok=' + rs.filter(r => r.ok).length + '/' + rs.length);
+    if (DBG) console.error('[t1g] ALL-SERVERS el=' + (Date.now() - t0) + 'ms ok=' + rs.filter(r => r.ok).length + '/' + rs.length);
     if (!rs.some(r => r.ok) && Date.now() - t0 < 7000) { // gate 7s (was 8s): a 7.5s extras-budget first pass used to slip under and push the retry past the gateway cut
       await new Promise(r2 => setTimeout(r2, 1200)); force = true;
       const failed = {};
@@ -665,7 +665,7 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
     const giantsMissing = rs.some(r => GIANT.indexOf(r.srv) >= 0 && (!r.j || !r.ok));
     if (out.length && !giantsMissing) memoSet(key, out);
     else if (out.length) memoShort.set(key, { ts: Date.now(), v: out }); // দৈত্য-মিসিং → ৬০সে-ক্ষণস্থায়ী
-    if (process.env.VDBG) console.error('[vdbg] ' + qsig + ' | ' + rs.map(r => r.srv + ':' + (r.neg ? 'neg' : r.err ? 'err' : r.empty ? 'empty' : 'ok' + r.nfit + '/' + (r.j && r.j.sources || []).length)).join(' '));
+    if (DBG) console.error('[vdbg] ' + qsig + ' | ' + rs.map(r => r.srv + ':' + (r.neg ? 'neg' : r.err ? 'err' : r.empty ? 'empty' : 'ok' + r.nfit + '/' + (r.j && r.j.sources || []).length)).join(' '));
     if (!out.length && lastErr) throw lastErr;
     return out;
   });
@@ -713,19 +713,21 @@ function decorate(j, type, s, e, showTitle, cfg, srv, ext) {
   const seen = {};
   const allow = Array.isArray(cfg.q) ? cfg.q : qToList(cfg.q);
   const cards = (j.sources || []).filter(x => x.url && /^https?:/.test(x.url) && !seen[x.url] && (seen[x.url] = 1)).filter(x => qPass(x, allow)).sort((a, b) => (order[a.quality] ?? 9) - (order[b.quality] ?? 9)).map(x => {
-    const q = String(x.quality || 'Auto').replace('p', '');
+    let q = String(x.quality || 'Auto').replace('p', '');
+    if (!/^\d{3,4}$/.test(q)) q = 'Auto'; // v1.11.7: 'Auto HLS'/'Streamwish'/'Vidara'-জাতীয়-অ-সংখ্যা-লেবেল → Auto (শুধু-আসল-উচ্চতা-সংখ্যা-থাকে)
     const sd = ((srv || 'vidy').charAt(0).toUpperCase() + (srv || 'vidy').slice(1)); // কার্ডে-সার্ভার-নাম
     // v1.11.6: ঘরে-সবসময়-সার্ভারের-নাম; সোর্স-নাম-শুধু-সার্ভার-বিহীন-সোর্সে (MovieBox নিজে-নেয়)
     const yTx = (ext && ext.year) ? ' | ' + ext.year + ' |' : '';
+    // v1.11.7: description = ⧉ Title | Year | / ⧠ SsEe • EpTitle / ⊞ Server ⌗ Audio — resolution নয়, Subs-লেখা নয় (resolution শুধু name-ঘরে)
     const epLine = type === 'tv'
-      ? '\u29e0 S' + s + 'E' + e + ((ext && ext.epT) ? ' \u2022 ' + ext.epT : '') + (subs.length ? ' \u00b7 Subs: ' + subs.length : '')
+      ? '\u29e0 S' + s + 'E' + e + ((ext && ext.epT) ? ' \u2022 ' + ext.epT : '')
       : '\u29e0 Movie';
-    const txt = '\u25a5 ' + q.replace('Auto HLS', 'Auto') + ' \u25a5\n\u29c9 ' + (showTitle || 'Vidy') + yTx + '\n' + epLine + '\n\u229e ' + sd + ' \u2317 ' + ((ext && ext.audio) || 'Original');
+    const txt = '\u29c9 ' + (showTitle || 'Vidy') + yTx + '\n' + epLine + '\n\u229e ' + sd + ' \u2317 ' + ((ext && ext.audio) || 'Original');
     return {
       name: '\u25a5 ' + q.replace('Auto HLS', 'Auto') + ' \u25a5',
       title: txt,
       description: txt,
-      quality: q === 'Auto HLS' ? '' : q,
+      quality: q === 'Auto' ? '' : q,
       url: String(x.url),
       headers: headers,
       behaviorHints: { notWebReady: true, proxyHeaders: { request: headers } },
