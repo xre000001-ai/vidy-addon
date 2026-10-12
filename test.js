@@ -32,6 +32,9 @@ async function tap(label, url, checks) {
   ok(s.every(c => String(c.description || '').includes('\u29e0 ')), 'description: \u29e0 episode line');
   ok(s.every(c => /\u229e .+ \u2317 .+/.test(String(c.description || '').split('\n').pop())), 'description: "\u229e slot \u2317 audio" last');
   ok(!s.some(c => audioOf(c) === 'Original'), 'audio: no lazy "Original" (real language names)');
+  ok(s.every(c => !Array.isArray(c.subtitles) || c.subtitles.every(u2 => typeof u2.url === 'string' && /^https?:/.test(u2.url) && typeof u2.lang === 'string' && !!u2.lang && typeof u2.title === 'string')), 'subtitles: schema-safe (url/title/lang strings)');
+  ok(s.every(c => c.quality === '' || /^\d{3,4}$/.test(String(c.quality))), 'quality field sane');
+  ok(ms < 15000, 'latency < 15s (' + ms + 'ms)');
   if (checks) checks(s, mb, v);
   return { s, mb, v };
 }
@@ -44,7 +47,7 @@ async function tap(label, url, checks) {
   try { h = await (await fetch(BASE + '/_health')).json(); } catch (e) {}
   try { m = await (await fetch(BASE + '/manifest.json')).json(); } catch (e) {}
   ok(h && h.ok === 1, 'health ok' + (h ? ' (v' + h.version + ', pool ' + h.pool + ', nx ' + h.nx + ')' : ''));
-  ok(h && h.version === '1.11.9', 'version = 1.11.9');
+  ok(h && h.version === '1.11.10', 'version = 1.11.10');
   ok(m && m.id === 'community.xre.vidy', 'manifest id');
   try {
     const html = await (await fetch(BASE + '/configure')).text();
@@ -94,6 +97,11 @@ async function tap(label, url, checks) {
   });
   await tap('cfg nxl=[russian]', cfgUrl({ nxl: ['russian'] }, '/stream/movie/tt0468569.json'), (s, mb) => {
     ok(mb.length >= 1 && mb.every(c => audioOf(c) === 'Russian'), 'russian audio only');
+  });
+
+  // ── safety-net: series without s:e → S1E1 ──
+  await tap('series tt0903747 (no s:e safety-net)', BASE + '/stream/series/tt0903747.json', (s) => {
+    ok(s.length === 0 || s.every(c => /\u29e0 S1E1/.test(c.description)), 'defaults to S1E1');
   });
 
   // ── summary ──

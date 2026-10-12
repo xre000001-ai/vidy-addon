@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.11.9';
+const VERSION = '1.11.10';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -96,14 +96,15 @@ const HAGENT = new http.Agent({ keepAlive: true, maxSockets: 32 }); // কান
 const SAGENT = new https.Agent({ keepAlive: true, maxSockets: 32 });
 const HAGENTP = new http.Agent({ keepAlive: false, maxSockets: 16 }); // প্রোব-একবার-ই-চলে — ক্লিন-ক্লোজ
 const SAGENTP = new https.Agent({ keepAlive: false, maxSockets: 16 });
-function directGet(url, timeoutMs, _re) {
+function directGet(url, timeoutMs, _re, _hop) {
   return new Promise((resolve, reject) => {
     const u = new URL(url);
     const mod = u.protocol === 'http:' ? http : https;
     const req = mod.get(url, { headers: { 'User-Agent': UA, 'Accept': '*/*' }, timeout: timeoutMs, agent: u.protocol === 'http:' ? HAGENT : SAGENT }, res => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
         res.resume();
-        return resolve(directGet(new URL(res.headers.location, url).toString(), timeoutMs));
+        if ((_hop || 0) >= 4) return reject(Object.assign(new Error('redirect-loop'), { code: 310 })); // লুপিং-রিডাইরেক্ট-স্টপ
+        return resolve(directGet(new URL(res.headers.location, url).toString(), timeoutMs, _re, (_hop || 0) + 1));
       }
       const chunks = [];
       res.on('data', d => chunks.push(d));
@@ -156,9 +157,18 @@ function proxiedGet(px, url, timeoutMs) {
         tl.write('GET ' + (u.pathname + u.search) + ' HTTP/1.1\r\nHost: ' + u.hostname + '\r\nUser-Agent: ' + UA + '\r\nAccept: */*\r\nConnection: close\r\n\r\n');
         const chunks = [buf.slice(i + 4)];
         let headTxt = '';
+        let hdrDone = false;
         tl.on('data', d2 => {
-          if (!headTxt) { headTxt += d2.toString('latin1'); if (headTxt.indexOf('\r\n\r\n') < 0) return; const j = headTxt.indexOf('\r\n\r\n'); chunks.push(Buffer.from(headTxt.slice(j + 4), 'latin1')); headTxt = headTxt.slice(0, j); }
-          else chunks.push(d2);
+          if (!hdrDone) { // হেডার-দুই-রেকর্ডে-ভাগ-হলেও-ঠিক (আগে: !headTxt-চেকে ২য়-অংশ-বডিতে-গুলে-যেত)
+            headTxt += d2.toString('latin1');
+            const j = headTxt.indexOf('\r\n\r\n');
+            if (j < 0) return;
+            hdrDone = true;
+            chunks.push(Buffer.from(headTxt.slice(j + 4), 'latin1'));
+            headTxt = headTxt.slice(0, j);
+            return;
+          }
+          chunks.push(d2);
         });
         tl.on('close', () => {
           clearTimeout(hardTo);
@@ -188,7 +198,7 @@ function racePool(url, n, timeoutMs) {
   return new Promise((resolve, reject) => {
     let done = false;
     const to = setTimeout(() => { if (!done) { done = true; reject(new Error('race-timeout')); } }, timeoutMs);
-    let ok = 0, fails = 0;
+    let fails = 0;
     for (const c of cands) {
       proxiedGet(c.px, url, timeoutMs).then(body => {
         if (done) return;
@@ -221,6 +231,7 @@ function catalogMeta(type, q, cfg, gn, skip) {
   const gid = genreIds(type, gn);
   let url;
   let cap = 14;
+  const off = (skip || 0) % cap; // ইন-পেজ-অফসেট — skip=14-আগে-পেজ-১-রিপিট-হত
   if (q) {
     url = TMDBP + '/search/' + type + '?language=en-US&query=' + encodeURIComponent(q);
   } else if (gid.length || cfg.lang || cfg.era || cfg.sort !== 'pop' || skip) {
@@ -232,21 +243,21 @@ function catalogMeta(type, q, cfg, gn, skip) {
     else qs.push('sort_by=popularity.desc');
     if (cfg.era) qs.push((type === 'tv' ? 'first_air_date.gte=' : 'primary_release_date.gte=') + cfg.era + '-01-01');
     const base = TMDBP + '/discover/' + type + '?language=en-US&' + qs.join('&');
-    const p0 = 1 + Math.floor((skip || 0) / 20); // জনর-মোডেও-স্ক্রল-পেজিনেশন (৪-পেজ-জানালা)
+    const p0 = 1 + Math.floor((skip || 0) / cap); // জনর-মোডেও-স্ক্রল-পেজিনেশন (৪-পেজ-জানালা, cap-সমলাইন)
     const pages = gid.length ? [p0, p0 + 1, p0 + 2, p0 + 3] : [p0];
     const one = () => Promise.all(pages.map(p =>
       directGet(base + '&page=' + p, 14000).then(b => (JSON.parse(b).results || []), () => [])
     )).then(lists => {
       let all = [].concat.apply([], lists);
       if (gid.length) all = all.filter(x => gid.every(gi => (x.genre_ids || []).indexOf(gi) !== -1));
-      return Promise.all(all.slice(0, cap).map(x => tmdbMeta(x, type))).then(arr => arr.filter(Boolean));
+      return Promise.all(all.slice(off, off + cap).map(x => tmdbMeta(x, type))).then(arr => arr.filter(Boolean));
     });
     return one().catch(() => new Promise(r => setTimeout(r, 900)).then(one)); // থ্রটল-এ-১-রিট্রি
   } else {
     url = TMDBP + '/' + (type === 'tv' ? 'tv/top_rated' : 'movie/popular') + '?language=en-US';
   }
   const one = () => directGet(url, 14000).then(b => {
-    const list = (JSON.parse(b).results || []).slice(0, cap);
+    const list = (JSON.parse(b).results || []).slice(off, off + cap);
     return Promise.all(list.map(x => tmdbMeta(x, type))).then(arr => arr.filter(Boolean));
   });
   return one().catch(() => new Promise(r => setTimeout(r, 900)).then(one)); // থ্রটল-এ-১-রিট্রি
@@ -304,7 +315,7 @@ function hedge2(f0, f1, delayMs, hardMs) { // প্রথম-সফল-উত�
     const win = v => { if (!done) { done = true; resolve(v); } };
     const die = () => { if (!done) { done = true; reject(new Error('hedge-dead')); } };
     f0().then(win, () => {});
-    setTimeout(() => f1().then(win, () => {}), delayMs);
+    setTimeout(() => { if (!done) f1().then(win, () => {}); }, delayMs); // f0 জিতে-থাকলে-ডাবল-কল-ই-হবে-না (আপস্ট্রিম-429-লোড-অর্ধেক)
     setTimeout(die, hardMs);
   });
 }
@@ -361,8 +372,11 @@ async function nxStreams(imdb, type, s, e) {
     const b = await directGet(NEXBASE + '/stream/' + type + '/' + path2 + '.json', 25000);
     if (DBG) console.error('[nxdbg] nethex ' + type + '/' + path2 + ' -> ' + (Date.now() - t3) + 'ms');
     // v1.11.7: চূড়ান্ত-ইউনিফর্ম-কার্ড — ⧉ Title | Year | / ⧠ SsEe • EpTitle / ⊞ Server ⌗ Audio (resolution শুধু name-এ, Subs-লেখা নেই)
-    const em = await Promise.race([epP.catch(() => null), new Promise(r => setTimeout(() => r(null), 1500))]);
-    const olN = langName(await raceVal(olP2, 1500));
+    const [em, olRaw] = await Promise.all([
+      Promise.race([epP.catch(() => null), new Promise(r => setTimeout(() => r(null), 1500))]),
+      raceVal(olP2, 1500)
+    ]);
+    const olN = langName(olRaw);
     const arr = (JSON.parse(b).streams || []).filter(x => x && typeof x.url === 'string' && /^https?:/.test(x.url)).map(x => {
       const q2 = (/(\d{3,4})p/.exec(String(x.name || '')) || [])[1] || 'Auto';
       const lang = String(x._lang || '').replace(/\s*dub\s*$/i, '').trim();
@@ -425,9 +439,9 @@ async function origLangCore(k, url) {
       const j = JSON.parse(b);
       const cand = j.original_language !== undefined ? j : ((j.movie_results || []).concat(j.tv_results || []))[0] || {}; // detail অথবা find-এর-প্রথম-ফল
       const v = String(cand.original_language || '').toLowerCase();
-      if (v) { OL_CACHE.set(k, { ts: Date.now(), v }); return v; }
-      return '';
-    } catch (eO) { return ''; }
+      if (v) { OL_CACHE.set(k, { ts: Date.now(), v }); if (OL_CACHE.size > 5000) OL_CACHE.clear(); return v; }
+      OL_CACHE.set(k, { ts: Date.now() - 21000000, v: '' }); return ''; // টিএমডিবি-ও-জানে-না → ১০মিন-নেগেটিভ (ts-পেছনে-ঘূর্ণিত; প্রতি-ট্যাপে-৮সে-রিট্রাই-নয়)
+    } catch (eO) { return ''; } // নেটওয়ার্ক-ব্যর্থতা → নেগেটিভ-নয় (পরের-কলে-আবার-চেষ্টা)
     finally { OL_FLIGHT.delete(k); }
   })();
   OL_FLIGHT.set(k, pr);
@@ -637,7 +651,7 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
         // v1.11.9: Auto-লেবেল-থাকলে-master-playlist-পড়ে-আসল-সর্বোচ্চ-উচ্চতা-বসে ('Auto er jaigai highest resolution')
         const autoRows = pass.filter(x => !/^\d{3,4}$/.test(String(x.quality || '').replace('p', '')));
         let autoH = 0;
-        const ok = autoRows.length ? await (async () => { const r = await probePlaylist(autoRows[0].url); autoH = r.h || 0; return r.ok; })()
+        const ok = autoRows.length ? await (async () => { let r = await probePlaylist(autoRows[0].url); if (!r.ok && autoRows[1]) r = await probePlaylist(autoRows[1].url); autoH = r.h || 0; return r.ok; })() // প্রথম-auto-মৃত → ২য়-auto-চেষ্টা
           : (pass.length > 1 ? await probeAny([pass[0].url, pass[1].url]) : (pass.length ? await playable(pass[0].url) : true)); // zero filter-matches -> probe skipped entirely
         if (autoH) j.sources.forEach(x => { if (!/^\d{3,4}$/.test(String(x.quality || '').replace('p', ''))) x.quality = autoH + 'p'; });
         const ns = (j.subtitles || []).length;
@@ -696,8 +710,10 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
     // v1.11.5: এপি-মেটা (বছর+টাইটেল) এসে-গেলে-কার্ডে-বসাও — সর্বোচ্চ ১.৮সে-অপেক্ষা (স্ক্যান-চলার-সময়েই-সাধারণত-আসে):
     let EXT0 = null;
     try {
-      const em = await Promise.race([epMetaP, new Promise(r => setTimeout(() => r(null), 1800))]);
-      const olc = await raceVal(olP, 1800); // আসল-ভাষা-নাম (hi→Hindi, bn→Bengali, ta→Tamil…)
+      const [em, olc] = await Promise.all([ // দুই-মেটা-একসাথে — worst-case +১.৮সে (আগে-পরপর-দুই-রেসে +৩.৬সে)
+        Promise.race([epMetaP.catch(() => null), new Promise(r => setTimeout(() => r(null), 1800))]),
+        raceVal(olP, 1800) // আসল-ভাষা-নাম (hi→Hindi, bn→Bengali, ta→Tamil…)
+      ]);
       if (em || olc) EXT0 = { year: (em && em.year) || '', epT: (em && em.epT) || '', audio: langName(olc) || '' };
     } catch (eE) {}
     // মার্জ: কোনো-ক্রস-সার্ভার-ডিউপ-নয় — প্রতিটা-সার্ভারের-প্রতিটা-স্ট্রিম-কার্ড-থাকবে;
@@ -791,7 +807,7 @@ function decorate(j, type, s, e, showTitle, cfg, srv, ext) {
       : '\u29e0 Movie';
     const txt = '\u29c9 ' + (showTitle || 'Vidy') + yTx + '\n' + epLine + '\n\u229e ' + sd + ' \u2317 ' + ((ext && ext.audio) || 'Original');
     return {
-      name: '\u25a5 ' + q.replace('Auto HLS', 'Auto') + ' \u25a5',
+      name: '\u25a5 ' + q + ' \u25a5',
       title: txt,
       description: txt,
       quality: q === 'Auto' ? '' : q,
