@@ -47,7 +47,7 @@ async function tap(label, url, checks) {
   try { h = await (await fetch(BASE + '/_health')).json(); } catch (e) {}
   try { m = await (await fetch(BASE + '/manifest.json')).json(); } catch (e) {}
   ok(h && h.ok === 1, 'health ok' + (h ? ' (v' + h.version + ', pool ' + h.pool + ', nx ' + h.nx + ')' : ''));
-  ok(h && h.version === '1.11.11', 'version = 1.11.11');
+  ok(h && h.version === '1.11.12', 'version = 1.11.12');
   ok(m && m.id === 'community.xre.vidy', 'manifest id');
   try {
     const html = await (await fetch(BASE + '/configure')).text();
@@ -97,6 +97,11 @@ async function tap(label, url, checks) {
   });
   await tap('cfg nxl=[russian]', cfgUrl({ nxl: ['russian'] }, '/stream/movie/tt0468569.json'), (s, mb) => {
     ok(mb.length >= 1 && mb.every(c => audioOf(c) === 'Russian'), 'russian audio only');
+  });
+  await tap('cfg nxl=[original,hindi]', cfgUrl({ nxl: ['original', 'hindi'] }, '/stream/movie/tt0468569.json'), (s, mb) => {
+    ok(mb.some(c => audioOf(c) === 'English'), 'moviebox: original row survives "original" chip (labeled English)');
+    ok(mb.some(c => audioOf(c) === 'Hindi'), 'moviebox: Hindi row present');
+    ok(mb.length >= 2 && mb.every(c => ['English', 'Hindi'].indexOf(audioOf(c)) >= 0), 'only original+hindi rows');
   });
 
   // ── safety-net: series without s:e → S1E1 ──

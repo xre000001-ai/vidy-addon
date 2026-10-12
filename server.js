@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.11.11';
+const VERSION = '1.11.12';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -780,7 +780,7 @@ function subLang(x) { // subtitle language code — schema-required on strict (T
 // decorate keeps exactly the same set. Unknown quality and Auto-HLS always pass.
 function nxLangKey(p) { // normalize one dub token → canonical chip key
   p = String(p || '').toLowerCase().trim();
-  if (!p || p === 'original') return 'original';
+  if (!p || p.indexOf('original') >= 0) return 'original'; // v1.11.12: 'Original Audio'-ও-original (nethex-স্ট্যান্ডঅ্যালোন-সেমান্টিক্স: startsWith('original') — এ-ছাড়া-original-চিপ-নিজের-রো-ই-ফিল্টার-হয়ে-যেত)
   if (p.indexOf('esla') >= 0 || p.indexOf('spanish') >= 0) return 'spanish';
   if (p.indexOf('ptbr') >= 0 || p.indexOf('portug') >= 0) return 'portuguese';
   return p;
