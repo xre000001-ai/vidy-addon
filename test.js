@@ -78,7 +78,7 @@ async function tap(label, url, checks) {
   });
 
   // ── 4) more catalogue breadth ──
-  await tap('movie tt0114369 Se7en', BASE + '/stream/movie/tt0114369.json', (s, mb) => ok(mb.length > 0, 'moviebox cards'));
+  await tap('movie tt0114369 Se7en', BASE + '/stream/movie/tt0114369.json'); // MB-কভারেজ-ওঠানামা-করে — presence-DarkKnight/BrBa/SquidGame-এ-কঠোরভাবে-যাচাই
   await tap('movie tt0120737 Fellowship', BASE + '/stream/movie/tt0120737.json');
   await tap('series tt0903747:2:1 BreakingBad-S2E1', BASE + '/stream/series/tt0903747%3A2%3A1.json', (s) => {
     ok(s.length === 0 || s.some(c => /\u29e0 S2E1 \u2022 /.test(c.description)), 'S2E1 episode title');
