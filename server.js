@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.11.2';
+const VERSION = '1.11.3';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -367,6 +367,7 @@ async function nxStreams(imdb, type, s, e) {
         title: info || String(x.name || ''),
         description: info || String(x.name || ''),
         quality: q2,
+        _lang: lang,
         url: String(x.url),
         headers: H2,
         behaviorHints: { notWebReady: false, proxyHeaders: { request: Object.assign({}, H2, { 'Origin': 'https://movieboxonline.net' }) } }
@@ -416,7 +417,7 @@ async function withNx(cardsP, nxP, cfg, t0) {
   // v1.11.2: vidy-মেটা/স্ক্যান-মরলেও (cinemeta-empty / srv-budget / ৪২৯-ঝড়) nx-আর-অনাথ-নয় —
   // ফাঁকা-কার্ড-নিয়ে-nx-hold-তার-সম্পূর্ণ-বরাদ্দ-পায় (Westworld-tapে ১.৪সে-তে-ফাঁকা-উত্তর-গেছিল, nx ৯.৮সে-তে-১০-কার্ড-নিয়ে-এসেছিল-নষ্ট-হয়ে)
   const cards = await cardsP.catch(e => { if (process.env.VDBG) console.error('[nxdbg] cardsP died: ' + String(e && e.message || e).slice(0, 90) + (e && e.stack ? ' | ' + String(e.stack).split('\n')[1].trim().slice(0, 90) : '')); return []; });
-  if (!nxP) return cards;
+  if (!nxP || (cfg && cfg.nx === 0)) return cards; // nx disabled per-source → zero hold, zero cards
   try {
     const el = Date.now() - t0;
     if (process.env.VDBG) console.error('[nxdbg] withNx el=' + el + 'ms grace-pending');
@@ -424,12 +425,16 @@ async function withNx(cardsP, nxP, cfg, t0) {
     // so on a cold call it already had `el` ms — the hold tops it up toward the hard deadline.
     // vidy answered from cache (<400ms) -> instant-path: only NXEXTRA (a cold NetHex resolve
     // catches the next tap via its own background re-resolve + cache).
-    const grace = el < 400 ? NXEXTRA : Math.max(0, Math.min(NXCOLDX, NXHARD - el));
+    // v1.11.3: কার্ড-একদম-শূন্য (v=0 nx-only মোড, বা vidy কিছু-পায়নি) → NXEXTRA-র ১সে-নয়,
+    // সম্পূর্ণ-হার্ড-বাজেট-ধরে-রাখো — nx-only-ব্যবহারকারীর-প্রথম-ঠান্ডা-ট্যাপ-কখনো-গ্যারান্টেড-ফাঁকা-ফেরত-পাবে-না
+    const grace = cards.length === 0 ? Math.max(0, NXHARD - el) : (el < 400 ? NXEXTRA : Math.max(0, Math.min(NXCOLDX, NXHARD - el)));
     const left = Math.max(0, Math.min(NXDEADLINE, el + grace) - el);
     const nx = await Promise.race([nxP.then(v => { if (process.env.VDBG) console.error('[nxdbg] nxP resolved: ' + (v || []).length + ' cards at ' + (Date.now() - t0) + 'ms'); return v; }).catch(() => []), new Promise(r => setTimeout(() => { if (process.env.VDBG) console.error('[nxdbg] nxP TIMED OUT at ' + (Date.now() - t0) + 'ms'); r(null); }, Math.max(0, left)))]);
     if (nx && nx.length) {
-      const allow = Array.isArray(cfg && cfg.q) ? cfg.q : qToList(cfg && cfg.q);
-      return cards.concat(nx.filter(x => qPass(x, allow))); // same quality filter discipline, appended last
+      // v1.11.3 per-source filters: NetHex answers to nxq/nxl (its OWN chips), NOT the vidy-side q
+      const nxAllow = qToList(cfg && cfg.nxq);
+      const nxSel = Array.isArray(cfg && cfg.nxl) ? cfg.nxl : [];
+      return cards.concat(nx.filter(x => qPass(x, nxAllow) && nxLangPass(x, nxSel))); // appended last
     }
   } catch (e) {}
   return cards;
@@ -631,6 +636,21 @@ function subLang(x) { // subtitle language code — schema-required on strict (T
 }
 // v1.9.0: shared quality-filter predicate — one() probes ONLY assets the filter would serve,
 // decorate keeps exactly the same set. Unknown quality and Auto-HLS always pass.
+function nxLangKey(p) { // normalize one dub token → canonical chip key
+  p = String(p || '').toLowerCase().trim();
+  if (!p || p === 'original') return 'original';
+  if (p.indexOf('esla') >= 0 || p.indexOf('spanish') >= 0) return 'spanish';
+  if (p.indexOf('ptbr') >= 0 || p.indexOf('portug') >= 0) return 'portuguese';
+  return p;
+}
+function nxLangPass(x, sel) { // sel empty = every language stays
+  if (!sel || !sel.length) return true;
+  const raw = String(x._lang || '').replace(/\s*dub\s*$/i, '').trim();
+  if (!raw) return sel.indexOf('original') >= 0;
+  const parts = raw.split('/').map(nxLangKey);
+  if (parts.indexOf('original') >= 0) return sel.indexOf('original') >= 0;
+  return parts.some(pt => sel.indexOf(pt) >= 0);
+}
 function qPass(x, allow) {
   if (!allow || !allow.length) return true;
   const h = parseInt(String(x.quality || '0'), 10) || 0;
@@ -685,7 +705,7 @@ function qToList(q) { // মাল্টি-রেজোলিউশন: অ্�
   const n = Math.min(2160, Math.max(0, Number(q) || 0));
   return n ? QH.filter(h => h <= n) : [];
 }
-const DEFAULT_CFG = { q: 0, sub: 1, cat: 'kd,mv', lang: '', sort: 'pop', era: '', g: [], srv: [] };
+const DEFAULT_CFG = { q: 0, sub: 1, cat: 'kd,mv', lang: '', sort: 'pop', era: '', g: [], srv: [], v: 1, nx: 1, nxq: 0, nxl: [] }; // v/nx = per-source master switches; nxq/nxl = NetHex's OWN quality/audio-language filters (independent of the vidy-side q)
 function parseCfgFromObj(o) {
   const c = Object.assign({}, DEFAULT_CFG, { g: [] });
   if (o) {
@@ -697,6 +717,10 @@ function parseCfgFromObj(o) {
     if (['2020', '2010', '2000'].indexOf(o.era) >= 0) c.era = o.era;
     if (Array.isArray(o.g)) c.g = o.g.map(String).map(x => x.trim()).filter(Boolean).slice(0, 4);
     if (Array.isArray(o.srv)) c.srv = o.srv.map(x => String(x).toLowerCase()).filter(x => SERVERS.indexOf(x) >= 0).slice(0, 16);
+    if (o.v === 0 || o.v === '0') c.v = 0;
+    if (o.nx === 0 || o.nx === '0') c.nx = 0;
+    if (o.nxq !== undefined && o.nxq !== null && o.nxq !== '') c.nxq = qToList(o.nxq);
+    if (Array.isArray(o.nxl)) c.nxl = o.nxl.map(x => String(x).toLowerCase().replace(/[^a-z]/g, '')).filter(x => x.length >= 2 && x.length <= 12).slice(0, 12);
   }
   return c;
 }
@@ -708,7 +732,7 @@ function manifest(cfg) {
     id: 'community.xre.vidy',
     version: VERSION,
     name: 'Vidy',
-    description: 'Stream-only: movies & series via Vidy — up to 4K, original audio, subtitles. 16 servers scanned in parallel (Miami·Boise·Atlanta primaries + Phoenix·Dallas·Austin·Seattle·Delhi·Munich·Cancun·Vegas·Oakland·Orlando·Paris·Reno·Tampa); every card shows its server.',
+    description: 'Stream-only, two parallel sources: Vidy (16 servers, up to 4K, subtitles) + NetHex/MovieBox (direct-MP4 dubs) — every card shows its source & server; each source keeps its own filters (quality, audio language, servers).',
     author: 'xre000001-ai',
     resources: ['stream'],
     types: ['movie', 'series'],
@@ -745,7 +769,7 @@ const server = http.createServer((req, res) => {
     if (cm2) { cfg = decodeCfg(cm2[1]); p = cm2[2]; }
     else {
       const qs = new URL(req.url, 'http://x').searchParams;
-      if ([...qs.keys()].length) cfg = parseCfgFromObj({ q: qs.get('q') || qs.get('maxq'), sub: qs.get('sub') === '0' ? 0 : 1, cat: qs.get('cat') || '', lang: qs.get('lang') || '', sort: qs.get('sort') || '', era: qs.get('era') || '', g: (qs.get('g') || '').split(',').filter(Boolean), srv: (qs.get('srv') || '').split(',').filter(Boolean) });
+      if ([...qs.keys()].length) cfg = parseCfgFromObj({ q: qs.get('q') || qs.get('maxq'), sub: qs.get('sub') === '0' ? 0 : 1, cat: qs.get('cat') || '', lang: qs.get('lang') || '', sort: qs.get('sort') || '', era: qs.get('era') || '', g: (qs.get('g') || '').split(',').filter(Boolean), srv: (qs.get('srv') || '').split(',').filter(Boolean), v: qs.get('v') === '0' ? 0 : undefined, nx: qs.get('nx') === '0' ? 0 : undefined, nxq: qs.get('nxq') || undefined, nxl: qs.get('nxl') ? qs.get('nxl').split(',') : undefined });
     }
     if (!cfg) cfg = Object.assign({}, DEFAULT_CFG, { g: [], srv: [] });
     if (p === '/' || p === '/config' || p === '/configure') return sendFile2(res, 'config.html');
@@ -775,40 +799,45 @@ const server = http.createServer((req, res) => {
     if ((m = p.match(/^\/stream\/movie\/tmdb(\d+)\.json$/))) {
       const t0 = Date.now();
       const tp = nameForTmdb(Number(m[1]), 'movie'); // টাইটেল-আর-sources-একসাথে-ছোটা — টাইটেল-শুধু-কার্ডের-জন্য
-      const nxP = nxFor('movie', String(m[1]), 0, 0);
-      return withNx(getSources(Number(m[1]), 'movie', null, null, '', cfg, tp), nxP, cfg, t0).then(
+      const vOn = !(cfg && cfg.v === 0), nxOn = !(cfg && cfg.nx === 0); // per-source masters
+      const nxP = nxOn ? nxFor('movie', String(m[1]), 0, 0) : null;
+      return withNx(vOn ? getSources(Number(m[1]), 'movie', null, null, '', cfg, tp) : Promise.resolve([]), nxP, cfg, t0).then(
         cards => { logReq(p, Date.now() - t0, (cards || []).length); sendJson(res, 200, { streams: cards || [] }); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message); sendJson(res, 200, { streams: [] }); });
     }
     if ((m = p.match(/^\/stream\/series\/tmdb(\d+):?(?:(\d+):(\d+))?\.json$/))) {
       const t0 = Date.now();
       const tp = nameForTmdb(Number(m[1]), 'series');
-      const nxP = nxFor('series', String(m[1]), Number(m[2] || 1), Number(m[3] || 1));
-      nxPrewarm('series', String(m[1]), Number(m[2] || 1), Number(m[3] || 1));
-      return withNx(getSources(Number(m[1]), 'tv', Number(m[2] || 1), Number(m[3] || 1), '', cfg, tp), nxP, cfg, t0).then(
+      const vOn = !(cfg && cfg.v === 0), nxOn = !(cfg && cfg.nx === 0); // per-source masters
+      const nxP = nxOn ? nxFor('series', String(m[1]), Number(m[2] || 1), Number(m[3] || 1)) : null;
+      if (nxOn) nxPrewarm('series', String(m[1]), Number(m[2] || 1), Number(m[3] || 1));
+      return withNx(vOn ? getSources(Number(m[1]), 'tv', Number(m[2] || 1), Number(m[3] || 1), '', cfg, tp) : Promise.resolve([]), nxP, cfg, t0).then(
         cards => { logReq(p, Date.now() - t0, (cards || []).length); sendJson(res, 200, { streams: cards || [] }); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message); sendJson(res, 200, { streams: [] }); });
     }
     if ((m = p.match(/^\/stream\/movie\/(tt\d+)\.json$/))) {
       const t0 = Date.now();
-      const nxP = nxFor('movie', m[1], 0, 0);
-      return withNx(findTmdbInfo(m[1], 'movie').then(info => (info && info.id > 0) ? getSources(info.id, 'movie', null, null, info.name, cfg) : Promise.resolve([])), nxP, cfg, t0).then(
+      const vOn = !(cfg && cfg.v === 0), nxOn = !(cfg && cfg.nx === 0); // per-source masters
+      const nxP = nxOn ? nxFor('movie', m[1], 0, 0) : null;
+      return withNx(vOn ? findTmdbInfo(m[1], 'movie').then(info => (info && info.id > 0) ? getSources(info.id, 'movie', null, null, info.name, cfg) : Promise.resolve([])) : Promise.resolve([]), nxP, cfg, t0).then(
         cards => { logReq(p, Date.now() - t0, (cards || []).length); sendJson(res, 200, { streams: cards || [] }); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message); sendJson(res, 200, { streams: [] }); });
     }
     if ((m = p.match(/^\/stream\/series\/(tt\d+):(\d+):(\d+)\.json$/))) {
       const t0 = Date.now();
-      const nxP = nxFor('series', m[1], Number(m[2]), Number(m[3]));
-      nxPrewarm('series', m[1], Number(m[2]), Number(m[3]));
-      return withNx(findTmdbInfo(m[1], 'series').then(info => (info && info.id > 0) ? getSources(info.id, 'tv', Number(m[2]), Number(m[3]), info.name, cfg) : Promise.resolve([])), nxP, cfg, t0).then(
+      const vOn = !(cfg && cfg.v === 0), nxOn = !(cfg && cfg.nx === 0); // per-source masters
+      const nxP = nxOn ? nxFor('series', m[1], Number(m[2]), Number(m[3])) : null;
+      if (nxOn) nxPrewarm('series', m[1], Number(m[2]), Number(m[3]));
+      return withNx(vOn ? findTmdbInfo(m[1], 'series').then(info => (info && info.id > 0) ? getSources(info.id, 'tv', Number(m[2]), Number(m[3]), info.name, cfg) : Promise.resolve([])) : Promise.resolve([]), nxP, cfg, t0).then(
         cards => { logReq(p, Date.now() - t0, (cards || []).length); sendJson(res, 200, { streams: cards || [] }); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message); sendJson(res, 200, { streams: [] }); });
     }
     if ((m = p.match(/^\/stream\/series\/(tt\d+)\.json$/))) { // সেফটি-নেট: s:e-ছাড়া কল → S1E1
       const t0 = Date.now();
-      const nxP = nxFor('series', m[1], 1, 1);
-      nxPrewarm('series', m[1], 1, 1);
-      return withNx(findTmdbInfo(m[1], 'series').then(info => (info && info.id > 0) ? getSources(info.id, 'tv', 1, 1, info.name, cfg) : Promise.resolve([])), nxP, cfg, t0).then(
+      const vOn = !(cfg && cfg.v === 0), nxOn = !(cfg && cfg.nx === 0); // per-source masters
+      const nxP = nxOn ? nxFor('series', m[1], 1, 1) : null;
+      if (nxOn) nxPrewarm('series', m[1], 1, 1);
+      return withNx(vOn ? findTmdbInfo(m[1], 'series').then(info => (info && info.id > 0) ? getSources(info.id, 'tv', 1, 1, info.name, cfg) : Promise.resolve([])) : Promise.resolve([]), nxP, cfg, t0).then(
         cards => { logReq(p + ' [no-s:e]', Date.now() - t0, (cards || []).length); sendJson(res, 200, { streams: cards || [] }); },
         e => { logReq(p + ' [no-s:e]', Date.now() - t0, 0, e && e.message); sendJson(res, 200, { streams: [] }); });
     }
