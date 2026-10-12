@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.11.10';
+const VERSION = '1.11.11';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -450,6 +450,9 @@ async function origLangCore(k, url) {
 const origLangForTmdb = (tmdbId, type) => origLangCore('t:' + tmdbId, TMDBP + '/' + (type === 'tv' ? 'tv/' : 'movie/') + tmdbId);
 const origLangForImdb = imdb => origLangCore('i:' + imdb, 'https://db.wecollege.net/3/find/' + imdb + '?api_key=' + TMDBK + '&external_source=imdb_id');
 const langName = c => LANG_NAMES[c] || '';
+// v1.11.11: HLS-মাস্টার-নিজে-অডিও-ভাষা-ঘোষণা-করলে (EXT-X-MEDIA LANGUAGE="da") সেটাই-সত্য — ISO-639-2/3 → নাম
+const ISO3 = { eng: 'English', dan: 'Danish', ben: 'Bengali', hin: 'Hindi', spa: 'Spanish', fra: 'French', fre: 'French', deu: 'German', ger: 'German', rus: 'Russian', por: 'Portuguese', ita: 'Italian', jpn: 'Japanese', kor: 'Korean', zho: 'Mandarin', cmn: 'Mandarin', tam: 'Tamil', tel: 'Telugu', mal: 'Malayalam', kan: 'Kannada', mar: 'Marathi', pan: 'Punjabi', urd: 'Urdu', ara: 'Arabic', tur: 'Turkish', tha: 'Thai', ind: 'Indonesian', msa: 'Malay', may: 'Malay', fas: 'Persian', per: 'Persian', nld: 'Dutch', dut: 'Dutch', pol: 'Polish', swe: 'Swedish', nor: 'Norwegian', fin: 'Finnish', vie: 'Vietnamese', heb: 'Hebrew', ell: 'Greek', gre: 'Greek', hun: 'Hungarian', ron: 'Romanian', rum: 'Romanian', ces: 'Czech', cze: 'Czech', ukr: 'Ukrainian', srp: 'Serbian', hrv: 'Croatian', bul: 'Bulgarian', kat: 'Georgian', geo: 'Georgian', mya: 'Burmese', bur: 'Burmese', sin: 'Sinhala', nep: 'Nepali', fil: 'Filipino', tgl: 'Filipino', und: '', mis: '', qaa: '', zxx: '' };
+const iso3Name = c => ISO3[String(c || '').toLowerCase()] || '';
 async function raceVal(pr, ms) { return Promise.race([pr.catch(() => ''), new Promise(r => setTimeout(() => r(''), ms))]); }
 
 // ---------- v1.11.5 card meta: বছর + প্রতি-এপিসোডের-নাম (Cinemeta, ৬ঘণ্টা-ক্যাশ) ----------
@@ -554,7 +557,8 @@ function probePlaylist(u, hop) { // Auto-HLS-master পড়ে-সর্বো
           const bws = [...t.matchAll(/BANDWIDTH=(\d+)/g)].map(m => Number(m[1]));
           if (bws.length) { const b = Math.max(...bws); h = b >= 2200000 ? 1080 : b >= 900000 ? 720 : b >= 450000 ? 480 : 360; }
         }
-        resolve({ ok: true, h });
+        const auds = [...new Set([...t.matchAll(/TYPE=AUDIO[^>'"\n]*?LANGUAGE="([a-zA-Z]{2,3})"/g)].map(m2 => iso3Name(m2[1])).filter(Boolean))]; // সোর্স-নিজের-ঘোষণা — TMDB-অনুমানের-চেয়ে-সত্য
+        resolve({ ok: true, h, auds });
       });
       res.on('error', () => resolve({ ok: false, h: 0 }));
     });
@@ -638,6 +642,7 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
         const ct = await hedge2(() => pathGet(u, sc.via, sc.px, 12000), () => pathGet(u, sc.via, sc.px, 12000), 2500, 12500);
         const j = JSON.parse(vidyDecrypt(ct, sc.seed, tmdbId));
         if (DBG) console.error('[t1g] ' + srv + ' fetch=' + (Date.now() - tS) + 'ms n=' + (j.sources || []).length + ' | jkeys=' + Object.keys(j).join(',') + ' | s0=' + JSON.stringify((j.sources || [])[0] || {}).slice(0, 220) + (j.audios ? ' | audios=' + JSON.stringify(j.audios).slice(0, 200) : '') + (j.audio ? ' | audio=' + JSON.stringify(j.audio).slice(0, 120) : ''));
+        if (DBG && j.playlist) console.error('[t1g] ' + srv + ' PLAYLIST=' + JSON.stringify(j.playlist).slice(0, 500));
         if (!j.sources || !j.sources.length) {
           if (DBG) console.error('[t1g] ' + srv + ' EMPTY at ' + (Date.now() - tS) + 'ms');
           SRV_NEG.set(ck, Date.now()); // সব-সার্ভার (টিটিএল-ভেদে) — একই-এপিসোডে-বারবার-হাতুড়ে-নয়
@@ -651,8 +656,18 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
         // v1.11.9: Auto-লেবেল-থাকলে-master-playlist-পড়ে-আসল-সর্বোচ্চ-উচ্চতা-বসে ('Auto er jaigai highest resolution')
         const autoRows = pass.filter(x => !/^\d{3,4}$/.test(String(x.quality || '').replace('p', '')));
         let autoH = 0;
-        const ok = autoRows.length ? await (async () => { let r = await probePlaylist(autoRows[0].url); if (!r.ok && autoRows[1]) r = await probePlaylist(autoRows[1].url); autoH = r.h || 0; return r.ok; })() // প্রথম-auto-মৃত → ২য়-auto-চেষ্টা
-          : (pass.length > 1 ? await probeAny([pass[0].url, pass[1].url]) : (pass.length ? await playable(pass[0].url) : true)); // zero filter-matches -> probe skipped entirely
+        // v1.11.11: payload-এর-নিজস্ব-মাস্টার (j.playlist) আগে — ওখানেই EXT-X-MEDIA-অডিও-ঘোষণা; মৃত-হলে-আগের-সব-পথ-অক্ষত
+        const masterU = (j.playlist && /^https?:/.test(String(j.playlist))) ? String(j.playlist) : '';
+        let pr = masterU ? await probePlaylist(masterU) : null;
+        if (!pr || !pr.ok) {
+          if (autoRows.length) { let r2 = await probePlaylist(autoRows[0].url); if (!r2.ok && autoRows[1]) r2 = await probePlaylist(autoRows[1].url); if (!pr || r2.ok) pr = r2; }
+          else if (pass.length > 1) pr = { ok: await probeAny([pass[0].url, pass[1].url]), h: 0, auds: [] };
+          else if (pass.length) pr = { ok: await playable(pass[0].url), h: 0, auds: [] };
+          else if (!pr) pr = { ok: true, h: 0, auds: [] }; // zero filter-matches -> probe skipped entirely
+        }
+        autoH = pr.h || 0;
+        if (pr.auds && pr.auds.length) j._audN = pr.auds.join('/'); // সোর্স-ঘোষিত-ভাষা — TMDB-অনুমানকে-হারায়
+        const ok = !!pr.ok;
         if (autoH) j.sources.forEach(x => { if (!/^\d{3,4}$/.test(String(x.quality || '').replace('p', ''))) x.quality = autoH + 'p'; });
         const ns = (j.subtitles || []).length;
         const nfit = ok ? decorate(j, type, s, e, title || '', cfg, srv).length : 0;
@@ -805,7 +820,7 @@ function decorate(j, type, s, e, showTitle, cfg, srv, ext) {
     const epLine = type === 'tv'
       ? '\u29e0 S' + s + 'E' + e + ((ext && ext.epT) ? ' \u2022 ' + ext.epT : '')
       : '\u29e0 Movie';
-    const txt = '\u29c9 ' + (showTitle || 'Vidy') + yTx + '\n' + epLine + '\n\u229e ' + sd + ' \u2317 ' + ((ext && ext.audio) || 'Original');
+    const txt = '\u29c9 ' + (showTitle || 'Vidy') + yTx + '\n' + epLine + '\n\u229e ' + sd + ' \u2317 ' + (j._audN || (ext && ext.audio) || 'Original'); // সোর্স-ঘোষিত > TMDB > Original
     return {
       name: '\u25a5 ' + q + ' \u25a5',
       title: txt,

@@ -47,7 +47,7 @@ async function tap(label, url, checks) {
   try { h = await (await fetch(BASE + '/_health')).json(); } catch (e) {}
   try { m = await (await fetch(BASE + '/manifest.json')).json(); } catch (e) {}
   ok(h && h.ok === 1, 'health ok' + (h ? ' (v' + h.version + ', pool ' + h.pool + ', nx ' + h.nx + ')' : ''));
-  ok(h && h.version === '1.11.10', 'version = 1.11.10');
+  ok(h && h.version === '1.11.11', 'version = 1.11.11');
   ok(m && m.id === 'community.xre.vidy', 'manifest id');
   try {
     const html = await (await fetch(BASE + '/configure')).text();
