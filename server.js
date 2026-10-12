@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.11.12';
+const VERSION = '1.11.13';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -380,7 +380,7 @@ async function nxStreams(imdb, type, s, e) {
     const arr = (JSON.parse(b).streams || []).filter(x => x && typeof x.url === 'string' && /^https?:/.test(x.url)).map(x => {
       const q2 = (/(\d{3,4})p/.exec(String(x.name || '')) || [])[1] || 'Auto';
       const lang = String(x._lang || '').replace(/\s*dub\s*$/i, '').trim();
-      const audio = (!lang || /^original/i.test(lang)) ? (olN || 'Original') : lang; // ডাব-র-নিজের-নাম; না-হলে-আসল-ভাষা
+      const audio = (!lang || /^original/i.test(lang)) ? (olN || 'Original Audio') : lang; // ডাব-র-নিজের-নাম; না-হলে-আসল-ভাষা; TMDB-ও-না-জানলে-স্পষ্ট-'Original Audio' (nethex-প্যারিটি)
       const yr = (/\u25f4\s*(\d{4})/.exec(String(x.description || '')) || [])[1] || (em && em.year) || '';
       const raw = (em && em.name) || (String(x.name || '').split('\u2739')[1] || '').replace(/\s*S\d+\s*-\s*S\d+.*$/i, '').trim() || 'MovieBox'; // শিরোনাম-ও-IMDb-সংগ্রহ
       const H2 = { 'User-Agent': UA, 'Referer': 'https://movieboxonline.net/' };
@@ -394,7 +394,8 @@ async function nxStreams(imdb, type, s, e) {
         _lang: lang,
         url: String(x.url),
         headers: H2,
-        behaviorHints: { notWebReady: false, proxyHeaders: { request: Object.assign({}, H2, { 'Origin': 'https://movieboxonline.net' }) } }
+        behaviorHints: { notWebReady: false, isBingeable: true, filename: 'stream.mp4', proxyHeaders: { request: Object.assign({}, H2, { 'Origin': 'https://movieboxonline.net' }) } },
+        bingeGroup: 'mbxr|' + raw + '::|' + (/^original/i.test(lang) ? 'Original' : lang) // nethex-প্যারিটি — বিংগে-গ্রুপিং-অডিও-ভাগে
       };
     });
     if (arr.length) { // empty is NEVER cached — a rate-limited/slow NetHex window must not poison the key for 30min (same rule as inside NetHex itself); the next tap re-fetches
@@ -405,17 +406,19 @@ async function nxStreams(imdb, type, s, e) {
   } catch (e2) { if (DBG) console.error('[nxdbg] nethex ERR: ' + String(e2 && e2.message).slice(0, 80)); return []; } // NetHex down/slow/empty → silently nothing, vidy never breaks
 }
 const T2IFLIGHT = new Map(); // dedupe concurrent tmdb→imdb translations (tap + prewarm share one mirror call)
+const SUBS_CACHE = new Map(); // subtitles-রিসোর্স → ৩০মিন (চাইল্ডের-ব্যয়বহুল-চেইন-পুনরাবৃত্তি-নয়)
 async function tmdbToImdb(tmdbId, type) { // NetHex is tt-only — translate tmdb-native ids through the mirror
   const k = 't2i:' + type + ':' + tmdbId;
   const hit = memoGet(k, 86400000);
   if (hit) return hit;
+  if (memoGet(k + ':neg', 600000)) return ''; // ব্যর্থ-অনুবাদ-মাত্র-১০মিন — প্রতি-ট্যাপে-১০সে-টাইমআউট-পোড়ানো-নয়
   const fl = T2IFLIGHT.get(k);
   if (fl) return fl;
   const pr = (async () => {
     try {
       const b = await directGet(TMDBP + '/' + (type === 'tv' || type === 'series' ? 'tv/' : 'movie/') + tmdbId + '/external_ids', 10000);
       const v = JSON.parse(b).imdb_id || '';
-      if (v) memoSet(k, v);
+      if (v) memoSet(k, v); else memoSet(k + ':neg', 1);
       return v;
     } catch (e) { return ''; }
     finally { T2IFLIGHT.delete(k); }
@@ -820,7 +823,7 @@ function decorate(j, type, s, e, showTitle, cfg, srv, ext) {
     const epLine = type === 'tv'
       ? '\u29e0 S' + s + 'E' + e + ((ext && ext.epT) ? ' \u2022 ' + ext.epT : '')
       : '\u29e0 Movie';
-    const txt = '\u29c9 ' + (showTitle || 'Vidy') + yTx + '\n' + epLine + '\n\u229e ' + sd + ' \u2317 ' + (j._audN || (ext && ext.audio) || 'Original'); // সোর্স-ঘোষিত > TMDB > Original
+    const txt = '\u29c9 ' + (showTitle || 'Vidy') + yTx + '\n' + epLine + '\n\u229e ' + sd + ' \u2317 ' + (j._audN || (ext && ext.audio) || 'Original Audio'); // সোর্স-ঘোষিত > TMDB > Original Audio
     return {
       name: '\u25a5 ' + q + ' \u25a5',
       title: txt,
@@ -882,7 +885,7 @@ function manifest(cfg) {
     name: 'Vidy',
     description: 'Stream-only, two parallel sources: Vidy (16 servers, up to 4K, subtitles) + MovieBox (direct-MP4 dubs & multi-audio) — every card in one unified format; each source keeps its own filters (quality, audio language, servers).',
     author: 'xre000001-ai',
-    resources: ['stream'],
+    resources: ['stream', 'subtitles'], // v1.11.13: MovieBox-সাবটাইটেল-ট্র্যাক-পুনরুদ্ধার (স্ট্যান্ডঅ্যালোন-nethex-এর-/subtitles-রুট-পোর্টে-হারিয়ে-গিয়েছিল)
     types: ['movie', 'series'],
     idPrefixes: ['tt', 'tmdb'],
     catalogs: []
@@ -988,6 +991,25 @@ const server = http.createServer((req, res) => {
       return withNx(vOn ? findTmdbInfo(m[1], 'series').then(info => (info && info.id > 0) ? getSources(info.id, 'tv', 1, 1, info.name, cfg) : Promise.resolve([])) : Promise.resolve([]), nxP, cfg, t0).then(
         cards => { logReq(p + ' [no-s:e]', Date.now() - t0, (cards || []).length); sendJson(res, 200, { streams: cards || [] }); },
         e => { logReq(p + ' [no-s:e]', Date.now() - t0, 0, e && e.message); sendJson(res, 200, { streams: [] }); });
+    }
+    // ── subtitles-রিসোর্স (MovieBox-সাবটাইটেল-ট্র্যাক — এমবেডেড-চাইল্ডের-/subtitles-প্রক্সি) ──
+    if ((m = p.match(/^\/subtitles\/(movie|series)\/([^/]+?)(?:\.json)?$/))) {
+      const t0 = Date.now();
+      const done2 = arr => { logReq(p, Date.now() - t0, (arr || []).length); sendJson(res, 200, { subtitles: arr || [] }); };
+      if (!NEXBASE) return done2([]);
+      const sk = 'subs:' + m[1] + ':' + String(m[2]);
+      const sh = SUBS_CACHE.get(sk);
+      if (sh && (Date.now() - sh.ts) < 1800000) return done2(sh.arr); // চাইল্ডের-চেইন-ব্যয়বহুল (মেটা+সার্চ+ম্যাট্রিক্স) — ৩০মিন-ক্যাশ
+      (async () => {
+        let id2 = String(m[2]);
+        if (/^tmdb\d+$/.test(id2)) { const iv = await tmdbToImdb(id2.slice(4), m[1] === 'series' ? 'tv' : 'movie'); if (!iv) return done2([]); id2 = iv; } // Nuvio-tmdb-আইডি
+        const b = await directGet(NEXBASE + '/subtitles/' + m[1] + '/' + encodeURIComponent(id2) + '.json', 18000);
+        const arr = (JSON.parse(b).subtitles || []).filter(x => x && x.url).map(x => ({ id: String(x.id || x.lang || 'sub'), url: String(x.url), lang: String(x.lang || 'Unknown') }));
+        const fin = arr.filter(x => /^https?:/.test(x.url)); // কঠোর-স্কিমা: url/lang-স্ট্রিং, প্রত্যাখ্যাত-কখনো-নয় (1.10.2-শ্রেণি)
+        if (fin.length) { if (SUBS_CACHE.size > 200) SUBS_CACHE.clear(); SUBS_CACHE.set(sk, { ts: Date.now(), arr: fin }); } // খালি-কখনো-ক্যাশ-নয় (কভারেজ-ওঠানামা-করে)
+        done2(fin);
+      })().catch(e2 => { if (DBG) console.error('[nxdbg] subs ERR: ' + String(e2 && e2.message).slice(0, 60)); done2([]); });
+      return;
     }
     sendJson(res, 404, { error: 'not found' });
   } catch (e) { sendJson(res, 500, { error: String(e && e.message) }); }

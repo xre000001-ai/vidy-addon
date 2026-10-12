@@ -47,7 +47,7 @@ async function tap(label, url, checks) {
   try { h = await (await fetch(BASE + '/_health')).json(); } catch (e) {}
   try { m = await (await fetch(BASE + '/manifest.json')).json(); } catch (e) {}
   ok(h && h.ok === 1, 'health ok' + (h ? ' (v' + h.version + ', pool ' + h.pool + ', nx ' + h.nx + ')' : ''));
-  ok(h && h.version === '1.11.12', 'version = 1.11.12');
+  ok(h && h.version === '1.11.13', 'version = 1.11.13');
   ok(m && m.id === 'community.xre.vidy', 'manifest id');
   try {
     const html = await (await fetch(BASE + '/configure')).text();
@@ -103,6 +103,17 @@ async function tap(label, url, checks) {
     ok(mb.some(c => audioOf(c) === 'Hindi'), 'moviebox: Hindi row present');
     ok(mb.length >= 2 && mb.every(c => ['English', 'Hindi'].indexOf(audioOf(c)) >= 0), 'only original+hindi rows');
   });
+
+  // ── subtitles রিসোর্স (MovieBox-ট্র্যাক — 1.11.13-পুনরুদ্ধার) ──
+  try {
+    let sj = await (await fetch(BASE + '/subtitles/movie/tt0468569.json', { signal: AbortSignal.timeout(40000) })).json();
+    if (!sj.subtitles.length) sj = await (await fetch(BASE + '/subtitles/movie/tt0468569.json', { signal: AbortSignal.timeout(40000) })).json(); // ঠান্ডা-চাইল্ড-চেইনে-১-রিট্রাই
+    ok(Array.isArray(sj.subtitles), 'subtitles resource: array');
+    ok(sj.subtitles.every(u3 => typeof u3.url === 'string' && /^https?:/.test(u3.url) && typeof u3.lang === 'string' && !!u3.lang && typeof u3.id === 'string'), 'subtitles resource: schema-safe (id/url/lang strings)');
+    ok(sj.subtitles.length > 0, 'subtitles resource: MB tracks present (' + sj.subtitles.length + ')');
+  } catch (e2) { ok(false, 'subtitles resource: ' + e2.message); }
+  ok(s.every(c => !c.bingeGroup || String(c.bingeGroup).indexOf('mbxr|') === 0), 'bingeGroup: mbxr| prefixed (MovieBox parity)');
+  ok(s.every(c => !c.behaviorHints || typeof c.behaviorHints === 'object'), 'behaviorHints sane');
 
   // ── safety-net: series without s:e → S1E1 ──
   await tap('series tt0903747 (no s:e safety-net)', BASE + '/stream/series/tt0903747.json', (s) => {
