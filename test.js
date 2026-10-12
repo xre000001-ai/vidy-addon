@@ -44,7 +44,7 @@ async function tap(label, url, extra) {
   try { h = await (await fetch(BASE + '/_health')).json(); } catch (e) {}
   try { m = await (await fetch(BASE + '/manifest.json')).json(); } catch (e) {}
   ok(h && h.ok === 1, 'health ok' + (h ? ' (v' + h.version + ', pool ' + h.pool + ')' : ''));
-  ok(h && h.version === '1.11.7', 'version = 1.11.7');
+  ok(h && h.version === '1.11.8', 'version = 1.11.8');
   ok(m && m.id === 'community.xre.vidy', 'manifest id');
 
   // 0b) configure page sanity

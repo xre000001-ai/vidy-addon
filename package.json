@@ -8,5 +8,9 @@
   },
   "engines": {
     "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "undici": "^6.21.0"
   }
 }

@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.11.7';
+const VERSION = '1.11.8';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -341,7 +341,8 @@ function pathGet(url, via, px, timeoutMs) {
 // vidy servers + NetHex (MovieBox direct-MP4) run in parallel; NetHex cards (♧, distinct style)
 // are appended after the vidy cards. Any NetHex failure/timeout/slow = vidy cards alone, never an error.
 const DBG = !!process.env.VDBG; // সব-debug-লগ-এই-এক-ফ্ল্যাগে-গেটেড (VDBG=1-এ-চালু)
-const NEXBASE = (process.env.NEXBASE || '').replace(/\/$/, '');
+// v1.11.8: NEXBASE-বাইরে-থেকে-দেওয়া-যায়; না-দিলে-ভেন্ডর-করা-MovieBox(nethex)-চাইল্ড-নিজেই-বুট-হয় (এক-অ্যাপ-ডিপ্লয়)
+let NEXBASE = (process.env.NEXBASE || '').replace(/\/$/, '');
 const NXDEADLINE = Number(process.env.NXDEADLINE || 20000); // absolute cap for the whole call
 const NXEXTRA = Number(process.env.NXEXTRA || 1000); // vidy answered from cache -> hold at most this for NetHex (cache-hit calls must stay instant)
 const NXCOLDX = Number(process.env.NXCOLDX || 4000); // vidy did a cold scan -> NetHex rode the scan in parallel, so it earned a longer hold on the FIRST cold request
@@ -896,8 +897,35 @@ const server = http.createServer((req, res) => {
 });
 // অলস-keep-alive-সকেট-প্রতি-৬০সে-পুড়িয়ে-দেওয়া — দীর্ঘ-অলসতায়-NAT-যেগুলো-নিঃশব্দে-কেটে-দেয় (বিংগের-মধ্যে-তাজা-থাকে):
 setInterval(() => { try { HAGENT.destroy(); SAGENT.destroy(); } catch (e) {} }, 60000).unref();
+// ---------- v1.11.8 embedded MovieBox (vendored nethex child; single-app deploy) ----------
+function startEmbeddedNx() {
+  return new Promise(resolve => {
+    try {
+      if (!fs.existsSync(path.join(__dirname, 'nethex', 'server.js'))) return resolve('');
+      const nxPort = Number(process.env.PORT || 7000) + 137;
+      const child = require('child_process').spawn(process.execPath, [path.join(__dirname, 'nethex', 'server.js')], {
+        env: Object.assign({}, process.env, { PORT: String(nxPort), NX_POOL_FILE: path.join(__dirname, 'vidy_proxy_pool.json') }),
+        stdio: 'ignore',
+      });
+      child.on('exit', c2 => { if (DBG) console.error('[nx-embed] child exited ' + c2); });
+      const t0 = Date.now();
+      (function ping() {
+        const rq = http.get({ host: '127.0.0.1', port: nxPort, path: '/manifest.json', timeout: 1500 }, r => {
+          r.resume();
+          if (r.statusCode === 200) { const u = 'http://127.0.0.1:' + nxPort; console.log('[nx-embed] MovieBox child ready on ' + u); return resolve(u); }
+          retry();
+        });
+        rq.on('error', retry); rq.on('timeout', () => { rq.destroy(); retry(); });
+        function retry() { if (Date.now() - t0 > 20000) { console.error('[nx-embed] child not ready in 20s — MovieBox off'); return resolve(''); } setTimeout(ping, 500); }
+      })();
+    } catch (eE) { console.error('[nx-embed] spawn failed: ' + eE.message); resolve(''); }
+  });
+}
 const PORT = Number(process.env.PORT || 7000);
-server.listen(PORT, '0.0.0.0', () => console.log('[vidy] ' + VERSION + ' on :' + PORT + ' | pool=' + POOL.length));
+(async () => {
+  if (!NEXBASE) NEXBASE = await startEmbeddedNx();
+  server.listen(PORT, '0.0.0.0', () => console.log('[vidy] ' + VERSION + ' on :' + PORT + ' | pool=' + POOL.length + (NEXBASE ? ' | moviebox embedded' : '')));
+})();
 
 // ---------- selftest ----------
 if (process.argv[2] === 'selftest') {
