@@ -742,7 +742,7 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
         if (DBG) console.error('[t1g] ' + srv + ' BUDGET-CUT');
         SRV_NEG.set(ckFor(srv), Date.now()); // genuine budget timeout — recent-failure marker
         fire({ srv, err: new Error('srv-budget') });
-      }, GIANT.indexOf(srv) >= 0 ? (viaProxy ? 9500 : 6500) : (viaProxy ? 8000 : 4500)); // v1.11.2 পথ-সচেতন-বাজেট: সরাসরি-পথে 6.5/4.5সে (ঝুলন্ত-সার্ভার-কখনো-কার্ড-দেয়-না), প্রক্সি-পথে (৪২৯-উইন্ডো) 9.5/8সে — প্রক্সি-চেইনের-সফল-ফেচ ৪.৭-৬.৩সে-তে
+      }, GIANT.indexOf(srv) >= 0 ? (viaProxy ? 8500 : 5500) : (viaProxy ? 7000 : 3800)); // v1.11.2 পথ-সচেতন-বাজেট: সরাসরি-পথে 6.5/4.5সে (ঝুলন্ত-সার্ভার-কখনো-কার্ড-দেয়-না), প্রক্সি-পথে (৪২৯-উইন্ডো) 9.5/8সে — প্রক্সি-চেইনের-সফল-ফেচ ৪.৭-৬.৩সে-তে
       return Promise.race([
         one(srv, negBypass).then(r => { done = true; clearTimeout(tmo); return r; }), // timer cleared on win — no dangling timeouts
         new Promise(r => { fire = r; })
@@ -927,9 +927,9 @@ function manifest(cfg, origin) {
 
 // ---------- HTTP ----------
 const reqLog = [];
-function logReq(path, ms, n, err) {
-  reqLog.push({ t: new Date().toISOString().slice(11, 19), path: path.slice(0, 60), ms, n, err: err || undefined });
-  if (reqLog.length > 40) reqLog.shift();
+function logReq(path, ms, n, err, ua) {
+  reqLog.push({ t: new Date().toISOString().slice(11, 19), path: path.slice(0, 60), ms, n, err: err || undefined, ua: (ua || '').split(')')[0].split('(')[1] || (ua || '').slice(0, 24) });
+  if (reqLog.length > 60) reqLog.shift();
 }
 function originOf(req) { // beamup-প্রক্সি-Host-হেডার-মাঝে-মাঝে-অভ্যন্তরীণ-নাম (ডট-হীন) → পরিচিত-পাবলিক-ডোমেইন; লোকাল-পরীক্ষায়-http
   const h = req.headers || {};
@@ -951,6 +951,7 @@ function sendFile2(res, name) {
   } catch (e) { return sendJson(res, 500, { error: 'missing ' + name }); }
 }
 const server = http.createServer((req, res) => {
+  const RVA = String(req.headers['user-agent'] || '');
   let pRaw = new URL(req.url, 'http://x').pathname;
   let p;
   try { p = decodeURIComponent(pRaw); } catch (eDec) { p = pRaw; } // ডিভাইস ':'-কে %3A-পাঠায় — ডিকোড-বাধ্যতামূলক
@@ -978,7 +979,7 @@ const server = http.createServer((req, res) => {
     if (p === '/_servers') return sendJson(res, 200, { order: srvOrder(), scores: SRV_SCORE }); // কনফিগ-পেজের-লাইভ-হেলথ
     let m;
     // সব-পথ-লগ (৪০৪-ও-দৃশ্যমান-হোক):
-    logReq(p, 0, -1, 'route-in');
+    logReq(p, 0, -1, 'route-in', RVA);
     // ── catalog (search + genre + skip — NetHex-ধাঁচ):
     if ((m = p.match(/^\/catalog\/(series|movie)\/(vidy-kdrama|vidy-movies)(?:\/(.*))?\.json$/))) {
       const type = m[1] === 'series' ? 'tv' : 'movie';
@@ -1001,8 +1002,8 @@ const server = http.createServer((req, res) => {
       const nxP = nxOn ? nxFor('movie', String(m[1]), 0, 0) : null;
       kickSubs('tmdb' + m[1], 'movie', null, null, cfg);
       return withDeadline(withNx(vOn ? getSources(Number(m[1]), 'movie', null, null, '', cfg, tp) : Promise.resolve([]), nxP, cfg, t0).then(cards => withSubs(cards, 'tmdb' + m[1], 'movie', null, null, cfg)), 11200, p).then(
-        cards => { logReq(p, Date.now() - t0, (cards || []).length); sendJson(res, 200, { streams: cards || [] }); },
-        e => { logReq(p, Date.now() - t0, 0, e && e.message); sendJson(res, 200, { streams: [] }); });
+        cards => { logReq(p, Date.now() - t0, (cards || []).length, null, RVA); sendJson(res, 200, { streams: cards || [] }); },
+        e => { logReq(p, Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }
     if ((m = p.match(/^\/stream\/series\/tmdb(\d+):?(?:(\d+):(\d+))?\.json$/))) {
       const t0 = Date.now();
@@ -1012,8 +1013,8 @@ const server = http.createServer((req, res) => {
       if (nxOn) nxPrewarm('series', String(m[1]), Number(m[2] || 1), Number(m[3] || 1));
       kickSubs('tmdb' + m[1], 'series', Number(m[2] || 1), Number(m[3] || 1), cfg);
       return withDeadline(withNx(vOn ? getSources(Number(m[1]), 'tv', Number(m[2] || 1), Number(m[3] || 1), '', cfg, tp) : Promise.resolve([]), nxP, cfg, t0).then(cards => withSubs(cards, 'tmdb' + m[1], 'series', Number(m[2] || 1), Number(m[3] || 1), cfg)), 11200, p).then(
-        cards => { logReq(p, Date.now() - t0, (cards || []).length); sendJson(res, 200, { streams: cards || [] }); },
-        e => { logReq(p, Date.now() - t0, 0, e && e.message); sendJson(res, 200, { streams: [] }); });
+        cards => { logReq(p, Date.now() - t0, (cards || []).length, null, RVA); sendJson(res, 200, { streams: cards || [] }); },
+        e => { logReq(p, Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }
     if ((m = p.match(/^\/stream\/movie\/(tt\d+)\.json$/))) {
       const t0 = Date.now();
@@ -1021,8 +1022,8 @@ const server = http.createServer((req, res) => {
       const nxP = nxOn ? nxFor('movie', m[1], 0, 0) : null;
       kickSubs(m[1], 'movie', null, null, cfg);
       return withDeadline(withNx(vOn ? findTmdbInfo(m[1], 'movie').then(info => (info && info.id > 0) ? getSources(info.id, 'movie', null, null, info.name, cfg) : Promise.resolve([])) : Promise.resolve([]), nxP, cfg, t0).then(cards => withSubs(cards, m[1], 'movie', null, null, cfg)), 11200, p).then(
-        cards => { logReq(p, Date.now() - t0, (cards || []).length); sendJson(res, 200, { streams: cards || [] }); },
-        e => { logReq(p, Date.now() - t0, 0, e && e.message); sendJson(res, 200, { streams: [] }); });
+        cards => { logReq(p, Date.now() - t0, (cards || []).length, null, RVA); sendJson(res, 200, { streams: cards || [] }); },
+        e => { logReq(p, Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }
     if ((m = p.match(/^\/stream\/series\/(tt\d+):(\d+):(\d+)\.json$/))) {
       const t0 = Date.now();
@@ -1031,8 +1032,8 @@ const server = http.createServer((req, res) => {
       if (nxOn) nxPrewarm('series', m[1], Number(m[2]), Number(m[3]));
       kickSubs(m[1], 'series', Number(m[2]), Number(m[3]), cfg);
       return withDeadline(withNx(vOn ? findTmdbInfo(m[1], 'series').then(info => (info && info.id > 0) ? getSources(info.id, 'tv', Number(m[2]), Number(m[3]), info.name, cfg) : Promise.resolve([])) : Promise.resolve([]), nxP, cfg, t0).then(cards => withSubs(cards, m[1], 'series', Number(m[2]), Number(m[3]), cfg)), 11200, p).then(
-        cards => { logReq(p, Date.now() - t0, (cards || []).length); sendJson(res, 200, { streams: cards || [] }); },
-        e => { logReq(p, Date.now() - t0, 0, e && e.message); sendJson(res, 200, { streams: [] }); });
+        cards => { logReq(p, Date.now() - t0, (cards || []).length, null, RVA); sendJson(res, 200, { streams: cards || [] }); },
+        e => { logReq(p, Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }
     if ((m = p.match(/^\/stream\/series\/(tt\d+)\.json$/))) { // সেফটি-নেট: s:e-ছাড়া কল → S1E1
       const t0 = Date.now();
@@ -1041,8 +1042,8 @@ const server = http.createServer((req, res) => {
       if (nxOn) nxPrewarm('series', m[1], 1, 1);
       kickSubs(m[1], 'series', 1, 1, cfg);
       return withDeadline(withNx(vOn ? findTmdbInfo(m[1], 'series').then(info => (info && info.id > 0) ? getSources(info.id, 'tv', 1, 1, info.name, cfg) : Promise.resolve([])) : Promise.resolve([]), nxP, cfg, t0).then(cards => withSubs(cards, m[1], 'series', 1, 1, cfg)), 11200, p).then(
-        cards => { logReq(p + ' [no-s:e]', Date.now() - t0, (cards || []).length); sendJson(res, 200, { streams: cards || [] }); },
-        e => { logReq(p + ' [no-s:e]', Date.now() - t0, 0, e && e.message); sendJson(res, 200, { streams: [] }); });
+        cards => { logReq(p + ' [no-s:e]', Date.now() - t0, (cards || []).length, null, RVA); sendJson(res, 200, { streams: cards || [] }); },
+        e => { logReq(p + ' [no-s:e]', Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }
     // ── subtitles-রিসোর্স (MovieBox-সাবটাইটেল-ট্র্যাক — এমবেডেড-চাইল্ডের-/subtitles-প্রক্সি) ──
     if ((m = p.match(/^\/subtitles\/(movie|series)\/([^/]+?)(?:\.json)?$/))) {
