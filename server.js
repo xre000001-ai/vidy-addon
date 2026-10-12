@@ -923,10 +923,12 @@ function logReq(path, ms, n, err) {
   reqLog.push({ t: new Date().toISOString().slice(11, 19), path: path.slice(0, 60), ms, n, err: err || undefined });
   if (reqLog.length > 40) reqLog.shift();
 }
-function originOf(req) { // beamup-TLS-পেছনে host-header-ই-সত্য; লোকাল-পরীক্ষায়-http
+function originOf(req) { // beamup-প্রক্সি-Host-হেডার-মাঝে-মাঝে-অভ্যন্তরীণ-নাম (ডট-হীন) → পরিচিত-পাবলিক-ডোমেইন; লোকাল-পরীক্ষায়-http
   const h = req.headers || {};
-  const proto = String(h['x-forwarded-proto'] || '').split(',')[0] || (/^(127\.|localhost|\[)/.test(String(h.host || '')) ? 'http' : 'https');
-  return proto + '://' + (h.host || 'localhost');
+  let host = String(h['x-forwarded-host'] || '').split(',')[0].trim() || String(h.host || '');
+  let proto = String(h['x-forwarded-proto'] || '').split(',')[0].trim() || (/^(127\.|localhost|\[)/.test(host) ? 'http' : 'https');
+  if (!host || host.indexOf('.') < 0) { host = '3404d3c5dc63-vidy.baby-beamup.club'; proto = 'https'; } // অভ্যন্তরীণ-নাম → পাবলিক
+  return proto + '://' + host;
 }
 function sendJson(res, code, obj) {
   const b = Buffer.from(JSON.stringify(obj));
