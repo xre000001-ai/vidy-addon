@@ -436,7 +436,7 @@ async function withNx(cardsP, nxP, cfg, t0) {
       const nxSel = Array.isArray(cfg && cfg.nxl) ? cfg.nxl : [];
       return cards.concat(nx.filter(x => qPass(x, nxAllow) && nxLangPass(x, nxSel))); // appended last
     }
-  } catch (e) {}
+  } catch (e) { if (process.env.VDBG) console.error('[nxdbg] withNx ERR: ' + String(e && e.message).slice(0, 80) + ' @ ' + String(e && e.stack).split('\n')[1].trim().slice(0, 100)); }
   return cards;
 }
 
