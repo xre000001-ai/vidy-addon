@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.11.1';
+const VERSION = '1.11.2';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -176,7 +176,14 @@ function proxiedGet(px, url, timeoutMs) {
   });
 }
 function racePool(url, n, timeoutMs) {
-  const cands = POOL.slice(0, n);
+  // v1.11.2: সুস্থতা-ব্যান্ড-জুড়ে-ছড়ানো-নমুনা — আগে-তালিকার-প্রথম-n-টা-নিত; ওই-৫টা-একসাথে-মৃত-থাকলে
+  // বাকি ১৯-সুস্থ-px-থাকতেও-পুরো-পুল 'pool-exhausted' ঘোষিত-হত ( BreakingBad-runে-ঠিক-তা-ই-হয়েছিল)
+  const srt = POOL.slice().sort((a, b) => (a.ms || 9999) - (b.ms || 9999));
+  const cands = [];
+  for (let i = 0; i < n && srt.length; i++) {
+    const c = srt[Math.floor(i * srt.length / n)];
+    if (c && !cands.some(x => x.px === c.px)) cands.push(c);
+  }
   if (!cands.length) return Promise.reject(new Error('pool-empty'));
   return new Promise((resolve, reject) => {
     let done = false;
@@ -291,6 +298,16 @@ function nameForTmdb(tmdbId, type) {
 // ---------- seed (direct-first → 429-এ pool-race) ----------
 let seedCache = { key: null, seed: null, via: 'direct', px: null, ts: 0 };
 let seedInflight = null; // প্যারালাল-জোড়ায়-এক-ই-সিড-কল-শেয়ার-হোক
+function hedge2(f0, f1, delayMs, hardMs) { // প্রথম-সফল-উত্তর-জয়ী; দুটোই-ব্যর্থ → reject; হারায়নি-একটাও-বাদ
+  return new Promise((resolve, reject) => {
+    let done = false;
+    const win = v => { if (!done) { done = true; resolve(v); } };
+    const die = () => { if (!done) { done = true; reject(new Error('hedge-dead')); } };
+    f0().then(win, () => {});
+    setTimeout(() => f1().then(win, () => {}), delayMs);
+    setTimeout(die, hardMs);
+  });
+}
 function getSeed(tmdbId, force) {
   if (!force && seedCache.seed && seedCache.key === tmdbId && (Date.now() - seedCache.ts) < 45000) { // বিংগে-বান্ধব — সিড-পুনর্ব্যবহার
     return Promise.resolve(seedCache);
@@ -388,12 +405,17 @@ function nxFor(type, id, s, e) { // starts the parallel fetch immediately; null 
 }
 function nxPrewarm(type, id, s, e) { // series tap → quietly fetch the next 3 episodes' NetHex into NXCACHE (binge tap-2 = instant)
   if (!NEXBASE) return;
-  for (let k = 1; k <= 3; k++) {
-    nxFor(type, id, s, e + k).catch(() => {});
-  }
+  // v1.11.2: মূল-ট্যাপের-resolve-পুল-থেকে-প্রথম-কামড়-নেয় (সঙ্গে-সঙ্গে-৪-resolve-প্লাবন-ঠান্ডা-E1-ধীর-করত) — ৯০০ms-দেরি
+  setTimeout(() => {
+    for (let k = 1; k <= 3; k++) {
+      nxFor(type, id, s, e + k).catch(() => {});
+    }
+  }, 900);
 }
 async function withNx(cardsP, nxP, cfg, t0) {
-  const cards = await cardsP;
+  // v1.11.2: vidy-মেটা/স্ক্যান-মরলেও (cinemeta-empty / srv-budget / ৪২৯-ঝড়) nx-আর-অনাথ-নয় —
+  // ফাঁকা-কার্ড-নিয়ে-nx-hold-তার-সম্পূর্ণ-বরাদ্দ-পায় (Westworld-tapে ১.৪সে-তে-ফাঁকা-উত্তর-গেছিল, nx ৯.৮সে-তে-১০-কার্ড-নিয়ে-এসেছিল-নষ্ট-হয়ে)
+  const cards = await cardsP.catch(e => { if (process.env.VDBG) console.error('[nxdbg] cardsP died: ' + String(e && e.message || e).slice(0, 90) + (e && e.stack ? ' | ' + String(e.stack).split('\n')[1].trim().slice(0, 90) : '')); return []; });
   if (!nxP) return cards;
   try {
     const el = Date.now() - t0;
@@ -424,6 +446,16 @@ function srvBump(srv, d) {
 }
 const srvOrder = () => SERVERS.slice().sort((a, b) => (SRV_SCORE[b] || 0) - (SRV_SCORE[a] || 0));
 // প্রথম-সোর্স-URL-বাঁচা-কি-না (master-m3u8-ছোট — সস্তা-GET; Referer-ছাড়া-CDN-403-দেয়):
+function probeAny(urls) { // প্রথম-জীবিত-রায়-সঙ্গে-সঙ্গে-জয়ী; সব-ব্যর্থ-হলেই-মৃত
+  return new Promise(resolve => {
+    let left = urls.length, settled = false;
+    urls.forEach(u => playable(u).then(v => {
+      if (settled) return;
+      if (v) { settled = true; resolve(true); }
+      else if (--left === 0) { settled = true; resolve(false); }
+    }));
+  });
+}
 function playable(u, hop) {
   if (!u || !/^https?:/.test(u)) return Promise.resolve(false);
   return new Promise(resolve => {
@@ -458,6 +490,10 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
     let deadJ = null;
     let deadSrv = null;
     const t0 = Date.now();
+    // v1.11.2: seed-আগেই-একবার (আগেও-প্রতিটা-one()-এর-প্রথম-await-এই-এক-ই-ছিল — লেটেন্সি-অপরিবর্তিত);
+    // পথ-জানা-হলে-বাজেট-পথ-অনুযায়ী: প্রক্সি-চেইন (৪২৯-উইন্ডো) ধীর-কিন্তু-জীবন্ত — বাজেট-প্রশস্ত-না-হলে ৪.৭-৬.৩সে-র-সফল-ফেচ-বাদ-পড়ত
+    const sc0 = await getSeed(tmdbId, false).catch(() => null);
+    const viaProxy = !!(sc0 && sc0.via === 'proxy');
     const ckFor = srv => ['srvc', VERSION, tmdbId, type, s || '', e || '', srv].join('|');
     const allow = srvOrder().filter(srv => !cfg || !Array.isArray(cfg.srv) || !cfg.srv.length || cfg.srv.indexOf(srv) >= 0); // cfg-সার্ভার-সাবসেট
     const one = async (srv, negBypass) => {
@@ -472,29 +508,39 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
         if ((Date.now() - nt) < ttl) return { srv, neg: true };
       }
       // এক-সার্ভার-সম্পূর্ণ-মূল্যায়ন (seed+sources+প্রোব):
+      const tS = Date.now(); // try-এর-বাইরে — catch-ও-লগ-দেখাতে-পারে
       try {
-        const sc = await getSeed(tmdbId, force);
+        const sc = (sc0 && !force) ? sc0 : await getSeed(tmdbId, force);
+        if (process.env.VDBG) console.error('[t1g] ' + srv + ' seed=' + (Date.now() - tS) + 'ms via=' + sc.via);
         const q = { mediaType: type, tmdbId: String(tmdbId), enc: '2', seed: sc.seed, title: title || '' };
         if (type === 'tv') { q.seasonId = String(s || 1); q.episodeId = String(e || 1); } // ভুল-ছিল s/e — upstream-এগুলো-উপেক্ষা-করত → সবসময়-EP1
         const u = API + '/' + srv + '/sources?' + new URLSearchParams(q).toString();
-        const ct = await pathGet(u, sc.via, sc.px, 12000);
+        // v1.11.2 FETCH-HEDGE: আটকে-যাওয়া-আপস্ট্রিম-উত্তরের (phoenix 4.9s, dallas/tampa 7.5s+) +2.5সে-পরে-আরেক-টা-একই-কল;
+        // প্রথম-সফল-টা-জেতে, হেরে-যাওয়া-টা-বাদ। প্রতি-সার্ভার-এখনো-এক-স্ক্যান-ফল-দেয়।
+        const ct = await hedge2(() => pathGet(u, sc.via, sc.px, 12000), () => pathGet(u, sc.via, sc.px, 12000), 2500, 12500);
         const j = JSON.parse(vidyDecrypt(ct, sc.seed, tmdbId));
+        if (process.env.VDBG) console.error('[t1g] ' + srv + ' fetch=' + (Date.now() - tS) + 'ms n=' + (j.sources || []).length);
         if (!j.sources || !j.sources.length) {
+          if (process.env.VDBG) console.error('[t1g] ' + srv + ' EMPTY at ' + (Date.now() - tS) + 'ms');
           SRV_NEG.set(ck, Date.now()); // সব-সার্ভার (টিটিএল-ভেদে) — একই-এপিসোডে-বারবার-হাতুড়ে-নয়
           force = true; return { srv, empty: true };
         }
         // v1.9.0 filter-aware probing: never spend probe time on assets the filter will discard.
         const allowD = Array.isArray(cfg && cfg.q) ? cfg.q : qToList(cfg && cfg.q);
         const pass = (j.sources || []).filter(x => x.url && /^https?:/.test(x.url) && qPass(x, allowD));
-        const ok = pass.length ? await playable(pass[0].url) : true; // zero filter-matches -> probe skipped entirely
+        // v1.11.2 PROBE-RACE: top-2-ফিল্টার-পাস-অ্যাসেট-একসাথে-প্রোব; প্রথম-জীবিত-রায়-তৎক্ষণাৎ-জেতে,
+        // মৃত-রায়-আসে-কেবল-দুটোই-মৃত-হলে। ধীর/মৃত-প্রথম-লিংক-আর-পুরো-সার্ভার-জিম্মি-করে-না।
+        const ok = pass.length > 1 ? await probeAny([pass[0].url, pass[1].url]) : (pass.length ? await playable(pass[0].url) : true); // zero filter-matches -> probe skipped entirely
         const ns = (j.subtitles || []).length;
         const nfit = ok ? decorate(j, type, s, e, title || '', cfg, srv).length : 0;
+        if (process.env.VDBG) console.error('[t1g] ' + srv + ' probe=' + (Date.now() - tS) + 'ms ok=' + ok + ' nfit=' + nfit + ' ns=' + ns);
         if (ok) { // শুধু-বাঁচা-ফল-ক্যাশ-হয় (মৃত/খালি-কখনো-নয়):
           SRV_CACHE.set(ck, { ts: Date.now(), j, ok: true, ns });
           if (SRV_CACHE.size > 400) SRV_CACHE.clear();
         } else SRV_NEG.set(ck, Date.now()); // মৃত-অ্যাসেট-ও-সাম্প্রতিক-ব্যর্থতা — ভ্যারিয়েন্ট-বারবার-প্রোব-করে-বাজেট-পোড়াবে-না
         return { srv, j, ok, ns, nfit };
       } catch (er) {
+        if (process.env.VDBG) console.error('[t1g] ' + srv + ' ERR at ' + (Date.now() - tS) + 'ms: ' + String(er && er.message).slice(0, 60));
         SRV_NEG.set(ck, Date.now());
         force = true; return { srv, err: er };
       }
@@ -519,9 +565,10 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
       let fire = null;
       const tmo = setTimeout(() => {
         if (done || !fire) return; // one() won — server is healthy, no neg
+        if (process.env.VDBG) console.error('[t1g] ' + srv + ' BUDGET-CUT');
         SRV_NEG.set(ckFor(srv), Date.now()); // genuine budget timeout — recent-failure marker
         fire({ srv, err: new Error('srv-budget') });
-      }, GIANT.indexOf(srv) >= 0 ? 10500 : 7500);
+      }, GIANT.indexOf(srv) >= 0 ? (viaProxy ? 9500 : 6500) : (viaProxy ? 8000 : 4500)); // v1.11.2 পথ-সচেতন-বাজেট: সরাসরি-পথে 6.5/4.5সে (ঝুলন্ত-সার্ভার-কখনো-কার্ড-দেয়-না), প্রক্সি-পথে (৪২৯-উইন্ডো) 9.5/8সে — প্রক্সি-চেইনের-সফল-ফেচ ৪.৭-৬.৩সে-তে
       return Promise.race([
         one(srv, negBypass).then(r => { done = true; clearTimeout(tmo); return r; }), // timer cleared on win — no dangling timeouts
         new Promise(r => { fire = r; })
@@ -529,6 +576,7 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
     };
     // সবাই-একসাথে-ফেল-করলে (যেমন-upstream-সাময়িক-http_500) ১.২-সে-পরে-এক-বার-অটো-রিট্রাই:
     let rs = await Promise.all(allow.map(s => budget(s)));
+    if (process.env.VDBG) console.error('[t1g] ALL-SERVERS el=' + (Date.now() - t0) + 'ms ok=' + rs.filter(r => r.ok).length + '/' + rs.length);
     if (!rs.some(r => r.ok) && Date.now() - t0 < 7000) { // gate 7s (was 8s): a 7.5s extras-budget first pass used to slip under and push the retry past the gateway cut
       await new Promise(r2 => setTimeout(r2, 1200)); force = true;
       const failed = {};
