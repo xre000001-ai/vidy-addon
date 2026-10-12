@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.11.5';
+const VERSION = '1.11.6';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -365,10 +365,10 @@ async function nxStreams(imdb, type, s, e) {
       const audio = (!lang || /^original/i.test(lang)) ? 'Original' : lang;
       const nSub = Number((/\u27e1\s*(\d+)\s*SUB/.exec(String(x.description || '')) || [])[1]) || 0;
       const yr = (/\u25f4\s*(\d{4})/.exec(String(x.description || '')) || [])[1] || (em && em.year) || '';
-      const raw = (String(x.name || '').split('\u2739')[1] || '').replace(/\s*S\d+\s*-\s*S\d+.*$/i, '').trim() || 'MovieBox';
+      const raw = (em && em.name) || (String(x.name || '').split('\u2739')[1] || '').replace(/\s*S\d+\s*-\s*S\d+.*$/i, '').trim() || 'MovieBox'; // শিরোনাম-ও-IMDb-সংগ্রহ
       const H2 = { 'User-Agent': UA, 'Referer': 'https://movieboxonline.net/' };
       const epLine = type === 'series' ? ('\u29e0 S' + (s || 1) + 'E' + (e || 1) + ((em && em.epT) ? ' \u2022 ' + em.epT : '')) : '\u29e0 Movie';
-      const txt = '\u29c9 ' + raw + (yr ? ' | ' + yr + ' |' : '') + '\n' + epLine + '\n\u229e MovieBox \u2317 ' + audio + (nSub ? ' \u00b7 Subs: ' + nSub : '');
+      const txt = '\u25a5 ' + q2 + ' \u25a5\n\u29c9 ' + raw + (yr ? ' | ' + yr + ' |' : '') + '\n' + epLine + '\n\u229e MovieBox \u2317 ' + audio + (nSub ? ' \u00b7 Subs: ' + nSub : '');
       return {
         name: '\u25a5 ' + q2 + ' \u25a5',
         title: txt,
@@ -415,10 +415,11 @@ async function epMetaCore(imdb, type) {
   const meta = JSON.parse(b).meta || {};
   const rec = {
     ts: Date.now(),
+    name: String(meta.name || '').slice(0, 80),
     year: String(meta.releaseInfo || meta.year || meta.released || '').slice(0, 4),
     videos: (meta.videos || []).map(v => ({ s: Number(v.season) || 0, e: Number(v.episode) || 0, n: String(v.name || '').slice(0, 60) })).filter(v => v.n),
   };
-  if (rec.year || rec.videos.length) { if (EP_META.size > 200) EP_META.clear(); EP_META.set(imdb, rec); }
+  if (rec.year || rec.videos.length || rec.name) { if (EP_META.size > 200) EP_META.clear(); EP_META.set(imdb, rec); }
   return rec;
 }
 function epMetaForImdb(imdb, type, s, e) {
@@ -428,7 +429,7 @@ function epMetaForImdb(imdb, type, s, e) {
       if (!rec) return null;
       let epT = '';
       if (type === 'tv' || type === 'series') { const v = rec.videos.find(v => v.s === Number(s || 1) && v.e === Number(e || 1)); if (v) epT = v.n; } // 'series'-ও-টিভি
-      return (rec.year || epT) ? { year: rec.year, epT } : null;
+      return (rec.year || epT || rec.name) ? { name: rec.name, year: rec.year, epT } : null;
     } catch (eE) { return null; }
   })();
 }
@@ -714,13 +715,12 @@ function decorate(j, type, s, e, showTitle, cfg, srv, ext) {
   const cards = (j.sources || []).filter(x => x.url && /^https?:/.test(x.url) && !seen[x.url] && (seen[x.url] = 1)).filter(x => qPass(x, allow)).sort((a, b) => (order[a.quality] ?? 9) - (order[b.quality] ?? 9)).map(x => {
     const q = String(x.quality || 'Auto').replace('p', '');
     const sd = ((srv || 'vidy').charAt(0).toUpperCase() + (srv || 'vidy').slice(1)); // কার্ডে-সার্ভার-নাম
-    // v1.11.5: সার্ভার-১-এর-কার্ডে-সোর্স-নামই-বসে, বাকি-সার্ভারে-সার্ভার-নাম (fallback source)
-    const slot = (srv === 'miami') ? 'Vidy' : sd;
+    // v1.11.6: ঘরে-সবসময়-সার্ভারের-নাম; সোর্স-নাম-শুধু-সার্ভার-বিহীন-সোর্সে (MovieBox নিজে-নেয়)
     const yTx = (ext && ext.year) ? ' | ' + ext.year + ' |' : '';
     const epLine = type === 'tv'
       ? '\u29e0 S' + s + 'E' + e + ((ext && ext.epT) ? ' \u2022 ' + ext.epT : '') + (subs.length ? ' \u00b7 Subs: ' + subs.length : '')
       : '\u29e0 Movie';
-    const txt = '\u29c9 ' + (showTitle || 'Vidy') + yTx + '\n' + epLine + '\n\u229e ' + slot + ' \u2317 ' + ((ext && ext.audio) || 'Original');
+    const txt = '\u25a5 ' + q.replace('Auto HLS', 'Auto') + ' \u25a5\n\u29c9 ' + (showTitle || 'Vidy') + yTx + '\n' + epLine + '\n\u229e ' + sd + ' \u2317 ' + ((ext && ext.audio) || 'Original');
     return {
       name: '\u25a5 ' + q.replace('Auto HLS', 'Auto') + ' \u25a5',
       title: txt,
