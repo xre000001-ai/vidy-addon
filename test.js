@@ -32,7 +32,7 @@ async function tap(label, url, checks) {
   ok(s.every(c => String(c.description || '').includes('\u29e0 ')), 'description: \u29e0 episode line');
   ok(s.every(c => /\u229e .+ \u2317 .+/.test(String(c.description || '').split('\n').pop())), 'description: "\u229e slot \u2317 audio" last');
   ok(!s.some(c => audioOf(c) === 'Original'), 'audio: no lazy "Original" (real language names)');
-  ok(s.every(c => !Array.isArray(c.subtitles) || c.subtitles.every(u2 => typeof u2.url === 'string' && /^https?:/.test(u2.url) && typeof u2.lang === 'string' && !!u2.lang && typeof u2.title === 'string')), 'subtitles: schema-safe (url/title/lang strings)');
+  ok(s.every(c => !Array.isArray(c.subtitles) || c.subtitles.every(u2 => typeof u2.url === 'string' && /^https?:/.test(u2.url) && typeof u2.lang === 'string' && !!u2.lang && typeof u2.id === 'string')), 'subtitles: schema-safe (id/url/lang strings)');
   ok(s.every(c => c.quality === '' || /^\d{3,4}$/.test(String(c.quality))), 'quality field sane');
   ok(ms < 15000, 'latency < 15s (' + ms + 'ms)');
   if (checks) checks(s, mb, v);
@@ -47,8 +47,20 @@ async function tap(label, url, checks) {
   try { h = await (await fetch(BASE + '/_health')).json(); } catch (e) {}
   try { m = await (await fetch(BASE + '/manifest.json')).json(); } catch (e) {}
   ok(h && h.ok === 1, 'health ok' + (h ? ' (v' + h.version + ', pool ' + h.pool + ', nx ' + h.nx + ')' : ''));
-  ok(h && h.version === '1.11.13', 'version = 1.11.13');
+  ok(h && h.version === '1.11.14', 'version = 1.11.14');
   ok(m && m.id === 'community.xre.vidy', 'manifest id');
+  ok(m && m.name === 'Phoenix', 'addon name = Phoenix');
+  ok(m && /^https?:\/\/.+\/logo\.png$/.test(m.logo || ''), 'manifest logo URL (' + (m && m.logo || '') + ')');
+  ok(m && m.behaviorHints && m.behaviorHints.configurable === true && m.behaviorHints.configurationRequired === false, 'behaviorHints.configurable ✓');
+  try {
+    const lb = Buffer.from(await (await fetch(BASE + '/logo.png', { signal: AbortSignal.timeout(15000) })).arrayBuffer());
+    ok(lb.length > 1000 && lb[0] === 0x89 && lb[1] === 0x50, '/logo.png served (' + lb.length + 'B PNG)');
+  } catch (e) { ok(false, 'logo fetch: ' + e.message); }
+  try { // সাব-ট্র্যাক-ওয়ার্ম (ঠান্ডা-চাইল্ড-চেইনে-১-রিট্রাই) — প্রথম-ট্যাপেই-কার্ডে-ট্র্যাক-থাকবে
+    let w = await (await fetch(BASE + '/subtitles/movie/tt0468569.json', { signal: AbortSignal.timeout(45000) })).json();
+    if (!w.subtitles.length) w = await (await fetch(BASE + '/subtitles/movie/tt0468569.json', { signal: AbortSignal.timeout(45000) })).json();
+    ok(Array.isArray(w.subtitles), 'subtitles warm ok');
+  } catch (e) { ok(false, 'subs warm: ' + e.message); }
   try {
     const html = await (await fetch(BASE + '/configure')).text();
     ok(!/nethex/i.test(html), 'configure: no legacy "nethex" text');
@@ -66,6 +78,8 @@ async function tap(label, url, checks) {
     ok(s.every(c => !c.bingeGroup || String(c.bingeGroup).indexOf('mbxr|') === 0), 'bingeGroup: mbxr| prefixed (MovieBox parity)');
     ok(mb.length === 0 || mb.every(c => c.bingeGroup && String(c.bingeGroup).indexOf('mbxr|') === 0), 'moviebox cards carry bingeGroup');
     ok(s.every(c => !c.behaviorHints || typeof c.behaviorHints === 'object'), 'behaviorHints sane');
+    ok(v.some(c => Array.isArray(c.subtitles) && c.subtitles.length > 0), 'vidy cards carry working MB subtitle tracks');
+    ok(mb.every(c => Array.isArray(c.subtitles) && c.subtitles.length > 0), 'moviebox cards carry subtitle tracks too');
   });
 
   // ── 2) Hindi movie ──
@@ -105,6 +119,10 @@ async function tap(label, url, checks) {
     ok(mb.some(c => audioOf(c) === 'English'), 'moviebox: original row survives "original" chip (labeled English)');
     ok(mb.some(c => audioOf(c) === 'Hindi'), 'moviebox: Hindi row present');
     ok(mb.length >= 2 && mb.every(c => ['English', 'Hindi'].indexOf(audioOf(c)) >= 0), 'only original+hindi rows');
+  });
+
+  await tap('cfg sub=0 (subtitle gate)', cfgUrl({ sub: 0 }, '/stream/movie/tt0468569.json'), (s) => {
+    ok(s.length === 0 || s.every(c => !c.subtitles || c.subtitles.length === 0), 'sub=0: zero tracks on cards');
   });
 
   // ── subtitles রিসোর্স (MovieBox-ট্র্যাক — 1.11.13-পুনরুদ্ধার) ──

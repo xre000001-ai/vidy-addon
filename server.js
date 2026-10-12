@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.11.13';
+const VERSION = '1.11.14';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -458,6 +458,34 @@ const ISO3 = { eng: 'English', dan: 'Danish', ben: 'Bengali', hin: 'Hindi', spa:
 const iso3Name = c => ISO3[String(c || '').toLowerCase()] || '';
 async function raceVal(pr, ms) { return Promise.race([pr.catch(() => ''), new Promise(r => setTimeout(() => r(''), ms))]); }
 
+function kickSubs(id, type, s, e, cfg) { // স্ক্যানের-সমান্তরালে-সাব-চেইন-ছুটে-পড়ে — withSubs-এর-race-যেন-অপেক্ষায়-বসে-না
+  if (!cfg || cfg.sub === 0) return;
+  (/^tt\d+$/.test(String(id)) ? Promise.resolve(String(id)) : tmdbToImdb(String(id), type === 'tv' || type === 'series' ? 'tv' : 'movie'))
+    .then(iv => iv ? mbSubs(iv, type, s, e) : null).catch(() => {});
+}
+async function withSubs(cards, id, type, s, e, cfg) { // রুট-স্তরে-সব-কার্ডে-কাজ-করা-MB-ট্র্যাক (vidy+MovieBox-একসাথে)
+  if (!cfg || cfg.sub === 0 || !cards || !cards.length) return cards || [];
+  const imdb2 = /^tt\d+$/.test(String(id)) ? Promise.resolve(String(id)) : tmdbToImdb(String(id), type === 'tv' || type === 'series' ? 'tv' : 'movie');
+  const trk = await Promise.race([imdb2.then(iv => iv ? mbSubs(iv, type, s, e) : []).catch(() => []), new Promise(r => setTimeout(() => r([]), 1200))]);
+  if (!trk || !trk.length) return cards;
+  return cards.map(c => Object.assign({}, c, { subtitles: trk }));
+}
+async function mbSubs(imdb, type, s, e) { // MovieBox-সাব-ট্র্যাক (চাইল্ড-চেইন-ব্যয়বহুল → ৩০মিন-ক্যাশ + ইনফ্লাইট-ডিডুপ)
+  if (!NEXBASE || !imdb) return [];
+  const isTv = type === 'tv' || type === 'series';
+  const k = 'subs:' + (isTv ? 'series' : 'movie') + ':' + imdb + (isTv ? ':' + (s || 1) + ':' + (e || 1) : '');
+  const h = SUBS_CACHE.get(k);
+  if (h && (Date.now() - h.ts) < 1800000) return h.arr;
+  return dedupe(k, async () => {
+    const idPath = encodeURIComponent(isTv ? imdb + ':' + (s || 1) + ':' + (e || 1) : imdb);
+    const b = await directGet(NEXBASE + '/subtitles/' + (isTv ? 'series' : 'movie') + '/' + idPath + '.json', 18000);
+    const arr = (JSON.parse(b).subtitles || []).filter(x => x && x.url && /^https?:/.test(String(x.url))).slice(0, 20)
+      .map(x => ({ id: String(x.id || x.lang || 'sub').slice(0, 40), url: String(x.url), lang: String(x.lang || x.id || 'Unknown').slice(0, 40) }));
+    if (arr.length) { if (SUBS_CACHE.size > 200) SUBS_CACHE.clear(); SUBS_CACHE.set(k, { ts: Date.now(), arr }); } // খালি-কখনো-ক্যাশ-নয়
+    return arr;
+  }).catch(() => []);
+}
+
 // ---------- v1.11.5 card meta: বছর + প্রতি-এপিসোডের-নাম (Cinemeta, ৬ঘণ্টা-ক্যাশ) ----------
 const EP_META = new Map(); // imdb -> {ts, year, videos:[{s,e,n}]}
 async function epMetaCore(imdb, type) {
@@ -805,12 +833,8 @@ function decorate(j, type, s, e, showTitle, cfg, srv, ext) {
   cfg = cfg || DEFAULT_CFG;
   const headers = { 'User-Agent': UA, 'Referer': VIDY_REFERER };
   const order = { '2160p': 0, '1080p': 1, '720p': 2, '480p': 3, '360p': 4, 'Auto HLS': 5 };
-  // v1.10.2: TV apps validate the stream schema strictly — every subtitle object REQUIRES `lang`
-  // (missing lang rejected the whole addon response, e.g. tt9288030:2:2 on TV). Derive a 2-letter
-  // code from the upstream fields, fall back to the label text, then 'en' as the safe default.
-  // v1.10.3 hardening: strict (TV) validators require url/title/lang to be real strings — a numeric label or non-string url from upstream would reject the whole response (same class as the 1.10.2 lang bug). Coerce here, never emit raw.
-  let subs = (j.subtitles || []).slice(0, 40).map(x => ({ title: String(x.label || x.lang || x.language || 'Subtitle'), url: String(x.url || x.file || ''), lang: subLang(x) })).filter(x => x.url && /^https?:/.test(x.url) && x.lang);
-  if (!cfg.sub) subs = [];
+  // v1.11.14: payload-সাব-লিঙ্ক-মৃত-প্রমাণিত (api.playhq.net/sub → 400, ভেতরের-ডোমেইন-নিষ্ক্রিয়) — আর-সংযুক্ত-হয়-না;
+  // কাজ-করা-MovieBox-ট্র্যাক-getSources-এর-মার্জ-স্তরে-সব-কার্ডে-বসে (mbSubs), cfg.sub=0-এ-দ্বার-বন্ধ
   const seen = {};
   const allow = Array.isArray(cfg.q) ? cfg.q : qToList(cfg.q);
   const cards = (j.sources || []).filter(x => x.url && /^https?:/.test(x.url) && !seen[x.url] && (seen[x.url] = 1)).filter(x => qPass(x, allow)).sort((a, b) => (order[a.quality] ?? 9) - (order[b.quality] ?? 9)).map(x => {
@@ -831,8 +855,7 @@ function decorate(j, type, s, e, showTitle, cfg, srv, ext) {
       quality: q === 'Auto' ? '' : q,
       url: String(x.url),
       headers: headers,
-      behaviorHints: { notWebReady: true, proxyHeaders: { request: headers } },
-      subtitles: subs
+      behaviorHints: { notWebReady: true, proxyHeaders: { request: headers } }
     };
   });
   return cards;
@@ -878,17 +901,19 @@ function parseCfgFromObj(o) {
 function decodeCfg(b64) {
   try { return parseCfgFromObj(JSON.parse(Buffer.from(b64, 'base64url').toString('utf8'))); } catch (e) { return Object.assign({}, DEFAULT_CFG, { g: [], srv: [] }); }
 }
-function manifest(cfg) {
+function manifest(cfg, origin) {
   return {
     id: 'community.xre.vidy',
     version: VERSION,
-    name: 'Vidy',
+    name: 'Phoenix',
+    logo: (origin || '') + '/logo.png',
     description: 'Stream-only, two parallel sources: Vidy (16 servers, up to 4K, subtitles) + MovieBox (direct-MP4 dubs & multi-audio) — every card in one unified format; each source keeps its own filters (quality, audio language, servers).',
     author: 'xre000001-ai',
     resources: ['stream', 'subtitles'], // v1.11.13: MovieBox-সাবটাইটেল-ট্র্যাক-পুনরুদ্ধার (স্ট্যান্ডঅ্যালোন-nethex-এর-/subtitles-রুট-পোর্টে-হারিয়ে-গিয়েছিল)
     types: ['movie', 'series'],
     idPrefixes: ['tt', 'tmdb'],
-    catalogs: []
+    catalogs: [],
+    behaviorHints: { configurable: true, configurationRequired: false } // কনফিগ-পেজ-ছাড়া-অ্যাপে-অ্যাডন-আসবে-না
   };
 }
 
@@ -897,6 +922,11 @@ const reqLog = [];
 function logReq(path, ms, n, err) {
   reqLog.push({ t: new Date().toISOString().slice(11, 19), path: path.slice(0, 60), ms, n, err: err || undefined });
   if (reqLog.length > 40) reqLog.shift();
+}
+function originOf(req) { // beamup-TLS-পেছনে host-header-ই-সত্য; লোকাল-পরীক্ষায়-http
+  const h = req.headers || {};
+  const proto = String(h['x-forwarded-proto'] || '').split(',')[0] || (/^(127\.|localhost|\[)/.test(String(h.host || '')) ? 'http' : 'https');
+  return proto + '://' + (h.host || 'localhost');
 }
 function sendJson(res, code, obj) {
   const b = Buffer.from(JSON.stringify(obj));
@@ -924,7 +954,14 @@ const server = http.createServer((req, res) => {
     }
     if (!cfg) cfg = Object.assign({}, DEFAULT_CFG, { g: [], srv: [] });
     if (p === '/' || p === '/config' || p === '/configure') return sendFile2(res, 'config.html');
-    if (p === '/manifest.json') return sendJson(res, 200, manifest(cfg));
+    if (p === '/manifest.json') return sendJson(res, 200, manifest(cfg, originOf(req)));
+    if (p === '/logo.png') {
+      try {
+        const lb = fs.readFileSync(path.join(__dirname, 'logo.png'));
+        res.writeHead(200, { 'content-type': 'image/png', 'access-control-allow-origin': '*', 'cache-control': 'public, max-age=86400' });
+        return res.end(lb);
+      } catch (eL) { return sendJson(res, 404, { error: 'no logo' }); }
+    }
     if (p === '/_health') return sendJson(res, 200, { ok: 1, version: VERSION, pool: POOL.length, memo: memo.size, nx: NEXBASE ? 1 : 0 });
     if (p === '/_pool') return sendJson(res, 200, POOL);
     if (p === '/_log') return sendJson(res, 200, reqLog.slice(-40).reverse());
@@ -952,7 +989,8 @@ const server = http.createServer((req, res) => {
       const tp = nameForTmdb(Number(m[1]), 'movie'); // টাইটেল-আর-sources-একসাথে-ছোটা — টাইটেল-শুধু-কার্ডের-জন্য
       const vOn = !(cfg && cfg.v === 0), nxOn = !(cfg && cfg.nx === 0); // per-source masters
       const nxP = nxOn ? nxFor('movie', String(m[1]), 0, 0) : null;
-      return withNx(vOn ? getSources(Number(m[1]), 'movie', null, null, '', cfg, tp) : Promise.resolve([]), nxP, cfg, t0).then(
+      kickSubs('tmdb' + m[1], 'movie', null, null, cfg);
+      return withNx(vOn ? getSources(Number(m[1]), 'movie', null, null, '', cfg, tp) : Promise.resolve([]), nxP, cfg, t0).then(cards => withSubs(cards, 'tmdb' + m[1], 'movie', null, null, cfg)).then(
         cards => { logReq(p, Date.now() - t0, (cards || []).length); sendJson(res, 200, { streams: cards || [] }); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message); sendJson(res, 200, { streams: [] }); });
     }
@@ -962,7 +1000,8 @@ const server = http.createServer((req, res) => {
       const vOn = !(cfg && cfg.v === 0), nxOn = !(cfg && cfg.nx === 0); // per-source masters
       const nxP = nxOn ? nxFor('series', String(m[1]), Number(m[2] || 1), Number(m[3] || 1)) : null;
       if (nxOn) nxPrewarm('series', String(m[1]), Number(m[2] || 1), Number(m[3] || 1));
-      return withNx(vOn ? getSources(Number(m[1]), 'tv', Number(m[2] || 1), Number(m[3] || 1), '', cfg, tp) : Promise.resolve([]), nxP, cfg, t0).then(
+      kickSubs('tmdb' + m[1], 'series', Number(m[2] || 1), Number(m[3] || 1), cfg);
+      return withNx(vOn ? getSources(Number(m[1]), 'tv', Number(m[2] || 1), Number(m[3] || 1), '', cfg, tp) : Promise.resolve([]), nxP, cfg, t0).then(cards => withSubs(cards, 'tmdb' + m[1], 'series', Number(m[2] || 1), Number(m[3] || 1), cfg)).then(
         cards => { logReq(p, Date.now() - t0, (cards || []).length); sendJson(res, 200, { streams: cards || [] }); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message); sendJson(res, 200, { streams: [] }); });
     }
@@ -970,7 +1009,8 @@ const server = http.createServer((req, res) => {
       const t0 = Date.now();
       const vOn = !(cfg && cfg.v === 0), nxOn = !(cfg && cfg.nx === 0); // per-source masters
       const nxP = nxOn ? nxFor('movie', m[1], 0, 0) : null;
-      return withNx(vOn ? findTmdbInfo(m[1], 'movie').then(info => (info && info.id > 0) ? getSources(info.id, 'movie', null, null, info.name, cfg) : Promise.resolve([])) : Promise.resolve([]), nxP, cfg, t0).then(
+      kickSubs(m[1], 'movie', null, null, cfg);
+      return withNx(vOn ? findTmdbInfo(m[1], 'movie').then(info => (info && info.id > 0) ? getSources(info.id, 'movie', null, null, info.name, cfg) : Promise.resolve([])) : Promise.resolve([]), nxP, cfg, t0).then(cards => withSubs(cards, m[1], 'movie', null, null, cfg)).then(
         cards => { logReq(p, Date.now() - t0, (cards || []).length); sendJson(res, 200, { streams: cards || [] }); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message); sendJson(res, 200, { streams: [] }); });
     }
@@ -979,7 +1019,8 @@ const server = http.createServer((req, res) => {
       const vOn = !(cfg && cfg.v === 0), nxOn = !(cfg && cfg.nx === 0); // per-source masters
       const nxP = nxOn ? nxFor('series', m[1], Number(m[2]), Number(m[3])) : null;
       if (nxOn) nxPrewarm('series', m[1], Number(m[2]), Number(m[3]));
-      return withNx(vOn ? findTmdbInfo(m[1], 'series').then(info => (info && info.id > 0) ? getSources(info.id, 'tv', Number(m[2]), Number(m[3]), info.name, cfg) : Promise.resolve([])) : Promise.resolve([]), nxP, cfg, t0).then(
+      kickSubs(m[1], 'series', Number(m[2]), Number(m[3]), cfg);
+      return withNx(vOn ? findTmdbInfo(m[1], 'series').then(info => (info && info.id > 0) ? getSources(info.id, 'tv', Number(m[2]), Number(m[3]), info.name, cfg) : Promise.resolve([])) : Promise.resolve([]), nxP, cfg, t0).then(cards => withSubs(cards, m[1], 'series', Number(m[2]), Number(m[3]), cfg)).then(
         cards => { logReq(p, Date.now() - t0, (cards || []).length); sendJson(res, 200, { streams: cards || [] }); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message); sendJson(res, 200, { streams: [] }); });
     }
@@ -988,7 +1029,8 @@ const server = http.createServer((req, res) => {
       const vOn = !(cfg && cfg.v === 0), nxOn = !(cfg && cfg.nx === 0); // per-source masters
       const nxP = nxOn ? nxFor('series', m[1], 1, 1) : null;
       if (nxOn) nxPrewarm('series', m[1], 1, 1);
-      return withNx(vOn ? findTmdbInfo(m[1], 'series').then(info => (info && info.id > 0) ? getSources(info.id, 'tv', 1, 1, info.name, cfg) : Promise.resolve([])) : Promise.resolve([]), nxP, cfg, t0).then(
+      kickSubs(m[1], 'series', 1, 1, cfg);
+      return withNx(vOn ? findTmdbInfo(m[1], 'series').then(info => (info && info.id > 0) ? getSources(info.id, 'tv', 1, 1, info.name, cfg) : Promise.resolve([])) : Promise.resolve([]), nxP, cfg, t0).then(cards => withSubs(cards, m[1], 'series', 1, 1, cfg)).then(
         cards => { logReq(p + ' [no-s:e]', Date.now() - t0, (cards || []).length); sendJson(res, 200, { streams: cards || [] }); },
         e => { logReq(p + ' [no-s:e]', Date.now() - t0, 0, e && e.message); sendJson(res, 200, { streams: [] }); });
     }
