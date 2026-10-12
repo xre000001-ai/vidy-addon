@@ -101,7 +101,11 @@ h1 .g{color:var(--acc)}
 .pcard .dot{width:8px;height:8px;border-radius:50%;flex:none}
 .pcard .dot.v{background:var(--accd);box-shadow:0 0 8px rgba(91,228,155,.8)}
 .pcard .dot.n{background:var(--nxd);box-shadow:0 0 8px rgba(124,199,255,.8)}
-.pcard .t{flex:1;font-size:12.5px;line-height:1.55;font-weight:700;white-space:pre-line;color:#cfd6df}
+.pcard .pbody{flex:1;min-width:0}
+.pcard .hd{font-weight:850;font-size:12px;letter-spacing:.5px;margin-bottom:5px}
+.pcard .hd.v{color:var(--acc)}
+.pcard .hd.n{color:var(--nx)}
+.pcard .t{font-size:12.5px;line-height:1.55;font-weight:700;white-space:pre-line;color:#cfd6df}
 .pcard .q{border-radius:7px;padding:2px 9px;font-size:11px;font-weight:800;white-space:nowrap}
 .pcard .q.v{background:var(--accbg);color:var(--acc);border:1px solid rgba(91,228,155,.35)}
 .pcard .q.n{background:var(--nxbg);color:var(--nx);border:1px solid rgba(124,199,255,.35)}
@@ -185,10 +189,11 @@ h1 .g{color:var(--acc)}
   </div>
 
   <div class="seclab">Preview</div>
+  <p class="sub" style="margin-bottom:4px">How stream cards will look in your app — both sources, one anatomy:</p>
   <div class="card">
     <div class="prev">
-      <div class="pcard" id="pvV"><div class="dot v"></div><div class="t" id="pvVt"></div><div class="q v" id="pvVq"></div></div>
-      <div class="pcard nxc" id="pvN"><div class="dot n"></div><div class="t" id="pvNt"></div><div class="q n" id="pvNq"></div></div>
+      <div class="pcard" id="pvV"><div class="dot v"></div><div class="pbody"><div class="hd v" id="pvVh"></div><div class="t" id="pvVt"></div></div><div class="q v" id="pvVq"></div></div>
+      <div class="pcard nxc" id="pvN"><div class="dot n"></div><div class="pbody"><div class="hd n" id="pvNh"></div><div class="t" id="pvNt"></div></div><div class="q n" id="pvNq"></div></div>
     </div>
   </div>
 
@@ -242,11 +247,13 @@ h1 .g{color:var(--acc)}
     var vOn=st.v===1&&st.srv.length>0;
     var top=st.q.length?Math.max.apply(null,st.q):2160;
     document.getElementById('pvV').style.display=vOn?'':'none';
-    document.getElementById('pvVt').textContent='\u29c9 Queen of Tears | 2024 |\n\u29e0 S1E1 \u2022 Episode Title\n\u229e Miami \u2317 Original';
+    document.getElementById('pvVh').textContent='\u25a5 '+top+' \u25a5';
+    document.getElementById('pvVt').textContent='\u29c9 Queen of Tears | 2024 |\n\u29e0 S1E1 \u2022 Episode Title\n\u229e '+((st.v===1&&st.srv.length)?st.srv[0].charAt(0).toUpperCase()+st.srv[0].slice(1):'Miami')+' \u2317 Original';
     document.getElementById('pvVq').textContent=qsel(st.q);
     var nq=st.nxq.length?Math.max.apply(null,st.nxq):1080;
     var lang=st.nxl.length?st.nxl[0].charAt(0).toUpperCase()+st.nxl[0].slice(1):'Original';
     document.getElementById('pvN').style.display=st.nx?'':'none';
+    document.getElementById('pvNh').textContent='\u25a5 '+nq+' \u25a5';
     document.getElementById('pvNt').textContent='\u29c9 Demon Slayer | 2019 |\n\u29e0 S1E5 \u2022 Episode Title\n\u229e MovieBox \u2317 '+lang;
     document.getElementById('pvNq').textContent=qsel(st.nxq);
   }

@@ -47,6 +47,16 @@ async function tap(label, url, extra) {
   ok(h && h.version === '1.11.7', 'version = 1.11.7');
   ok(m && m.id === 'community.xre.vidy', 'manifest id');
 
+  // 0b) configure page sanity
+  try {
+    const html = await (await fetch(BASE + '/configure')).text();
+    ok(!/nethex/i.test(html), 'configure: no legacy "nethex" text');
+    ok(html.includes('MovieBox'), 'configure: MovieBox named');
+    ok(!/Subs:/i.test(html), 'configure: no "Subs:" text');
+    ok(html.includes('pvVh') && html.includes('pvNh'), 'configure: preview has quality headers');
+    ok(html.includes('srvSum'), 'configure: servers collapsed behind summary');
+  } catch (e) { ok(false, 'configure fetch: ' + e.message); }
+
   // 1) movie (tt)
   await tap('movie tt0468569 (Dark Knight)', BASE + '/stream/movie/tt0468569.json', (s, mb) => {
     const slots = s.filter(c => !mb.includes(c)).map(c => String(c.description).split('\n').pop().split(' ')[1].toLowerCase());
