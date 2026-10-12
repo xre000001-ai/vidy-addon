@@ -32,7 +32,7 @@ async function tap(label, url, checks) {
   ok(s.every(c => String(c.description || '').includes('\u29e0 ')), 'description: \u29e0 episode line');
   ok(s.every(c => /\u229e .+ \u2317 .+/.test(String(c.description || '').split('\n').pop())), 'description: "\u229e slot \u2317 audio" last');
   ok(!s.some(c => audioOf(c) === 'Original'), 'audio: no lazy "Original" (real language names)');
-  ok(s.every(c => !Array.isArray(c.subtitles) || c.subtitles.every(u2 => typeof u2.url === 'string' && /^https?:/.test(u2.url) && typeof u2.lang === 'string' && !!u2.lang && typeof u2.id === 'string')), 'subtitles: schema-safe (id/url/lang strings)');
+  ok(s.every(c => !Array.isArray(c.subtitles) || c.subtitles.every(u2 => typeof u2.url === 'string' && /^https?:/.test(u2.url) && typeof u2.lang === 'string' && /^[a-z]{2}$/.test(u2.lang) && typeof u2.title === 'string')), 'subtitles: app-safe shape {title,url,lang:2-letter}');
   ok(s.every(c => c.quality === '' || /^\d{3,4}$/.test(String(c.quality))), 'quality field sane');
   ok(ms < 15000, 'latency < 15s (' + ms + 'ms)');
   if (checks) checks(s, mb, v);
@@ -130,7 +130,7 @@ async function tap(label, url, checks) {
     let sj = await (await fetch(BASE + '/subtitles/movie/tt0468569.json', { signal: AbortSignal.timeout(40000) })).json();
     if (!sj.subtitles.length) sj = await (await fetch(BASE + '/subtitles/movie/tt0468569.json', { signal: AbortSignal.timeout(40000) })).json(); // ঠান্ডা-চাইল্ড-চেইনে-১-রিট্রাই
     ok(Array.isArray(sj.subtitles), 'subtitles resource: array');
-    ok(sj.subtitles.every(u3 => typeof u3.url === 'string' && /^https?:/.test(u3.url) && typeof u3.lang === 'string' && !!u3.lang && typeof u3.id === 'string'), 'subtitles resource: schema-safe (id/url/lang strings)');
+    ok(sj.subtitles.every(u3 => typeof u3.url === 'string' && /^https?:/.test(u3.url) && typeof u3.lang === 'string' && /^[a-z]{2,3}$/.test(u3.lang)), 'subtitles resource: lang codes sanitized');
     ok(sj.subtitles.length > 0, 'subtitles resource: MB tracks present (' + sj.subtitles.length + ')');
   } catch (e2) { ok(false, 'subtitles resource: ' + e2.message); }
   // ── safety-net: series without s:e → S1E1 ──

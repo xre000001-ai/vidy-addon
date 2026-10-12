@@ -471,7 +471,7 @@ async function withSubs(cards, id, type, s, e, cfg) { // রুট-স্তর�
   if (!cfg || cfg.sub === 0 || !cards || !cards.length) return cards || [];
   const imdb2 = /^tt\d+$/.test(String(id)) ? Promise.resolve(String(id)) : tmdbToImdb(String(id), type === 'tv' || type === 'series' ? 'tv' : 'movie');
   const trk = await Promise.race([imdb2.then(iv => iv ? mbSubs(iv, type, s, e) : []).catch(() => []), new Promise(r => setTimeout(() => r([]), 1200))]);
-  if (!trk || !trk.length) return cards;
+  if (!trk || !trk.length || !trk.every(x => typeof x.url === 'string' && /^https?:/.test(x.url) && /^[a-z]{2}$/.test(x.lang) && typeof x.title === 'string')) return cards; // সন্দেহজনক-কিছু-থাকলে-সাবটাইটেল-নয় — স্ট্রিম-সর্বদা-আগে
   return cards.map(c => Object.assign({}, c, { subtitles: trk }));
 }
 async function mbSubs(imdb, type, s, e) { // MovieBox-সাব-ট্র্যাক (চাইল্ড-চেইন-ব্যয়বহুল → ৩০মিন-ক্যাশ + ইনফ্লাইট-ডিডুপ)
@@ -484,7 +484,8 @@ async function mbSubs(imdb, type, s, e) { // MovieBox-সাব-ট্র্য�
     const idPath = encodeURIComponent(isTv ? imdb + ':' + (s || 1) + ':' + (e || 1) : imdb);
     const b = await directGet(NEXBASE + '/subtitles/' + (isTv ? 'series' : 'movie') + '/' + idPath + '.json', 18000);
     const arr = (JSON.parse(b).subtitles || []).filter(x => x && x.url && /^https?:/.test(String(x.url))).slice(0, 20)
-      .map(x => ({ id: String(x.id || x.lang || 'sub').slice(0, 40), url: String(x.url), lang: String(x.lang || x.id || 'Unknown').slice(0, 40) }));
+      .map(x => ({ title: String(x.lang || x.id || 'Subtitle').slice(0, 60), url: String(x.url), lang: subLang({ lang: String(x.lang || ''), label: String(x.id || '') }) })) // ঐতিহাসিক-আকৃতি: title+url+2-অক্ষর-lang (1.10.x-টিভি-ভ্যালিডেটর-প্রমাণিত)
+      .filter(x => x.url && /^https?:/.test(x.url) && /^[a-z]{2}$/.test(x.lang));
     if (arr.length) { if (SUBS_CACHE.size > 200) SUBS_CACHE.clear(); SUBS_CACHE.set(k, { ts: Date.now(), arr }); } // খালি-কখনো-ক্যাশ-নয়
     return arr;
   }).catch(() => []);
@@ -804,8 +805,11 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
   });
 }
 const SUB_LANGS = { english: 'en', bangla: 'bn', bengali: 'bn', hindi: 'hi', japanese: 'ja', korean: 'ko', spanish: 'es', french: 'fr', german: 'de', portuguese: 'pt', italian: 'it', turkish: 'tr', arabic: 'ar', chinese: 'zh', mandarin: 'zh', thai: 'th', indonesian: 'id', malay: 'ms', tamil: 'ta', telugu: 'te', russian: 'ru', urdu: 'ur', malayalam: 'ml', marathi: 'mr', punjabi: 'pa', kannada: 'kn', nepali: 'ne', sinhala: 'si', filipino: 'tl', tagalog: 'tl', bhojpuri: 'bh', persian: 'fa', farsi: 'fa', vietnamese: 'vi' };
+const NATIVE_SUB = { 'العربية': 'ar', 'اَلْعَرَبِيَّةُ': 'ar', 'français': 'fr', 'हिन्दी': 'hi', 'বাংলা': 'bn', 'indonesia': 'id', 'bahasa indonesia': 'id', 'melayu': 'ms', 'bahasa melayu': 'ms', 'español': 'es', 'deutsch': 'de', 'русский': 'ru', '日本語': 'ja', '한국어': 'ko', 'தமிழ்': 'ta', 'తెలుగు': 'te', 'മലയാളം': 'ml', 'português': 'pt', 'italiano': 'it', 'türkçe': 'tr', 'tiếng việt': 'vi', 'ไทย': 'th', 'فارسی': 'fa' };
 function subLang(x) { // subtitle language code — schema-required on strict (TV) validators
-  const v = String(x.lang || x.language || '').trim().toLowerCase();
+  const raw = String(x.lang || x.language || '').trim();
+  if (NATIVE_SUB[raw] || NATIVE_SUB[raw.toLowerCase()]) return NATIVE_SUB[raw] || NATIVE_SUB[raw.toLowerCase()];
+  const v = raw.toLowerCase();
   if (/^[a-z]{2}(-|$)/.test(v)) return v.slice(0, 2);
   const s = v + ' ' + String(x.label || '').toLowerCase();
   for (const k in SUB_LANGS) if (s.indexOf(k) >= 0) return SUB_LANGS[k];
@@ -1045,17 +1049,13 @@ const server = http.createServer((req, res) => {
       const t0 = Date.now();
       const done2 = arr => { logReq(p, Date.now() - t0, (arr || []).length); sendJson(res, 200, { subtitles: arr || [] }); };
       if (!NEXBASE) return done2([]);
-      const sk = 'subs:' + m[1] + ':' + String(m[2]);
-      const sh = SUBS_CACHE.get(sk);
-      if (sh && (Date.now() - sh.ts) < 1800000) return done2(sh.arr); // চাইল্ডের-চেইন-ব্যয়বহুল (মেটা+সার্চ+ম্যাট্রিক্স) — ৩০মিন-ক্যাশ
+      // ক্যাশ-ম্যানেজমেন্ট-mbSubs-এর-ভেতরে (SUBS_CACHE) — রুট-শুধু-আকৃতি-ম্যাপ-করে
       (async () => {
         let id2 = String(m[2]);
         if (/^tmdb\d+$/.test(id2)) { const iv = await tmdbToImdb(id2.slice(4), m[1] === 'series' ? 'tv' : 'movie'); if (!iv) return done2([]); id2 = iv; } // Nuvio-tmdb-আইডি
-        const b = await directGet(NEXBASE + '/subtitles/' + m[1] + '/' + encodeURIComponent(id2) + '.json', 18000);
-        const arr = (JSON.parse(b).subtitles || []).filter(x => x && x.url).map(x => ({ id: String(x.id || x.lang || 'sub'), url: String(x.url), lang: String(x.lang || 'Unknown') }));
-        const fin = arr.filter(x => /^https?:/.test(x.url)); // কঠোর-স্কিমা: url/lang-স্ট্রিং, প্রত্যাখ্যাত-কখনো-নয় (1.10.2-শ্রেণি)
-        if (fin.length) { if (SUBS_CACHE.size > 200) SUBS_CACHE.clear(); SUBS_CACHE.set(sk, { ts: Date.now(), arr: fin }); } // খালি-কখনো-ক্যাশ-নয় (কভারেজ-ওঠানামা-করে)
-        done2(fin);
+        const isTv = m[1] === 'series';
+        const canon = await mbSubs(id2, isTv ? 'tv' : 'movie', 1, 1); // এক-ফেচার-এক-আকৃতি — mbSubs-ই-ক্যাশ-লেখে
+        done2(canon.map(x => ({ id: x.lang, url: x.url, lang: x.lang }))); // রিসোর্স-আকৃতি (স্ট্রিমিও-নেটিভ)
       })().catch(e2 => { if (DBG) console.error('[nxdbg] subs ERR: ' + String(e2 && e2.message).slice(0, 60)); done2([]); });
       return;
     }
