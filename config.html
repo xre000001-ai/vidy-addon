@@ -242,12 +242,12 @@ h1 .g{color:var(--acc)}
     var vOn=st.v===1&&st.srv.length>0;
     var top=st.q.length?Math.max.apply(null,st.q):2160;
     document.getElementById('pvV').style.display=vOn?'':'none';
-    document.getElementById('pvVt').textContent='\u25eb '+(st.q.length?top:'2160')+' \u00b7 '+(st.srv.length?'Miami':'—')+' \u25eb\n\u29c9 Queen of Tears\n\u2b21 S1E1'+(st.sub?' \u00b7 Subs: 31':'');
+    document.getElementById('pvVt').textContent='\u29c9 Queen of Tears | 2024 |\n\u29e0 S1E1 \u2022 Episode Title'+(st.sub?' \u00b7 Subs: 31':'')+'\n\u229e Vidy \u2317 Original';
     document.getElementById('pvVq').textContent=qsel(st.q);
     var nq=st.nxq.length?Math.max.apply(null,st.nxq):1080;
-    var lang=st.nxl.length?' \u00b7 '+st.nxl[0].charAt(0).toUpperCase()+st.nxl[0].slice(1):'';
+    var lang=st.nxl.length?st.nxl[0].charAt(0).toUpperCase()+st.nxl[0].slice(1):'Original';
     document.getElementById('pvN').style.display=st.nx?'':'none';
-    document.getElementById('pvNt').textContent='\u25eb '+nq+' \u00b7 MovieBox \u25eb\n\u29c9 Demon Slayer\n\u2b21 S1E5'+lang+' \u00b7 Subs: 6';
+    document.getElementById('pvNt').textContent='\u29c9 Demon Slayer | 2019 |\n\u29e0 S1E5 \u2022 Episode Title\n\u229e MovieBox \u2317 '+lang+' \u00b7 Subs: 6';
     document.getElementById('pvNq').textContent=qsel(st.nxq);
   }
 

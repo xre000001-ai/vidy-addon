@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.11.4';
+const VERSION = '1.11.5';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -353,22 +353,24 @@ async function nxStreams(imdb, type, s, e) {
   if (h && (Date.now() - h.ts) < 1800000) return h.v;
   try {
     const path2 = type === 'series' ? encodeURIComponent(imdb + ':' + (s || 1) + ':' + (e || 1)) : encodeURIComponent(imdb);
+    const epP = epMetaForImdb(imdb, type, s, e); // বছর+এপি-টাইটেল — nethex-ফেচের-সমান্তরালে
     const t3 = Date.now();
     const b = await directGet(NEXBASE + '/stream/' + type + '/' + path2 + '.json', 25000);
     if (process.env.VDBG) console.error('[nxdbg] nethex ' + type + '/' + path2 + ' -> ' + (Date.now() - t3) + 'ms');
-    // v1.11.4: সব-সোর্সের-কার্ড-এক-ফরম্যাটে — ◫ QUALITY · SOURCE ◫ / ⧉ Title / ⬡ SsEe · Subs: n
-    // (vidy-কার্ডে-server-বসে, MovieBox-কার্ডে-source-নামটাই-ওই-ঘরে; ভাষা-তথ্য ⬡-লাইনে)
+    // v1.11.5: চূড়ান্ত-ইউনিফর্ম-কার্ড — ▥ Q ▥ / ⧉ Title | Year | / ⧠ SsEe • EpTitle / ⊞ Source ⌗ Audio · Subs: n
+    const em = await Promise.race([epP.catch(() => null), new Promise(r => setTimeout(() => r(null), 1500))]);
     const arr = (JSON.parse(b).streams || []).filter(x => x && typeof x.url === 'string' && /^https?:/.test(x.url)).map(x => {
       const q2 = (/(\d{3,4})p/.exec(String(x.name || '')) || [])[1] || 'Auto';
       const lang = String(x._lang || '').replace(/\s*dub\s*$/i, '').trim();
-      const dub = (!lang || /^original/i.test(lang)) ? '' : ' \u00b7 ' + lang;
+      const audio = (!lang || /^original/i.test(lang)) ? 'Original' : lang;
       const nSub = Number((/\u27e1\s*(\d+)\s*SUB/.exec(String(x.description || '')) || [])[1]) || 0;
+      const yr = (/\u25f4\s*(\d{4})/.exec(String(x.description || '')) || [])[1] || (em && em.year) || '';
       const raw = (String(x.name || '').split('\u2739')[1] || '').replace(/\s*S\d+\s*-\s*S\d+.*$/i, '').trim() || 'MovieBox';
       const H2 = { 'User-Agent': UA, 'Referer': 'https://movieboxonline.net/' };
-      const line2 = (type === 'series' ? 'S' + (s || 1) + 'E' + (e || 1) : 'Movie') + dub + (nSub ? ' \u00b7 Subs: ' + nSub : '');
-      const txt = '\u29c9 ' + raw + '\n\u2b21 ' + line2;
+      const epLine = type === 'series' ? ('\u29e0 S' + (s || 1) + 'E' + (e || 1) + ((em && em.epT) ? ' \u2022 ' + em.epT : '')) : '\u29e0 Movie';
+      const txt = '\u29c9 ' + raw + (yr ? ' | ' + yr + ' |' : '') + '\n' + epLine + '\n\u229e MovieBox \u2317 ' + audio + (nSub ? ' \u00b7 Subs: ' + nSub : '');
       return {
-        name: '\u25eb ' + q2 + ' \u00b7 MovieBox \u25eb',
+        name: '\u25a5 ' + q2 + ' \u25a5',
         title: txt,
         description: txt,
         quality: q2 === 'Auto' ? '' : q2,
@@ -403,6 +405,35 @@ async function tmdbToImdb(tmdbId, type) { // NetHex is tt-only — translate tmd
   })();
   T2IFLIGHT.set(k, pr);
   return pr;
+}
+// ---------- v1.11.5 card meta: বছর + প্রতি-এপিসোডের-নাম (Cinemeta, ৬ঘণ্টা-ক্যাশ) ----------
+const EP_META = new Map(); // imdb -> {ts, year, videos:[{s,e,n}]}
+async function epMetaCore(imdb, type) {
+  const h = EP_META.get(imdb);
+  if (h && (Date.now() - h.ts) < 21600000) return h;
+  const b = await directGet('https://v3-cinemeta.strem.io/meta/' + (type === 'tv' || type === 'series' ? 'series' : 'movie') + '/' + imdb + '.json', 8000); // 'series'-ও-টিভি (nxStreams-'series'-পাঠায়)
+  const meta = JSON.parse(b).meta || {};
+  const rec = {
+    ts: Date.now(),
+    year: String(meta.releaseInfo || meta.year || meta.released || '').slice(0, 4),
+    videos: (meta.videos || []).map(v => ({ s: Number(v.season) || 0, e: Number(v.episode) || 0, n: String(v.name || '').slice(0, 60) })).filter(v => v.n),
+  };
+  if (rec.year || rec.videos.length) { if (EP_META.size > 200) EP_META.clear(); EP_META.set(imdb, rec); }
+  return rec;
+}
+function epMetaForImdb(imdb, type, s, e) {
+  return (async () => {
+    try {
+      const rec = await epMetaCore(imdb, type);
+      if (!rec) return null;
+      let epT = '';
+      if (type === 'tv' || type === 'series') { const v = rec.videos.find(v => v.s === Number(s || 1) && v.e === Number(e || 1)); if (v) epT = v.n; } // 'series'-ও-টিভি
+      return (rec.year || epT) ? { year: rec.year, epT } : null;
+    } catch (eE) { return null; }
+  })();
+}
+function epMetaFor(tmdbId, type, s, e) { // tmdb-নেটিভ-আইডি → অনুবাদ → Cinemeta
+  return tmdbToImdb(String(tmdbId), type).then(imdb => imdb ? epMetaForImdb(imdb, type, s, e) : null).catch(() => null);
 }
 function nxFor(type, id, s, e) { // starts the parallel fetch immediately; null when source is off
   if (!NEXBASE) return null;
@@ -492,6 +523,7 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
   const hitS = memoShort.get(key);
   if (hitS && (Date.now() - hitS.ts) < 60000) return Promise.resolve(hitS.v);
   return dedupe(key, async () => {
+    const epMetaP = epMetaFor(tmdbId, type, s, e); // বছর+এপি-টাইটেল — স্ক্যানের-সমান্তরালে
     let lastErr = null;
     let force = false;
     let bestFit = null; let bestFitSrv = null; let bestFitN = -1; let bestFitNs = -1; // আগে-সাব-সমৃদ্ধতা (মূল-অডিও), টাইতে-বেশি-কার্ড
@@ -529,7 +561,7 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
         // প্রথম-সফল-টা-জেতে, হেরে-যাওয়া-টা-বাদ। প্রতি-সার্ভার-এখনো-এক-স্ক্যান-ফল-দেয়।
         const ct = await hedge2(() => pathGet(u, sc.via, sc.px, 12000), () => pathGet(u, sc.via, sc.px, 12000), 2500, 12500);
         const j = JSON.parse(vidyDecrypt(ct, sc.seed, tmdbId));
-        if (process.env.VDBG) console.error('[t1g] ' + srv + ' fetch=' + (Date.now() - tS) + 'ms n=' + (j.sources || []).length);
+        if (process.env.VDBG) console.error('[t1g] ' + srv + ' fetch=' + (Date.now() - tS) + 'ms n=' + (j.sources || []).length + ' keys=' + Object.keys((j.sources || [])[0] || {}).join(','));
         if (!j.sources || !j.sources.length) {
           if (process.env.VDBG) console.error('[t1g] ' + srv + ' EMPTY at ' + (Date.now() - tS) + 'ms');
           SRV_NEG.set(ck, Date.now()); // সব-সার্ভার (টিটিএল-ভেদে) — একই-এপিসোডে-বারবার-হাতুড়ে-নয়
@@ -594,6 +626,12 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
       rs = rs.concat(await Promise.all(allow.map(srv => budget(srv, failed[srv]))));
     }
     rs.forEach(absorb);
+    // v1.11.5: এপি-মেটা (বছর+টাইটেল) এসে-গেলে-কার্ডে-বসাও — সর্বোচ্চ ১.৮সে-অপেক্ষা (স্ক্যান-চলার-সময়েই-সাধারণত-আসে):
+    let EXT0 = null;
+    try {
+      const em = await Promise.race([epMetaP, new Promise(r => setTimeout(() => r(null), 1800))]);
+      if (em) EXT0 = { year: em.year || '', epT: em.epT || '' };
+    } catch (eE) {}
     // মার্জ: কোনো-ক্রস-সার্ভার-ডিউপ-নয় — প্রতিটা-সার্ভারের-প্রতিটা-স্ট্রিম-কার্ড-থাকবে;
     // ক্রম: দৈত্য-সার্ভার (miami→boise→atlanta) সবার-উপরে, তারপর-বাড়তি, ভেতরে-রেজোলিউশন-বড়→ছোট:
     const PRIO = ['miami', 'boise', 'atlanta', 'phoenix', 'dallas', 'austin', 'seattle', 'delhi', 'munich', 'paris', 'orlando', 'reno', 'oakland', 'vegas', 'cancun', 'tampa'];
@@ -601,7 +639,7 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
     const all = [];
     for (const r of rs) {
       if (!r.j || !r.ok) continue;
-      for (const c of decorate(r.j, type, s, e, title || '', cfg, r.srv)) all.push({ c, srv: r.srv });
+      for (const c of decorate(r.j, type, s, e, title || '', cfg, r.srv, EXT0)) all.push({ c, srv: r.srv });
     }
     all.sort((a, b) => prio(a.srv) - prio(b.srv) || (parseInt(b.c.quality, 10) || 0) - (parseInt(a.c.quality, 10) || 0));
     let out = all.map(x => x.c);
@@ -609,15 +647,15 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
     if (!out.length) {
       let pick = bestAny, pickSrv = bestAnySrv;
       if (!pick) { pick = deadJ; pickSrv = deadSrv; }
-      if (pick) out = decorate(pick, type, s, e, title || '', cfg, pickSrv);
+      if (pick) out = decorate(pick, type, s, e, title || '', cfg, pickSrv, EXT0);
     }
     // টাইটেল-প্রমিস-সমান্তরালে-ছুটেছিল → সর্বোচ্চ ৪০০ms-অপেক্ষা, এসে-গেলে-কার্ডে-বসাও (memoSet-এর-আগে-ই):
     if (titleP && out.length) {
       const nm = await Promise.race([titleP.catch(() => ''), new Promise(r => setTimeout(() => r(''), 400))]);
       if (nm) {
-        const PRE = '\u29c9 Vidy\n'; // খালি-টাইটেলের-ফলব্যাক-সারি — সম্পূর্ণ-সারি-রিপ্লেস (আংশিক-নয়)
+        const PRE = '\u29c9 Vidy'; // খালি-টাইটেলের-ফলব্যাক-টোকেন — শুধু-নাম-রিপ্লেস (বছর/এপি/⊞-লাইন-অক্ষত)
         out = out.map(c => {
-          const t2 = c.title.indexOf(PRE) === 0 ? '\u29c9 ' + nm + '\n' + c.title.slice(PRE.length) : c.title;
+          const t2 = c.title.indexOf(PRE) === 0 ? '\u29c9 ' + nm + c.title.slice(PRE.length) : c.title;
           return Object.assign({}, c, { title: t2, description: t2 });
         });
       }
@@ -661,7 +699,7 @@ function qPass(x, allow) {
   const h = parseInt(String(x.quality || '0'), 10) || 0;
   return !h || allow.indexOf(h) >= 0;
 }
-function decorate(j, type, s, e, showTitle, cfg, srv) {
+function decorate(j, type, s, e, showTitle, cfg, srv, ext) {
   cfg = cfg || DEFAULT_CFG;
   const headers = { 'User-Agent': UA, 'Referer': VIDY_REFERER };
   const order = { '2160p': 0, '1080p': 1, '720p': 2, '480p': 3, '360p': 4, 'Auto HLS': 5 };
@@ -676,10 +714,15 @@ function decorate(j, type, s, e, showTitle, cfg, srv) {
   const cards = (j.sources || []).filter(x => x.url && /^https?:/.test(x.url) && !seen[x.url] && (seen[x.url] = 1)).filter(x => qPass(x, allow)).sort((a, b) => (order[a.quality] ?? 9) - (order[b.quality] ?? 9)).map(x => {
     const q = String(x.quality || 'Auto').replace('p', '');
     const sd = ((srv || 'vidy').charAt(0).toUpperCase() + (srv || 'vidy').slice(1)); // কার্ডে-সার্ভার-নাম
-    const line2 = type === 'tv' ? '\u2b21 S' + s + 'E' + e + (subs.length ? ' \u00b7 Subs: ' + subs.length : '') : '\u2b21 Movie';
-    const txt = '\u29c9 ' + (showTitle || 'Vidy') + '\n' + line2;
+    // v1.11.5: সার্ভার-১-এর-কার্ডে-সোর্স-নামই-বসে, বাকি-সার্ভারে-সার্ভার-নাম (fallback source)
+    const slot = (srv === 'miami') ? 'Vidy' : sd;
+    const yTx = (ext && ext.year) ? ' | ' + ext.year + ' |' : '';
+    const epLine = type === 'tv'
+      ? '\u29e0 S' + s + 'E' + e + ((ext && ext.epT) ? ' \u2022 ' + ext.epT : '') + (subs.length ? ' \u00b7 Subs: ' + subs.length : '')
+      : '\u29e0 Movie';
+    const txt = '\u29c9 ' + (showTitle || 'Vidy') + yTx + '\n' + epLine + '\n\u229e ' + slot + ' \u2317 ' + ((ext && ext.audio) || 'Original');
     return {
-      name: '\u25eb ' + q.replace('Auto HLS', 'Auto') + ' \u00b7 ' + sd + ' \u25eb',
+      name: '\u25a5 ' + q.replace('Auto HLS', 'Auto') + ' \u25a5',
       title: txt,
       description: txt,
       quality: q === 'Auto HLS' ? '' : q,
