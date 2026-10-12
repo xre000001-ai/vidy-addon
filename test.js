@@ -63,6 +63,9 @@ async function tap(label, url, checks) {
     ok(v.length && v.every(c => audioOf(c) === 'English'), 'vidy audio = English');
     ok(v.length && v.every(c => SERVER_WORDS.includes(slotOf(c).toLowerCase())), 'vidy slots = server names');
     ok(mb.some(c => audioOf(c) === 'English'), 'moviebox: original audio present (English)');
+    ok(s.every(c => !c.bingeGroup || String(c.bingeGroup).indexOf('mbxr|') === 0), 'bingeGroup: mbxr| prefixed (MovieBox parity)');
+    ok(mb.length === 0 || mb.every(c => c.bingeGroup && String(c.bingeGroup).indexOf('mbxr|') === 0), 'moviebox cards carry bingeGroup');
+    ok(s.every(c => !c.behaviorHints || typeof c.behaviorHints === 'object'), 'behaviorHints sane');
   });
 
   // ── 2) Hindi movie ──
@@ -112,9 +115,6 @@ async function tap(label, url, checks) {
     ok(sj.subtitles.every(u3 => typeof u3.url === 'string' && /^https?:/.test(u3.url) && typeof u3.lang === 'string' && !!u3.lang && typeof u3.id === 'string'), 'subtitles resource: schema-safe (id/url/lang strings)');
     ok(sj.subtitles.length > 0, 'subtitles resource: MB tracks present (' + sj.subtitles.length + ')');
   } catch (e2) { ok(false, 'subtitles resource: ' + e2.message); }
-  ok(s.every(c => !c.bingeGroup || String(c.bingeGroup).indexOf('mbxr|') === 0), 'bingeGroup: mbxr| prefixed (MovieBox parity)');
-  ok(s.every(c => !c.behaviorHints || typeof c.behaviorHints === 'object'), 'behaviorHints sane');
-
   // ── safety-net: series without s:e → S1E1 ──
   await tap('series tt0903747 (no s:e safety-net)', BASE + '/stream/series/tt0903747.json', (s) => {
     ok(s.length === 0 || s.every(c => /\u29e0 S1E1/.test(c.description)), 'defaults to S1E1');
