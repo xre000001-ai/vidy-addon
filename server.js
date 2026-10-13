@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.12.7';
+const VERSION = '1.12.8';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -596,7 +596,8 @@ const TWBASE = String(process.env.TWBASE || '');
 const RTBASE = String(process.env.RTBASE || '');
 const TWRCACHE = new Map(); // twr:source:title:s:e -> {ts, v} — রেজলভার-নিজেই-৮ঘ-ক্যাশ-করে, এখানে-৩০মিন
 async function twrStreams(base, tag, title, type, s, e) {
-  if (!base || !title) return [];
+  console.error('[rtdbg] twr call tag=' + tag + ' title=' + String(title).slice(0, 40) + ' s=' + s + ' e=' + e);
+  if (!base || !title) { console.error('[rtdbg] twr skip: base/title শূন্য'); return []; }
   const k = 'twr:' + tag + ':' + String(title).toLowerCase() + ':' + (type === 'series' ? (s || 1) + ':' + (e || 1) : 'm');
   const h = TWRCACHE.get(k);
   if (h && (Date.now() - h.ts) < 1800000) return h.v;
@@ -627,11 +628,12 @@ async function twrStreams(base, tag, title, type, s, e) {
       };
     });
     if (arr.length) TWRCACHE.set(k, { ts: Date.now(), v: arr }); // খালি-ফল-ক্যাশ-নয় (ঠান্ডা-মিস-পরের-কলে-আবার-চেষ্টা)
+    console.error('[rtdbg] twr ফল ' + tag + ' ' + String(title).slice(0, 30) + ' -> ' + arr.length + ' কার্ড @' + (Date.now() - t3) + 'ms');
     if (TWRCACHE.size > 2500) TWRCACHE.clear();
     if (DBG) console.error('[twr] ' + tag + ' ' + String(title).slice(0, 30) + ' S' + (s || 1) + 'E' + (e || 1) + ' -> ' + arr.length + ' cards @' + (Date.now() - t3) + 'ms');
     return arr;
   } catch (e2) {
-    if (DBG) console.error('[twr] ' + tag + ' ERR ' + String(e2 && e2.message).slice(0, 70) + ' @' + (Date.now() - t3) + 'ms');
+    console.error('[rtdbg] twr ERR ' + tag + ': ' + String(e2 && e2.message).slice(0, 90) + ' @' + (Date.now() - t3) + 'ms');
     return [];
   }
 }
@@ -1143,7 +1145,7 @@ const server = http.createServer((req, res) => {
       const vOn = !(cfg && cfg.v === 0), nxOn = !(cfg && cfg.nx === 0); // per-source masters
       const nxP = nxOn ? nxFor('movie', m[1], 0, 0) : null;
       const infoP = vOn ? findTmdbInfo(m[1], 'movie') : null; // v1.12: এক-কলেই-সব-সোর্স-খাওয়ানো
-      const nmP = suggName(m[1]); // v1.12.6: rt/tw-দ্রুত-নাম (TMDB-মালা-পেছনে-নয়)
+      const nmP = suggName(m[1]).then(nm => { console.error('[rtdbg] suggName ' + m[1] + ' -> ' + String(nm).slice(0, 44)); return nm; }); // v1.12.6+dbg
       const twP = (TWBASE && infoP) ? nmP.then(nm => nm ? twrStreams(TWBASE, 'toonworld', nm, 'movie', 0, 0) : []).catch(() => []) : null;
       const rtP = (RTBASE && infoP) ? nmP.then(nm => nm ? twrStreams(RTBASE, 'raretoons', nm, 'movie', 0, 0) : []).catch(() => []) : null;
       kickSubs(m[1], 'movie', null, null, cfg);
@@ -1156,7 +1158,7 @@ const server = http.createServer((req, res) => {
       const vOn = !(cfg && cfg.v === 0), nxOn = !(cfg && cfg.nx === 0); // per-source masters
       const nxP = nxOn ? nxFor('series', m[1], Number(m[2]), Number(m[3])) : null;
       const infoP = vOn ? findTmdbInfo(m[1], 'series') : null;
-      const nmP = suggName(m[1]); // v1.12.6: rt/tw-দ্রুত-নাম
+      const nmP = suggName(m[1]).then(nm => { console.error('[rtdbg] suggName ' + m[1] + ' -> ' + String(nm).slice(0, 44)); return nm; });
       const twP = (TWBASE && infoP) ? nmP.then(nm => nm ? twrStreams(TWBASE, 'toonworld', nm, 'series', Number(m[2]), Number(m[3])) : []).catch(() => []) : null;
       const rtP = (RTBASE && infoP) ? nmP.then(nm => nm ? twrStreams(RTBASE, 'raretoons', nm, 'series', Number(m[2]), Number(m[3])) : []).catch(() => []) : null;
       if (nxOn) nxPrewarm('series', m[1], Number(m[2]), Number(m[3]));
@@ -1170,7 +1172,7 @@ const server = http.createServer((req, res) => {
       const vOn = !(cfg && cfg.v === 0), nxOn = !(cfg && cfg.nx === 0); // per-source masters
       const nxP = nxOn ? nxFor('series', m[1], 1, 1) : null;
       const infoP = vOn ? findTmdbInfo(m[1], 'series') : null;
-      const nmP = suggName(m[1]); // v1.12.6: rt/tw-দ্রুত-নাম
+      const nmP = suggName(m[1]).then(nm => { console.error('[rtdbg] suggName ' + m[1] + ' -> ' + String(nm).slice(0, 44)); return nm; });
       const twP = TWBASE ? nmP.then(nm => nm ? twrStreams(TWBASE, 'toonworld', nm, 'series', 1, 1) : []).catch(() => []) : null;
       const rtP = RTBASE ? nmP.then(nm => nm ? twrStreams(RTBASE, 'raretoons', nm, 'series', 1, 1) : []).catch(() => []) : null;
       if (nxOn) nxPrewarm('series', m[1], 1, 1);
