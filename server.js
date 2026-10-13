@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.12.8';
+const VERSION = '1.12.9';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -601,7 +601,7 @@ async function twrStreams(base, tag, title, type, s, e) {
   const k = 'twr:' + tag + ':' + String(title).toLowerCase() + ':' + (type === 'series' ? (s || 1) + ':' + (e || 1) : 'm');
   const h = TWRCACHE.get(k);
   if (h && (Date.now() - h.ts) < 1800000) return h.v;
-  const qs = new URLSearchParams({ source: tag, title: String(title) });
+  const qs = new URLSearchParams({ source: tag, title: String(title), _: String(Date.now()) }); // ক্যাশ-বাস্টার (এজ-CF-ক্যাশ-ভেদ)
   if (type === 'series') { qs.set('season', String(s || 1)); qs.set('episode', String(e || 1)); }
   const t3 = Date.now();
   try {
