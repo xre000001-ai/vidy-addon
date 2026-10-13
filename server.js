@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.12.5';
+const VERSION = '1.12.6';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -311,6 +311,17 @@ function findTmdbInfo(imdb, type) {
   )); // কখনো-থ্রো-নয় — id:0 মানে vidy-সোর্স-স্কিপ কিন্তু rt/tw চলবে
 }
 function findTmdb(imdb, type) { return findTmdbInfo(imdb, type).then(v => v.id); }
+function suggName(imdb) { // দ্রুত-টাইটেল (rt/tw-র-জন্য): IMDb-suggestion — TMDB-মালা-বাদ
+  const key = 'snm:' + imdb;
+  const hit = memoGet(key, 86400000);
+  if (hit !== undefined && hit !== null) return Promise.resolve(hit);
+  return dedupe(key, () => directGet('https://v2.sg.media-imdb.com/suggestion/' + encodeURIComponent(String(imdb)[2]) + '/' + encodeURIComponent(imdb) + '.json', 8000).then(b => {
+    const hit2 = (JSON.parse(b).d || []).find(x => x && x.l && ['TV series', 'TV mini series', 'feature', 'movie', 'TV movie'].indexOf(String(x.q || '')) >= 0) || {};
+    const nm = hit2.l || '';
+    if (nm) memoSet(key, nm);
+    return nm;
+  }).catch(() => ''));
+}
 function nameForTmdb(tmdbId, type) {
   const key = 'nm:' + type + ':' + tmdbId;
   const hit = memoGet(key, 86400000);
@@ -373,8 +384,8 @@ const DBG = !!process.env.VDBG; // সব-debug-লগ-এই-এক-ফ্ল�
 // v1.11.8: NEXBASE-বাইরে-থেকে-দেওয়া-যায়; না-দিলে-ভেন্ডর-করা-MovieBox(nethex)-চাইল্ড-নিজেই-বুট-হয় (এক-অ্যাপ-ডিপ্লয়)
 let NEXBASE = (process.env.NEXBASE || '').replace(/\/$/, '');
 const NXDEADLINE = Number(process.env.NXDEADLINE || 22000); // absolute cap for the whole call
-const NXEXTRA = Number(process.env.NXEXTRA || 1000); // vidy answered from cache -> hold at most this for NetHex (cache-hit calls must stay instant)
-const NXCOLDX = Number(process.env.NXCOLDX || 6500); // cold scan -> tw/rt (site-fetch) also rides it; earned longer hold on FIRST cold request
+const NXEXTRA = Number(process.env.NXEXTRA || 2500); // cache-hit: rt/tw TWRCACHE-উষ্ণ-হলে-১সে-র-ভেতরেই-এসে-পড়ে; ঠান্ডা-ব্যাকগ্রাউন্ড-ওয়ার্মের-লাভ-পরের-কলে // vidy answered from cache -> hold at most this for NetHex (cache-hit calls must stay instant)
+const NXCOLDX = Number(process.env.NXCOLDX || 9000); // cold scan -> tw/rt (site-fetch) also rides it; earned longer hold on FIRST cold request
 const NXHARD = Number(process.env.NXHARD || 12500); // absolute response deadline — রুট-সফট-ডেডলাইনের (১৫সে) ভেতরেই
 const NXCACHE = new Map(); // nx:imdb:s:e -> {ts, v} — NetHex links are signed/fresh + it caches 30min itself
 async function nxStreams(imdb, type, s, e) {
@@ -1132,8 +1143,9 @@ const server = http.createServer((req, res) => {
       const vOn = !(cfg && cfg.v === 0), nxOn = !(cfg && cfg.nx === 0); // per-source masters
       const nxP = nxOn ? nxFor('movie', m[1], 0, 0) : null;
       const infoP = vOn ? findTmdbInfo(m[1], 'movie') : null; // v1.12: এক-কলেই-সব-সোর্স-খাওয়ানো
-      const twP = (TWBASE && infoP) ? infoP.then(info => (info && info.name) ? twrStreams(TWBASE, 'toonworld', info.name, 'movie', 0, 0) : []).catch(() => []) : null;
-      const rtP = (RTBASE && infoP) ? infoP.then(info => (info && info.name) ? twrStreams(RTBASE, 'raretoons', info.name, 'movie', 0, 0) : []).catch(() => []) : null;
+      const nmP = suggName(m[1]); // v1.12.6: rt/tw-দ্রুত-নাম (TMDB-মালা-পেছনে-নয়)
+      const twP = (TWBASE && infoP) ? nmP.then(nm => nm ? twrStreams(TWBASE, 'toonworld', nm, 'movie', 0, 0) : []).catch(() => []) : null;
+      const rtP = (RTBASE && infoP) ? nmP.then(nm => nm ? twrStreams(RTBASE, 'raretoons', nm, 'movie', 0, 0) : []).catch(() => []) : null;
       kickSubs(m[1], 'movie', null, null, cfg);
       return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'movie', null, null, info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }], cfg, t0).then(cards => withSubs(cards, m[1], 'movie', null, null, cfg)), 15000, p).then(
         cards => { logReq(p, Date.now() - t0, (cards || []).length, null, RVA); sendJson(res, 200, { streams: cards || [] }); },
@@ -1144,8 +1156,9 @@ const server = http.createServer((req, res) => {
       const vOn = !(cfg && cfg.v === 0), nxOn = !(cfg && cfg.nx === 0); // per-source masters
       const nxP = nxOn ? nxFor('series', m[1], Number(m[2]), Number(m[3])) : null;
       const infoP = vOn ? findTmdbInfo(m[1], 'series') : null;
-      const twP = (TWBASE && infoP) ? infoP.then(info => (info && info.name) ? twrStreams(TWBASE, 'toonworld', info.name, 'series', Number(m[2]), Number(m[3])) : []).catch(() => []) : null;
-      const rtP = (RTBASE && infoP) ? infoP.then(info => (info && info.name) ? twrStreams(RTBASE, 'raretoons', info.name, 'series', Number(m[2]), Number(m[3])) : []).catch(() => []) : null;
+      const nmP = suggName(m[1]); // v1.12.6: rt/tw-দ্রুত-নাম
+      const twP = (TWBASE && infoP) ? nmP.then(nm => nm ? twrStreams(TWBASE, 'toonworld', nm, 'series', Number(m[2]), Number(m[3])) : []).catch(() => []) : null;
+      const rtP = (RTBASE && infoP) ? nmP.then(nm => nm ? twrStreams(RTBASE, 'raretoons', nm, 'series', Number(m[2]), Number(m[3])) : []).catch(() => []) : null;
       if (nxOn) nxPrewarm('series', m[1], Number(m[2]), Number(m[3]));
       kickSubs(m[1], 'series', Number(m[2]), Number(m[3]), cfg);
       return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'tv', Number(m[2]), Number(m[3]), info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }], cfg, t0).then(cards => withSubs(cards, m[1], 'series', Number(m[2]), Number(m[3]), cfg)), 15000, p).then(
@@ -1157,8 +1170,9 @@ const server = http.createServer((req, res) => {
       const vOn = !(cfg && cfg.v === 0), nxOn = !(cfg && cfg.nx === 0); // per-source masters
       const nxP = nxOn ? nxFor('series', m[1], 1, 1) : null;
       const infoP = vOn ? findTmdbInfo(m[1], 'series') : null;
-      const twP = (TWBASE && infoP) ? infoP.then(info => (info && info.name) ? twrStreams(TWBASE, 'toonworld', info.name, 'series', 1, 1) : []).catch(() => []) : null;
-      const rtP = (RTBASE && infoP) ? infoP.then(info => (info && info.name) ? twrStreams(RTBASE, 'raretoons', info.name, 'series', 1, 1) : []).catch(() => []) : null;
+      const nmP = suggName(m[1]); // v1.12.6: rt/tw-দ্রুত-নাম
+      const twP = TWBASE ? nmP.then(nm => nm ? twrStreams(TWBASE, 'toonworld', nm, 'series', 1, 1) : []).catch(() => []) : null;
+      const rtP = RTBASE ? nmP.then(nm => nm ? twrStreams(RTBASE, 'raretoons', nm, 'series', 1, 1) : []).catch(() => []) : null;
       if (nxOn) nxPrewarm('series', m[1], 1, 1);
       kickSubs(m[1], 'series', 1, 1, cfg);
       return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'tv', 1, 1, info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }], cfg, t0).then(cards => withSubs(cards, m[1], 'series', 1, 1, cfg)), 15000, p).then(
