@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.13.0';
+const VERSION = '1.13.1';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -614,7 +614,9 @@ async function twrStreams(base, tag, title, type, s, e) {
       const audio = lang || (/\b(multi|dual)\b/i.test(fn) ? 'Multi Audio' : 'Hindi Audio');
       const epLine = type === 'series' ? ('\u29e0 S' + (s || 1) + 'E' + (e || 1) + ((x.ep_title || '') ? ' \u2022 ' + x.ep_title : '')) : '\u29e0 Movie';
       const lbl = tag === 'toonworld' ? 'ToonWorld' : 'RareToons';
-      const txt = '\u29c9 ' + String(title) + '\n' + epLine + '\n\u229e ' + lbl + ' \u2317 ' + audio;
+      const hu = String(x.url || '');
+      const host = /pixeldrain/.test(hu) ? 'Pixeldrain' : (x.kind === 'hls' || /\/hls\//.test(hu)) ? 'MQ' : /hubcloud|yournewdomain/.test(hu) ? 'HubCloud' : 'Direct';
+      const txt = '\u29c9 ' + String(title) + '\n' + epLine + '\n\u229e ' + lbl + ' \u00b7 ' + host + ' \u2317 ' + audio;
       return {
         name: '\u25a5 ' + q2 + ' \u25a5',
         title: txt,
