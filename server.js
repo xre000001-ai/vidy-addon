@@ -587,26 +587,24 @@ async function twrStreams(base, tag, title, type, s, e) {
   try {
     const b = await directGet(base + '/find?' + qs.toString(), 30000);
     const j = JSON.parse(b);
+    // v1.12.3: twr-কার্ড-ও-ইউনিফর্ম-ভিডি-ফরম্যাটে (⧉ Title / ⧠ SsEe • EpTitle / ⨞ Server ⌧ Audio) — resolution-শুধু-name-ব্যাজে, সবসময়-1080 (Auto/360-লেবেল-নয়)
     const arr = ((j && j.results) || []).filter(x => x && typeof x.url === 'string' && /^https?:/.test(x.url)).map(x => {
       const fn = String(x.name || '');
-      const q2 = (/((\d{3,4}))p/.exec(fn + ' ' + String(x.codec || '') + ' ' + String(x.quality || '')) || [])[1] || 'Auto';
+      const q2 = '1080';
       const lang = String(x.lang || '');
       const audio = lang || (/\b(multi|dual)\b/i.test(fn) ? 'Multi Audio' : 'Hindi Audio');
-      const size = Number(x.size) || 0;
-      const sizeTag = size > 1e6 ? (size >= 1e9 ? ' \u2022 ' + (size / 1e9).toFixed(1) + ' GB' : ' \u2022 ' + Math.round(size / 1e6) + ' MB') : '';
       const epLine = type === 'series' ? ('\u29e0 S' + (s || 1) + 'E' + (e || 1) + ((x.ep_title || '') ? ' \u2022 ' + x.ep_title : '')) : '\u29e0 Movie';
-      const sym = tag === 'toonworld' ? '\u2726' : '\u2727';
       const lbl = tag === 'toonworld' ? 'ToonWorld' : 'RareToons';
-      const txt = sym + ' ' + String(title) + '\n' + epLine + sizeTag + '\n\u229e ' + lbl + ' \u2317 ' + audio + ((x.codec && tag === 'toonworld') ? ' \u2022 ' + x.codec : '');
+      const txt = '\u29c9 ' + String(title) + '\n' + epLine + '\n\u229e ' + lbl + ' \u2317 ' + audio;
       return {
-        name: (tag === 'toonworld' ? '\u2756 ' : '\u25c8 ') + (q2 === 'Auto' ? 'Auto' : q2) + (tag === 'toonworld' ? ' \u2756' : ' \u25c8'),
+        name: '\u25a5 ' + q2 + ' \u25a5',
         title: txt,
         description: txt,
-        quality: q2 === 'Auto' ? '' : q2,
+        quality: q2,
         _lang: lang,
         url: String(x.url),
         behaviorHints: { notWebReady: false, isBingeable: true, filename: fn || (tag === 'toonworld' ? 'toonworld.mkv' : 'raretoons.mkv') },
-        bingeGroup: (tag === 'toonworld' ? 'tw|' : 'rt|') + String(title).toLowerCase() + '::'
+        bingeGroup: (tag === 'toonworld' ? 'tw|' : 'rt|') + String(title).toLowerCase() + '::|' + (lang || 'Hindi')
       };
     });
     TWRCACHE.set(k, { ts: Date.now(), v: arr });
