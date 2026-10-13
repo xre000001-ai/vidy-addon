@@ -22,6 +22,16 @@ Users stream directly from the CDN — the add-on only resolves tokens and links
 - Negative id-cache only on confirmed-empty lookups (30 min), never on network errors
 - Keep-alive sockets swept every 60 s; stale-socket resets auto-retry once
 
+## RareToons source (v1.12.1)
+
+Third parallel source fed by the local multi-resolver (`RTBASE` env, e.g. `RTBASE=http://127.0.0.1:8619 node server.js`; empty = off):
+
+- Every stream route merges `source=raretoons` cards: pixeldrain direct-MKV mirrors + auto-HLS shield (new episodes appear automatically)
+- Universal card anatomy — `◈ Auto ◈` / `✧ Title ⏎ ⧠ SxE • ep title • size ⏎ ⊞ RareToons ⌗ audio` — same as Vidy & MovieBox
+- **Own filter** (config page, independent of the Vidy-side `q`): master switch (`rt`) + audio-language chips (`rtl`: Hindi/Tamil/Telugu/Malayalam; nothing picked = every dub stays)
+- Cards follow `/hls/` relay URLs from the resolver; `bingeGroup: rt|title::`
+- Official transparent logo served at `/rt_logo.png` (collected from rareanimes.mov, background keyed out)
+
 ## Endpoints
 
 | Route | Purpose |

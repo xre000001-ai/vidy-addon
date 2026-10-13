@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.12.0';
+const VERSION = '1.12.2';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -264,6 +264,16 @@ function catalogMeta(type, q, cfg, gn, skip) {
 }
 
 // ---------- tt → TMDB numeric (keyless) ----------
+function tmdbSearchPick(name, year, type) { // keyless-search → বছর-মিল-অগ্রাধিকার, না-মিললেও শীর্ষ-১
+  return directGet(TMDBP + '/search/' + (type === 'series' ? 'tv' : 'movie') + '?query=' + encodeURIComponent(name), 12000).then(b3 => {
+    const list = (JSON.parse(b3).results || []);
+    let pick = null;
+    for (const x of list) { if (year && String(x.release_date || x.first_air_date || '').slice(0, 4) === year.slice(0, 4)) { pick = x; break; } }
+    if (!pick) pick = list[0];
+    if (pick && pick.id) return { id: pick.id, name: pick.name || pick.title || name };
+    throw new Error('search-empty');
+  });
+}
 function findTmdbInfo(imdb, type) {
   const key = 'find:' + imdb + ':' + type;
   const hit = memoGet(key, 86400000);
@@ -275,20 +285,20 @@ function findTmdbInfo(imdb, type) {
     if (r && r.id) { const v = { id: r.id, name: r.name || r.title || '' }; memoSet(key, v); return v; }
     throw new Error('find-empty');
   }).catch(() =>
-    // ফলব্যাক: Cinemeta টাইটেল → keyless search (বছর-মিল-অগ্রাধিকার, না-মিললেও শীর্ষ-১)
+    // ফলব্যাক-১: Cinemeta টাইটেল → keyless search
     directGet(CINEMETA + '/meta/' + type + '/' + encodeURIComponent(imdb) + '.json', 15000).then(b2 => {
       const m = (JSON.parse(b2).meta || {});
       const name = m.name || '';
       const year = String(m.releaseInfo || m.year || '');
       if (!name) throw new Error('cinemeta-empty');
-      return directGet(TMDBP + '/search/' + (type === 'series' ? 'tv' : 'movie') + '?query=' + encodeURIComponent(name), 12000).then(b3 => {
-        const list = (JSON.parse(b3).results || []);
-        let pick = null;
-        for (const x of list) { if (year && String(x.release_date || x.first_air_date || '').slice(0, 4) === year.slice(0, 4)) { pick = x; break; } }
-        if (!pick) pick = list[0];
-        if (pick && pick.id) { const v = { id: pick.id, name: pick.name || pick.title || name }; memoSet(key, v); return v; }
-        throw new Error('search-empty');
-      });
+      return tmdbSearchPick(name, year, type);
+    })
+  ).catch(() =>
+    // ফলব্যাক-২: IMDb-suggestion (মুক্ত, keyless, cinemeta-মৃত-হলেও-বাঁচে) — tt→নাম+বছর → TMDB-search
+    directGet('https://v2.sg.media-imdb.com/suggestion/' + encodeURIComponent(String(imdb)[2]) + '/' + encodeURIComponent(imdb) + '.json', 8000).then(b4 => {
+      const hit = (JSON.parse(b4).d || []).find(x => x && x.l && ['TV series', 'TV mini series', 'feature', 'movie', 'TV movie'].indexOf(String(x.q || '')) >= 0) || {};
+      if (!hit.l) throw new Error('sugg-empty');
+      return tmdbSearchPick(hit.l, String(hit.y || ''), type);
     })
   ).catch(e => { if (e && e.message === 'find-empty') memoSet(key + ':empty', 1); throw e; })); // নেগেটিভ-ক্যাশ-শুধু-নিশ্চিত-খালিতে; নেটওয়ার্ক/429-এ-কখনো-নয়
 }
@@ -630,6 +640,9 @@ async function withSources(cardsP, srcs, cfg, t0) {
         const nxAllow = qToList(cfg && cfg.nxq);
         const nxSel = Array.isArray(cfg && cfg.nxl) ? cfg.nxl : [];
         all = all.concat(v.filter(z => qPass(z, nxAllow) && nxLangPass(z, nxSel)));
+      } else if (live[i].key === 'rt') {
+        const rtSel = Array.isArray(cfg && cfg.rtl) ? cfg.rtl : [];
+        all = all.concat(v.filter(z => rtLangPass(z, rtSel)));
       } else all = all.concat(v);
     }
     if (DBG) console.error('[srcdbg] withSources el=' + el + 'ms left=' + left + 'ms → ' + all.length + ' কার্ড');
@@ -951,6 +964,12 @@ function genreIds(type, names) {
     .map(n => (gl.find(g2 => g2[0].toLowerCase() === n) || [0, 0])[1]).filter(Boolean);
 }
 const QH = [2160, 1080, 720, 480, 360];
+function rtLangPass(x, sel) { // RareToons-নিজের-ফিল্টার: sel খালি = সব-ভাষা-থাকুক; যা-কার্ডে-দেখা-যায়-সেটাই-মানদণ্ড (_lang+ফাইলনাম+ডিসপ্লে)
+  if (!sel || !sel.length) return true;
+  const blob = (String(x._lang || '') + ' ' + String((x.behaviorHints || {}).filename || '') + ' ' + String(x.name || '') + ' ' + String(x.title || '')).toLowerCase();
+  if (!blob.trim()) return false;
+  return sel.some(l => blob.indexOf(l) >= 0);
+}
 function qToList(q) { // মাল্টি-রেজোলিউশন: অ্যারে/কমা-লিস্ট → ঠিক-ওইগুলো; সংখ্যা → ≤n-ক্যাপ (পুরনো-cfg); 0/খালি → সব
   const pick = [];
   const add = x => { const h = Number(x); if (QH.indexOf(h) >= 0 && pick.indexOf(h) < 0) pick.push(h); };
@@ -959,7 +978,7 @@ function qToList(q) { // মাল্টি-রেজোলিউশন: অ্�
   const n = Math.min(2160, Math.max(0, Number(q) || 0));
   return n ? QH.filter(h => h <= n) : [];
 }
-const DEFAULT_CFG = { q: 0, sub: 1, cat: 'kd,mv', lang: '', sort: 'pop', era: '', g: [], srv: [], v: 1, nx: 1, nxq: 0, nxl: [], tw: 1, rt: 1 }; // v/nx/tw/rt = per-source master switches (tw=ToonWorld, rt=RareToons) // v/nx = per-source master switches; nxq/nxl = NetHex's OWN quality/audio-language filters (independent of the vidy-side q)
+const DEFAULT_CFG = { q: 0, sub: 1, cat: 'kd,mv', lang: '', sort: 'pop', era: '', g: [], srv: [], v: 1, nx: 1, nxq: 0, nxl: [], tw: 1, rt: 1, rtl: [] }; // v/nx/tw/rt = per-source master switches (tw=ToonWorld, rt=RareToons) // v/nx = per-source master switches; nxq/nxl = NetHex's OWN quality/audio-language filters (independent of the vidy-side q)
 function parseCfgFromObj(o) {
   const c = Object.assign({}, DEFAULT_CFG, { g: [] });
   if (o) {
@@ -977,6 +996,7 @@ function parseCfgFromObj(o) {
     if (o.rt === 0 || o.rt === '0') c.rt = 0;
     if (o.nxq !== undefined && o.nxq !== null && o.nxq !== '') c.nxq = qToList(o.nxq);
     if (Array.isArray(o.nxl)) c.nxl = o.nxl.map(x => String(x).toLowerCase().replace(/[^a-z]/g, '')).filter(x => x.length >= 2 && x.length <= 12).slice(0, 12);
+    if (Array.isArray(o.rtl)) c.rtl = o.rtl.map(x => String(x).toLowerCase().replace(/[^a-z]/g, '')).filter(x => ['hindi', 'tamil', 'telugu', 'malayalam', 'bengali'].indexOf(x) >= 0).slice(0, 5); // RareToons-নিজের-অডিও-ভাষা-ফিল্টার
   }
   return c;
 }
@@ -989,7 +1009,7 @@ function manifest(cfg, origin) {
     version: VERSION,
     name: 'Phoenix',
     logo: (origin || '') + '/logo.png',
-    description: 'Stream-only, two parallel sources: Vidy (16 servers, up to 4K, subtitles) + MovieBox (direct-MP4 dubs & multi-audio) — every card in one unified format; each source keeps its own filters (quality, audio language, servers).',
+    description: 'Stream-only, parallel sources: Vidy (16 servers, up to 4K, subtitles) + MovieBox (direct-MP4 dubs & multi-audio) + RareToons (Hindi/Tamil/Telugu anime & cartoons, auto-HLS) — every card in one unified format; each source keeps its own filters (quality, audio language, servers).',
     author: 'xre000001-ai',
     resources: ['stream', 'subtitles'], // v1.11.13: MovieBox-সাবটাইটেল-ট্র্যাক-পুনরুদ্ধার (স্ট্যান্ডঅ্যালোন-nethex-এর-/subtitles-রুট-পোর্টে-হারিয়ে-গিয়েছিল)
     types: ['movie', 'series'],
@@ -1035,7 +1055,7 @@ const server = http.createServer((req, res) => {
     if (cm2) { cfg = decodeCfg(cm2[1]); p = cm2[2]; }
     else {
       const qs = new URL(req.url, 'http://x').searchParams;
-      if ([...qs.keys()].length) cfg = parseCfgFromObj({ q: qs.get('q') || qs.get('maxq'), sub: qs.get('sub') === '0' ? 0 : 1, cat: qs.get('cat') || '', lang: qs.get('lang') || '', sort: qs.get('sort') || '', era: qs.get('era') || '', g: (qs.get('g') || '').split(',').filter(Boolean), srv: (qs.get('srv') || '').split(',').filter(Boolean), v: qs.get('v') === '0' ? 0 : undefined, nx: qs.get('nx') === '0' ? 0 : undefined, tw: qs.get('tw') === '0' ? 0 : undefined, rt: qs.get('rt') === '0' ? 0 : undefined, nxq: qs.get('nxq') || undefined, nxl: qs.get('nxl') ? qs.get('nxl').split(',') : undefined });
+      if ([...qs.keys()].length) cfg = parseCfgFromObj({ q: qs.get('q') || qs.get('maxq'), sub: qs.get('sub') === '0' ? 0 : 1, cat: qs.get('cat') || '', lang: qs.get('lang') || '', sort: qs.get('sort') || '', era: qs.get('era') || '', g: (qs.get('g') || '').split(',').filter(Boolean), srv: (qs.get('srv') || '').split(',').filter(Boolean), v: qs.get('v') === '0' ? 0 : undefined, nx: qs.get('nx') === '0' ? 0 : undefined, tw: qs.get('tw') === '0' ? 0 : undefined, rt: qs.get('rt') === '0' ? 0 : undefined, rtl: qs.get('rtl') ? qs.get('rtl').split(',') : undefined, nxq: qs.get('nxq') || undefined, nxl: qs.get('nxl') ? qs.get('nxl').split(',') : undefined });
     }
     if (!cfg) cfg = Object.assign({}, DEFAULT_CFG, { g: [], srv: [] });
     if (p === '/' || p === '/config' || p === '/configure') return sendFile2(res, 'config.html');
@@ -1046,6 +1066,13 @@ const server = http.createServer((req, res) => {
         res.writeHead(200, { 'content-type': 'image/png', 'access-control-allow-origin': '*', 'cache-control': 'public, max-age=86400' });
         return res.end(lb);
       } catch (eL) { return sendJson(res, 404, { error: 'no logo' }); }
+    }
+    if (p === '/rt_logo.png') { // RareToons-অফিসিয়াল-লোগো (ট্রান্সপারেন্ট — rareanimes.mov থেকে)
+      try {
+        const lb = fs.readFileSync(path.join(__dirname, 'assets', 'raretoons_logo.png'));
+        res.writeHead(200, { 'content-type': 'image/png', 'access-control-allow-origin': '*', 'cache-control': 'public, max-age=86400' });
+        return res.end(lb);
+      } catch (eL) { return sendJson(res, 404, { error: 'no rt logo' }); }
     }
     if (p === '/_health') return sendJson(res, 200, { ok: 1, version: VERSION, pool: POOL.length, memo: memo.size, nx: NEXBASE ? 1 : 0, tw: TWBASE ? 1 : 0, rt: RTBASE ? 1 : 0 });
     if (p === '/_pool') return sendJson(res, 200, POOL);
