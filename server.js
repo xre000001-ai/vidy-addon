@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.12.4';
+const VERSION = '1.12.5';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -300,7 +300,15 @@ function findTmdbInfo(imdb, type) {
       if (!hit.l) throw new Error('sugg-empty');
       return tmdbSearchPick(hit.l, String(hit.y || ''), type);
     })
-  ).catch(e => { if (e && e.message === 'find-empty') memoSet(key + ':empty', 1); throw e; })); // নেগেটিভ-ক্যাশ-শুধু-নিশ্চিত-খালিতে; নেটওয়ার্ক/429-এ-কখনো-নয়
+  ).catch(() =>
+    // ফলব্যাক-৩ (নাম-শুধু): TMDB-id না-পাওয়া-গেলেও rt/tw-সোর্স নাম-দিয়েই-চলে — পুরো-চেইন-মৃত-হয়-না
+    directGet(CINEMETA + '/meta/' + type + '/' + encodeURIComponent(imdb) + '.json', 12000).then(b5 => {
+      const m5 = (JSON.parse(b5).meta || {});
+      const v = { id: 0, name: m5.name || '' };
+      if (v.name) memoSet(key, v);
+      return v;
+    }).catch(() => ({ id: 0, name: '' }))
+  )); // কখনো-থ্রো-নয় — id:0 মানে vidy-সোর্স-স্কিপ কিন্তু rt/tw চলবে
 }
 function findTmdb(imdb, type) { return findTmdbInfo(imdb, type).then(v => v.id); }
 function nameForTmdb(tmdbId, type) {
