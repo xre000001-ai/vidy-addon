@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.10';
+const VERSION = '1.15.11';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -807,7 +807,7 @@ function twTitleOk(title, fn) { // v1.13.5 ভুল-টাইটেল-বা�
   if (qs2.length >= 5 && cts.join('').indexOf(qs2) >= 0) return true; // স্কোয়াশ-ফ্রেজ — কেবল-≥৫-অক্ষর-কোয়েরিতে (ছোট-"bb"-"dubbed"-এর-মিলে-যাওয়া-বন্ধ)
   let i = 0;
   for (const t of cts) { if (t === qt[i]) i++; }
-  return i >= qt.length; // সব-কোয়েরি-টোকেন-ক্রম-রক্ষার-সাথে-মিলতে-হবে
+  return i >= Math.min(qt.length, Math.max(2, Math.ceil(qt.length * 0.6))); // v1.15.11: RT-পোস্ট-টাইটেল-প্রায়ই-কোয়েরির-শুরুর-অংশ-মাত্র → ৬০%-ক্রমানুসারে-মিল-যথেষ্ট; ভুল-শো (Breaking Bad→Bad Guys: ১/২) আগের-মতোই-বাদ
 }
 
 async function twrFetch(base, tag, title, type, s, e, t3) {
