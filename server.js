@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.8';
+const VERSION = '1.15.9';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -111,7 +111,6 @@ async function enrichPool() {
 
 // ---------- মেমো + ডিডুপ ----------
 const memo = new Map(); // key → {ts, v}
-const memoShort = new Map(); // আংশিক-ফলের-৬০সে-ক্যাশ — স্ট্যাম্পিড-আটকায়, দ্রুত-নিজে-ই-সেরে-ওঠে
 const pending = new Map();
 function memoGet(k, ttl) { const h = memo.get(k); return h && (Date.now() - h.ts) < ttl ? h.v : null; }
 function memoSet(k, v) { memo.set(k, { ts: Date.now(), v }); if (memo.size > 3000) memo.clear(); }
@@ -484,7 +483,7 @@ process.on('unhandledRejection', e => { if (DBG) console.error('[urej] ' + Strin
 // v1.11.8: NEXBASE-বাইরে-থেকে-দেওয়া-যায়; না-দিলে-ভেন্ডর-করা-MovieBox(nethex)-চাইল্ড-নিজেই-বুট-হয় (এক-অ্যাপ-ডিপ্লয়)
 let NEXBASE = (process.env.NEXBASE || '').replace(/\/$/, '');
 const NXDEADLINE = Math.max(Number(process.env.NXDEADLINE || 0), 22000); // absolute cap (stale-env-ও-নিচে-টানবে-না)
-const NXEXTRA = Math.max(Number(process.env.NXEXTRA || 0), 2500); // cache-hit: rt/tw TWRCACHE-উষ্ণ-হলে-১সে-র-ভেতরেই-এসে-পড়ে; ঠান্ডা-ব্যাকগ্রাউন্ড-ওয়ার্মের-লাভ-পরের-কলে // vidy answered from cache -> hold at most this for NetHex (cache-hit calls must stay instant)
+const NXEXTRA = Math.max(Number(process.env.NXEXTRA || 0), 2500); // vidy answered -> hold at most this for NetHex (instant-answer calls must stay instant)
 const NXCOLDX = Math.max(Number(process.env.NXCOLDX || 0), 3000); // v1.13.6: →৩সে — কার্ড-থাকতে-ই-ধীর-সোর্সের-বাড়তি-অপেক্ষা (nx-ব্যাকগ্রাউন্ডে-শেষ-করে-ক্যাশে-রাখে → পরের-ট্যাপ-তাৎক্ষণিক)
 const NXHARD = Math.max(Number(process.env.NXHARD || 0), 7000); // v1.13.6: →৭সে — সব-সোর্স-মিলিয়ে-পূর্ণ-বরাদ্দ (Stremio-দেয়াল ~১০সে-র-নিচে-সবসময়)
 const NXCACHE = new Map(); // nx:imdb:s:e -> {ts, v} — NetHex links are signed/fresh + it caches 30min itself
@@ -707,7 +706,6 @@ else if (/\.a\.baby-beamup\.club/.test(TWBASE)) TWBASE = TWBASE.replace('.a.baby
 let RTBASE = String(process.env.RTBASE || '');
 if (!RTBASE) RTBASE = 'https://3404d3c5dc63-raretoons.baby-beamup.club'; // ফলব্যাক: নতুন-পাবলিক-ডোমেইন
 else if (/\.a\.baby-beamup\.club/.test(RTBASE)) RTBASE = RTBASE.replace('.a.baby-beamup.club', '.baby-beamup.club'); // beamup-ডোমেইন-মাইগ্রেশন (a. বাদ)
-const TWRCACHE = new Map(); // twr:source:title:s:e -> {ts, v} — রেজলভার-নিজেই-৮ঘ-ক্যাশ-করে, এখানে-৩০মিন
 function showCore(t) { // v1.15.4 সর্বজনীন-টাইটেল: 'One Piece S1E1' / 'One Piece season 1 episode 8' / 'One Piece s01e0001' / '1x01' / hindi-dub-কোয়ালিটি-টোকেন → খাঁটি-শো-নাম;
   let c2 = String(t || ''); // এক-জায়গায়-সব-আকৃতি-নরমালাইজ — প্রতি-ফরম্যাটে-বাইরের-অ্যাডন-আপডেট-লাগবে-না (ইউজার-নির্দেশ)
   const before = c2.trim();
@@ -720,7 +718,7 @@ async function twrStreams(base, tag, title, type, s, e, pre) {
   if (!base || !title) return [];
   const tRaw = String(title);
   const tCore = showCore(tRaw); // v1.15.4: যেকোনো-আকৃতি → ক্যানোনিকাল-শো-নাম — সন্ধান/সিজন-ভ্যারিয়েন্ট/alt/গেট/ক্যাশ-সব-কোরে-চলে; কার্ড-লেখা-ইউজারের-মূল-নামে-ই
-  // v1.15.8 (ইউজার): TWRCACHE-পাঠ-বিলোপ — প্রতি-ট্যাপ-রেজলভারে-তাজা-কোয়েরি (মিস-কখনো-পিন-হয়-না); prewarm-রেজলভার-উষ্ণ-রাখে-বলে-গতি-সুরক্ষিত
+  // v1.15.8: কোনো-twr-ক্যাশ-নেই — প্রতি-ট্যাপ-রেজলভারে-তাজা-কোয়েরি (মিস-কখনো-পিন-হয়-না); prewarm-রেজলভার-উষ্ণ-রাখে-বলে-গতি-সুরক্ষিত
   const t3 = Date.now();
   const tries = [tCore]; // v1.15.4: ক্যানোনিকাল-আগে (খাঁটি-নামে-কোর===মূল — আচরণ-অপরিবর্তিত)
   if (tCore.toLowerCase() !== tRaw.toLowerCase()) tries.push(tRaw); // বিকৃত-আকৃতি-হলে-মূলটাও-১ম-ঢেউয়ে-সমান্তরালে
@@ -757,16 +755,23 @@ async function twrStreams(base, tag, title, type, s, e, pre) {
     const alts = (await altP).filter(a => !tries.some(t => t.toLowerCase() === String(a).toLowerCase()) && lcs4(a)).slice(0, 4);
     const extra = seas.concat(alts).filter(a => !tries.some(t => t.toLowerCase() === String(a).toLowerCase()));
     tries.push(...extra);
-    const w2 = await Promise.all(extra.map(a => twrFetch(base, tag, a, type, s, e, t3)));
-    const i2 = w2.findIndex(v => v.length);
-    if (i2 >= 0) { r0 = w2[i2]; used = tries.length - extra.length + i2; }
+    // v1.15.9: Promise.all → প্রথম-জয়ী-রেস (ঢেউ-১-এর-প্রমাণিত-প্যাটার্ন) — ফলব্যাকে-৫-ভ্যারিয়েন্ট-সবার-জন্য-অপেক্ষা-আর-নয়:
+    // যে-ভ্যারিয়েন্ট-আগে-ফল-দেয়-জেতে (রেজলভার-হাতুড়ে-কমে — ঠান্ডা-জানালায়-সাইট-কম-থ্রটল-হয়), ধীর-ভাই-আর-সময়-নষ্ট-করে-না
+    const w2 = extra.map(a => twrFetch(base, tag, a, type, s, e, t3));
+    if (w2.length) {
+      let settled2 = false;
+      const anyHit2 = new Promise(res => w2.forEach((p2, i2) => p2.then(v => { if (!settled2 && v && v.length) { settled2 = true; res(i2); } }).catch(() => {})));
+      const allDone2 = Promise.all(w2.map(p2 => p2.catch(() => []))).then(() => -1);
+      const u2 = await Promise.race([anyHit2, allDone2]);
+      if (u2 >= 0) { r0 = await w2[u2]; used = tries.length - extra.length + u2; }
+    }
   }
   if (r0.length) {
     if (used >= 0 && tries[used].toLowerCase() !== tRaw.toLowerCase()) r0 = r0.map(z => { // কার্ড-টেক্সটে-ইউজারের-মূল-ডিসপ্লে-টাইটেল (v1.15.4: কোর-জয়েও-রিম্যাপ)
       const t2 = String(z.title || '').split(tries[used]).join(tRaw);
       return Object.assign({}, z, { title: t2, description: t2 });
     });
-  } // v1.15.8: TWRCACHE-লেখা-বিলোপ (pos+neg) — কিছুই-পিন-হয়-না
+  } // v1.15.8: কোনো-twr-লেখা-নেই — কিছুই-পিন-হয়-না
   if (DBG) console.error('[twr] ' + tag + ' ' + String(title).slice(0, 30) + ' S' + (s || 1) + 'E' + (e || 1) + ' -> ' + r0.length + ' cards @' + (Date.now() - t3) + 'ms');
   return r0;
 }
@@ -895,8 +900,6 @@ async function withSources(cardsP, srcs, cfg, t0) {
 // ---------- sources ----------
 // সার্ভার-স্কোর: যেটা-ভালো-চলে-সেটাই-সবসময়-আগে (ফাইলে-জমে — রিস্টার্টেও-মনে-থাকে):
 const SRV_SCORE = (() => { try { return JSON.parse(fs.readFileSync(path.join(__dirname, 'vidy_server_scores.json'), 'utf8')); } catch (e) { return {}; } })();
-const SRV_CACHE = new Map(); // [srvc|VERSION|tmdb|type|s|e|srv] → {ts, j, ok, ns} — ফিল্টার-ভ্যারিয়েন্ট-আর-স্ক্যান-পুনরাবৃত্তি-করে-না
-const SRV_NEG = new Map(); // বাড়তি-সার্ভারের-সাম্প্রতিক-ব্যর্থতা (৯০সে) — ভ্যারিয়েন্ট-যেন-একই-মরা-সার্ভারে-বাজেট-না-পোড়ায়
 function srvBump(srv, d) {
   SRV_SCORE[srv] = Math.max(-20, Math.min(20, (SRV_SCORE[srv] || 0) + d));
   try { fs.writeFileSync(path.join(__dirname, 'vidy_server_scores.json'), JSON.stringify(SRV_SCORE)); } catch (e) {}
@@ -979,7 +982,7 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
     const viaProxy = !!(sc0 && sc0.via === 'proxy');
     const ckFor = srv => ['srvc', VERSION, tmdbId, type, s || '', e || '', srv].join('|');
     const allow = srvOrder().filter(srv => !cfg || !Array.isArray(cfg.srv) || !cfg.srv.length || cfg.srv.indexOf(srv) >= 0); // cfg-সার্ভার-সাবসেট
-    const one = async (srv, negBypass) => {
+    const one = async srv => {
       const ck = ['srvc', VERSION, tmdbId, type, s || '', e || '', srv].join('|');
       // v1.15.8 (ইউজার): SRV_CACHE/SRV_NEG-পাঠ-বিলোপ — প্রতি-ট্যাপ-লাইভ-স্ক্যান; নতুন/মিস-হওয়া-স্ট্রিম-পরের-ক্লিকেই-ধরা-পড়ে
       // এক-সার্ভার-সম্পূর্ণ-মূল্যায়ন (seed+sources+প্রোব):
@@ -1048,7 +1051,7 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
     // Now the neg write only happens when the timeout genuinely fires first.
     let okWave = 0; // v1.14.2 early-harvest: কত-সার্ভার-ইতিমধ্যে-জিতেছে
     const pend = new Map(); // v1.14.2 early-harvest: এখনো-ঝুলন্ত-সার্ভারের-রেজলভার
-    const budget = (srv, negBypass) => {
+    const budget = srv => {
       let done = false;
       let fire = null;
       const tmo = setTimeout(() => {
@@ -1058,7 +1061,7 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
         fire({ srv, err: new Error('srv-budget') });
       }, GIANT.indexOf(srv) >= 0 ? (viaProxy ? 8500 : 5500) : (viaProxy ? 7000 : 3800)); // v1.11.2 পথ-সচেতন-বাজেট: সরাসরি-পথে 6.5/4.5সে (ঝুলন্ত-সার্ভার-কখনো-কার্ড-দেয়-না), প্রক্সি-পথে (৪২৯-উইন্ডো) 9.5/8সে — প্রক্সি-চেইনের-সফল-ফেচ ৪.৭-৬.৩সে-তে
       return Promise.race([
-        one(srv, negBypass).then(r => { done = true; clearTimeout(tmo); pend.delete(srv); if (r.ok) okWave++; return r; }), // timer cleared on win — no dangling timeouts
+        one(srv).then(r => { done = true; clearTimeout(tmo); pend.delete(srv); if (r.ok) okWave++; return r; }), // timer cleared on win — no dangling timeouts
         new Promise(r => { fire = r; pend.set(srv, v => { done = true; clearTimeout(tmo); fire(v); }); }) // v1.14.2: tighten-কাটও-টাইমার-পরিষ্কার-করে — পরের-আসল-বাজেট-কাট/শাস্তি-আর-গুলে-খায়-না
       ]);
     };
@@ -1082,7 +1085,7 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
       await new Promise(r2 => setTimeout(r2, 800)); force = true;
       const failed = {};
       rs.forEach(r => { if (r.err) failed[r.srv] = 1; }); // only genuine errors retry — empty/dead stay negative-cached
-      rs = rs.concat(await Promise.all(allow.map(srv => budget(srv, failed[srv]))));
+      rs = rs.concat(await Promise.all(allow.filter(srv => failed[srv]).map(srv => budget(srv)))); // v1.15.9: শুধু-সত্যিকারের-ত্রুটি-রিট্রাই (মন্তব্য-পুনরুদ্ধার) — খালি/মৃত-সার্ভার-আর-হাতুড়ে-নয়
     }
     rs.forEach(absorb);
     // v1.11.5: এপি-মেটা (বছর+টাইটেল) এসে-গেলে-কার্ডে-বসাও — সর্বোচ্চ ১.৮সে-অপেক্ষা (স্ক্যান-চলার-সময়েই-সাধারণত-আসে):
@@ -1290,14 +1293,7 @@ function sendJson(res, code, obj) {
   res.end(b);
 }
 // v1.13.9 স্ট্রিম-উত্তর-ক্যাশ — nethex-v2.4.0-প্যারিটি: TTL-৩০মি + সর্বোচ্চ-৪০০, পুরনো-আগে-বাদ
-const SC_TTL = 1800000, SC_MAX = 400;
-const sCache = new Map();
 const stripCards = cards => (cards || []).map(({ _hq, _lang, quality, headers, subtitles, ...r }) => r); // nethex-প্যারিটি-শেপ: ভেতরে-গাঁথা-সাব+অ-স্পেক-ফিল্ড-ছাঁটা
-function stashStreams(skey, cards, partial) {
-  const n = (cards || []).length;
-  if (n > 0) { if (sCache.size >= SC_MAX) sCache.delete(sCache.keys().next().value); sCache.set(skey, { body: JSON.stringify({ streams: stripCards(cards) }), n, at: Date.now(), short: partial ? 1 : 0 }); }
-  return n;
-}
 function sendStreams(res, skey, plog, ms, cards, ua) {
   const partial = !!(cards && cards.$partial);
   const n = (cards || []).length; // v1.15.8: কোনো-stash-নেই — প্রতি-উত্তর-তাজা
