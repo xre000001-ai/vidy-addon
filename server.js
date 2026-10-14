@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.7';
+const VERSION = '1.15.8';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -373,7 +373,7 @@ function findTmdbInfo(imdb, type) {
   const key = 'find:' + imdb + ':' + type;
   const hit = memoGet(key, 86400000);
   if (hit) return Promise.resolve(hit);
-  if (memoGet(key + ':empty', 1800000)) return Promise.reject(new Error('find-empty-cached')); // নিশ্চিত-খালি → ৩০মিন-মাত্র
+  // v1.15.8: find-empty-মেমো-পাঠ-বিলোপ
   const cinemetaMeta = ms => pooledGet(CINEMETA + '/meta/' + type + '/' + encodeURIComponent(imdb) + '.json', ms).then(b2 => (JSON.parse(b2).meta || {})); // ফ্রি-পাবলিক — Stremio-র-নিজের-IMDb-CDN, IMDb-প্রথম-চেইনের-মাথা
   const suggMeta = () => pooledGet('https://v2.sg.media-imdb.com/suggestion/' + encodeURIComponent(String(imdb)[2]) + '/' + encodeURIComponent(imdb) + '.json', 8000).then(b4 => { // ফ্রি-পাবলিক IMDb-CDN
     const hit = (JSON.parse(b4).d || []).find(x => x && x.l && ['TV series', 'TV mini series', 'feature', 'movie', 'TV movie'].indexOf(String(x.q || '')) >= 0) || {};
@@ -720,9 +720,7 @@ async function twrStreams(base, tag, title, type, s, e, pre) {
   if (!base || !title) return [];
   const tRaw = String(title);
   const tCore = showCore(tRaw); // v1.15.4: যেকোনো-আকৃতি → ক্যানোনিকাল-শো-নাম — সন্ধান/সিজন-ভ্যারিয়েন্ট/alt/গেট/ক্যাশ-সব-কোরে-চলে; কার্ড-লেখা-ইউজারের-মূল-নামে-ই
-  const k = 'twr:' + tag + ':' + tCore.toLowerCase() + ':' + (type === 'series' ? (s || 1) + ':' + (e || 1) : 'm'); // কোর-কী → বিকৃত-আকৃতিও-একই-ক্যাশ-ভাগ-করে (রেজলভার-হিট-কম)
-  const h = TWRCACHE.get(k);
-  if (h && (Date.now() - h.ts) < (h.neg ? 45000 : 1800000)) return h.v; // v1.15.1: নেগেটিভ-মাত্র-৪৫-সে (রেজলভারের-নিজের-খালি-উইন্ডোর-সমান) — রিফ্রেশ-দিলেই-আসল-পুনঃস্ক্র্যাপ; ইউজার: খালি-ফল-ক্যাশ-করে-রাখা-যাবে-না
+  // v1.15.8 (ইউজার): TWRCACHE-পাঠ-বিলোপ — প্রতি-ট্যাপ-রেজলভারে-তাজা-কোয়েরি (মিস-কখনো-পিন-হয়-না); prewarm-রেজলভার-উষ্ণ-রাখে-বলে-গতি-সুরক্ষিত
   const t3 = Date.now();
   const tries = [tCore]; // v1.15.4: ক্যানোনিকাল-আগে (খাঁটি-নামে-কোর===মূল — আচরণ-অপরিবর্তিত)
   if (tCore.toLowerCase() !== tRaw.toLowerCase()) tries.push(tRaw); // বিকৃত-আকৃতি-হলে-মূলটাও-১ম-ঢেউয়ে-সমান্তরালে
@@ -768,9 +766,7 @@ async function twrStreams(base, tag, title, type, s, e, pre) {
       const t2 = String(z.title || '').split(tries[used]).join(tRaw);
       return Object.assign({}, z, { title: t2, description: t2 });
     });
-    TWRCACHE.set(k, { ts: Date.now(), v: r0 }); // সফল-ফল-মূল-কী-তে-ক্যাশ
-  } else if (!pre) TWRCACHE.set(k, { ts: Date.now(), v: [], neg: 1 }); // v1.15.0: prewarm-এর-খালি-ফল-নেগ-লেখে-না (আসল-ট্যাপ-নিজে-রায়-দেবে)
-  if (TWRCACHE.size > 2500) TWRCACHE.clear();
+  } // v1.15.8: TWRCACHE-লেখা-বিলোপ (pos+neg) — কিছুই-পিন-হয়-না
   if (DBG) console.error('[twr] ' + tag + ' ' + String(title).slice(0, 30) + ' S' + (s || 1) + 'E' + (e || 1) + ' -> ' + r0.length + ' cards @' + (Date.now() - t3) + 'ms');
   return r0;
 }
@@ -849,7 +845,6 @@ async function twrFetch(base, tag, title, type, s, e, t3) {
         bingeGroup: (tag === 'toonworld' ? 'tw|' : 'rt|') + String(title).toLowerCase() + '::|' + (lang || 'Hindi')
       };
     });
-    if (TWRCACHE.size > 2500) TWRCACHE.clear();
     if (DBG) console.error('[twr] ' + tag + ' ' + String(title).slice(0, 30) + ' S' + (s || 1) + 'E' + (e || 1) + ' -> ' + arr.length + ' cards @' + (Date.now() - t3) + 'ms');
     return arr;
   } catch (e2) {
@@ -968,10 +963,7 @@ function playable(u, hop) {
 function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টাইটেলের-প্রমিস — sources-সমান্তরালে-ছোটা-হয়
   const qsig = (Array.isArray(cfg && cfg.q) ? cfg.q.slice().sort((a, b) => a - b).join('.') : String((cfg && cfg.q) || '')) + ':' + ((cfg && cfg.sub) === 0 ? 0 : 1) + ':' + ((cfg && Array.isArray(cfg.srv) && cfg.srv.length) ? cfg.srv.slice().sort().join('.') : '');
   const key = ['src', VERSION, tmdbId, type, s || '', e || '', qsig].join('|'); // VERSION+cfg-ভার্সনড — ভিন্ন-ফিল্টার-ভিন্ন-ক্যাশ
-  const hit = memoGet(key, 10800000);
-  if (hit) return Promise.resolve(hit);
-  const hitS = memoShort.get(key);
-  if (hitS && (Date.now() - hitS.ts) < 60000) return Promise.resolve(hitS.v);
+  // v1.15.8 (ইউজার): ৩-ঘণ্টা-মেমো+৬০সে-মেমোশর্ট-পাঠ-বিলোপ — এটাই-ছিল-সবচেয়ে-বড়-মিস-পিনার (মিস-সহ-উত্তর-৩ঘণ্টা-আটকে-থাকত); প্রতি-ট্যাপ-প্রকৃত-স্ক্যান
   return dedupe(key, async () => {
     const epMetaP = epMetaFor(tmdbId, type, s, e); // বছর+এপি-টাইটেল — স্ক্যানের-সমান্তরালে
     const olP = origLangForTmdb(tmdbId, type); // আসল-অডিও-ভাষা (TMDB) — সমান্তরালে
@@ -989,15 +981,7 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
     const allow = srvOrder().filter(srv => !cfg || !Array.isArray(cfg.srv) || !cfg.srv.length || cfg.srv.indexOf(srv) >= 0); // cfg-সার্ভার-সাবসেট
     const one = async (srv, negBypass) => {
       const ck = ['srvc', VERSION, tmdbId, type, s || '', e || '', srv].join('|');
-      const ch = SRV_CACHE.get(ck);
-      if (ch && (Date.now() - ch.ts) < 600000) { // ১০মিন-raw-ক্যাশ-হিট → seed/sources/প্রোব-সব-স্কিপ (নেগের-আগে — ক্যাশ-হিট-কখনো-প্রোব-ই-করে-না)
-        return { srv, j: ch.j, ok: ch.ok, ns: ch.ns, nfit: ch.ok ? decorate(ch.j, type, s, e, title || '', cfg, srv).length : 0 };
-      }
-      const nt = SRV_NEG.get(ck);
-      if (nt && !negBypass) { // negBypass: the in-call retry re-probes servers that just errored in this same call (their neg was written seconds ago)
-        const ttl = GIANT.indexOf(srv) >= 0 ? 45000 : 90000; // giants retry after 45s (per-episode key — fresh episodes always scan live), extras after 90s
-        if ((Date.now() - nt) < ttl) return { srv, neg: true };
-      }
+      // v1.15.8 (ইউজার): SRV_CACHE/SRV_NEG-পাঠ-বিলোপ — প্রতি-ট্যাপ-লাইভ-স্ক্যান; নতুন/মিস-হওয়া-স্ট্রিম-পরের-ক্লিকেই-ধরা-পড়ে
       // এক-সার্ভার-সম্পূর্ণ-মূল্যায়ন (seed+sources+প্রোব):
       const tS = Date.now(); // try-এর-বাইরে — catch-ও-লগ-দেখাতে-পারে
       try {
@@ -1014,7 +998,6 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
         if (DBG && j.playlist) console.error('[t1g] ' + srv + ' PLAYLIST=' + JSON.stringify(j.playlist).slice(0, 500));
         if (!j.sources || !j.sources.length) {
           if (DBG) console.error('[t1g] ' + srv + ' EMPTY at ' + (Date.now() - tS) + 'ms');
-          SRV_NEG.set(ck, Date.now()); // সব-সার্ভার (টিটিএল-ভেদে) — একই-এপিসোডে-বারবার-হাতুড়ে-নয়
           force = true; return { srv, empty: true };
         }
         // v1.9.0 filter-aware probing: never spend probe time on assets the filter will discard.
@@ -1041,14 +1024,10 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
         const ns = (j.subtitles || []).length;
         const nfit = ok ? decorate(j, type, s, e, title || '', cfg, srv).length : 0;
         if (DBG) console.error('[t1g] ' + srv + ' probe=' + (Date.now() - tS) + 'ms ok=' + ok + ' nfit=' + nfit + ' ns=' + ns);
-        if (ok) { // শুধু-বাঁচা-ফল-ক্যাশ-হয় (মৃত/খালি-কখনো-নয়):
-          SRV_CACHE.set(ck, { ts: Date.now(), j, ok: true, ns });
-          if (SRV_CACHE.size > 400) SRV_CACHE.clear();
-        } else SRV_NEG.set(ck, Date.now()); // মৃত-অ্যাসেট-ও-সাম্প্রতিক-ব্যর্থতা — ভ্যারিয়েন্ট-বারবার-প্রোব-করে-বাজেট-পোড়াবে-না
+        // v1.15.8: ক্যাশ-লেখা-বিলোপ — প্রতি-ট্যাপ-তাজা
         return { srv, j, ok, ns, nfit };
       } catch (er) {
         if (DBG) console.error('[t1g] ' + srv + ' ERR at ' + (Date.now() - tS) + 'ms: ' + String(er && er.message).slice(0, 60));
-        SRV_NEG.set(ck, Date.now());
         force = true; return { srv, err: er };
       }
     };
@@ -1076,7 +1055,6 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
         if (done || !fire) return; // one() won — server is healthy, no neg
         if (DBG) console.error('[t1g] ' + srv + ' BUDGET-CUT');
         pend.delete(srv); // v1.14.2: বসে-গেছে — early-harvest-গণিত-যেন-ভুল-না-হয়
-        SRV_NEG.set(ckFor(srv), Date.now()); // genuine budget timeout — recent-failure marker
         fire({ srv, err: new Error('srv-budget') });
       }, GIANT.indexOf(srv) >= 0 ? (viaProxy ? 8500 : 5500) : (viaProxy ? 7000 : 3800)); // v1.11.2 পথ-সচেতন-বাজেট: সরাসরি-পথে 6.5/4.5সে (ঝুলন্ত-সার্ভার-কখনো-কার্ড-দেয়-না), প্রক্সি-পথে (৪২৯-উইন্ডো) 9.5/8সে — প্রক্সি-চেইনের-সফল-ফেচ ৪.৭-৬.৩সে-তে
       return Promise.race([
@@ -1147,10 +1125,7 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
         });
       }
     }
-    // দৈত্য-সার্ভার-কেউ-এই-পাসে-মিসিং-হলে (transient) ক্যাশ-নয় — পরের-চেষ্টায়-আবার-স্ক্যান-হবে:
-    const giantsMissing = rs.some(r => GIANT.indexOf(r.srv) >= 0 && (!r.j || !r.ok));
-    if (out.length && !giantsMissing) memoSet(key, out);
-    else if (out.length) memoShort.set(key, { ts: Date.now(), v: out }); // দৈত্য-মিসিং → ৬০সে-ক্ষণস্থায়ী
+    // v1.15.8: কোনো-ফল-ক্যাশ-হয়-না — মিস-হলে-পরের-ক্লিকেই-তাজা-স্ক্যানে-পাওয়া-যায়
     if (DBG) console.error('[vdbg] ' + qsig + ' | ' + rs.map(r => r.srv + ':' + (r.neg ? 'neg' : r.err ? 'err' : r.empty ? 'empty' : 'ok' + r.nfit + '/' + (r.j && r.j.sources || []).length)).join(' '));
     if (!out.length && lastErr) throw lastErr;
     return out;
@@ -1325,7 +1300,7 @@ function stashStreams(skey, cards, partial) {
 }
 function sendStreams(res, skey, plog, ms, cards, ua) {
   const partial = !!(cards && cards.$partial);
-  const n = stashStreams(skey, cards, partial);
+  const n = (cards || []).length; // v1.15.8: কোনো-stash-নেই — প্রতি-উত্তর-তাজা
   logReq(plog, ms, n, null, ua);
   res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'cache-control': 'no-store' });
   return res.end(JSON.stringify({ streams: stripCards(cards) }));
@@ -1376,12 +1351,7 @@ const server = http.createServer((req, res) => {
     let m;
     // সব-পথ-লগ (৪০৪-ও-দৃশ্যমান-হোক):
     logReq(p, 0, -1, 'route-in', RVA);
-    // v1.13.9 nethex-ক্যাশ-ধাঁচ: ৩০-মিনিটে-একই-স্ট্রিম-কোয়েরি = তাৎক্ষণিক-উত্তর
-    if (/^(\/cfg\/[^/]+)?\/stream\//.test(req.url)) {
-      const hit = sCache.get(req.url);
-      const hitTtl = hit && hit.short ? 90000 : SC_TTL; // v1.14.3: সোর্স-কাটা-উত্তর-মাত্র-৯০সে — পরের-ট্যাপে-সম্পূর্ণ-আপগ্রেড
-      if (hit && Date.now() - hit.at < hitTtl) { logReq(p, 0, hit.n, null, RVA); res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'cache-control': 'no-store' }); return res.end(hit.body); }
-    }
+    // v1.15.8 (ইউজার): স্ট্রিম-উত্তরে-ক্যাশ-পাঠ-বিলোপ — আগে-৩০মিন-পিন-মিস-হলে-২য়-ক্লিকে-একই-মিস-দেখাত; এখন-প্রতি-ক্লিক-প্রকৃত-স্ক্যান
     // ── catalog (search + genre + skip — NetHex-ধাঁচ):
     if ((m = p.match(/^\/catalog\/(series|movie)\/(vidy-kdrama|vidy-movies)(?:\/(.*))?\.json$/))) {
       const type = m[1] === 'series' ? 'tv' : 'movie';
@@ -1488,6 +1458,26 @@ const server = http.createServer((req, res) => {
 // v1.15.0: ৬০-সে-অন্তর-সব-agent-socket-ধ্বংস-বাদ — এটাই-কিপ-অ্যালাইভ-কে-অর্থহীন-করত (প্রতি-ট্যাপে-DNS+TLS-পুনরায়);
 // warmBases()-এর-৪৫-সে-অন্তর-ট্রাফিক-সকেট-সক্রিয়-রাখে (NAT-কাট-স্বাভাবিকভাবেই-টালানো); মরা-সকেট-সার্ভার-FIN-এ-এজেন্ট-নিজেই-ফেলে।
 // ---------- v1.11.8 embedded MovieBox (vendored nethex child; single-app deploy) ----------
+let _nxEnsure = null;
+function ensureNxChild(nxPort) { // v1.15.8: ৯০সে-অন্তর-7137-যাচাই; জীবিত-পেলে-NEXBASE-সেট; মৃত-হলে-পুনঃস্পন (৩মিন-স্পন-গার্ড — স্পন-ঝড়-নয়)
+  if (_nxEnsure) return;
+  let lastSpawn = 0;
+  _nxEnsure = setInterval(() => {
+    if (NEXBASE) return;
+    const rq = http.get({ host: '127.0.0.1', port: nxPort, path: '/manifest.json', timeout: 1500 }, r => {
+      r.resume();
+      if (r.statusCode === 200) { NEXBASE = 'http://127.0.0.1:' + nxPort; console.log('[nx-embed] MovieBox দেরিতে-জীবন্ত: ' + NEXBASE); }
+    });
+    rq.on('error', () => {
+      if (Date.now() - lastSpawn < 180000) return;
+      lastSpawn = Date.now();
+      if (DBG) console.error('[nx-embed] ensure: চাইল্ড-নেই — পুনঃস্পন');
+      try { require('child_process').spawn(process.execPath, [path.join(__dirname, 'nethex', 'server.js')], { env: Object.assign({}, process.env, { PORT: String(nxPort), NX_POOL_FILE: path.join(__dirname, 'vidy_proxy_pool.json') }), stdio: 'ignore' }); } catch (e) {}
+    });
+    rq.on('timeout', () => { rq.destroy(); });
+  }, 90000);
+  _nxEnsure.unref();
+}
 function startEmbeddedNx() {
   return new Promise(resolve => {
     try {
@@ -1497,6 +1487,7 @@ function startEmbeddedNx() {
         env: Object.assign({}, process.env, { PORT: String(nxPort), NX_POOL_FILE: path.join(__dirname, 'vidy_proxy_pool.json') }),
         stdio: 'ignore',
       });
+      ensureNxChild(nxPort); // v1.15.8: বুট থেকেই-প্রহরী — চাইল্ড-বুটেই-ব্যর্থ-হলেও-৯০সে-অন্তর-যাচাই→পুনঃস্পন (আগে-স্থায়ী-off-হয়ে-যেত)
       let nxRespawned = false;
       child.on('exit', c2 => { // v1.15.6 রাউন্ড-৩৬: চাইল্ড-মাঝপথে-মরলে-একবার-৯০সে-পরে-পুনঃস্পন (গার্ডেড — মাত্র-একবার, unref);
         if (DBG) console.error('[nx-embed] child exited ' + c2);
