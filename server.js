@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.9';
+const VERSION = '1.15.10';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -489,6 +489,7 @@ const NXHARD = Math.max(Number(process.env.NXHARD || 0), 7000); // v1.13.6: →�
 const NXCACHE = new Map(); // nx:imdb:s:e -> {ts, v} — NetHex links are signed/fresh + it caches 30min itself
 async function nxStreams(imdb, type, s, e) {
   if (!NEXBASE || !imdb) return [];
+  if (NXBENCH === 0) return []; // v1.15.10 শীতলীকরণ-রক্ষক: বেঞ্চ-খালি = প্রতিটা-কল-403-খায়-আর-বেঞ্চ-আরো-বসে (ইউজারের-'MovieBox-ভাঙা'-মূল-কারণ); ৬০সে-পোল-জীবিত-দেখলে-নিজে-ই-চালু-হবে
   const k = 'nx:' + imdb + ':' + (type === 'series' ? (s || 1) + ':' + (e || 1) : 'm');
   const h = NXCACHE.get(k);
   if (h && (Date.now() - h.ts) < 1800000) return h.v;
@@ -1083,9 +1084,7 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
     if (DBG) console.error('[t1g] ALL-SERVERS el=' + (Date.now() - t0) + 'ms ok=' + rs.filter(r => r.ok).length + '/' + rs.length);
     if (!rs.some(r => r.ok) && Date.now() - t0 < 3400) { // gate 3.4s (নতুন-বাজেটে-সমন্বয়): দ্রুত-সর্বব্যর্থতায়-রিট্রাই-এখনো-৯.৮সে-সীমার-ভেতরে-শেষ-হয়
       await new Promise(r2 => setTimeout(r2, 800)); force = true;
-      const failed = {};
-      rs.forEach(r => { if (r.err) failed[r.srv] = 1; }); // only genuine errors retry — empty/dead stay negative-cached
-      rs = rs.concat(await Promise.all(allow.filter(srv => failed[srv]).map(srv => budget(srv)))); // v1.15.9: শুধু-সত্যিকারের-ত্রুটি-রিট্রাই (মন্তব্য-পুনরুদ্ধার) — খালি/মৃত-সার্ভার-আর-হাতুড়ে-নয়
+      rs = rs.concat(await Promise.all(allow.map(srv => budget(srv)))); // v1.15.10: পূর্ণ-পুনরুদ্ধার-ঢেউ-ফিরল (v1.15.9-ফিল্টার-ঠান্ডা-জানালার-কার্ড-উদ্ধার-ভাঙছিল — ইউজার-রিপোর্ট-অনুযায়ী-ফিরেছে)
     }
     rs.forEach(absorb);
     // v1.11.5: এপি-মেটা (বছর+টাইটেল) এসে-গেলে-কার্ডে-বসাও — সর্বোচ্চ ১.৮সে-অপেক্ষা (স্ক্যান-চলার-সময়েই-সাধারণত-আসে):
