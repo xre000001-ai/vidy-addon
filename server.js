@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.14.1';
+const VERSION = '1.14.2';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -908,6 +908,7 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
       }
     };
     const absorb = r => {
+      if (r.late) return; // v1.14.2 early-harvest-কাট — দোষ-নেই, শাস্তি/নেগ-নয় (পেছনে-ক্যাশে-জমবে)
       if (r.neg) return; // নেগেটিভ-হিট — স্কোর-আর-শাস্তি-নয়
       if (r.err) { srvBump(r.srv, -1); lastErr = r.err; return; }
       if (r.empty) { srvBump(r.srv, 0); return; }
@@ -921,22 +922,38 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
     // v1.9.0 fix: the timeout timer used to fire even when one() had already won the race,
     // negative-caching healthy servers for 45-90s after every scan (empty-card windows).
     // Now the neg write only happens when the timeout genuinely fires first.
+    let okWave = 0; // v1.14.2 early-harvest: কত-সার্ভার-ইতিমধ্যে-জিতেছে
+    const pend = new Map(); // v1.14.2 early-harvest: এখনো-ঝুলন্ত-সার্ভারের-রেজলভার
     const budget = (srv, negBypass) => {
       let done = false;
       let fire = null;
       const tmo = setTimeout(() => {
         if (done || !fire) return; // one() won — server is healthy, no neg
         if (DBG) console.error('[t1g] ' + srv + ' BUDGET-CUT');
+        pend.delete(srv); // v1.14.2: বসে-গেছে — early-harvest-গণিত-যেন-ভুল-না-হয়
         SRV_NEG.set(ckFor(srv), Date.now()); // genuine budget timeout — recent-failure marker
         fire({ srv, err: new Error('srv-budget') });
       }, GIANT.indexOf(srv) >= 0 ? (viaProxy ? 8500 : 5500) : (viaProxy ? 7000 : 3800)); // v1.11.2 পথ-সচেতন-বাজেট: সরাসরি-পথে 6.5/4.5সে (ঝুলন্ত-সার্ভার-কখনো-কার্ড-দেয়-না), প্রক্সি-পথে (৪২৯-উইন্ডো) 9.5/8সে — প্রক্সি-চেইনের-সফল-ফেচ ৪.৭-৬.৩সে-তে
       return Promise.race([
-        one(srv, negBypass).then(r => { done = true; clearTimeout(tmo); return r; }), // timer cleared on win — no dangling timeouts
-        new Promise(r => { fire = r; })
+        one(srv, negBypass).then(r => { done = true; clearTimeout(tmo); pend.delete(srv); if (r.ok) okWave++; return r; }), // timer cleared on win — no dangling timeouts
+        new Promise(r => { fire = r; pend.set(srv, v => { done = true; clearTimeout(tmo); fire(v); }); }) // v1.14.2: tighten-কাটও-টাইমার-পরিষ্কার-করে — পরের-আসল-বাজেট-কাট/শাস্তি-আর-গুলে-খায়-না
       ]);
     };
     // সবাই-একসাথে-ফেল-করলে (যেমন-upstream-সাময়িক-http_500) ১.২-সে-পরে-এক-বার-অটো-রিট্রাই:
+    // v1.14.2 EARLY-HARVEST: পণ্যদর্শী-কাজ-মাত্র ~১-সে-তে-শেষ (fetch ০.২-০.৬সে + probe); ঝুলন্ত-সার্ভারের-পূর্ণ-বাজেট-আর-গোটা-ঢেউ-জিম্মি-করে-না।
+    // ≥৬-ওকে-হলে (২.২সে-পরে) বাকিদের-কাটো — শাস্তি-নেই (বাজেট-কাট-নয়), ওরা-পেছনে-শেষ-করে-SRV_CACHE-এ-জমে → পরের-ট্যাপ-তাৎক্ষণিক-পায়।
+    // giants-একা-উৎস-হলে (পুরনো-সিরিজ) okWave-কখনো-৬-ছোঁয়-না → পুরনো-পূর্ণ-বাজেট-আচরণ-অক্ষত।
+    const stopTighten = setInterval(() => {
+      const el2 = Date.now() - t0;
+      // স্তর-১: ব্যাপক-সাফল্য (≥৬-ওকে) → ২.২সে-থেকেই-ঝুলন্ত-কাট
+      // স্তর-২: প্রায়-সবাই-বসে-গেছে (≤২-ঝুলন্ত) + অন্তত-১-ওকে + ৩.৯সে → শেষ-জিদ্দিদের-কাটো (সাধারণত-ধীর-giant, যে-শেষে-err/empty-ই-দেয় — অপেক্ষা-নিষ্ফল)
+      if (pend.size && el2 >= 2200 && (okWave >= 6 || (okWave >= 1 && el2 >= 3900 && allow.length - pend.size >= allow.length - 2))) {
+        if (DBG) console.error('[t1g] TIGHTEN ok=' + okWave + ' cut=' + pend.size + ' at ' + el2 + 'ms');
+        for (const [srv2, f2] of Array.from(pend)) { pend.delete(srv2); f2({ srv: srv2, late: true }); }
+      }
+    }, 150);
     let rs = await Promise.all(allow.map(s => budget(s)));
+    clearInterval(stopTighten); pend.clear();
     if (DBG) console.error('[t1g] ALL-SERVERS el=' + (Date.now() - t0) + 'ms ok=' + rs.filter(r => r.ok).length + '/' + rs.length);
     if (!rs.some(r => r.ok) && Date.now() - t0 < 3400) { // gate 3.4s (নতুন-বাজেটে-সমন্বয়): দ্রুত-সর্বব্যর্থতায়-রিট্রাই-এখনো-৯.৮সে-সীমার-ভেতরে-শেষ-হয়
       await new Promise(r2 => setTimeout(r2, 800)); force = true;
@@ -948,9 +965,12 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
     // v1.11.5: এপি-মেটা (বছর+টাইটেল) এসে-গেলে-কার্ডে-বসাও — সর্বোচ্চ ১.৮সে-অপেক্ষা (স্ক্যান-চলার-সময়েই-সাধারণত-আসে):
     let EXT0 = null;
     try {
+      // v1.14.2 অভিযোজিত-অপেক্ষা: স্ক্যান-দেরি-হলে-সাজসজ্জার-বাড়তি-অপেক্ষা-আর-যোগ-হয়-না (মোট-স্ক্যান+সাজ ~৪.৬সে-ছোঁয়-না);
+      // দ্রুত-স্ক্যানে-পুরো ১.৫সে-বেড়ি থাকে (সাধারণত-মেটা-ইতিমধ্যে-এসে-গেছে — তাৎক্ষণিক-ফেরত)
+      const metaWait = Math.max(0, Math.min(1500, 4600 - (Date.now() - t0)));
       const [em, olc] = await Promise.all([ // দুই-মেটা-একসাথে — worst-case +১.৫সে (স্ক্যান-বাজেটের-সাথে-মসৃণ)
-        Promise.race([epMetaP.catch(() => null), new Promise(r => setTimeout(() => r(null), 1500))]),
-        raceVal(olP, 1500) // আসল-ভাষা-নাম (hi→Hindi, bn→Bengali, ta→Tamil…)
+        Promise.race([epMetaP.catch(() => null), new Promise(r => setTimeout(() => r(null), metaWait))]),
+        raceVal(olP, metaWait) // আসল-ভাষা-নাম (hi→Hindi, bn→Bengali, ta→Tamil…)
       ]);
       if (em || olc) EXT0 = { year: (em && em.year) || '', epT: (em && em.epT) || '', audio: langName(olc) || '' };
     } catch (eE) {}
