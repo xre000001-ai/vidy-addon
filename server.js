@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.14.3';
+const VERSION = '1.14.4';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -734,9 +734,10 @@ async function withSources(cardsP, srcs, cfg, t0) {
     // এখন-নির্বশেষ-৬.৫সে-নিশ্চিত-জানালা (গরম-TWRCACHE/নেগ-ক্যাশে-তাত্ক্ষণিক-রেজলভ-বলে-অপেক্ষা-বাস্তবে-হয়-না);
     // nx-আগের-নীতিই (স্ক্যান-শেষে +grace) — চাইল্ড-নিজেই-দ্রুত।
     const twRtLeft = Math.max(left, Math.max(0, Math.min(NXDEADLINE, 6500) - el));
+    const nxLeft = Math.max(left, Math.max(0, Math.min(NXDEADLINE, 5500) - el)); // v1.14.3: চাইল্ড-ঠান্ডা/ধীর-আপস্ট্রিমেও-১ম-ট্যাপে-থাকে
     const outs = await Promise.all(live.map(x => Promise.race([
       x.p.catch(() => []),
-      new Promise(r => setTimeout(() => r(null), Math.max(0, (x.key === 'tw' || x.key === 'rt') ? twRtLeft : left)))
+      new Promise(r => setTimeout(() => r(null), Math.max(0, x.key === 'tw' || x.key === 'rt' ? twRtLeft : x.key === 'nx' ? nxLeft : left)))
     ])));
     let all = cards.slice();
     for (let i = 0; i < live.length; i++) {
@@ -755,6 +756,7 @@ async function withSources(cardsP, srcs, cfg, t0) {
       } else all = all.concat(v);
     }
     if (DBG) console.error('[srcdbg] withSources el=' + el + 'ms left=' + left + 'ms → ' + all.length + ' কার্ড');
+    all.$partial = outs.some(v => v === null); // v1.14.3: কোনো-সোর্স-কাটা-পড়লে-চিহ্ন — এই-উত্তর-৩০মিন-নয়-৯০সে-ক্যাশ-হবে (পরের-ট্যাপে-সম্পূর্ণ-আপগ্রেড)
     return all;
   } catch (e) { if (DBG) console.error('[srcdbg] ERR ' + String(e && e.message).slice(0, 80)); return cards; }
 }
@@ -1180,13 +1182,14 @@ function sendJson(res, code, obj) {
 const SC_TTL = 1800000, SC_MAX = 400;
 const sCache = new Map();
 const stripCards = cards => (cards || []).map(({ _hq, _lang, quality, headers, subtitles, ...r }) => r); // nethex-প্যারিটি-শেপ: ভেতরে-গাঁথা-সাব+অ-স্পেক-ফিল্ড-ছাঁটা
-function stashStreams(skey, cards) {
+function stashStreams(skey, cards, partial) {
   const n = (cards || []).length;
-  if (n > 0) { if (sCache.size >= SC_MAX) sCache.delete(sCache.keys().next().value); sCache.set(skey, { body: JSON.stringify({ streams: stripCards(cards) }), n, at: Date.now() }); }
+  if (n > 0) { if (sCache.size >= SC_MAX) sCache.delete(sCache.keys().next().value); sCache.set(skey, { body: JSON.stringify({ streams: stripCards(cards) }), n, at: Date.now(), short: partial ? 1 : 0 }); }
   return n;
 }
 function sendStreams(res, skey, plog, ms, cards, ua) {
-  const n = stashStreams(skey, cards);
+  const partial = !!(cards && cards.$partial);
+  const n = stashStreams(skey, cards, partial);
   logReq(plog, ms, n, null, ua);
   res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'cache-control': 'no-store' });
   return res.end(JSON.stringify({ streams: stripCards(cards) }));
@@ -1240,7 +1243,8 @@ const server = http.createServer((req, res) => {
     // v1.13.9 nethex-ক্যাশ-ধাঁচ: ৩০-মিনিটে-একই-স্ট্রিম-কোয়েরি = তাৎক্ষণিক-উত্তর
     if (/^(\/cfg\/[^/]+)?\/stream\//.test(req.url)) {
       const hit = sCache.get(req.url);
-      if (hit && Date.now() - hit.at < SC_TTL) { logReq(p, 0, hit.n, null, RVA); res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'cache-control': 'no-store' }); return res.end(hit.body); }
+      const hitTtl = hit && hit.short ? 90000 : SC_TTL; // v1.14.3: সোর্স-কাটা-উত্তর-মাত্র-৯০সে — পরের-ট্যাপে-সম্পূর্ণ-আপগ্রেড
+      if (hit && Date.now() - hit.at < hitTtl) { logReq(p, 0, hit.n, null, RVA); res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'cache-control': 'no-store' }); return res.end(hit.body); }
     }
     // ── catalog (search + genre + skip — NetHex-ধাঁচ):
     if ((m = p.match(/^\/catalog\/(series|movie)\/(vidy-kdrama|vidy-movies)(?:\/(.*))?\.json$/))) {
