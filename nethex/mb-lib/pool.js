@@ -55,7 +55,7 @@ function noteFail(u, kind) {
   const s = STATS.get(u) || { ok: 0, fail: 0, lat: null };
   s.fail += 1;
   STATS.set(u, s);
-  BAD.set(u, Date.now() + (kind === 'block' ? 1200000 : 600000));
+  BAD.set(u, Date.now() + (kind === 'block' ? 300000 : 180000)); // r-20261016a: 403→৫মিন (২০মিন-ছিল), মৃত→৩মিন — কঠোর-বেঞ্চে-MovieBox-না-খেতেই-বসে-থাকত
 }
 
 export function pick(exclude) {
@@ -266,7 +266,7 @@ async function searchVerify(u) {
 
 export async function poolOnce(force = false) {
   if (force) POOL.__passes = 1;                     // boot/fresh-wave
-  if (!force && Date.now() - TS < 240000) return;   // 4-min re-verify
+  if (!force && Date.now() - TS < 90000) return;   // r-20261016a: ১.৫-মিনিট-পুনঃযাচাই (ইউজার-নির্দেশ — fastest-alive bench সতেজ)
   if (FETCHING) return;
   FETCHING = true;
   TS = Date.now();
@@ -319,7 +319,7 @@ export async function poolOnce(force = false) {
     // bench-the-rest: a member that missed the bench sits out until a
     // later pass re-verifies it (re-verify = rejoin)
     for (const u of prev) {
-      if (!POOL.includes(u)) BAD.set(u, Date.now() + 300000);
+      if (!POOL.includes(u)) BAD.set(u, Date.now() + 90000); // এক-পাস-বাদ (৯০সে) — পরের-পাসেই-পুনঃযাচাই
     }
     console.log(`[pool] bench=${POOL.length} healthy=${poolStats().healthy}`);
     // thin bench right after boot -> more passes immediately (up to 3)
@@ -338,7 +338,7 @@ export async function poolOnce(force = false) {
 
 export function poolStart() {
   poolOnce(true);
-  setInterval(() => poolOnce(), 240000);
+  setInterval(() => poolOnce(), 90000); // r-20261016a: প্রতি-১.৫-মিনিট
 }
 
 export function poolStats() {
