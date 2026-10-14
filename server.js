@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.3';
+const VERSION = '1.15.4';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -73,6 +73,40 @@ function prunePool(snap) {
   POOL.length = 0;
   for (const c of alive) POOL.push(c);
   if (DBG) console.error('[pool] probe: ' + alive.length + '/' + snap.length + ' জীবিত');
+}
+// v1.15.4 পুল-ট্রেইনার (enrich): পাবলিক-তালিকা → নমুনা-১২০ → সমান্তরাল-২০৪-যাচাই → দ্রুততম(<১.৮সে)-যোগ;
+// মূল-১৭-অক্ষত-প্রথমে, ক্যাপ-৭৭, জেতা-প্রক্সি-ফাইলেও-লেখা (রিস্টার্টে-উষ্ণ); PX_ENRICH=0 দিলে-বন্ধ
+const PX_BASE_N = 17, PX_CAP = 77, POOL_FILE = path.join(__dirname, 'vidy_proxy_pool.json');
+let _training = false;
+async function enrichPool() {
+  if (_training || process.env.PX_ENRICH === '0' || !POOL.length) return;
+  _training = true;
+  try {
+    const lists = ['https://raw.githubusercontent.com/TheSpeedX/PROXY-LIST/master/http.txt',
+                   'https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt',
+                   'https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=3000'];
+    const txts = await Promise.all(lists.map(u => directGet(u, 12000).catch(() => '')));
+    const have = new Set(POOL.map(c => c.px));
+    const cands = [...new Set((txts.join('\n').match(/\b\d{1,3}(?:\.\d{1,3}){3}:\d{2,5}\b/g) || [])).values()].filter(px => !have.has(px));
+    for (let i = cands.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); const w = cands[i]; cands[i] = cands[j]; cands[j] = w; }
+    const sample = cands.slice(0, 120), good = [];
+    for (let i = 0; i < sample.length && POOL.length < PX_CAP; i += 40) {
+      const res = await Promise.all(sample.slice(i, i + 40).map(px => new Promise(r2 => {
+        const t0 = Date.now();
+        proxiedGet(px, PX_PROBE_URL, 4000).then(() => { const ms = Date.now() - t0; r2(ms < 1800 ? { px, ms } : null); }).catch(() => r2(null));
+      })));
+      for (const g of res) if (g) good.push(g);
+    }
+    good.sort((a, b) => a.ms - b.ms);
+    const base = POOL.slice(0, Math.min(PX_BASE_N, POOL.length)), rest = POOL.slice(base.length);
+    const next = base.slice(); const seen = new Set(next.map(c => c.px));
+    let n = 0;
+    for (const g of good) { if (next.length >= PX_CAP) break; if (!seen.has(g.px)) { seen.add(g.px); next.push(g); n++; } }
+    for (const c of rest) { if (next.length >= PX_CAP) break; if (!seen.has(c.px)) { seen.add(c.px); next.push(c); } }
+    POOL.length = 0; for (const c of next) POOL.push(c);
+    if (n) { try { fs.writeFileSync(POOL_FILE, JSON.stringify(POOL)); } catch (e) {} }
+    if (DBG) console.error('[pool] enrich: +' + n + ' (মোট ' + POOL.length + ', প্রার্থী ' + cands.length + ')');
+  } catch (e) { if (DBG) console.error('[pool] enrich-ERR ' + String(e && e.message).slice(0, 80)); } finally { _training = false; }
 }
 
 // ---------- মেমো + ডিডুপ ----------
@@ -663,20 +697,31 @@ let RTBASE = String(process.env.RTBASE || '');
 if (!RTBASE) RTBASE = 'https://3404d3c5dc63-raretoons.baby-beamup.club'; // ফলব্যাক: নতুন-পাবলিক-ডোমেইন
 else if (/\.a\.baby-beamup\.club/.test(RTBASE)) RTBASE = RTBASE.replace('.a.baby-beamup.club', '.baby-beamup.club'); // beamup-ডোমেইন-মাইগ্রেশন (a. বাদ)
 const TWRCACHE = new Map(); // twr:source:title:s:e -> {ts, v} — রেজলভার-নিজেই-৮ঘ-ক্যাশ-করে, এখানে-৩০মিন
+function showCore(t) { // v1.15.4 সর্বজনীন-টাইটেল: 'One Piece S1E1' / 'One Piece season 1 episode 8' / 'One Piece s01e0001' / '1x01' / hindi-dub-কোয়ালিটি-টোকেন → খাঁটি-শো-নাম;
+  let c2 = String(t || ''); // এক-জায়গায়-সব-আকৃতি-নরমালাইজ — প্রতি-ফরম্যাটে-বাইরের-অ্যাডন-আপডেট-লাগবে-না (ইউজার-নির্দেশ)
+  const before = c2.trim();
+  c2 = c2.replace(/\b(?:s\d{1,2}[\s._-]?e\d{1,4}|\d{1,2}x\d{1,4}|season[\s._-]?\d{1,2}|episodes?[\s._-]?\d{1,4}|ep[\s._-]?\d{1,4})\b/gi, ' ');
+  c2 = c2.replace(/\b(?:hindi|dubbed|dub|subbed|sub|720p|1080p|480p|web[\s.-]?dl|bluray|hevc|x264|x265)\b/gi, ' ');
+  c2 = c2.replace(/\s+/g, ' ').replace(/^[\s\-_:.,]+|[\s\-_:.,]+$/g, '').trim();
+  return c2.length >= 2 ? c2 : (before || String(t || ''));
+}
 async function twrStreams(base, tag, title, type, s, e, pre) {
   if (!base || !title) return [];
-  const k = 'twr:' + tag + ':' + String(title).toLowerCase() + ':' + (type === 'series' ? (s || 1) + ':' + (e || 1) : 'm');
+  const tRaw = String(title);
+  const tCore = showCore(tRaw); // v1.15.4: যেকোনো-আকৃতি → ক্যানোনিকাল-শো-নাম — সন্ধান/সিজন-ভ্যারিয়েন্ট/alt/গেট/ক্যাশ-সব-কোরে-চলে; কার্ড-লেখা-ইউজারের-মূল-নামে-ই
+  const k = 'twr:' + tag + ':' + tCore.toLowerCase() + ':' + (type === 'series' ? (s || 1) + ':' + (e || 1) : 'm'); // কোর-কী → বিকৃত-আকৃতিও-একই-ক্যাশ-ভাগ-করে (রেজলভার-হিট-কম)
   const h = TWRCACHE.get(k);
   if (h && (Date.now() - h.ts) < (h.neg ? 45000 : 1800000)) return h.v; // v1.15.1: নেগেটিভ-মাত্র-৪৫-সে (রেজলভারের-নিজের-খালি-উইন্ডোর-সমান) — রিফ্রেশ-দিলেই-আসল-পুনঃস্ক্র্যাপ; ইউজার: খালি-ফল-ক্যাশ-করে-রাখা-যাবে-না
   const t3 = Date.now();
-  const tries = [String(title)];
-  const sq = String(title).replace(/[^A-Za-z0-9\u0900-\u097F\u0980-\u09FF\u0B80-\u0BFF]/g, ''); // স্পেস/বিরামচিহ্ন-স্কোয়াশ ফলব্যাক
-  if (sq && sq.toLowerCase() !== String(title).toLowerCase()) tries.push(sq);
+  const tries = [tCore]; // v1.15.4: ক্যানোনিকাল-আগে (খাঁটি-নামে-কোর===মূল — আচরণ-অপরিবর্তিত)
+  if (tCore.toLowerCase() !== tRaw.toLowerCase()) tries.push(tRaw); // বিকৃত-আকৃতি-হলে-মূলটাও-১ম-ঢেউয়ে-সমান্তরালে
+  const sq = tRaw.replace(/[^A-Za-z0-9\u0900-\u097F\u0980-\u09FF\u0B80-\u0BFF]/g, ''); // স্পেস/বিরামচিহ্ন-স্কোয়াশ ফলব্যাক
+  if (sq && !tries.some(t2 => t2.toLowerCase() === sq.toLowerCase())) tries.push(sq);
   // v1.15.3: Season-যোগ্য-ভ্যারিয়েন্ট-১ম-ঢেউয়েই-সমান্তরালে (আগে-সিকোয়েন্সিয়াল-ফলব্যাকে-৫+৬=১১সে > ৯.৩সে-জানালা → One-Piece-জাতীয়-কাটা-পড়ত);
   // ম্যাস-টেস্ট-প্রমাণ: সমান্তরালে-চালালে-কোনো-শোর-ক্ষতি-নেই — যে-আকৃতি-আগে-ফল-দেয়-সেটাই-জেতে (Naruto=সাধারণ, One Piece/JJK=Season-আকৃতি)
-  const seasTry = (type === 'series' && s && tag === 'toonworld') ? [String(title) + ' Season ' + s] : []; // v1.15.3: শুধু-TW (RT-ইনডেক্স-ম্যাচ-নিজেই-ঠিক); ০-প্যাড-ভ্যারিয়েন্ট-ফলব্যাকেই
+  const seasTry = (type === 'series' && s && tag === 'toonworld') ? [tCore + ' Season ' + s] : []; // v1.15.4: কোর-ভিত্তিক ('One Piece S1E1 Season 1'-জাতীয়-আবর্জনা-নয়); শুধু-TW (RT-ইনডেক্স-ম্যাচ-নিজেই-ঠিক)
   // v1.13.5 সমান্তরাল-ফ্যানআউট: মূল+স্কোয়াশ-একসাথে, alt-লুকআপও-সমান্তরালে-ছোটানো — পরপর-অপেক্ষার-যোগফল-দেরি-নেই (দেয়াল-সময় = এক-ট্রাই-এর-সময়)
-  const altP = tmdbAltTitles(title);
+  const altP = tmdbAltTitles(tCore);
   const first = tries.concat(seasTry.filter(a => !tries.some(t => t.toLowerCase() === a.toLowerCase())));
   const w1 = first.map(t => twrFetch(base, tag, t, type, s, e, t3));
   tries.push(...first.slice(tries.length));
@@ -693,13 +738,13 @@ async function twrStreams(base, tag, title, type, s, e, pre) {
   if (!r0.length) { // শেষ-ফলব্যাক: Season-যোগ্য-টাইটেল + TMDB-বিকল্প-টাইটেল — সব-একসাথে, অগ্রাধিকার-ক্রমে-প্রথম-জয়ী
     // v1.15.2 ম্যাস-টেস্ট-প্রমাণ: TW-ক্যাটালগ-ম্যাচ-কোয়েরি-আকৃতি-নির্ভর — One Piece/Jujutsu Kaisen 'X Season N'-এ-৩-ফল (সাধারণ-টাইটেলে-০);
     // Naruto-উল্টো (সাধারণ=৩, season=০) — তাই-সিজন-ভ্যারিয়েন্ট-শুধু-ফলব্যাকে (১ম-ধাপ-সাধারণ-টাইটেল-ই-জেতে-যেখানে-জেতা-হয়)
-    const tSq = String(title).toLowerCase().replace(/[^a-z0-9\u0900-\u097F\u0980-\u09FF\u0B80-\u0BFF]/g, '');
+    const tSq = tCore.toLowerCase().replace(/[^a-z0-9\u0900-\u097F\u0980-\u09FF\u0B80-\u0BFF]/g, '');
     const lcs4 = a => { // স্কোয়াশড-দুই-টাইটেলের-সাধারণ-খণ্ড ≥৪ — না-থাকলে-অনুবাদ/সংক্ষেপ-জাত-অর্থহীন-alt
       const aSq = String(a).toLowerCase().replace(/[^a-z0-9\u0900-\u097F\u0980-\u09FF\u0B80-\u0BFF]/g, '');
       for (let i = 0; i + 4 <= aSq.length; i++) if (tSq.indexOf(aSq.slice(i, i + 4)) >= 0) return true; // aSq-এর-যেকোনো-৪-অক্ষর-খণ্ড tSq-তে-আছে-কি
       return false;
     };
-    const seas = type === 'series' ? [String(title) + ' Season ' + s, String(title) + ' Season ' + String(s).padStart(2, '0')] : [];
+    const seas = type === 'series' ? [tCore + ' Season ' + s, tCore + ' Season ' + String(s).padStart(2, '0')] : [];
     const alts = (await altP).filter(a => !tries.some(t => t.toLowerCase() === String(a).toLowerCase()) && lcs4(a)).slice(0, 4);
     const extra = seas.concat(alts).filter(a => !tries.some(t => t.toLowerCase() === String(a).toLowerCase()));
     tries.push(...extra);
@@ -708,8 +753,8 @@ async function twrStreams(base, tag, title, type, s, e, pre) {
     if (i2 >= 0) { r0 = w2[i2]; used = tries.length - extra.length + i2; }
   }
   if (r0.length) {
-    if (used > 0) r0 = r0.map(z => { // কার্ড-টেক্সটে-আসল-ডিসপ্লে-টাইটেল (ফলব্যাক-টাইটেল-নয়)
-      const t2 = String(z.title || '').split(tries[used]).join(String(title));
+    if (used >= 0 && tries[used].toLowerCase() !== tRaw.toLowerCase()) r0 = r0.map(z => { // কার্ড-টেক্সটে-ইউজারের-মূল-ডিসপ্লে-টাইটেল (v1.15.4: কোর-জয়েও-রিম্যাপ)
+      const t2 = String(z.title || '').split(tries[used]).join(tRaw);
       return Object.assign({}, z, { title: t2, description: t2 });
     });
     TWRCACHE.set(k, { ts: Date.now(), v: r0 }); // সফল-ফল-মূল-কী-তে-ক্যাশ
@@ -766,8 +811,9 @@ async function twrFetch(base, tag, title, type, s, e, t3) {
       const nm = String(x.name || '');
       return nm.length >= 4 && !/\b(raretoons|toonworld)?\s*mq\b/i.test(nm);
     });
-    const keep = catShow ? twTitleOk(title, catShow) // পোস্ট-পরিচিতি-থাকলে-সেটাই-চূড়ান্ত-রায়
-          : (named.length ? named.some(x => twTitleOk(title, x.name)) : false); // নইলে-নাম-ওয়ালা-কার্ড-রায়; সব-জেনেরিক+পরিচয়হীন → যাচাই-অযোগ্য → বাদ (ভুল-শো-MQ-লিক-বন্ধ)
+    const qG = showCore(title); // v1.15.4 গেট-সংশোধন: রায়-শুধু-খাঁটি-শো-নামে — 'Season 1'-জাতীয়-কোয়েরি-টোকেন-কার্ড-লেখায়-থাকে-না-ই (সে/ই-ম্যাচ-রেজলভার-আগে-ই-করে-আনে); আগে-প্রাপ্ত-TW-কার্ড-এখানেই-বাদ-পড়ত (One-Piece-S1E8-মূল-কারণ)
+    const keep = catShow ? twTitleOk(qG, catShow) // পোস্ট-পরিচিতি-থাকলে-সেটাই-চূড়ান্ত-রায়
+          : (named.length ? named.some(x => twTitleOk(qG, x.name)) : false); // নইলে-নাম-ওয়ালা-কার্ড-রায়; সব-জেনেরিক+পরিচয়হীন → বাদ (ভুল-শো-MQ-লিক-বন্ধ — সুরক্ষা-অক্ষত)
     if (DBG) console.error('[twrGATE] ' + tag + ' title=' + String(title).slice(0, 34) + ' cat=' + (catShow || '(শূন্য)').slice(0, 50) + ' named=' + named.length + '/' + raws.length + ' keep=' + keep + ' names=' + raws.map(x => String(x.name || '').slice(0, 26)).join(' | ').slice(0, 110));
     const arr = (keep ? raws : []).map(x => {
       const hq = parseInt(String(x.quality || ''), 10) || 0; // রেজলভারের-আসল-উচ্চতা — twq-ফিল্টার-এর-জন্য
@@ -1459,7 +1505,9 @@ const PORT = Number(process.env.PORT || 7000);
   if (!NEXBASE) NEXBASE = await startEmbeddedNx();
   server.listen(PORT, '0.0.0.0', () => console.log('[vidy] ' + VERSION + ' on :' + PORT + ' | pool=' + POOL.length + (NEXBASE ? ' | moviebox embedded' : '')));
   setTimeout(probePool, 3000).unref(); // v1.15.0 বুট-প্রোব
-  setInterval(probePool, 300000).unref(); // প্রতি-৫-মিনিট
+  setInterval(probePool, 180000).unref(); // v1.15.4: প্রতি-৩-মিনিট (বড়-পুলে-তাজা-লেটেন্সি-দ্রুত)
+  setTimeout(enrichPool, 20000).unref(); // v1.15.4 বুট-এনরিচ
+  setInterval(enrichPool, 1800000).unref(); // v1.15.4: প্রতি-৩০-মিনিটে-তাজা-ফসল
   const warmBases0 = () => { try { warmBases(); } catch (e) {} };
   setTimeout(warmBases0, 1500).unref();
   setInterval(warmBases0, 45000).unref(); // প্রতি-৪৫-সে-সকেট-উষ্ণ
