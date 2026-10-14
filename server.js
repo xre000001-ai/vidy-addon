@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.14.5';
+const VERSION = '1.14.6';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -734,16 +734,14 @@ async function withSources(cardsP, srcs, cfg, t0) {
   if (!live.length) return cards; // সব-বন্ধ → শূন্য-অপেক্ষা
   try {
     const el = Date.now() - t0;
-    const grace = cards.length === 0 ? Math.max(0, NXHARD - el) : (el < 400 ? NXEXTRA : Math.max(0, Math.min(NXCOLDX, NXHARD - el)));
-    const left = Math.max(0, Math.min(NXDEADLINE, el + grace) - el);
-    // v1.14.3 প্রতি-সোর্স-জানালা: tw/rt-রেজলভারের-ঠান্ডা-স্ক্র্যাপ+রেজলভ ৪-৭সে — ছোট-জানালায়-১ম-ট্যাপে-মিস-হতো;
-    // এখন-নির্বশেষ-৬.৫সে-নিশ্চিত-জানালা (গরম-TWRCACHE/নেগ-ক্যাশে-তাত্ক্ষণিক-রেজলভ-বলে-অপেক্ষা-বাস্তবে-হয়-না);
-    // nx-আগের-নীতিই (স্ক্যান-শেষে +grace) — চাইল্ড-নিজেই-দ্রুত।
-    const twRtLeft = Math.max(left, Math.max(0, Math.min(NXDEADLINE, 8500) - el)); // v1.14.5: ৮.৫সে — ঠান্ডা-রেজলভার-প99-ও-১ম-ক্লিকে (টপ-অগ্রাধিকার: প্রতি-নির্বাচিত-সোর্স-১ম-ক্লিকেই)
-    const nxLeft = Math.max(left, Math.max(0, Math.min(NXDEADLINE, 5500) - el)); // v1.14.3: চাইল্ড-ঠান্ডা/ধীর-আপস্ট্রিমেও-১ম-ট্যাপে-থাকে
+    // v1.14.6 ঐক্যবদ্ধ-১ম-ক্লিক-সময়সীমা (ইউজার-টপ-অগ্রাধিকার: প্রতি-নির্বাচিত-সোর্স-১ম-ক্লিকেই):
+    // সব-লাইভ-সোর্স-একই-পরম-সীমা ~৯.৩সে (রুট-সেফটি ১০সে/এজ-কাট ১২সে-র-ভেতরে) — যে-সোর্স-আগে-সেটল
+    // উত্তর-তার-পরেই (দ্রুত-ক্ষেত্রে ২-৫সে), ধীর-সোর্স-কাটা-পড়ার-আগে-সর্বোচ্চ-সময়-পায়। পৃথক-৫.৫/৮.৫সে-জানালা-বাদ —
+    // প্রোডে-চাইল্ড/রেজলভার-লেটেন্সি-ওঠানামায়-পৃথক-জানালা-১ম-ক্লিক-মিস-করত (MB কখনো ৬.৬সে-তে-১৬-কার্ড, কখনো >৫.৫সে)।
+    const uniLeft = Math.max(0, Math.min(NXDEADLINE, 9300) - el);
     const outs = await Promise.all(live.map(x => Promise.race([
       x.p.catch(() => []),
-      new Promise(r => setTimeout(() => r(null), Math.max(0, x.key === 'tw' || x.key === 'rt' ? twRtLeft : x.key === 'nx' ? nxLeft : left)))
+      new Promise(r => setTimeout(() => r(null), uniLeft))
     ])));
     let all = cards.slice();
     for (let i = 0; i < live.length; i++) {
