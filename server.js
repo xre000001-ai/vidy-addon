@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.14.4';
+const VERSION = '1.14.5';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -489,20 +489,16 @@ const iso3Name = c => ISO3[String(c || '').toLowerCase()] || '';
 async function raceVal(pr, ms) { return Promise.race([pr.catch(() => ''), new Promise(r => setTimeout(() => r(''), ms))]); }
 
 function withDeadline(pr, ms, tag) { // ঠান্ডা-স্পাইকে-গেটওয়ে-HTML-কাট (~12সে)-যেন-কখনো-ছোঁয়া-না-লাগে — আগে-ই-আংশিক/খালি-JSON
-  return Promise.race([pr, new Promise(r => setTimeout(() => { if (DBG) console.error('[deadline] ' + tag + ' cut at ' + ms + 'ms'); r(null); }, ms))]);
+  let to;
+  const w = Promise.race([pr, new Promise(r => { to = setTimeout(() => { if (DBG) console.error('[deadline] ' + tag + ' cut at ' + ms + 'ms'); r(null); }, ms); })]);
+  Promise.resolve(pr).catch(() => {}).then(() => clearTimeout(to)); // v1.14.5: কাজ-শেষে-টাইমার-মুছো — ইভেন্ট-লুপ-পরিষ্কার
+  return w;
 }
 
-function kickSubs(id, type, s, e, cfg) { // স্ক্যানের-সমান্তরালে-সাব-চেইন-ছুটে-পড়ে — withSubs-এর-race-যেন-অপেক্ষায়-বসে-না
+function kickSubs(id, type, s, e, cfg) { // স্ক্যানের-সমান্তরালে-সাব-চেইন-উষ্ণ-করে — /subtitles-রুট-তাৎক্ষণিক-উত্তর-দেয়
   if (!cfg || cfg.sub === 0) return;
   (/^tt\d+$/.test(String(id)) ? Promise.resolve(String(id)) : tmdbToImdb(String(id), type === 'tv' || type === 'series' ? 'tv' : 'movie'))
     .then(iv => iv ? mbSubs(iv, type, s, e) : null).catch(() => {});
-}
-async function withSubs(cards, id, type, s, e, cfg) { // রুট-স্তরে-সব-কার্ডে-কাজ-করা-MB-ট্র্যাক (vidy+MovieBox-একসাথে)
-  if (!cfg || cfg.sub === 0 || !cards || !cards.length) return cards || [];
-  const imdb2 = /^tt\d+$/.test(String(id)) ? Promise.resolve(String(id)) : tmdbToImdb(String(id), type === 'tv' || type === 'series' ? 'tv' : 'movie');
-  const trk = await Promise.race([imdb2.then(iv => iv ? mbSubs(iv, type, s, e) : []).catch(() => []), new Promise(r => setTimeout(() => r([]), 500))]); // v1.13.6: →০.৫সে — ধীর-সাব-সাবছাড়া-কার্ড-আগে (kickSubs-আগে-থেকেই-ওয়ার্ম-করে)
-  if (!trk || !trk.length || !trk.every(x => typeof x.url === 'string' && /^https?:/.test(x.url) && /^[a-z]{2}$/.test(x.lang) && typeof x.title === 'string')) return cards; // সন্দেহজনক-কিছু-থাকলে-সাবটাইটেল-নয় — স্ট্রিম-সর্বদা-আগে
-  return cards.map(c => Object.assign({}, c, { subtitles: trk }));
 }
 async function mbSubs(imdb, type, s, e) { // MovieBox-সাব-ট্র্যাক (চাইল্ড-চেইন-ব্যয়বহুল → ৩০মিন-ক্যাশ + ইনফ্লাইট-ডিডুপ)
   if (!NEXBASE || !imdb) return [];
@@ -555,6 +551,16 @@ function nxFor(type, id, s, e) { // starts the parallel fetch immediately; null 
   if (!NEXBASE) return null;
   if (/^tt\d+$/.test(id)) return nxStreams(id, type, s, e);
   return tmdbToImdb(id, type).then(v => v ? nxStreams(v, type, s, e) : []);
+}
+function twRtPrewarm(nameP, type, s, e) { // v1.14.5 series tap → পরের-২-এপিসোড-রেজলভার-আগেই-গরম (ঠান্ধা-এপিসোড-রেজলভ ৮সে+ → binge-২য়-ক্লিক-তাৎক্ষণিক)
+  if ((!TWBASE && !RTBASE) || type !== 'series') return;
+  setTimeout(() => { Promise.resolve(nameP).then(nm => {
+    if (!nm) return;
+    for (let k = 1; k <= 2; k++) {
+      if (TWBASE) twrStreams(TWBASE, 'toonworld', nm, 'series', s, e + k).catch(() => {});
+      if (RTBASE) twrStreams(RTBASE, 'raretoons', nm, 'series', s, e + k).catch(() => {});
+    }
+  }).catch(() => {}); }, 1200);
 }
 function nxPrewarm(type, id, s, e) { // series tap → quietly fetch the next 3 episodes' NetHex into NXCACHE (binge tap-2 = instant)
   if (!NEXBASE) return;
@@ -733,7 +739,7 @@ async function withSources(cardsP, srcs, cfg, t0) {
     // v1.14.3 প্রতি-সোর্স-জানালা: tw/rt-রেজলভারের-ঠান্ডা-স্ক্র্যাপ+রেজলভ ৪-৭সে — ছোট-জানালায়-১ম-ট্যাপে-মিস-হতো;
     // এখন-নির্বশেষ-৬.৫সে-নিশ্চিত-জানালা (গরম-TWRCACHE/নেগ-ক্যাশে-তাত্ক্ষণিক-রেজলভ-বলে-অপেক্ষা-বাস্তবে-হয়-না);
     // nx-আগের-নীতিই (স্ক্যান-শেষে +grace) — চাইল্ড-নিজেই-দ্রুত।
-    const twRtLeft = Math.max(left, Math.max(0, Math.min(NXDEADLINE, 6500) - el));
+    const twRtLeft = Math.max(left, Math.max(0, Math.min(NXDEADLINE, 8500) - el)); // v1.14.5: ৮.৫সে — ঠান্ডা-রেজলভার-প99-ও-১ম-ক্লিকে (টপ-অগ্রাধিকার: প্রতি-নির্বাচিত-সোর্স-১ম-ক্লিকেই)
     const nxLeft = Math.max(left, Math.max(0, Math.min(NXDEADLINE, 5500) - el)); // v1.14.3: চাইল্ড-ঠান্ডা/ধীর-আপস্ট্রিমেও-১ম-ট্যাপে-থাকে
     const outs = await Promise.all(live.map(x => Promise.race([
       x.p.catch(() => []),
@@ -1281,6 +1287,7 @@ const server = http.createServer((req, res) => {
       const twP = (TWBASE && !(cfg && cfg.tw === 0)) ? tp.then(n => twrStreams(TWBASE, 'toonworld', n, 'series', Number(m[2] || 1), Number(m[3] || 1))).catch(() => []) : null;
       const rtP = (RTBASE && !(cfg && cfg.rt === 0)) ? tp.then(n => twrStreams(RTBASE, 'raretoons', n, 'series', Number(m[2] || 1), Number(m[3] || 1))).catch(() => []) : null;
       if (nxOn) nxPrewarm('series', String(m[1]), Number(m[2] || 1), Number(m[3] || 1));
+      twRtPrewarm(tp, 'series', Number(m[2] || 1), Number(m[3] || 1));
       kickSubs('tmdb' + m[1], 'series', Number(m[2] || 1), Number(m[3] || 1), cfg);
       return withDeadline(withSources(vOn ? getSources(Number(m[1]), 'tv', Number(m[2] || 1), Number(m[3] || 1), '', cfg, tp) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }], cfg, t0), 10000 /* রুট-সেফটি — NXHARD(৭সে)-এর-উপরে, এজ-কাট (~১২সে)-এর-নিচে: Stremio-কখনো-ছাড়া-উত্তর-না-পাওয়া */, p).then(
         cards => { sendStreams(res, req.url, p, Date.now() - t0, cards, RVA); },
@@ -1308,6 +1315,7 @@ const server = http.createServer((req, res) => {
       const twP = ((TWBASE && infoP) && !(cfg && cfg.tw === 0)) ? nmP.then(nm => nm ? twrStreams(TWBASE, 'toonworld', nm, 'series', Number(m[2]), Number(m[3])) : []).catch(() => []) : null;
       const rtP = ((RTBASE && infoP) && !(cfg && cfg.rt === 0)) ? nmP.then(nm => nm ? twrStreams(RTBASE, 'raretoons', nm, 'series', Number(m[2]), Number(m[3])) : []).catch(() => []) : null;
       if (nxOn) nxPrewarm('series', m[1], Number(m[2]), Number(m[3]));
+      twRtPrewarm(nmP, 'series', Number(m[2]), Number(m[3]));
       kickSubs(m[1], 'series', Number(m[2]), Number(m[3]), cfg);
       return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'tv', Number(m[2]), Number(m[3]), info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }], cfg, t0), 10000 /* রুট-সেফটি — NXHARD(৭সে)-এর-উপরে, এজ-কাট (~১২সে)-এর-নিচে: Stremio-কখনো-ছাড়া-উত্তর-না-পাওয়া */, p).then(
         cards => { sendStreams(res, req.url, p, Date.now() - t0, cards, RVA); },
@@ -1322,6 +1330,7 @@ const server = http.createServer((req, res) => {
       const twP = (TWBASE && !(cfg && cfg.tw === 0)) ? nmP.then(nm => nm ? twrStreams(TWBASE, 'toonworld', nm, 'series', 1, 1) : []).catch(() => []) : null;
       const rtP = (RTBASE && !(cfg && cfg.rt === 0)) ? nmP.then(nm => nm ? twrStreams(RTBASE, 'raretoons', nm, 'series', 1, 1) : []).catch(() => []) : null;
       if (nxOn) nxPrewarm('series', m[1], 1, 1);
+      twRtPrewarm(nmP, 'series', 1, 1);
       kickSubs(m[1], 'series', 1, 1, cfg);
       return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'tv', 1, 1, info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }], cfg, t0), 10000 /* রুট-সেফটি — NXHARD(৭সে)-এর-উপরে, এজ-কাট (~১২সে)-এর-নিচে: Stremio-কখনো-ছাড়া-উত্তর-না-পাওয়া */, p).then(
         cards => { sendStreams(res, req.url, p + ' [no-s:e]', Date.now() - t0, cards, RVA); },
