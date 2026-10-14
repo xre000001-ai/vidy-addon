@@ -10,14 +10,14 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.4';
+const VERSION = '1.15.5';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
 const TMDBP = 'https://db.wecollege.net/3';
 function tmdbGet(path, timeoutMs) { // v1.13.7 IMDb/ফ্রি-পাবলিক-প্রথম: অফিসিয়াল api.themoviedb.org (এমবেডেড-পাবলিক-কী) আগে — আয়না (db.wecollege.net) ধীর/ডাউন-হলে-ফলব্যাক
-  return directGet('https://api.themoviedb.org/3' + path + (path.indexOf('?') >= 0 ? '&' : '?') + 'api_key=' + TMDBK, timeoutMs)
-    .catch(() => directGet(TMDBP + path, timeoutMs));
+  return pooledGet('https://api.themoviedb.org/3' + path + (path.indexOf('?') >= 0 ? '&' : '?') + 'api_key=' + TMDBK, timeoutMs)
+    .catch(() => pooledGet(TMDBP + path, timeoutMs));
 }
 const CINEMETA = 'https://v3-cinemeta.strem.io';
 const SERVERS = ['miami', 'atlanta', 'seattle', 'boise', 'phoenix', 'dallas', 'austin', 'delhi', 'munich', 'cancun', 'vegas', 'oakland', 'orlando', 'paris', 'reno', 'tampa']; // full server family — 7 veterans + 9 discovered from the official player bundle (live-probed)
@@ -316,7 +316,7 @@ function tmdbMeta(x, type) {
     releaseInfo: String(x.first_air_date || x.release_date || '').slice(0, 4) || undefined
   };
   if (!base.name || !x.id) return null;
-  return directGet(TMDBP + '/' + (type === 'tv' ? 'tv/' : 'movie/') + x.id + '/external_ids', 10000).then(b => {
+  return pooledGet(TMDBP + '/' + (type === 'tv' ? 'tv/' : 'movie/') + x.id + '/external_ids', 10000).then(b => {
     const e = JSON.parse(b);
     return e.imdb_id ? Object.assign({}, base, { id: e.imdb_id }) : Object.assign({}, base, { id: 'tmdb' + x.id });
   }).catch(() => Object.assign({}, base, { id: 'tmdb' + x.id })); // থ্রটল-হলেও ক্যাটালগ-মরবে-না (tmdb-নেটিভ-আইডি)
@@ -341,7 +341,7 @@ function catalogMeta(type, q, cfg, gn, skip) {
     const p0 = 1 + Math.floor((skip || 0) / cap); // জনর-মোডেও-স্ক্রল-পেজিনেশন (৪-পেজ-জানালা, cap-সমলাইন)
     const pages = gid.length ? [p0, p0 + 1, p0 + 2, p0 + 3] : [p0];
     const one = () => Promise.all(pages.map(p =>
-      directGet(base + '&page=' + p, 14000).then(b => (JSON.parse(b).results || []), () => [])
+      pooledGet(base + '&page=' + p, 14000).then(b => (JSON.parse(b).results || []), () => [])
     )).then(lists => {
       let all = [].concat.apply([], lists);
       if (gid.length) all = all.filter(x => gid.every(gi => (x.genre_ids || []).indexOf(gi) !== -1));
@@ -351,7 +351,7 @@ function catalogMeta(type, q, cfg, gn, skip) {
   } else {
     url = TMDBP + '/' + (type === 'tv' ? 'tv/top_rated' : 'movie/popular') + '?language=en-US';
   }
-  const one = () => directGet(url, 14000).then(b => {
+  const one = () => pooledGet(url, 14000).then(b => {
     const list = (JSON.parse(b).results || []).slice(off, off + cap);
     return Promise.all(list.map(x => tmdbMeta(x, type))).then(arr => arr.filter(Boolean));
   });
@@ -374,8 +374,8 @@ function findTmdbInfo(imdb, type) {
   const hit = memoGet(key, 86400000);
   if (hit) return Promise.resolve(hit);
   if (memoGet(key + ':empty', 1800000)) return Promise.reject(new Error('find-empty-cached')); // নিশ্চিত-খালি → ৩০মিন-মাত্র
-  const cinemetaMeta = ms => directGet(CINEMETA + '/meta/' + type + '/' + encodeURIComponent(imdb) + '.json', ms).then(b2 => (JSON.parse(b2).meta || {})); // ফ্রি-পাবলিক — Stremio-র-নিজের-IMDb-CDN, IMDb-প্রথম-চেইনের-মাথা
-  const suggMeta = () => directGet('https://v2.sg.media-imdb.com/suggestion/' + encodeURIComponent(String(imdb)[2]) + '/' + encodeURIComponent(imdb) + '.json', 8000).then(b4 => { // ফ্রি-পাবলিক IMDb-CDN
+  const cinemetaMeta = ms => pooledGet(CINEMETA + '/meta/' + type + '/' + encodeURIComponent(imdb) + '.json', ms).then(b2 => (JSON.parse(b2).meta || {})); // ফ্রি-পাবলিক — Stremio-র-নিজের-IMDb-CDN, IMDb-প্রথম-চেইনের-মাথা
+  const suggMeta = () => pooledGet('https://v2.sg.media-imdb.com/suggestion/' + encodeURIComponent(String(imdb)[2]) + '/' + encodeURIComponent(imdb) + '.json', 8000).then(b4 => { // ফ্রি-পাবলিক IMDb-CDN
     const hit = (JSON.parse(b4).d || []).find(x => x && x.l && ['TV series', 'TV mini series', 'feature', 'movie', 'TV movie'].indexOf(String(x.q || '')) >= 0) || {};
     if (!hit.l) throw new Error('sugg-empty');
     return { name: hit.l, year: String(hit.y || '') };
@@ -385,7 +385,7 @@ function findTmdbInfo(imdb, type) {
       if (!name) throw new Error('cinemeta-empty');
       return tmdbSearchPick(name, String(m.releaseInfo || m.year || ''), type);
     }).catch(() => suggMeta().then(m2 => tmdbSearchPick(m2.name, m2.year, type))) // ② IMDb-suggestion → অফিসিয়াল-search
-  ).catch(() => directGet(TMDBP + '/find/' + encodeURIComponent(imdb) + '?external_source=imdb_id', 10000).then(body => { // ③ শেষ-ভরসা: আয়না-find
+  ).catch(() => pooledGet(TMDBP + '/find/' + encodeURIComponent(imdb) + '?external_source=imdb_id', 10000).then(body => { // ③ শেষ-ভরসা: আয়না-find
     const j = JSON.parse(body);
     const r = (type === 'series' ? (j.tv_results || []) : (j.movie_results || []))[0] || null;
     if (r && r.id) { const v = { id: r.id, name: r.name || r.title || '' }; memoSet(key, v); return v; }
@@ -404,7 +404,7 @@ function suggName(imdb) { // দ্রুত-টাইটেল (rt/tw-র-জ�
   const key = 'snm:' + imdb;
   const hit = memoGet(key, 86400000);
   if (hit !== undefined && hit !== null) return Promise.resolve(hit);
-  return dedupe(key, () => directGet('https://v2.sg.media-imdb.com/suggestion/' + encodeURIComponent(String(imdb)[2]) + '/' + encodeURIComponent(imdb) + '.json', 8000).then(b => {
+  return dedupe(key, () => pooledGet('https://v2.sg.media-imdb.com/suggestion/' + encodeURIComponent(String(imdb)[2]) + '/' + encodeURIComponent(imdb) + '.json', 8000).then(b => {
     const hit2 = (JSON.parse(b).d || []).find(x => x && x.l && ['TV series', 'TV mini series', 'feature', 'movie', 'TV movie'].indexOf(String(x.q || '')) >= 0) || {};
     const nm = hit2.l || '';
     if (nm) memoSet(key, nm);
@@ -464,6 +464,15 @@ function getSeed(tmdbId, force) {
 }
 function pathGet(url, via, px, timeoutMs) {
   return via === 'proxy' && px ? proxiedGet(px, url, timeoutMs) : directGet(url, timeoutMs);
+}
+// v1.15.5 রাউন্ড-২ (ইউজার: সব-সোর্স-পুল-না-হলে-IP-flag-ঝুঁকি): সুখপথে-direct (শূন্য-দেরি); ৪২৯/৪০৩/৫xx/নেট-ত্রুটিতে-
+// পুল-রেস-ফলব্যাক — getSeed-এর-প্রমাণিত-মডেল-মেটাডেটা-API-তেও (TMDB/Cinemeta/IMDb-suggestion এক-IP-ঘন-ব্যবহারে-throttle-করত-পারে)
+function pooledGet(url, timeoutMs, n) {
+  return directGet(url, timeoutMs).catch(e => {
+    const c2 = String((e && (e.code || e.message)) || '');
+    if (!/429|403|rate_limited|http_5|^5\d\d$|timeout|ECONN|EPIPE|socket|EAI_AGAIN|fetch/i.test(c2)) throw e;
+    return racePool(url, n || 4, Math.min(timeoutMs + 3000, 12000)).then(w => w.body);
+  });
 }
 
 // ---------- NetHex parallel source (separate source; NEXBASE env, empty = off) ----------
@@ -613,7 +622,7 @@ const EP_META = new Map(); // imdb -> {ts, year, videos:[{s,e,n}]}
 async function epMetaCore(imdb, type) {
   const h = EP_META.get(imdb);
   if (h && (Date.now() - h.ts) < 21600000) return h;
-  const b = await directGet('https://v3-cinemeta.strem.io/meta/' + (type === 'tv' || type === 'series' ? 'series' : 'movie') + '/' + imdb + '.json', 8000); // 'series'-ও-টিভি (nxStreams-'series'-পাঠায়)
+  const b = await pooledGet('https://v3-cinemeta.strem.io/meta/' + (type === 'tv' || type === 'series' ? 'series' : 'movie') + '/' + imdb + '.json', 8000); // 'series'-ও-টিভি (nxStreams-'series'-পাঠায়)
   const meta = JSON.parse(b).meta || {};
   const rec = {
     ts: Date.now(),
