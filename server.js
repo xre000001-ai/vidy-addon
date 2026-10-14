@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.0';
+const VERSION = '1.15.1';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -667,7 +667,7 @@ async function twrStreams(base, tag, title, type, s, e, pre) {
   if (!base || !title) return [];
   const k = 'twr:' + tag + ':' + String(title).toLowerCase() + ':' + (type === 'series' ? (s || 1) + ':' + (e || 1) : 'm');
   const h = TWRCACHE.get(k);
-  if (h && (Date.now() - h.ts) < (h.neg ? 180000 : 1800000)) return h.v; // v1.15.0: নেগেটিভ ১২→৩-মিনিট — ঠান্ধা-রেজলভার-এক-খালি-ফলে-দীর্ঘ-বিষাক্ত-নয় (নির্ভরযোগ্যতা)
+  if (h && (Date.now() - h.ts) < (h.neg ? 45000 : 1800000)) return h.v; // v1.15.1: নেগেটিভ-মাত্র-৪৫-সে (রেজলভারের-নিজের-খালি-উইন্ডোর-সমান) — রিফ্রেশ-দিলেই-আসল-পুনঃস্ক্র্যাপ; ইউজার: খালি-ফল-ক্যাশ-করে-রাখা-যাবে-না
   const t3 = Date.now();
   const tries = [String(title)];
   const sq = String(title).replace(/[^A-Za-z0-9\u0900-\u097F\u0980-\u09FF\u0B80-\u0BFF]/g, ''); // স্পেস/বিরামচিহ্ন-স্কোয়াশ ফলব্যাক
