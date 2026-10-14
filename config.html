@@ -388,6 +388,9 @@ h1 .g{color:var(--acc)}
     [].forEach.call(rtEl.querySelectorAll('.chip[data-k]'),function(c){
       c.classList.toggle('on',st.rtl.indexOf(c.dataset.k)>=0);
     });
+  }
+  drawRT();
+
   /* toonworld-only quality chips */
   var TWQ=[[1080,"1080p"],[720,"720p"],[480,"480p"]];
   var twEl=document.getElementById('twChips');
@@ -420,8 +423,6 @@ h1 .g{color:var(--acc)}
     cardT.classList.toggle('off',!st.tw);
     rebuild();
   };
-  }
-  drawRT();
 
   /* raretoons master switch */
   var swR=document.getElementById('swR'), cardR=document.getElementById('cardR');
