@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.1';
+const VERSION = '1.15.2';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -677,18 +677,22 @@ async function twrStreams(base, tag, title, type, s, e, pre) {
   const w1 = await Promise.all(tries.map(t => twrFetch(base, tag, t, type, s, e, t3)));
   let used = w1.findIndex(v => v.length);
   let r0 = used >= 0 ? w1[used] : [];
-  if (!r0.length) { // শেষ-ফলব্যাক: TMDB-বিকল্প-টাইটেল ("Dan Da Dan"→"Dandadan") — সব-একসাথে, অগ্রাধিকার-ক্রমে-প্রথম-জয়ী
+  if (!r0.length) { // শেষ-ফলব্যাক: Season-যোগ্য-টাইটেল + TMDB-বিকল্প-টাইটেল — সব-একসাথে, অগ্রাধিকার-ক্রমে-প্রথম-জয়ী
+    // v1.15.2 ম্যাস-টেস্ট-প্রমাণ: TW-ক্যাটালগ-ম্যাচ-কোয়েরি-আকৃতি-নির্ভর — One Piece/Jujutsu Kaisen 'X Season N'-এ-৩-ফল (সাধারণ-টাইটেলে-০);
+    // Naruto-উল্টো (সাধারণ=৩, season=০) — তাই-সিজন-ভ্যারিয়েন্ট-শুধু-ফলব্যাকে (১ম-ধাপ-সাধারণ-টাইটেল-ই-জেতে-যেখানে-জেতা-হয়)
     const tSq = String(title).toLowerCase().replace(/[^a-z0-9\u0900-\u097F\u0980-\u09FF\u0B80-\u0BFF]/g, '');
     const lcs4 = a => { // স্কোয়াশড-দুই-টাইটেলের-সাধারণ-খণ্ড ≥৪ — না-থাকলে-অনুবাদ/সংক্ষেপ-জাত-অর্থহীন-alt
       const aSq = String(a).toLowerCase().replace(/[^a-z0-9\u0900-\u097F\u0980-\u09FF\u0B80-\u0BFF]/g, '');
       for (let i = 0; i + 4 <= aSq.length; i++) if (tSq.indexOf(aSq.slice(i, i + 4)) >= 0) return true; // aSq-এর-যেকোনো-৪-অক্ষর-খণ্ড tSq-তে-আছে-কি
       return false;
     };
+    const seas = type === 'series' ? [String(title) + ' Season ' + s, String(title) + ' Season ' + String(s).padStart(2, '0')] : [];
     const alts = (await altP).filter(a => !tries.some(t => t.toLowerCase() === String(a).toLowerCase()) && lcs4(a)).slice(0, 4);
-    tries.push(...alts);
-    const w2 = await Promise.all(alts.map(a => twrFetch(base, tag, a, type, s, e, t3)));
+    const extra = seas.concat(alts).filter(a => !tries.some(t => t.toLowerCase() === String(a).toLowerCase()));
+    tries.push(...extra);
+    const w2 = await Promise.all(extra.map(a => twrFetch(base, tag, a, type, s, e, t3)));
     const i2 = w2.findIndex(v => v.length);
-    if (i2 >= 0) { r0 = w2[i2]; used = tries.length - alts.length + i2; }
+    if (i2 >= 0) { r0 = w2[i2]; used = tries.length - extra.length + i2; }
   }
   if (r0.length) {
     if (used > 0) r0 = r0.map(z => { // কার্ড-টেক্সটে-আসল-ডিসপ্লে-টাইটেল (ফলব্যাক-টাইটেল-নয়)
@@ -816,7 +820,7 @@ async function withSources(cardsP, srcs, cfg, t0) {
         all = all.concat(twAllow.length ? v.filter(z => !z._hq || twAllow.indexOf(z._hq) >= 0) : v);
       } else all = all.concat(v);
     }
-    if (DBG) console.error('[srcdbg] withSources el=' + el + 'ms left=' + left + 'ms → ' + all.length + ' কার্ড');
+    if (DBG) console.error('[srcdbg] withSources el=' + el + 'ms uniLeft=' + uniLeft + 'ms → ' + all.length + ' কার্ড (partial=' + !!all.$partial + ')');
     all.$partial = outs.some(v => v === null); // v1.14.3: কোনো-সোর্স-কাটা-পড়লে-চিহ্ন — এই-উত্তর-৩০মিন-নয়-৯০সে-ক্যাশ-হবে (পরের-ট্যাপে-সম্পূর্ণ-আপগ্রেড)
     return all;
   } catch (e) { if (DBG) console.error('[srcdbg] ERR ' + String(e && e.message).slice(0, 80)); return cards; }
