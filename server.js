@@ -1344,7 +1344,7 @@ const server = http.createServer((req, res) => {
         return res.end(lb);
       } catch (eL) { return sendJson(res, 404, { error: 'no rt logo' }); }
     }
-    if (p === '/_health') return sendJson(res, 200, { ok: 1, version: VERSION, pool: POOL.length, memo: memo.size, nx: NEXBASE ? 1 : 0, tw: TWBASE ? 1 : 0, rt: RTBASE ? 1 : 0 });
+    if (p === '/_health') return sendJson(res, 200, { ok: 1, version: VERSION, pool: POOL.length, memo: memo.size, nx: NEXBASE ? 1 : 0, nxpool: NXBENCH, tw: TWBASE ? 1 : 0, rt: RTBASE ? 1 : 0 }); // v1.15.8: nxpool=MB-বেঞ্চ-সুস্থ-এক্সিট-সংখ্যা (MB0-হলে-সৎ-কারণ-চোখেই)
     if (p === '/_pool') return sendJson(res, 200, POOL.map(c => Object.assign({}, c, PX_RUN.get(c.px) || {}))); // v1.15.0: রানটাইম-স্বাস্থ্য-সহ
     if (p === '/_log') return sendJson(res, 200, reqLog.slice(-40).reverse());
     if (p === '/_servers') return sendJson(res, 200, { order: srvOrder(), scores: SRV_SCORE }); // কনফিগ-পেজের-লাইভ-হেলথ
@@ -1534,6 +1534,11 @@ function startEmbeddedNx() {
   });
 }
 const PORT = Number(process.env.PORT || 7000);
+let NXBENCH = -1; // v1.15.8: চাইল্ড-বেঞ্চ-সুস্থ-এক্সিট-সংখ্যা (৬০সে-পোল)
+setInterval(() => {
+  if (!NEXBASE) { NXBENCH = -1; return; }
+  directGet(NEXBASE + '/health', 3000).then(b => { const j = JSON.parse(b); NXBENCH = typeof j.pool === 'number' ? j.pool : -1; }).catch(() => { NXBENCH = -1; });
+}, 60000).unref();
 (async () => {
   if (!NEXBASE) NEXBASE = await startEmbeddedNx();
   server.listen(PORT, '0.0.0.0', () => console.log('[vidy] ' + VERSION + ' on :' + PORT + ' | pool=' + POOL.length + (NEXBASE ? ' | moviebox embedded' : '')));
