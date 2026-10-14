@@ -10,11 +10,15 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.13.6';
+const VERSION = '1.13.7';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
 const TMDBP = 'https://db.wecollege.net/3';
+function tmdbGet(path, timeoutMs) { // v1.13.7 IMDb/ফ্রি-পাবলিক-প্রথম: অফিসিয়াল api.themoviedb.org (এমবেডেড-পাবলিক-কী) আগে — আয়না (db.wecollege.net) ধীর/ডাউন-হলে-ফলব্যাক
+  return directGet('https://api.themoviedb.org/3' + path + (path.indexOf('?') >= 0 ? '&' : '?') + 'api_key=' + TMDBK, timeoutMs)
+    .catch(() => directGet(TMDBP + path, timeoutMs));
+}
 const CINEMETA = 'https://v3-cinemeta.strem.io';
 const SERVERS = ['miami', 'atlanta', 'seattle', 'boise', 'phoenix', 'dallas', 'austin', 'delhi', 'munich', 'cancun', 'vegas', 'oakland', 'orlando', 'paris', 'reno', 'tampa']; // full server family — 7 veterans + 9 discovered from the official player bundle (live-probed)
 const GIANT = ['miami', 'boise', 'atlanta']; // giant primaries — carry ~32 sources across a 12-title sample (new servers top out at ~13, measured 10-11 Oct 2026)
@@ -265,7 +269,7 @@ function catalogMeta(type, q, cfg, gn, skip) {
 
 // ---------- tt → TMDB numeric (keyless) ----------
 function tmdbSearchPick(name, year, type) { // keyless-search → বছর-মিল-অগ্রাধিকার, না-মিললেও শীর্ষ-১
-  return directGet(TMDBP + '/search/' + (type === 'series' ? 'tv' : 'movie') + '?query=' + encodeURIComponent(name), 12000).then(b3 => {
+  return tmdbGet('/search/' + (type === 'series' ? 'tv' : 'movie') + '?query=' + encodeURIComponent(name), 12000).then(b3 => {
     const list = (JSON.parse(b3).results || []);
     let pick = null;
     for (const x of list) { if (year && String(x.release_date || x.first_air_date || '').slice(0, 4) === year.slice(0, 4)) { pick = x; break; } }
@@ -279,36 +283,30 @@ function findTmdbInfo(imdb, type) {
   const hit = memoGet(key, 86400000);
   if (hit) return Promise.resolve(hit);
   if (memoGet(key + ':empty', 1800000)) return Promise.reject(new Error('find-empty-cached')); // নিশ্চিত-খালি → ৩০মিন-মাত্র
-  return dedupe(key, () => directGet(TMDBP + '/find/' + encodeURIComponent(imdb) + '?external_source=imdb_id', 12000).then(body => {
+  const cinemetaMeta = ms => directGet(CINEMETA + '/meta/' + type + '/' + encodeURIComponent(imdb) + '.json', ms).then(b2 => (JSON.parse(b2).meta || {})); // ফ্রি-পাবলিক — Stremio-র-নিজের-IMDb-CDN, IMDb-প্রথম-চেইনের-মাথা
+  const suggMeta = () => directGet('https://v2.sg.media-imdb.com/suggestion/' + encodeURIComponent(String(imdb)[2]) + '/' + encodeURIComponent(imdb) + '.json', 8000).then(b4 => { // ফ্রি-পাবলিক IMDb-CDN
+    const hit = (JSON.parse(b4).d || []).find(x => x && x.l && ['TV series', 'TV mini series', 'feature', 'movie', 'TV movie'].indexOf(String(x.q || '')) >= 0) || {};
+    if (!hit.l) throw new Error('sugg-empty');
+    return { name: hit.l, year: String(hit.y || '') };
+  });
+  return dedupe(key, () => cinemetaMeta(15000).then(m => { // ① IMDb-প্রথম: Cinemeta-নাম → অফিসিয়াল-TMDB-search
+      const name = m.name || '';
+      if (!name) throw new Error('cinemeta-empty');
+      return tmdbSearchPick(name, String(m.releaseInfo || m.year || ''), type);
+    }).catch(() => suggMeta().then(m2 => tmdbSearchPick(m2.name, m2.year, type))) // ② IMDb-suggestion → অফিসিয়াল-search
+  ).catch(() => directGet(TMDBP + '/find/' + encodeURIComponent(imdb) + '?external_source=imdb_id', 10000).then(body => { // ③ শেষ-ভরসা: আয়না-find
     const j = JSON.parse(body);
     const r = (type === 'series' ? (j.tv_results || []) : (j.movie_results || []))[0] || null;
     if (r && r.id) { const v = { id: r.id, name: r.name || r.title || '' }; memoSet(key, v); return v; }
     throw new Error('find-empty');
-  }).catch(() =>
-    // ফলব্যাক-১: Cinemeta টাইটেল → keyless search
-    directGet(CINEMETA + '/meta/' + type + '/' + encodeURIComponent(imdb) + '.json', 15000).then(b2 => {
-      const m = (JSON.parse(b2).meta || {});
-      const name = m.name || '';
-      const year = String(m.releaseInfo || m.year || '');
-      if (!name) throw new Error('cinemeta-empty');
-      return tmdbSearchPick(name, year, type);
-    })
-  ).catch(() =>
-    // ফলব্যাক-২: IMDb-suggestion (মুক্ত, keyless, cinemeta-মৃত-হলেও-বাঁচে) — tt→নাম+বছর → TMDB-search
-    directGet('https://v2.sg.media-imdb.com/suggestion/' + encodeURIComponent(String(imdb)[2]) + '/' + encodeURIComponent(imdb) + '.json', 8000).then(b4 => {
-      const hit = (JSON.parse(b4).d || []).find(x => x && x.l && ['TV series', 'TV mini series', 'feature', 'movie', 'TV movie'].indexOf(String(x.q || '')) >= 0) || {};
-      if (!hit.l) throw new Error('sugg-empty');
-      return tmdbSearchPick(hit.l, String(hit.y || ''), type);
-    })
-  ).catch(() =>
-    // ফলব্যাক-৩ (নাম-শুধু): TMDB-id না-পাওয়া-গেলেও rt/tw-সোর্স নাম-দিয়েই-চলে — পুরো-চেইন-মৃত-হয়-না
-    directGet(CINEMETA + '/meta/' + type + '/' + encodeURIComponent(imdb) + '.json', 12000).then(b5 => {
-      const m5 = (JSON.parse(b5).meta || {});
+  })).catch(() =>
+    // ফলব্যাক-৪ (নাম-শুধু): TMDB-id না-পাওয়া-গেলেও rt/tw-সোর্স নাম-দিয়েই-চলে — পুরো-চেইন-মৃত-হয়-না
+    cinemetaMeta(12000).then(m5 => {
       const v = { id: 0, name: m5.name || '' };
       if (v.name) memoSet(key, v);
       return v;
     }).catch(() => ({ id: 0, name: '' }))
-  )); // কখনো-থ্রো-নয় — id:0 মানে vidy-সোর্স-স্কিপ কিন্তু rt/tw চলবে
+  ); // কখনো-থ্রো-নয় — id:0 মানে vidy-সোর্স-স্কিপ কিন্তু rt/tw চলবে
 }
 function findTmdb(imdb, type) { return findTmdbInfo(imdb, type).then(v => v.id); }
 function suggName(imdb) { // দ্রুত-টাইটেল (rt/tw-র-জন্য): IMDb-suggestion — TMDB-মালা-বাদ
@@ -327,7 +325,7 @@ function nameForTmdb(tmdbId, type) {
   const hit = memoGet(key, 86400000);
   if (hit) return Promise.resolve(hit);
   if (memoGet(key + ':neg', 600000)) return Promise.resolve(''); // ব্যর্থ-লুকআপ-মাত্র-১০মিন — দিনভর-'Vidy'-টাইটেল-নয়
-  return dedupe(key, () => directGet(TMDBP + '/' + (type === 'series' ? 'tv/' : 'movie/') + tmdbId, 10000).then(b => {
+  return dedupe(key, () => tmdbGet('/' + (type === 'series' ? 'tv/' : 'movie/') + tmdbId, 10000).then(b => {
     const j = JSON.parse(b);
     const v = j.name || j.title || '';
     memoSet(key, v);
@@ -445,7 +443,7 @@ async function tmdbToImdb(tmdbId, type) { // NetHex is tt-only — translate tmd
   if (fl) return fl;
   const pr = (async () => {
     try {
-      const b = await directGet(TMDBP + '/' + (type === 'tv' || type === 'series' ? 'tv/' : 'movie/') + tmdbId + '/external_ids', 10000);
+      const b = await tmdbGet('/' + (type === 'tv' || type === 'series' ? 'tv/' : 'movie/') + tmdbId + '/external_ids', 10000);
       const v = JSON.parse(b).imdb_id || '';
       if (v) memoSet(k, v); else memoSet(k + ':neg', 1);
       return v;
@@ -467,7 +465,7 @@ async function origLangCore(k, url) {
   if (fl) return fl;
   const pr = (async () => {
     try {
-      const b = await directGet(url, 8000);
+      const b = await tmdbGet(url, 8000); // url=পথ — অফিসিয়াল-আগে, আয়না-ফলব্যাক
       const j = JSON.parse(b);
       const cand = j.original_language !== undefined ? j : ((j.movie_results || []).concat(j.tv_results || []))[0] || {}; // detail অথবা find-এর-প্রথম-ফল
       const v = String(cand.original_language || '').toLowerCase();
@@ -479,8 +477,8 @@ async function origLangCore(k, url) {
   OL_FLIGHT.set(k, pr);
   return pr;
 }
-const origLangForTmdb = (tmdbId, type) => origLangCore('t:' + tmdbId, TMDBP + '/' + (type === 'tv' ? 'tv/' : 'movie/') + tmdbId);
-const origLangForImdb = imdb => origLangCore('i:' + imdb, 'https://db.wecollege.net/3/find/' + imdb + '?api_key=' + TMDBK + '&external_source=imdb_id');
+const origLangForTmdb = (tmdbId, type) => origLangCore('t:' + tmdbId, '/' + (type === 'tv' ? 'tv/' : 'movie/') + tmdbId);
+const origLangForImdb = imdb => origLangCore('i:' + imdb, '/find/' + imdb + '?external_source=imdb_id');
 const langName = c => LANG_NAMES[c] || '';
 // v1.11.11: HLS-মাস্টার-নিজে-অডিও-ভাষা-ঘোষণা-করলে (EXT-X-MEDIA LANGUAGE="da") সেটাই-সত্য — ISO-639-2/3 → নাম
 const ISO3 = { eng: 'English', dan: 'Danish', ben: 'Bengali', hin: 'Hindi', spa: 'Spanish', fra: 'French', fre: 'French', deu: 'German', ger: 'German', rus: 'Russian', por: 'Portuguese', ita: 'Italian', jpn: 'Japanese', kor: 'Korean', zho: 'Mandarin', cmn: 'Mandarin', tam: 'Tamil', tel: 'Telugu', mal: 'Malayalam', kan: 'Kannada', mar: 'Marathi', pan: 'Punjabi', urd: 'Urdu', ara: 'Arabic', tur: 'Turkish', tha: 'Thai', ind: 'Indonesian', msa: 'Malay', may: 'Malay', fas: 'Persian', per: 'Persian', nld: 'Dutch', dut: 'Dutch', pol: 'Polish', swe: 'Swedish', nor: 'Norwegian', fin: 'Finnish', vie: 'Vietnamese', heb: 'Hebrew', ell: 'Greek', gre: 'Greek', hun: 'Hungarian', ron: 'Romanian', rum: 'Romanian', ces: 'Czech', cze: 'Czech', ukr: 'Ukrainian', srp: 'Serbian', hrv: 'Croatian', bul: 'Bulgarian', kat: 'Georgian', geo: 'Georgian', mya: 'Burmese', bur: 'Burmese', sin: 'Sinhala', nep: 'Nepali', fil: 'Filipino', tgl: 'Filipino', und: '', mis: '', qaa: '', zxx: '' };
@@ -644,11 +642,11 @@ async function tmdbAltTitles(name) {
   if (ALTCACHE.has(k0)) return ALTCACHE.get(k0);
   const out = [];
   try {
-    const b = await directGet(TMDBP + '/search/multi?api_key=' + TMDBK + '&query=' + encodeURIComponent(String(name)), 8000);
+    const b = await tmdbGet('/search/multi?query=' + encodeURIComponent(String(name)), 8000);
     const hit = ((JSON.parse(b)).results || [])[0];
     if (hit && hit.id != null) {
       const ty = hit.media_type === 'movie' ? 'movie' : 'tv';
-      const b2 = await directGet(TMDBP + '/' + ty + '/' + hit.id + '/alternative_titles?api_key=' + TMDBK, 8000);
+      const b2 = await tmdbGet('/' + ty + '/' + hit.id + '/alternative_titles', 8000);
       const arr = ((JSON.parse(b2)).results || []).map(r => String(r.title || '')).filter(t => t && /^[\x20-\x7E]+$/.test(t) && t.toLowerCase() !== k0);
       out.push(...arr.slice(0, 6));
     }
