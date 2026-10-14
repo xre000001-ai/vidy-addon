@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.6';
+const VERSION = '1.15.7';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -444,18 +444,19 @@ function getSeed(tmdbId, force) {
   if (!force && seedInflight && seedInflight.key === tmdbId && (Date.now() - seedInflight.ts) < 8000) return seedInflight.p;
   const url = API + '/seed?mediaId=' + tmdbId;
   const p = (async () => {
+    // v1.15.7 (ইউজার-নির্দেশ, MovieBox-মডেল): টোকেন/সিড **পুল-থেকেই** — sticky-px-এ-পরের-সব-পথ-কল-ও-পুলে;
+    // প্লে-সবসময়-ইউজারের-নিজ-IP-তে। পুল-শূন্য/সর্বমৃত-হলে-শেষ-ভরসা direct (কখনো-ভাঙবে-না)
     try {
-      const b = await directGet(url, 6000);
-      const j = JSON.parse(b);
-      if (!j.seed) throw Object.assign(new Error('seed-empty'), { code: 429 });
-      seedCache = { key: tmdbId, seed: j.seed, via: 'direct', px: null, ts: Date.now() };
-      return seedCache;
-    } catch (e) {
-      if (e.code !== 429 && e.message !== 'seed-empty' && e.message !== 'timeout' && !/proxy|rate|http_5|ECONN|fetch/.test(e.message)) throw e;
       const w = await racePool(url, 5, 9000);
       const j = JSON.parse(w.body);
       if (!j.seed) throw new Error('seed-empty-proxy');
       seedCache = { key: tmdbId, seed: j.seed, via: 'proxy', px: w.px, ts: Date.now() };
+      return seedCache;
+    } catch (e) {
+      const b = await directGet(url, 6000);
+      const j = JSON.parse(b);
+      if (!j.seed) throw Object.assign(new Error('seed-empty'), { code: 429 });
+      seedCache = { key: tmdbId, seed: j.seed, via: 'direct', px: null, ts: Date.now() };
       return seedCache;
     }
   })();
@@ -1507,7 +1508,14 @@ function startEmbeddedNx() {
               env: Object.assign({}, process.env, { PORT: String(nxPort), NX_POOL_FILE: path.join(__dirname, 'vidy_proxy_pool.json') }),
               stdio: 'ignore',
             });
-            c3.on('exit', () => { if (DBG) console.error('[nx-embed] respawn exited — MovieBox off'); });
+            c3.on('exit', () => { // v1.15.7 রাউন্ড-৮: respawn-চাইল্ড-মরলেও-আগে-যাচাই — 7137-তে-কেউ-সেবা-দিলে-'off'-বলা-মিথ্যা
+              const rq3 = http.get({ host: '127.0.0.1', port: nxPort, path: '/manifest.json', timeout: 1500 }, r3 => {
+                r3.resume();
+                console.error('[nx-embed] respawn exited — 7137 এখনো-সক্রিয়, MovieBox-সেবা-চলছে');
+              });
+              rq3.on('error', () => { if (DBG) console.error('[nx-embed] respawn exited — MovieBox off'); });
+              rq3.on('timeout', () => { rq3.destroy(); if (DBG) console.error('[nx-embed] respawn exited — MovieBox off'); });
+            });
             const t4 = Date.now();
             (function ping2() {
               const rq2 = http.get({ host: '127.0.0.1', port: nxPort, path: '/manifest.json', timeout: 1500 }, r2 => {
