@@ -811,7 +811,7 @@ function twTitleOk(title, fn) { // v1.13.5 ভুল-টাইটেল-বা�
 }
 
 async function twrFetch(base, tag, title, type, s, e, t3) {
-  const qs = new URLSearchParams({ source: tag, title: title, _: String(Date.now()) }); // ক্যাশ-বাস্টার (এজ-CF-ক্যাশ-ভেদ)
+  const qs = new URLSearchParams({ source: tag, title: String(title || '').replace(/[\u2018\u2019\u02BC]/g, "'"), _: String(Date.now()) }); // v1.15.11: ইউনিকোড-অ্যাপস্ট্রফি→ASCII (রেজলভার-ক্যাশ-কী-একতা)
   if (type === 'series') { qs.set('season', String(s || 1)); qs.set('episode', String(e || 1)); }
   try {
     const b = await directGet(base + '/find?' + qs.toString(), 30000);
