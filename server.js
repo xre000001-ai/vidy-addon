@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.13.7';
+const VERSION = '1.13.8';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -1106,20 +1106,29 @@ function parseCfgFromObj(o) {
 function decodeCfg(b64) {
   try { return parseCfgFromObj(JSON.parse(Buffer.from(b64, 'base64url').toString('utf8'))); } catch (e) { return Object.assign({}, DEFAULT_CFG, { g: [], srv: [] }); }
 }
-function manifest(cfg, origin) {
-  return {
-    id: 'community.xre.vidy',
+const crypto = require('crypto');
+function manifest(cfg, origin, cfgged) {
+  // v1.13.8 PHOENIX-প্যারিটি: Stremio-ম্যানিফেস্ট-id-প্রতি-ক্যাশ-করে — আগের-ভাঙা-ইনস্টলের-id-পুনঃব্যবহার-নিষিদ্ধ
+  const m = {
+    id: cfgged ? 'community.xre.vidy.' + crypto.createHash('md5').update(JSON.stringify(cfg || {})).digest('hex').slice(0, 8) : 'community.xre.vidy.p7',
     version: VERSION,
     name: 'Phoenix',
     logo: (origin || '') + '/logo.png',
     description: 'Stream-only, parallel sources: Vidy (16 servers, up to 4K, subtitles) + MovieBox (direct-MP4 dubs & multi-audio) + RareToons (Hindi/Tamil/Telugu anime & cartoons, auto-HLS) + ToonWorld4All (multi-audio movies & anime via encrypted-link resolver) — every card in one unified format; each source keeps its own filters (quality, audio language, servers).',
     author: 'xre000001-ai',
-    resources: ['stream', 'subtitles'], // v1.11.13: MovieBox-সাবটাইটেল-ট্র্যাক-পুনরুদ্ধার (স্ট্যান্ডঅ্যালোন-nethex-এর-/subtitles-রুট-পোর্টে-হারিয়ে-গিয়েছিল)
     types: ['movie', 'series'],
     idPrefixes: ['tt', 'tmdb'],
     catalogs: [],
-    behaviorHints: { configurable: true, configurationRequired: false } // কনফিগ-পেজ-ছাড়া-অ্যাপে-অ্যাডন-আসবে-না
+    behaviorHints: { configurable: true, configurationRequired: false, logging: false } // কনফিগ-পেজ-ছাড়া-অ্যাপে-অ্যাডন-আসবে-না
   };
+  if (cfgged) { // কনফিগ-ইনস্টল: ফুল-নোটেশন-রিসোর্স (per-type idPrefixes) — টপ-লেভেল-বাদ (PHOENIX-নিয়ম)
+    m.resources = [
+      { name: 'stream', types: ['movie', 'series'], idPrefixes: ['tt', 'tmdb'] },
+      { name: 'subtitles', types: ['movie', 'series'], idPrefixes: ['tt', 'tmdb'] }
+    ];
+    delete m.idPrefixes;
+  } else m.resources = ['stream', 'subtitles']; // v1.11.13: MovieBox-সাবটাইটেল-ট্র্যাক
+  return m;
 }
 
 // ---------- HTTP ----------
@@ -1153,16 +1162,17 @@ const server = http.createServer((req, res) => {
   let p;
   try { p = decodeURIComponent(pRaw); } catch (eDec) { p = pRaw; } // ডিভাইস ':'-কে %3A-পাঠায় — ডিকোড-বাধ্যতামূলক
   let cfg = null;
+  let cfgged = false; // v1.13.8: /cfg/-ইনস্টল → নিজস্ব-md5-ম্যানিফেস্ট-id (Stremio-ক্যাশ-সংঘর্ষ-নিষিদ্ধ)
   try {
     const cm2 = p.match(/^\/cfg\/([^\/]+)(\/.*)$/); // যেকোনো-অক্ষর-সহ্য — ভাঙা-b64-ও decodeCfg-এর-catch-এ-ডিফল্ট-হয় (404-নয়)
-    if (cm2) { cfg = decodeCfg(cm2[1]); p = cm2[2]; }
+    if (cm2) { cfg = decodeCfg(cm2[1]); p = cm2[2]; cfgged = true; }
     else {
       const qs = new URL(req.url, 'http://x').searchParams;
       if ([...qs.keys()].length) cfg = parseCfgFromObj({ q: qs.get('q') || qs.get('maxq'), sub: qs.get('sub') === '0' ? 0 : 1, cat: qs.get('cat') || '', lang: qs.get('lang') || '', sort: qs.get('sort') || '', era: qs.get('era') || '', g: (qs.get('g') || '').split(',').filter(Boolean), srv: (qs.get('srv') || '').split(',').filter(Boolean), v: qs.get('v') === '0' ? 0 : undefined, nx: qs.get('nx') === '0' ? 0 : undefined, tw: qs.get('tw') === '0' ? 0 : undefined, rt: qs.get('rt') === '0' ? 0 : undefined, rtl: qs.get('rtl') ? qs.get('rtl').split(',') : undefined, nxq: qs.get('nxq') || undefined, nxl: qs.get('nxl') ? qs.get('nxl').split(',') : undefined });
     }
     if (!cfg) cfg = Object.assign({}, DEFAULT_CFG, { g: [], srv: [] });
     if (p === '/' || p === '/config' || p === '/configure') return sendFile2(res, 'config.html');
-    if (p === '/manifest.json') return sendJson(res, 200, manifest(cfg, originOf(req)));
+    if (p === '/manifest.json') return sendJson(res, 200, manifest(cfg, originOf(req), cfgged));
     if (p === '/logo.png') {
       try {
         const lb = fs.readFileSync(path.join(__dirname, 'logo.png'));
@@ -1208,7 +1218,7 @@ const server = http.createServer((req, res) => {
       const rtP = (RTBASE && !(cfg && cfg.rt === 0)) ? tp.then(n => twrStreams(RTBASE, 'raretoons', n, 'movie', 0, 0)).catch(() => []) : null;
       kickSubs('tmdb' + m[1], 'movie', null, null, cfg);
       return withDeadline(withSources(vOn ? getSources(Number(m[1]), 'movie', null, null, '', cfg, tp) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }], cfg, t0).then(cards => withSubs(cards, 'tmdb' + m[1], 'movie', null, null, cfg)), 10000 /* রুট-সেফটি — NXHARD(৭সে)-এর-উপরে, এজ-কাট (~১২সে)-এর-নিচে: Stremio-কখনো-ছাড়া-উত্তর-না-পাওয়া */, p).then(
-        cards => { logReq(p, Date.now() - t0, (cards || []).length, null, RVA); sendJson(res, 200, { streams: cards || [] }); },
+        cards => { logReq(p, Date.now() - t0, (cards || []).length, null, RVA); sendJson(res, 200, { streams: (cards || []).map(({ _hq, _lang, ...r }) => r) }); }, // v1.13.8 stripInt — অন্তর্দুষ্ট-ফিল্ড-ক্লায়েন্টে-যায়-না
         e => { logReq(p, Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }
     if ((m = p.match(/^\/stream\/series\/tmdb(\d+):?(?:(\d+):(\d+))?\.json$/))) {
@@ -1221,7 +1231,7 @@ const server = http.createServer((req, res) => {
       if (nxOn) nxPrewarm('series', String(m[1]), Number(m[2] || 1), Number(m[3] || 1));
       kickSubs('tmdb' + m[1], 'series', Number(m[2] || 1), Number(m[3] || 1), cfg);
       return withDeadline(withSources(vOn ? getSources(Number(m[1]), 'tv', Number(m[2] || 1), Number(m[3] || 1), '', cfg, tp) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }], cfg, t0).then(cards => withSubs(cards, 'tmdb' + m[1], 'series', Number(m[2] || 1), Number(m[3] || 1), cfg)), 10000 /* রুট-সেফটি — NXHARD(৭সে)-এর-উপরে, এজ-কাট (~১২সে)-এর-নিচে: Stremio-কখনো-ছাড়া-উত্তর-না-পাওয়া */, p).then(
-        cards => { logReq(p, Date.now() - t0, (cards || []).length, null, RVA); sendJson(res, 200, { streams: cards || [] }); },
+        cards => { logReq(p, Date.now() - t0, (cards || []).length, null, RVA); sendJson(res, 200, { streams: (cards || []).map(({ _hq, _lang, ...r }) => r) }); }, // v1.13.8 stripInt — অন্তর্দুষ্ট-ফিল্ড-ক্লায়েন্টে-যায়-না
         e => { logReq(p, Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }
     if ((m = p.match(/^\/stream\/movie\/(tt\d+)\.json$/))) {
@@ -1234,7 +1244,7 @@ const server = http.createServer((req, res) => {
       const rtP = ((RTBASE && infoP) && !(cfg && cfg.rt === 0)) ? nmP.then(nm => nm ? twrStreams(RTBASE, 'raretoons', nm, 'movie', 0, 0) : []).catch(() => []) : null;
       kickSubs(m[1], 'movie', null, null, cfg);
       return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'movie', null, null, info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }], cfg, t0).then(cards => withSubs(cards, m[1], 'movie', null, null, cfg)), 10000 /* রুট-সেফটি — NXHARD(৭সে)-এর-উপরে, এজ-কাট (~১২সে)-এর-নিচে: Stremio-কখনো-ছাড়া-উত্তর-না-পাওয়া */, p).then(
-        cards => { logReq(p, Date.now() - t0, (cards || []).length, null, RVA); sendJson(res, 200, { streams: cards || [] }); },
+        cards => { logReq(p, Date.now() - t0, (cards || []).length, null, RVA); sendJson(res, 200, { streams: (cards || []).map(({ _hq, _lang, ...r }) => r) }); }, // v1.13.8 stripInt — অন্তর্দুষ্ট-ফিল্ড-ক্লায়েন্টে-যায়-না
         e => { logReq(p, Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }
     if ((m = p.match(/^\/stream\/series\/(tt\d+):(\d+):(\d+)\.json$/))) {
@@ -1248,7 +1258,7 @@ const server = http.createServer((req, res) => {
       if (nxOn) nxPrewarm('series', m[1], Number(m[2]), Number(m[3]));
       kickSubs(m[1], 'series', Number(m[2]), Number(m[3]), cfg);
       return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'tv', Number(m[2]), Number(m[3]), info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }], cfg, t0).then(cards => withSubs(cards, m[1], 'series', Number(m[2]), Number(m[3]), cfg)), 10000 /* রুট-সেফটি — NXHARD(৭সে)-এর-উপরে, এজ-কাট (~১২সে)-এর-নিচে: Stremio-কখনো-ছাড়া-উত্তর-না-পাওয়া */, p).then(
-        cards => { logReq(p, Date.now() - t0, (cards || []).length, null, RVA); sendJson(res, 200, { streams: cards || [] }); },
+        cards => { logReq(p, Date.now() - t0, (cards || []).length, null, RVA); sendJson(res, 200, { streams: (cards || []).map(({ _hq, _lang, ...r }) => r) }); }, // v1.13.8 stripInt — অন্তর্দুষ্ট-ফিল্ড-ক্লায়েন্টে-যায়-না
         e => { logReq(p, Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }
     if ((m = p.match(/^\/stream\/series\/(tt\d+)\.json$/))) { // সেফটি-নেট: s:e-ছাড়া কল → S1E1
@@ -1262,7 +1272,7 @@ const server = http.createServer((req, res) => {
       if (nxOn) nxPrewarm('series', m[1], 1, 1);
       kickSubs(m[1], 'series', 1, 1, cfg);
       return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'tv', 1, 1, info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }], cfg, t0).then(cards => withSubs(cards, m[1], 'series', 1, 1, cfg)), 10000 /* রুট-সেফটি — NXHARD(৭সে)-এর-উপরে, এজ-কাট (~১২সে)-এর-নিচে: Stremio-কখনো-ছাড়া-উত্তর-না-পাওয়া */, p).then(
-        cards => { logReq(p + ' [no-s:e]', Date.now() - t0, (cards || []).length, null, RVA); sendJson(res, 200, { streams: cards || [] }); },
+        cards => { logReq(p + ' [no-s:e]', Date.now() - t0, (cards || []).length, null, RVA); sendJson(res, 200, { streams: (cards || []).map(({ _hq, _lang, ...r }) => r) }); }, // v1.13.8 stripInt
         e => { logReq(p + ' [no-s:e]', Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }
     // ── subtitles-রিসোর্স (MovieBox-সাবটাইটেল-ট্র্যাক — এমবেডেড-চাইল্ডের-/subtitles-প্রক্সি) ──
