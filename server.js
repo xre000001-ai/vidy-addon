@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.14.2';
+const VERSION = '1.14.3';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -397,11 +397,14 @@ async function nxStreams(imdb, type, s, e) {
     const olP2 = origLangForImdb(imdb); // আসল-ভাষা — ডাব-না-থাকলে-এ-নামই-বসবে ('Original'-লেখা-আর-নেই)
     const t3 = Date.now();
     const b = await directGet(NEXBASE + '/stream/' + type + '/' + path2 + '.json', 25000);
-    if (DBG) console.error('[nxdbg] nethex ' + type + '/' + path2 + ' -> ' + (Date.now() - t3) + 'ms');
+    const nxMs = Date.now() - t3;
+    if (DBG) console.error('[nxdbg] nethex ' + type + '/' + path2 + ' -> ' + nxMs + 'ms');
     // v1.11.7: চূড়ান্ত-ইউনিফর্ম-কার্ড — ⧉ Title | Year | / ⧠ SsEe • EpTitle / ⊞ Server ⌗ Audio (resolution শুধু name-এ, Subs-লেখা নেই)
+    // v1.14.3 অভিযোজিত-সাজ-অপেক্ষা: ধীর-চাইল্ড-ফেচে-বেড়ি-কমে — মোট nx ≤ ~২.৬সে+চাইল্ড-সর্বনিম্ন
+    const nxMeta = Math.max(0, Math.min(1500, 2600 - nxMs));
     const [em, olRaw] = await Promise.all([
-      Promise.race([epP.catch(() => null), new Promise(r => setTimeout(() => r(null), 1500))]),
-      raceVal(olP2, 1500)
+      Promise.race([epP.catch(() => null), new Promise(r => setTimeout(() => r(null), nxMeta))]),
+      raceVal(olP2, nxMeta)
     ]);
     const olN = langName(olRaw);
     const arr = (JSON.parse(b).streams || []).filter(x => x && typeof x.url === 'string' && /^https?:/.test(x.url)).map(x => {
@@ -727,9 +730,13 @@ async function withSources(cardsP, srcs, cfg, t0) {
     const el = Date.now() - t0;
     const grace = cards.length === 0 ? Math.max(0, NXHARD - el) : (el < 400 ? NXEXTRA : Math.max(0, Math.min(NXCOLDX, NXHARD - el)));
     const left = Math.max(0, Math.min(NXDEADLINE, el + grace) - el);
+    // v1.14.3 প্রতি-সোর্স-জানালা: tw/rt-রেজলভারের-ঠান্ডা-স্ক্র্যাপ+রেজলভ ৪-৭সে — ছোট-জানালায়-১ম-ট্যাপে-মিস-হতো;
+    // এখন-নির্বশেষ-৬.৫সে-নিশ্চিত-জানালা (গরম-TWRCACHE/নেগ-ক্যাশে-তাত্ক্ষণিক-রেজলভ-বলে-অপেক্ষা-বাস্তবে-হয়-না);
+    // nx-আগের-নীতিই (স্ক্যান-শেষে +grace) — চাইল্ড-নিজেই-দ্রুত।
+    const twRtLeft = Math.max(left, Math.max(0, Math.min(NXDEADLINE, 6500) - el));
     const outs = await Promise.all(live.map(x => Promise.race([
       x.p.catch(() => []),
-      new Promise(r => setTimeout(() => r(null), Math.max(0, left)))
+      new Promise(r => setTimeout(() => r(null), Math.max(0, (x.key === 'tw' || x.key === 'rt') ? twRtLeft : left)))
     ])));
     let all = cards.slice();
     for (let i = 0; i < live.length; i++) {
