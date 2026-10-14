@@ -210,6 +210,23 @@ h1 .g{color:var(--acc)}
     </div>
   </div>
 
+  <div class="card src-card nx" id="cardT">
+    <div class="src-hd">
+      <div class="tile nx" style="background:#170f28;color:#c9a6ff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:20px;letter-spacing:1px">TW</div>
+      <div class="s-body">
+        <div class="s-name">ToonWorld4All <span class="badge n">multi-audio &middot; movies &amp; anime</span></div>
+        <div class="s-sub">Direct pixeldrain/hubcloud links via encrypted-link resolver</div>
+      </div>
+      <div class="sw nx on" id="swT"></div>
+    </div>
+
+    <div class="fzone">
+      <div class="flab">Quality <em>&middot; toonworld-only filter</em></div>
+      <div class="chips" id="twChips"></div>
+      <div class="fhint" style="margin-top:9px">Nothing picked = every quality stays. Filter uses the real file height, not the card badge.</div>
+    </div>
+  </div>
+
   <div class="seclab">Preview</div>
   <p class="sub" style="margin-bottom:4px">How stream cards will look in your app — both sources, one anatomy:</p>
   <div class="card">
@@ -217,6 +234,7 @@ h1 .g{color:var(--acc)}
       <div class="pcard" id="pvV"><div class="dot v"></div><div class="pbody"><div class="hd v" id="pvVh"></div><div class="t" id="pvVt"></div></div><div class="q v" id="pvVq"></div></div>
       <div class="pcard nxc" id="pvN"><div class="dot n"></div><div class="pbody"><div class="hd n" id="pvNh"></div><div class="t" id="pvNt"></div></div><div class="q n" id="pvNq"></div></div>
       <div class="pcard nxc" id="pvR"><div class="dot n"></div><div class="pbody"><div class="hd n" id="pvRh"></div><div class="t" id="pvRt"></div></div><div class="q n" id="pvRq"></div></div>
+      <div class="pcard nxc" id="pvT"><div class="dot n"></div><div class="pbody"><div class="hd n" id="pvTh"></div><div class="t" id="pvTt"></div></div><div class="q n" id="pvTq"></div></div>
     </div>
   </div>
 
@@ -241,7 +259,7 @@ h1 .g{color:var(--acc)}
   var SRVS=[["miami","Miami","Primary · always-on workhorse"],["boise","Boise","Primary · up to 4K"],["atlanta","Atlanta","Primary · official subtitles"],["phoenix","Phoenix","Extra · 1080p mirror"],["dallas","Dallas","Extra · Auto-HLS feed"],["austin","Austin","Extra · audio variants (Hindi/English)"],["seattle","Seattle","Backup · Auto-HLS feed"],["delhi","Delhi","Extra · multi-audio (Hindi/English)"],["munich","Munich","Extra · 1080p (EU)"],["paris","Paris","Extra · always-on single feed"],["orlando","Orlando","Extra · 1080p feed"],["reno","Reno","Extra · Auto-HLS feed"],["oakland","Oakland","Extra · Auto-HLS feed"],["vegas","Vegas","Extra · Vidara feed"],["cancun","Cancun","Extra · Vimeos feed"],["tampa","Tampa","Extra · Auto-HLS feed"]];
   var LANGS=[["original","Original"],["english","English"],["hindi","Hindi"],["spanish","Spanish"],["russian","Russian"],["japanese","Japanese"],["tamil","Tamil"],["portuguese","Portuguese (BR)"],["french","French"],["german","German"],["korean","Korean"],["arabic","Arabic"]];
 
-  var st={ v:1, q:[], sub:1, srv:SRVS.map(function(x){return x[0];}), nx:1, nxq:[], nxl:[], rt:1, rtl:[] };
+  var st={ v:1, q:[], sub:1, srv:SRVS.map(function(x){return x[0];}), nx:1, nxq:[], nxl:[], rt:1, rtl:[], tw:1, twq:[] };
 
   function b64u(o){return btoa(unescape(encodeURIComponent(JSON.stringify(o)))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');}
   function base(){return location.origin;}
@@ -261,6 +279,8 @@ h1 .g{color:var(--acc)}
     }
     if(st.rt===0)c.rt=0;
     else if(st.rtl.length)c.rtl=st.rtl.slice();
+    if(st.tw===0)c.tw=0;
+    else if(st.twq.length)c.twq=st.twq.slice();
     var u=base()+(Object.keys(c).length?'/cfg/'+b64u(c):'')+'/manifest.json';
     document.getElementById('url').value=u;
     document.getElementById('inst').href='stremio://'+u.replace(/^https?:\/\//,'');
@@ -287,6 +307,10 @@ h1 .g{color:var(--acc)}
     document.getElementById('pvRh').textContent='\u25c8 Auto \u25c8';
     document.getElementById('pvRt').textContent='\u29c9 Demon Slayer | 2019 |\n\u29e0 S1E5 \u2022 Episode Title\n\u229e RareToons \u2317 '+rlang;
     document.getElementById('pvRq').textContent=st.rtl.length?st.rtl.slice().join(', '):'All';
+    document.getElementById('pvT').style.display=st.tw?'':'none';
+    document.getElementById('pvTh').textContent='\u25a5 1080 \u25a5';
+    document.getElementById('pvTt').textContent='\u29c9 Scarlet | 2025 |\n\u29e0 Movie\n\u229e ToonWorld \u2317 Multi Audio';
+    document.getElementById('pvTq').textContent=st.twq.length?st.twq.slice().sort(function(a,b){return b-a;}).join(', '):'All';
   }
 
   /* resolution chips factory (per source) */
@@ -364,6 +388,38 @@ h1 .g{color:var(--acc)}
     [].forEach.call(rtEl.querySelectorAll('.chip[data-k]'),function(c){
       c.classList.toggle('on',st.rtl.indexOf(c.dataset.k)>=0);
     });
+  /* toonworld-only quality chips */
+  var TWQ=[[1080,"1080p"],[720,"720p"],[480,"480p"]];
+  var twEl=document.getElementById('twChips');
+  var twAll=document.createElement('div');
+  twAll.className='chip all';twAll.textContent='All';
+  twAll.onclick=function(){st.twq=[];drawTW();rebuild();};
+  twEl.appendChild(twAll);
+  TWQ.forEach(function(l){
+    var c=document.createElement('div');c.className='chip';c.textContent=l[1];c.dataset.k=l[0];
+    c.onclick=function(){
+      var i=st.twq.indexOf(l[0]);
+      if(i>=0)st.twq.splice(i,1);else st.twq.push(l[0]);
+      if(st.twq.length===TWQ.length)st.twq=[];
+      drawTW();rebuild();
+    };
+    twEl.appendChild(c);
+  });
+  function drawTW(){
+    twAll.classList.toggle('on',st.twq.length===0);
+    [].forEach.call(twEl.querySelectorAll('.chip[data-k]'),function(c){
+      c.classList.toggle('on',st.twq.indexOf(Number(c.dataset.k))>=0);
+    });
+  }
+  drawTW();
+
+  var swT=document.getElementById('swT'), cardT=document.getElementById('cardT');
+  swT.onclick=function(){
+    st.tw=st.tw?0:1;
+    swT.classList.toggle('on',!!st.tw);
+    cardT.classList.toggle('off',!st.tw);
+    rebuild();
+  };
   }
   drawRT();
 

@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.13.3';
+const VERSION = '1.13.4';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -604,14 +604,63 @@ async function twrStreams(base, tag, title, type, s, e) {
   const k = 'twr:' + tag + ':' + String(title).toLowerCase() + ':' + (type === 'series' ? (s || 1) + ':' + (e || 1) : 'm');
   const h = TWRCACHE.get(k);
   if (h && (Date.now() - h.ts) < 1800000) return h.v;
-  const qs = new URLSearchParams({ source: tag, title: String(title), _: String(Date.now()) }); // ক্যাশ-বাস্টার (এজ-CF-ক্যাশ-ভেদ)
-  if (type === 'series') { qs.set('season', String(s || 1)); qs.set('episode', String(e || 1)); }
   const t3 = Date.now();
+  const tries = [String(title)];
+  const sq = String(title).replace(/[^A-Za-z0-9\u0900-\u097F\u0980-\u09FF\u0B80-\u0BFF]/g, ''); // স্পেস/বিরামচিহ্ন-স্কোয়াশ ফলব্যাক
+  if (sq && sq.toLowerCase() !== String(title).toLowerCase()) tries.push(sq);
+  let r0 = [], used = -1;
+  for (let ti = 0; ti < tries.length; ti++) {
+    r0 = await twrFetch(base, tag, tries[ti], type, s, e, t3);
+    if (r0.length) { used = ti; break; }
+  }
+  if (!r0.length) { // শেষ-ফলব্যাক: TMDB-বিকল্প-টাইটেল ("Dan Da Dan"→"Dandadan" — স্কোয়াশেও-ধরা-যায়-না)
+    const alts = await tmdbAltTitles(title);
+    for (const alt of alts) {
+      if (tries.some(t => t.toLowerCase() === String(alt).toLowerCase())) continue;
+      tries.push(alt);
+      r0 = await twrFetch(base, tag, alt, type, s, e, t3);
+      if (r0.length) { used = tries.length - 1; break; }
+    }
+  }
+  if (r0.length) {
+    if (used > 0) r0 = r0.map(z => { // কার্ড-টেক্সটে-আসল-ডিসপ্লে-টাইটেল (ফলব্যাক-টাইটেল-নয়)
+      const t2 = String(z.title || '').split(tries[used]).join(String(title));
+      return Object.assign({}, z, { title: t2, description: t2 });
+    });
+    TWRCACHE.set(k, { ts: Date.now(), v: r0 }); // সফল-ট্রাই-মূল-কী-তে-ক্যাশ
+  }
+  return r0;
+}
+
+const ALTCACHE = new Map(); // নাম → লাতিন-বিকল্প-টাইটেল[] — মিসে-একবারই
+async function tmdbAltTitles(name) {
+  const k0 = String(name).toLowerCase();
+  if (ALTCACHE.has(k0)) return ALTCACHE.get(k0);
+  const out = [];
+  try {
+    const b = await directGet(TMDBP + '/search/multi?api_key=' + TMDBK + '&query=' + encodeURIComponent(String(name)), 8000);
+    const hit = ((JSON.parse(b)).results || [])[0];
+    if (hit && hit.id != null) {
+      const ty = hit.media_type === 'movie' ? 'movie' : 'tv';
+      const b2 = await directGet(TMDBP + '/' + ty + '/' + hit.id + '/alternative_titles?api_key=' + TMDBK, 8000);
+      const arr = ((JSON.parse(b2)).results || []).map(r => String(r.title || '')).filter(t => t && /^[\x20-\x7E]+$/.test(t) && t.toLowerCase() !== k0);
+      out.push(...arr.slice(0, 6));
+    }
+  } catch (_) {}
+  ALTCACHE.set(k0, out);
+  if (ALTCACHE.size > 1200) ALTCACHE.clear();
+  return out;
+}
+
+async function twrFetch(base, tag, title, type, s, e, t3) {
+  const qs = new URLSearchParams({ source: tag, title: title, _: String(Date.now()) }); // ক্যাশ-বাস্টার (এজ-CF-ক্যাশ-ভেদ)
+  if (type === 'series') { qs.set('season', String(s || 1)); qs.set('episode', String(e || 1)); }
   try {
     const b = await directGet(base + '/find?' + qs.toString(), 30000);
     const j = JSON.parse(b);
     // v1.12.3: twr-কার্ড-ও-ইউনিফর্ম-ভিডি-ফরম্যাটে (⧉ Title / ⧠ SsEe • EpTitle / ⨞ Server ⌧ Audio) — resolution-শুধু-name-ব্যাজে, সবসময়-1080 (Auto/360-লেবেল-নয়)
     const arr = ((j && j.results) || []).filter(x => x && typeof x.url === 'string' && /^https?:/.test(x.url)).map(x => {
+      const hq = parseInt(String(x.quality || ''), 10) || 0; // রেজলভারের-আসল-উচ্চতা — twq-ফিল্টার-এর-জন্য
       const fn = String(x.name || '');
       const q2 = '1080';
       const lang = String(x.lang || '');
@@ -626,13 +675,13 @@ async function twrStreams(base, tag, title, type, s, e) {
         title: txt,
         description: txt,
         quality: q2,
+        _hq: hq,
         _lang: lang,
         url: String(x.url),
         behaviorHints: { notWebReady: false, isBingeable: true, filename: fn || (tag === 'toonworld' ? 'toonworld.mkv' : 'raretoons.mkv') },
         bingeGroup: (tag === 'toonworld' ? 'tw|' : 'rt|') + String(title).toLowerCase() + '::|' + (lang || 'Hindi')
       };
     });
-    if (arr.length) TWRCACHE.set(k, { ts: Date.now(), v: arr }); // খালি-ফল-ক্যাশ-নয় (ঠান্ডা-মিস-পরের-কলে-আবার-চেষ্টা)
     if (TWRCACHE.size > 2500) TWRCACHE.clear();
     if (DBG) console.error('[twr] ' + tag + ' ' + String(title).slice(0, 30) + ' S' + (s || 1) + 'E' + (e || 1) + ' -> ' + arr.length + ' cards @' + (Date.now() - t3) + 'ms');
     return arr;
@@ -666,6 +715,9 @@ async function withSources(cardsP, srcs, cfg, t0) {
       } else if (live[i].key === 'rt') {
         const rtSel = Array.isArray(cfg && cfg.rtl) ? cfg.rtl : [];
         all = all.concat(v.filter(z => rtLangPass(z, rtSel)));
+      } else if (live[i].key === 'tw') {
+        const twAllow = qToList(cfg && cfg.twq); // ToonWorld-নিজের-চিপস — রেজলভারের-আসল-উচ্চতায়
+        all = all.concat(twAllow.length ? v.filter(z => !z._hq || twAllow.indexOf(z._hq) >= 0) : v);
       } else all = all.concat(v);
     }
     if (DBG) console.error('[srcdbg] withSources el=' + el + 'ms left=' + left + 'ms → ' + all.length + ' কার্ড');
@@ -1001,7 +1053,7 @@ function qToList(q) { // মাল্টি-রেজোলিউশন: অ্�
   const n = Math.min(2160, Math.max(0, Number(q) || 0));
   return n ? QH.filter(h => h <= n) : [];
 }
-const DEFAULT_CFG = { q: 0, sub: 1, cat: 'kd,mv', lang: '', sort: 'pop', era: '', g: [], srv: [], v: 1, nx: 1, nxq: 0, nxl: [], tw: 1, rt: 1, rtl: [] }; // v/nx/tw/rt = per-source master switches (tw=ToonWorld, rt=RareToons) // v/nx = per-source master switches; nxq/nxl = NetHex's OWN quality/audio-language filters (independent of the vidy-side q)
+const DEFAULT_CFG = { q: 0, sub: 1, cat: 'kd,mv', lang: '', sort: 'pop', era: '', g: [], srv: [], v: 1, nx: 1, nxq: 0, nxl: [], tw: 1, rt: 1, twq: [], rtl: [] }; // v/nx/tw/rt = per-source master switches (tw=ToonWorld, rt=RareToons) // v/nx = per-source master switches; nxq/nxl = NetHex's OWN quality/audio-language filters (independent of the vidy-side q)
 function parseCfgFromObj(o) {
   const c = Object.assign({}, DEFAULT_CFG, { g: [] });
   if (o) {
@@ -1016,6 +1068,7 @@ function parseCfgFromObj(o) {
     if (o.v === 0 || o.v === '0') c.v = 0;
     if (o.nx === 0 || o.nx === '0') c.nx = 0;
     if (o.tw === 0 || o.tw === '0') c.tw = 0;
+    if (o.twq !== undefined && o.twq !== null && o.twq !== '') c.twq = qToList(o.twq); // ToonWorld-নিজের-কোয়ালিটি-ফিল্টার (আসল-উচ্চতায়, কার্ড-লেবেল-নয়)
     if (o.rt === 0 || o.rt === '0') c.rt = 0;
     if (o.nxq !== undefined && o.nxq !== null && o.nxq !== '') c.nxq = qToList(o.nxq);
     if (Array.isArray(o.nxl)) c.nxl = o.nxl.map(x => String(x).toLowerCase().replace(/[^a-z]/g, '')).filter(x => x.length >= 2 && x.length <= 12).slice(0, 12);
@@ -1032,7 +1085,7 @@ function manifest(cfg, origin) {
     version: VERSION,
     name: 'Phoenix',
     logo: (origin || '') + '/logo.png',
-    description: 'Stream-only, parallel sources: Vidy (16 servers, up to 4K, subtitles) + MovieBox (direct-MP4 dubs & multi-audio) + RareToons (Hindi/Tamil/Telugu anime & cartoons, auto-HLS) — every card in one unified format; each source keeps its own filters (quality, audio language, servers).',
+    description: 'Stream-only, parallel sources: Vidy (16 servers, up to 4K, subtitles) + MovieBox (direct-MP4 dubs & multi-audio) + RareToons (Hindi/Tamil/Telugu anime & cartoons, auto-HLS) + ToonWorld4All (multi-audio movies & anime via encrypted-link resolver) — every card in one unified format; each source keeps its own filters (quality, audio language, servers).',
     author: 'xre000001-ai',
     resources: ['stream', 'subtitles'], // v1.11.13: MovieBox-সাবটাইটেল-ট্র্যাক-পুনরুদ্ধার (স্ট্যান্ডঅ্যালোন-nethex-এর-/subtitles-রুট-পোর্টে-হারিয়ে-গিয়েছিল)
     types: ['movie', 'series'],
@@ -1124,8 +1177,8 @@ const server = http.createServer((req, res) => {
       const tp = nameForTmdb(Number(m[1]), 'movie'); // টাইটেল-আর-sources-একসাথে-ছোটা — টাইটেল-শুধু-কার্ডের-জন্য
       const vOn = !(cfg && cfg.v === 0), nxOn = !(cfg && cfg.nx === 0); // per-source masters
       const nxP = nxOn ? nxFor('movie', String(m[1]), 0, 0) : null;
-      const twP = TWBASE ? tp.then(n => twrStreams(TWBASE, 'toonworld', n, 'movie', 0, 0)).catch(() => []) : null; // v1.12: টাইটেল-প্রমিস-থেকেই-সমান্তরালে-ছোটা
-      const rtP = RTBASE ? tp.then(n => twrStreams(RTBASE, 'raretoons', n, 'movie', 0, 0)).catch(() => []) : null;
+      const twP = (TWBASE && !(cfg && cfg.tw === 0)) ? tp.then(n => twrStreams(TWBASE, 'toonworld', n, 'movie', 0, 0)).catch(() => []) : null; // v1.12: টাইটেল-প্রমিস-থেকেই-সমান্তরালে-ছোটা
+      const rtP = (RTBASE && !(cfg && cfg.rt === 0)) ? tp.then(n => twrStreams(RTBASE, 'raretoons', n, 'movie', 0, 0)).catch(() => []) : null;
       kickSubs('tmdb' + m[1], 'movie', null, null, cfg);
       return withDeadline(withSources(vOn ? getSources(Number(m[1]), 'movie', null, null, '', cfg, tp) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }], cfg, t0).then(cards => withSubs(cards, 'tmdb' + m[1], 'movie', null, null, cfg)), Math.max(15000, NXDEADLINE > 0 ? 15000 : 15000), p).then(
         cards => { logReq(p, Date.now() - t0, (cards || []).length, null, RVA); sendJson(res, 200, { streams: cards || [] }); },
@@ -1136,8 +1189,8 @@ const server = http.createServer((req, res) => {
       const tp = nameForTmdb(Number(m[1]), 'series');
       const vOn = !(cfg && cfg.v === 0), nxOn = !(cfg && cfg.nx === 0); // per-source masters
       const nxP = nxOn ? nxFor('series', String(m[1]), Number(m[2] || 1), Number(m[3] || 1)) : null;
-      const twP = TWBASE ? tp.then(n => twrStreams(TWBASE, 'toonworld', n, 'series', Number(m[2] || 1), Number(m[3] || 1))).catch(() => []) : null;
-      const rtP = RTBASE ? tp.then(n => twrStreams(RTBASE, 'raretoons', n, 'series', Number(m[2] || 1), Number(m[3] || 1))).catch(() => []) : null;
+      const twP = (TWBASE && !(cfg && cfg.tw === 0)) ? tp.then(n => twrStreams(TWBASE, 'toonworld', n, 'series', Number(m[2] || 1), Number(m[3] || 1))).catch(() => []) : null;
+      const rtP = (RTBASE && !(cfg && cfg.rt === 0)) ? tp.then(n => twrStreams(RTBASE, 'raretoons', n, 'series', Number(m[2] || 1), Number(m[3] || 1))).catch(() => []) : null;
       if (nxOn) nxPrewarm('series', String(m[1]), Number(m[2] || 1), Number(m[3] || 1));
       kickSubs('tmdb' + m[1], 'series', Number(m[2] || 1), Number(m[3] || 1), cfg);
       return withDeadline(withSources(vOn ? getSources(Number(m[1]), 'tv', Number(m[2] || 1), Number(m[3] || 1), '', cfg, tp) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }], cfg, t0).then(cards => withSubs(cards, 'tmdb' + m[1], 'series', Number(m[2] || 1), Number(m[3] || 1), cfg)), Math.max(15000, NXDEADLINE > 0 ? 15000 : 15000), p).then(
@@ -1150,8 +1203,8 @@ const server = http.createServer((req, res) => {
       const nxP = nxOn ? nxFor('movie', m[1], 0, 0) : null;
       const infoP = vOn ? findTmdbInfo(m[1], 'movie') : null; // v1.12: এক-কলেই-সব-সোর্স-খাওয়ানো
       const nmP = suggName(m[1]); // v1.12.6: rt/tw-দ্রুত-নাম
-      const twP = (TWBASE && infoP) ? nmP.then(nm => nm ? twrStreams(TWBASE, 'toonworld', nm, 'movie', 0, 0) : []).catch(() => []) : null;
-      const rtP = (RTBASE && infoP) ? nmP.then(nm => nm ? twrStreams(RTBASE, 'raretoons', nm, 'movie', 0, 0) : []).catch(() => []) : null;
+      const twP = ((TWBASE && infoP) && !(cfg && cfg.tw === 0)) ? nmP.then(nm => nm ? twrStreams(TWBASE, 'toonworld', nm, 'movie', 0, 0) : []).catch(() => []) : null;
+      const rtP = ((RTBASE && infoP) && !(cfg && cfg.rt === 0)) ? nmP.then(nm => nm ? twrStreams(RTBASE, 'raretoons', nm, 'movie', 0, 0) : []).catch(() => []) : null;
       kickSubs(m[1], 'movie', null, null, cfg);
       return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'movie', null, null, info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }], cfg, t0).then(cards => withSubs(cards, m[1], 'movie', null, null, cfg)), Math.max(15000, NXDEADLINE > 0 ? 15000 : 15000), p).then(
         cards => { logReq(p, Date.now() - t0, (cards || []).length, null, RVA); sendJson(res, 200, { streams: cards || [] }); },
@@ -1163,8 +1216,8 @@ const server = http.createServer((req, res) => {
       const nxP = nxOn ? nxFor('series', m[1], Number(m[2]), Number(m[3])) : null;
       const infoP = vOn ? findTmdbInfo(m[1], 'series') : null;
       const nmP = suggName(m[1]); // v1.12.6: rt/tw-দ্রুত-নাম
-      const twP = (TWBASE && infoP) ? nmP.then(nm => nm ? twrStreams(TWBASE, 'toonworld', nm, 'series', Number(m[2]), Number(m[3])) : []).catch(() => []) : null;
-      const rtP = (RTBASE && infoP) ? nmP.then(nm => nm ? twrStreams(RTBASE, 'raretoons', nm, 'series', Number(m[2]), Number(m[3])) : []).catch(() => []) : null;
+      const twP = ((TWBASE && infoP) && !(cfg && cfg.tw === 0)) ? nmP.then(nm => nm ? twrStreams(TWBASE, 'toonworld', nm, 'series', Number(m[2]), Number(m[3])) : []).catch(() => []) : null;
+      const rtP = ((RTBASE && infoP) && !(cfg && cfg.rt === 0)) ? nmP.then(nm => nm ? twrStreams(RTBASE, 'raretoons', nm, 'series', Number(m[2]), Number(m[3])) : []).catch(() => []) : null;
       if (nxOn) nxPrewarm('series', m[1], Number(m[2]), Number(m[3]));
       kickSubs(m[1], 'series', Number(m[2]), Number(m[3]), cfg);
       return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'tv', Number(m[2]), Number(m[3]), info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }], cfg, t0).then(cards => withSubs(cards, m[1], 'series', Number(m[2]), Number(m[3]), cfg)), Math.max(15000, NXDEADLINE > 0 ? 15000 : 15000), p).then(
@@ -1177,8 +1230,8 @@ const server = http.createServer((req, res) => {
       const nxP = nxOn ? nxFor('series', m[1], 1, 1) : null;
       const infoP = vOn ? findTmdbInfo(m[1], 'series') : null;
       const nmP = suggName(m[1]); // v1.12.6: rt/tw-দ্রুত-নাম
-      const twP = TWBASE ? nmP.then(nm => nm ? twrStreams(TWBASE, 'toonworld', nm, 'series', 1, 1) : []).catch(() => []) : null;
-      const rtP = RTBASE ? nmP.then(nm => nm ? twrStreams(RTBASE, 'raretoons', nm, 'series', 1, 1) : []).catch(() => []) : null;
+      const twP = (TWBASE && !(cfg && cfg.tw === 0)) ? nmP.then(nm => nm ? twrStreams(TWBASE, 'toonworld', nm, 'series', 1, 1) : []).catch(() => []) : null;
+      const rtP = (RTBASE && !(cfg && cfg.rt === 0)) ? nmP.then(nm => nm ? twrStreams(RTBASE, 'raretoons', nm, 'series', 1, 1) : []).catch(() => []) : null;
       if (nxOn) nxPrewarm('series', m[1], 1, 1);
       kickSubs(m[1], 'series', 1, 1, cfg);
       return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'tv', 1, 1, info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }], cfg, t0).then(cards => withSubs(cards, m[1], 'series', 1, 1, cfg)), Math.max(15000, NXDEADLINE > 0 ? 15000 : 15000), p).then(
