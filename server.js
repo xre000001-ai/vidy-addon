@@ -798,8 +798,8 @@ async function tmdbAltTitles(name) {
 }
 
 function twTitleOk(title, fn) { // v1.13.5 ভুল-টাইটেল-বাধা: রেজলভারের-টোকেন-গেট-ছলে-যায় ("Breaking Bad"→"The Bad Guys Breaking In") — নামের-ভেতরে-সব-শব্দ-ক্রমে-থাকা-বাধ্যতামূলক (বা স্কোয়াশ-ফ্রেজ-মিল)
-  const c = String(fn || '').replace(/^\[[^\]]*\]\s*/, '').toLowerCase();
-  const q = String(title || '').toLowerCase().replace(/[^a-z0-9\u0900-\u097F\u0980-\u09FF\u0B80-\u0BFF]+/g, ' ').trim();
+  const c = String(fn || '').replace(/^\[[^\]]*\]\s*/, '').replace(/[\u2018\u2019\u02BC']/g, '').toLowerCase(); // v1.15.11c: অ্যাপস্ট্রফি-মুছে-এক-টোকেন (I'll→ill দুই-পাশে-এক — slug-এ-"ill", কোয়েরিতে-"i ll" ভেঙে-ক্রম-আটকাত)
+  const q = String(title || '').toLowerCase().replace(/[\u2018\u2019\u02BC']/g, '').replace(/[^a-z0-9\u0900-\u097F\u0980-\u09FF\u0B80-\u0BFF]+/g, ' ').trim();
   if (!c || !q) return true; // বিচার-অসম্ভব → থাকুক
   const qt = q.split(' ');
   const cts = c.replace(/[^a-z0-9\u0900-\u097F\u0980-\u09FF\u0B80-\u0BFF]+/g, ' ').trim().split(' ');
@@ -814,7 +814,7 @@ async function twrFetch(base, tag, title, type, s, e, t3) {
   const qs = new URLSearchParams({ source: tag, title: String(title || '').replace(/[\u2018\u2019\u02BC]/g, "'"), _: String(Date.now()) }); // v1.15.11: ইউনিকোড-অ্যাপস্ট্রফি→ASCII (রেজলভার-ক্যাশ-কী-একতা)
   if (type === 'series') { qs.set('season', String(s || 1)); qs.set('episode', String(e || 1)); }
   try {
-    const b = await directGet(base + '/find?' + qs.toString(), 30000);
+    if (DBG) console.error('[twrURL] ' + base + '/find?' + qs.toString()); const b = await directGet(base + '/find?' + qs.toString(), 30000);
     const j = JSON.parse(b);
     // v1.12.3: twr-কার্ড-ও-ইউনিফর্ম-ভিডি-ফরম্যাটে (⧉ Title / ⧠ SsEe • EpTitle / ⨞ Server ⌧ Audio) — resolution-শুধু-name-ব্যাজে, সবসময়-1080 (Auto/360-লেবেল-নয়)
     const raws = ((j && j.results) || []).filter(x => x && typeof x.url === 'string' && /^https?:/.test(x.url));
