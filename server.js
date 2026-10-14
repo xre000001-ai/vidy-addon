@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.14.6';
+const VERSION = '1.15.0';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -24,6 +24,56 @@ const SERVERS = ['miami', 'atlanta', 'seattle', 'boise', 'phoenix', 'dallas', 'a
 const GIANT = ['miami', 'boise', 'atlanta']; // giant primaries — carry ~32 sources across a 12-title sample (new servers top out at ~13, measured 10-11 Oct 2026)
 let POOL = [];
 try { POOL = JSON.parse(fs.readFileSync(path.join(__dirname, 'vidy_proxy_pool.json'), 'utf8')); } catch (e) {}
+// v1.15.0 রানটাইম-প্রক্সি-স্বাস্থ্য: বুট-সময়ের-ms-আর-বাস্তব-নয় — জয়/ব্যর্থতা/EMA-লেটেন্সি-মনে-থাকে, রেস-স্কোর-অনুযায়ী-হয়
+const PX_RUN = new Map(); // px → { ok, fail, ms, last }
+function pxRec(px, good, ms) {
+  const h = PX_RUN.get(px) || { ok: 0, fail: 0, ms: 0, last: 0 };
+  if (good) { h.ok++; h.ms = h.ms ? Math.round(h.ms * 0.7 + ms * 0.3) : ms; } else h.fail++;
+  h.last = Date.now();
+  PX_RUN.set(px, h);
+}
+function pxScore(px, bootMs) { // কম-ভালো; ব্যর্থতা-ভারী-প্রক্সি-পিছিয়ে, নিখরচয়ী-এগিয়ে
+  const h = PX_RUN.get(px);
+  if (!h) return bootMs || 9999;
+  let sc = h.ms || bootMs || 9999;
+  if (h.fail && !h.ok) sc += 8000; // কখনো-জেতেনি, বারবার-মরে
+  sc += h.fail * 400 - Math.min(h.ok, 8) * 120;
+  return sc;
+}
+// v1.15.0 পুল-প্রোব: বুটে+প্রতি-৫মিনিটে-সব-px-সমান্তরালে-হালকা-২০৪-প্রোব — তাজা-লেটেন্সি-পুলে-লেখা,
+// প্রমাণিত-মৃত-বাদ (ফাইল-অক্ষত — রিবুটে-আবার-সুযোগ); পুল-কখনো-খালি-হয়-না (সব-মরলে-পুরনো-তালিকাই-থাকে)
+const PX_PROBE_URL = 'https://www.google.com/generate_204';
+// v1.15.0 উষ্ণ-সংযোগ: রেজলভার(TW/RT)+MovieBox-চাইল্ড-সকেট-জীবন্ত-রাখা — প্রতি-ট্যাপে-DNS+TLS (~০.৩-০.৬সে) বাদ;
+// 'রেজলভারে-পৌঁছাতে-দেরি'-র-ভিডি-পার্শ্ব-অংশ-এটাই-ছিল। keepAlive-এজেন্ট-পুনঃব্যবহার-করে।
+function warmBases() {
+  for (const b of [TWBASE, RTBASE, NEXBASE]) {
+    if (!b) continue;
+    directGet(b + '/_health', 8000).catch(() => {});
+  }
+}
+function probePool() {
+  if (!POOL.length) return;
+  const snap = POOL.slice();
+  let doneN = 0;
+  for (const c of snap) {
+    const t0 = Date.now();
+    proxiedGet(c.px, PX_PROBE_URL, 4000).then(() => {
+      pxRec(c.px, true, Date.now() - t0);
+      c.ms = Date.now() - t0;
+      if (++doneN === snap.length) prunePool(snap);
+    }).catch(() => {
+      pxRec(c.px, false, 0);
+      if (++doneN === snap.length) prunePool(snap);
+    });
+  }
+}
+function prunePool(snap) {
+  const good = snap.filter(c => { const h = PX_RUN.get(c.px); return !h || h.ok > 0 || h.fail < 3; });
+  const alive = good.length >= 3 ? good : snap; // সব-মরলে-তালিকা-ধরে-রাখো (রিবুটে-আবার-চেষ্টা)
+  POOL.length = 0;
+  for (const c of alive) POOL.push(c);
+  if (DBG) console.error('[pool] probe: ' + alive.length + '/' + snap.length + ' জীবিত');
+}
 
 // ---------- মেমো + ডিডুপ ----------
 const memo = new Map(); // key → {ts, v}
@@ -180,7 +230,7 @@ function proxiedGet(px, url, timeoutMs) {
           const body = (/chunked/i.test(headTxt) ? dechunk(raw) : raw).toString('utf8');
           const code = parseInt((headTxt.split('\r\n')[0] || '').split(' ')[1] || '0', 10);
           if (code === 429) return reject(Object.assign(new Error('rate_limited'), { code: 429 }));
-          if (code !== 200) return bail(new Error('http_' + code));
+          if (code !== 200 && code !== 204) return bail(new Error('http_' + code)); // v1.15.0: ২০৪-ও-সাফল্য (generate_204-প্রোব-টার্গেট)
           resolve(body);
         });
       });
@@ -192,10 +242,14 @@ function proxiedGet(px, url, timeoutMs) {
 function racePool(url, n, timeoutMs) {
   // v1.11.2: সুস্থতা-ব্যান্ড-জুড়ে-ছড়ানো-নমুনা — আগে-তালিকার-প্রথম-n-টা-নিত; ওই-৫টা-একসাথে-মৃত-থাকলে
   // বাকি ১৯-সুস্থ-px-থাকতেও-পুরো-পুল 'pool-exhausted' ঘোষিত-হত ( BreakingBad-runে-ঠিক-তা-ই-হয়েছিল)
-  const srt = POOL.slice().sort((a, b) => (a.ms || 9999) - (b.ms || 9999));
+  // v1.15.0: ক্রম-রানটাইম-স্কোরে (ব্যর্থতা-ভারী-পিছিয়ে), মৃত-ভারী-পুলে-রেস-প্রস্থ-বাড়ে, ফল-PX_RUN-এ-জমে
+  const srt = POOL.slice().sort((a, b) => pxScore(a.px, a.ms) - pxScore(b.px, b.ms));
+  const alive = srt.filter(c => { const h = PX_RUN.get(c.px); return !h || h.ok > 0 || h.fail < 3; }); // প্রমাণিত-মৃত (৩-ব্যর্থ-শূন্য-জয়) রেসে-নয়
+  const use = alive.length >= 3 ? alive : srt; // সব-দোষী-সাব্যস্ত-হলে-পুরো-পুল-ই-শেষ-ভরসা
+  const n2 = Math.min(use.length, Math.max(n, (srt.length - alive.length) >= srt.length / 2 ? n + 3 : n)); // অর্ধেকের-বেশি-মৃত → প্রস্থ+৩
   const cands = [];
-  for (let i = 0; i < n && srt.length; i++) {
-    const c = srt[Math.floor(i * srt.length / n)];
+  for (let i = 0; i < n2 && use.length; i++) {
+    const c = use[Math.floor(i * use.length / n2)];
     if (c && !cands.some(x => x.px === c.px)) cands.push(c);
   }
   if (!cands.length) return Promise.reject(new Error('pool-empty'));
@@ -204,11 +258,14 @@ function racePool(url, n, timeoutMs) {
     const to = setTimeout(() => { if (!done) { done = true; reject(new Error('race-timeout')); } }, timeoutMs);
     let fails = 0;
     for (const c of cands) {
+      const tP = Date.now();
       proxiedGet(c.px, url, timeoutMs).then(body => {
+        pxRec(c.px, true, Date.now() - tP);
         if (done) return;
         done = true; clearTimeout(to);
         resolve({ body, px: c.px });
       }).catch(() => {
+        pxRec(c.px, false, 0);
         if (++fails === cands.length && !done) { done = true; clearTimeout(to); reject(new Error('pool-exhausted')); }
       });
     }
@@ -557,8 +614,8 @@ function twRtPrewarm(nameP, type, s, e) { // v1.14.5 series tap → পরের
   setTimeout(() => { Promise.resolve(nameP).then(nm => {
     if (!nm) return;
     for (let k = 1; k <= 2; k++) {
-      if (TWBASE) twrStreams(TWBASE, 'toonworld', nm, 'series', s, e + k).catch(() => {});
-      if (RTBASE) twrStreams(RTBASE, 'raretoons', nm, 'series', s, e + k).catch(() => {});
+      if (TWBASE) twrStreams(TWBASE, 'toonworld', nm, 'series', s, e + k, 1).catch(() => {});
+      if (RTBASE) twrStreams(RTBASE, 'raretoons', nm, 'series', s, e + k, 1).catch(() => {});
     }
   }).catch(() => {}); }, 1200);
 }
@@ -606,11 +663,11 @@ let RTBASE = String(process.env.RTBASE || '');
 if (!RTBASE) RTBASE = 'https://3404d3c5dc63-raretoons.baby-beamup.club'; // ফলব্যাক: নতুন-পাবলিক-ডোমেইন
 else if (/\.a\.baby-beamup\.club/.test(RTBASE)) RTBASE = RTBASE.replace('.a.baby-beamup.club', '.baby-beamup.club'); // beamup-ডোমেইন-মাইগ্রেশন (a. বাদ)
 const TWRCACHE = new Map(); // twr:source:title:s:e -> {ts, v} — রেজলভার-নিজেই-৮ঘ-ক্যাশ-করে, এখানে-৩০মিন
-async function twrStreams(base, tag, title, type, s, e) {
+async function twrStreams(base, tag, title, type, s, e, pre) {
   if (!base || !title) return [];
   const k = 'twr:' + tag + ':' + String(title).toLowerCase() + ':' + (type === 'series' ? (s || 1) + ':' + (e || 1) : 'm');
   const h = TWRCACHE.get(k);
-  if (h && (Date.now() - h.ts) < (h.neg ? 720000 : 1800000)) return h.v; // খালি-ফলের-নেগেটিভ ১২মিন — TW/RT-তে-নেই-টাইটেল-প্রতি-ট্যাপে-হাতুড়ে-নয়
+  if (h && (Date.now() - h.ts) < (h.neg ? 180000 : 1800000)) return h.v; // v1.15.0: নেগেটিভ ১২→৩-মিনিট — ঠান্ধা-রেজলভার-এক-খালি-ফলে-দীর্ঘ-বিষাক্ত-নয় (নির্ভরযোগ্যতা)
   const t3 = Date.now();
   const tries = [String(title)];
   const sq = String(title).replace(/[^A-Za-z0-9\u0900-\u097F\u0980-\u09FF\u0B80-\u0BFF]/g, ''); // স্পেস/বিরামচিহ্ন-স্কোয়াশ ফলব্যাক
@@ -639,7 +696,7 @@ async function twrStreams(base, tag, title, type, s, e) {
       return Object.assign({}, z, { title: t2, description: t2 });
     });
     TWRCACHE.set(k, { ts: Date.now(), v: r0 }); // সফল-ফল-মূল-কী-তে-ক্যাশ
-  } else TWRCACHE.set(k, { ts: Date.now(), v: [], neg: 1 }); // সম্পূর্ণ-মিস → ১২মিন-নেগেটিভ
+  } else if (!pre) TWRCACHE.set(k, { ts: Date.now(), v: [], neg: 1 }); // v1.15.0: prewarm-এর-খালি-ফল-নেগ-লেখে-না (আসল-ট্যাপ-নিজে-রায়-দেবে)
   if (TWRCACHE.size > 2500) TWRCACHE.clear();
   if (DBG) console.error('[twr] ' + tag + ' ' + String(title).slice(0, 30) + ' S' + (s || 1) + 'E' + (e || 1) + ' -> ' + r0.length + ' cards @' + (Date.now() - t3) + 'ms');
   return r0;
@@ -1238,7 +1295,7 @@ const server = http.createServer((req, res) => {
       } catch (eL) { return sendJson(res, 404, { error: 'no rt logo' }); }
     }
     if (p === '/_health') return sendJson(res, 200, { ok: 1, version: VERSION, pool: POOL.length, memo: memo.size, nx: NEXBASE ? 1 : 0, tw: TWBASE ? 1 : 0, rt: RTBASE ? 1 : 0 });
-    if (p === '/_pool') return sendJson(res, 200, POOL);
+    if (p === '/_pool') return sendJson(res, 200, POOL.map(c => Object.assign({}, c, PX_RUN.get(c.px) || {}))); // v1.15.0: রানটাইম-স্বাস্থ্য-সহ
     if (p === '/_log') return sendJson(res, 200, reqLog.slice(-40).reverse());
     if (p === '/_servers') return sendJson(res, 200, { order: srvOrder(), scores: SRV_SCORE }); // কনফিগ-পেজের-লাইভ-হেলথ
     let m;
@@ -1353,8 +1410,8 @@ const server = http.createServer((req, res) => {
     sendJson(res, 404, { error: 'not found' });
   } catch (e) { sendJson(res, 500, { error: String(e && e.message) }); }
 });
-// অলস-keep-alive-সকেট-প্রতি-৬০সে-পুড়িয়ে-দেওয়া — দীর্ঘ-অলসতায়-NAT-যেগুলো-নিঃশব্দে-কেটে-দেয় (বিংগের-মধ্যে-তাজা-থাকে):
-setInterval(() => { try { HAGENT.destroy(); SAGENT.destroy(); } catch (e) {} }, 60000).unref();
+// v1.15.0: ৬০-সে-অন্তর-সব-agent-socket-ধ্বংস-বাদ — এটাই-কিপ-অ্যালাইভ-কে-অর্থহীন-করত (প্রতি-ট্যাপে-DNS+TLS-পুনরায়);
+// warmBases()-এর-৪৫-সে-অন্তর-ট্রাফিক-সকেট-সক্রিয়-রাখে (NAT-কাট-স্বাভাবিকভাবেই-টালানো); মরা-সকেট-সার্ভার-FIN-এ-এজেন্ট-নিজেই-ফেলে।
 // ---------- v1.11.8 embedded MovieBox (vendored nethex child; single-app deploy) ----------
 function startEmbeddedNx() {
   return new Promise(resolve => {
@@ -1383,6 +1440,11 @@ const PORT = Number(process.env.PORT || 7000);
 (async () => {
   if (!NEXBASE) NEXBASE = await startEmbeddedNx();
   server.listen(PORT, '0.0.0.0', () => console.log('[vidy] ' + VERSION + ' on :' + PORT + ' | pool=' + POOL.length + (NEXBASE ? ' | moviebox embedded' : '')));
+  setTimeout(probePool, 3000).unref(); // v1.15.0 বুট-প্রোব
+  setInterval(probePool, 300000).unref(); // প্রতি-৫-মিনিট
+  const warmBases0 = () => { try { warmBases(); } catch (e) {} };
+  setTimeout(warmBases0, 1500).unref();
+  setInterval(warmBases0, 45000).unref(); // প্রতি-৪৫-সে-সকেট-উষ্ণ
 })();
 
 // ---------- selftest ----------
