@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.5';
+const VERSION = '1.15.6';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -479,6 +479,7 @@ function pooledGet(url, timeoutMs, n) {
 // vidy servers + NetHex (MovieBox direct-MP4) run in parallel; NetHex cards (♧, distinct style)
 // are appended after the vidy cards. Any NetHex failure/timeout/slow = vidy cards alone, never an error.
 const DBG = !!process.env.VDBG; // সব-debug-লগ-এই-এক-ফ্ল্যাগে-গেটেড (VDBG=1-এ-চালু)
+process.on('unhandledRejection', e => { if (DBG) console.error('[urej] ' + String((e && (e.stack || e.message)) || e).slice(0, 160)); }); // v1.15.6 রাউন্ড-৪৩: স্ট্রে-promise-রিজেকশন-এ-প্রসেস-মরা-বন্ধ (Node-১৫+ ডিফল্ট-ক্র্যাশ) — লগ-অনলি, পরিষেবা-চলতে-থাকে
 // v1.11.8: NEXBASE-বাইরে-থেকে-দেওয়া-যায়; না-দিলে-ভেন্ডর-করা-MovieBox(nethex)-চাইল্ড-নিজেই-বুট-হয় (এক-অ্যাপ-ডিপ্লয়)
 let NEXBASE = (process.env.NEXBASE || '').replace(/\/$/, '');
 const NXDEADLINE = Math.max(Number(process.env.NXDEADLINE || 0), 22000); // absolute cap (stale-env-ও-নিচে-টানবে-না)
@@ -1495,7 +1496,31 @@ function startEmbeddedNx() {
         env: Object.assign({}, process.env, { PORT: String(nxPort), NX_POOL_FILE: path.join(__dirname, 'vidy_proxy_pool.json') }),
         stdio: 'ignore',
       });
-      child.on('exit', c2 => { if (DBG) console.error('[nx-embed] child exited ' + c2); });
+      let nxRespawned = false;
+      child.on('exit', c2 => { // v1.15.6 রাউন্ড-৩৬: চাইল্ড-মাঝপথে-মরলে-একবার-৯০সে-পরে-পুনঃস্পন (গার্ডেড — মাত্র-একবার, unref);
+        if (DBG) console.error('[nx-embed] child exited ' + c2);
+        if (nxRespawned) return;
+        nxRespawned = true;
+        setTimeout(() => {
+          try {
+            const c3 = require('child_process').spawn(process.execPath, [path.join(__dirname, 'nethex', 'server.js')], {
+              env: Object.assign({}, process.env, { PORT: String(nxPort), NX_POOL_FILE: path.join(__dirname, 'vidy_proxy_pool.json') }),
+              stdio: 'ignore',
+            });
+            c3.on('exit', () => { if (DBG) console.error('[nx-embed] respawn exited — MovieBox off'); });
+            const t4 = Date.now();
+            (function ping2() {
+              const rq2 = http.get({ host: '127.0.0.1', port: nxPort, path: '/manifest.json', timeout: 1500 }, r2 => {
+                r2.resume();
+                if (r2.statusCode === 200) { NEXBASE = 'http://127.0.0.1:' + nxPort; console.log('[nx-embed] MovieBox respawned on ' + NEXBASE); return; }
+                retry2();
+              });
+              rq2.on('error', retry2); rq2.on('timeout', () => { rq2.destroy(); retry2(); });
+              function retry2() { if (Date.now() - t4 > 20000) { if (DBG) console.error('[nx-embed] respawn not ready — MovieBox off'); return; } setTimeout(ping2, 500); }
+            })();
+          } catch (eR) { if (DBG) console.error('[nx-embed] respawn failed: ' + eR.message); }
+        }, 90000).unref();
+      });
       const t0 = Date.now();
       (function ping() {
         const rq = http.get({ host: '127.0.0.1', port: nxPort, path: '/manifest.json', timeout: 1500 }, r => {
