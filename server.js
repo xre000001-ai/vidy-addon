@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.2';
+const VERSION = '1.15.3';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -672,11 +672,24 @@ async function twrStreams(base, tag, title, type, s, e, pre) {
   const tries = [String(title)];
   const sq = String(title).replace(/[^A-Za-z0-9\u0900-\u097F\u0980-\u09FF\u0B80-\u0BFF]/g, ''); // স্পেস/বিরামচিহ্ন-স্কোয়াশ ফলব্যাক
   if (sq && sq.toLowerCase() !== String(title).toLowerCase()) tries.push(sq);
+  // v1.15.3: Season-যোগ্য-ভ্যারিয়েন্ট-১ম-ঢেউয়েই-সমান্তরালে (আগে-সিকোয়েন্সিয়াল-ফলব্যাকে-৫+৬=১১সে > ৯.৩সে-জানালা → One-Piece-জাতীয়-কাটা-পড়ত);
+  // ম্যাস-টেস্ট-প্রমাণ: সমান্তরালে-চালালে-কোনো-শোর-ক্ষতি-নেই — যে-আকৃতি-আগে-ফল-দেয়-সেটাই-জেতে (Naruto=সাধারণ, One Piece/JJK=Season-আকৃতি)
+  const seasTry = (type === 'series' && s && tag === 'toonworld') ? [String(title) + ' Season ' + s] : []; // v1.15.3: শুধু-TW (RT-ইনডেক্স-ম্যাচ-নিজেই-ঠিক); ০-প্যাড-ভ্যারিয়েন্ট-ফলব্যাকেই
   // v1.13.5 সমান্তরাল-ফ্যানআউট: মূল+স্কোয়াশ-একসাথে, alt-লুকআপও-সমান্তরালে-ছোটানো — পরপর-অপেক্ষার-যোগফল-দেরি-নেই (দেয়াল-সময় = এক-ট্রাই-এর-সময়)
   const altP = tmdbAltTitles(title);
-  const w1 = await Promise.all(tries.map(t => twrFetch(base, tag, t, type, s, e, t3)));
-  let used = w1.findIndex(v => v.length);
-  let r0 = used >= 0 ? w1[used] : [];
+  const first = tries.concat(seasTry.filter(a => !tries.some(t => t.toLowerCase() === a.toLowerCase())));
+  const w1 = first.map(t => twrFetch(base, tag, t, type, s, e, t3));
+  tries.push(...first.slice(tries.length));
+  // v1.15.3 প্রথম-জয়ী-রেস: Promise.all-ধীর-ভাইকে-অপেক্ষা-করাত (Season-ভ্যারিয়েন্ট-১সে-তে-৩-ফল-দিয়েও-ধীর-সাধারণ-স্ক্র্যাপ ১০-১২সে-ঢেউ-আটকে-রাখত → জানালা-কাটা);
+  // এখন-যে-ট্রাই-প্রথম-অ-শূন্য-ফল-দেয়-সঙ্গে-সঙ্গে-জেতে; সব-শূন্য-হলেই-ফলব্যাক-ধাপ
+  let used = -1;
+  {
+    let settled = false;
+    const anyHit = new Promise(res => w1.forEach((p1, i1) => p1.then(v => { if (!settled && v && v.length) { settled = true; res(i1); } }).catch(() => {})));
+    const allDone = Promise.all(w1.map(p1 => p1.catch(() => []))).then(() => -1);
+    used = await Promise.race([anyHit, allDone]);
+  }
+  let r0 = used >= 0 ? await w1[used] : [];
   if (!r0.length) { // শেষ-ফলব্যাক: Season-যোগ্য-টাইটেল + TMDB-বিকল্প-টাইটেল — সব-একসাথে, অগ্রাধিকার-ক্রমে-প্রথম-জয়ী
     // v1.15.2 ম্যাস-টেস্ট-প্রমাণ: TW-ক্যাটালগ-ম্যাচ-কোয়েরি-আকৃতি-নির্ভর — One Piece/Jujutsu Kaisen 'X Season N'-এ-৩-ফল (সাধারণ-টাইটেলে-০);
     // Naruto-উল্টো (সাধারণ=৩, season=০) — তাই-সিজন-ভ্যারিয়েন্ট-শুধু-ফলব্যাকে (১ম-ধাপ-সাধারণ-টাইটেল-ই-জেতে-যেখানে-জেতা-হয়)
@@ -800,8 +813,9 @@ async function withSources(cardsP, srcs, cfg, t0) {
     // উত্তর-তার-পরেই (দ্রুত-ক্ষেত্রে ২-৫সে), ধীর-সোর্স-কাটা-পড়ার-আগে-সর্বোচ্চ-সময়-পায়। পৃথক-৫.৫/৮.৫সে-জানালা-বাদ —
     // প্রোডে-চাইল্ড/রেজলভার-লেটেন্সি-ওঠানামায়-পৃথক-জানালা-১ম-ক্লিক-মিস-করত (MB কখনো ৬.৬সে-তে-১৬-কার্ড, কখনো >৫.৫সে)।
     const uniLeft = Math.max(0, Math.min(NXDEADLINE, 9300) - el);
+    let errFlag = false; // v1.15.3: সোর্স-ত্রুটি (রিবিল্ড/নেটওয়ার্ক) ≠ সত্যিকারের-খালি — আংশিক-গণ্য হোক
     const outs = await Promise.all(live.map(x => Promise.race([
-      x.p.catch(() => []),
+      x.p.catch(() => { errFlag = true; return []; }),
       new Promise(r => setTimeout(() => r(null), uniLeft))
     ])));
     let all = cards.slice();
@@ -821,7 +835,7 @@ async function withSources(cardsP, srcs, cfg, t0) {
       } else all = all.concat(v);
     }
     if (DBG) console.error('[srcdbg] withSources el=' + el + 'ms uniLeft=' + uniLeft + 'ms → ' + all.length + ' কার্ড (partial=' + !!all.$partial + ')');
-    all.$partial = outs.some(v => v === null); // v1.14.3: কোনো-সোর্স-কাটা-পড়লে-চিহ্ন — এই-উত্তর-৩০মিন-নয়-৯০সে-ক্যাশ-হবে (পরের-ট্যাপে-সম্পূর্ণ-আপগ্রেড)
+    all.$partial = outs.some(v => v === null) || errFlag; // v1.15.3: কাটা-বা-ত্রুটিজ-সোর্স → ৩০মিন-নয়-৯০সে-ক্যাশ (পরের-ট্যাপে-সম্পূর্ণ-আপগ্রেড)
     return all;
   } catch (e) { if (DBG) console.error('[srcdbg] ERR ' + String(e && e.message).slice(0, 80)); return cards; }
 }
