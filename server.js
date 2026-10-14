@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.12';
+const VERSION = '1.15.13';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -489,7 +489,8 @@ const NXHARD = Math.max(Number(process.env.NXHARD || 0), 7000); // v1.13.6: →�
 const NXCACHE = new Map(); // nx:imdb:s:e -> {ts, v} — NetHex links are signed/fresh + it caches 30min itself
 async function nxStreams(imdb, type, s, e) {
   if (!NEXBASE || !imdb) return [];
-  if (NXBENCH === 0) return []; // v1.15.10 শীতলীকরণ-রক্ষক: বেঞ্চ-খালি = প্রতিটা-কল-403-খায়-আর-বেঞ্চ-আরো-বসে (ইউজারের-'MovieBox-ভাঙা'-মূল-কারণ); ৬০সে-পোল-জীবিত-দেখলে-নিজে-ই-চালু-হবে
+  if (NXBENCH === 0 && NEXBASE) await waitNxBench(8000); // v1.15.13: ঠান্ডা-রেপ্লিকায়-প্রথম-বেঞ্চ-ঢেউ-অপেক্ষা (৮সে-সীমা; বেঞ্চ-ঝড়-নয় — এক-single-flight)
+  if (NXBENCH === 0) return []; // v1.15.10 শীতলীকরণ-রক্ষক (অক্ষত: সত্যিই-শূন্য-পুলে-স্ক্যান-ঝড়-নয়): বেঞ্চ-খালি = প্রতিটা-কল-403-খায়-আর-বেঞ্চ-আরো-বসে (ইউজারের-'MovieBox-ভাঙা'-মূল-কারণ); ৬০সে-পোল-জীবিত-দেখলে-নিজে-ই-চালু-হবে
   const k = 'nx:' + imdb + ':' + (type === 'series' ? (s || 1) + ':' + (e || 1) : 'm');
   const h = NXCACHE.get(k);
   if (h && (Date.now() - h.ts) < 1800000) return h.v;
@@ -1529,13 +1530,31 @@ function startEmbeddedNx() {
   });
 }
 const PORT = Number(process.env.PORT || 7000);
-let NXBENCH = -1; // v1.15.8: চাইল্ড-বেঞ্চ-সুস্থ-এক্সিট-সংখ্যা (৬০সে-পোল)
-setInterval(() => {
-  if (!NEXBASE) { NXBENCH = -1; return; }
-  directGet(NEXBASE + '/health', 3000).then(b => { const j = JSON.parse(b); NXBENCH = typeof j.pool === 'number' ? j.pool : -1; }).catch(() => { NXBENCH = -1; });
-}, 60000).unref();
+let NXBENCH = -1; // v1.15.13: চাইল্ড-বেঞ্চ-সুস্থ-এক্সিট-সংখ্যা (১৫সে-পোল — আগে ৬০সে: বুটের-প্রথম-মিনিট-জুড়েই MB-ভুল-বন্ধ থাকত)
+function nxBenchHealth() {
+  if (!NEXBASE) { NXBENCH = -1; return Promise.resolve(-1); }
+  return directGet(NEXBASE + '/health', 3000).then(b => { const j = JSON.parse(b); NXBENCH = typeof j.pool === 'number' ? j.pool : -1; return NXBENCH; }).catch(() => { NXBENCH = -1; return -1; });
+}
+let nxBenchWait = null; // single-flight — ঘন-ট্যাপে-এক-অপেক্ষাই (বেঞ্চ-ঝড়-নয়)
+function waitNxBench(maxMs) { // v1.15.13: NXBENCH===0 → হার্ড-[]-এর-বদলে-প্রথম-বেঞ্চ-ঢেউয়ের-সীমিত-অপেক্ষা (শিশু-স্ট্রিমিং-বুট ~৫-১৫সে)
+  if (NXBENCH !== 0) return Promise.resolve(NXBENCH);
+  if (nxBenchWait) return nxBenchWait;
+  const t0 = Date.now();
+  nxBenchWait = (async () => {
+    while (Date.now() - t0 < maxMs) {
+      await new Promise(r => setTimeout(r, 700));
+      const n = await nxBenchHealth();
+      if (n !== 0) break;
+    }
+    nxBenchWait = null;
+    return NXBENCH;
+  })();
+  return nxBenchWait;
+}
+setInterval(() => { nxBenchHealth(); }, 15000).unref();
 (async () => {
   if (!NEXBASE) NEXBASE = await startEmbeddedNx();
+  nxBenchHealth(); // v1.15.13: বুটেই-জানি (৬০সে-অপেক্ষা-নয়)
   server.listen(PORT, '0.0.0.0', () => console.log('[vidy] ' + VERSION + ' on :' + PORT + ' | pool=' + POOL.length + (NEXBASE ? ' | moviebox embedded' : '')));
   setTimeout(probePool, 3000).unref(); // v1.15.0 বুট-প্রোব
   setInterval(probePool, 180000).unref(); // v1.15.4: প্রতি-৩-মিনিট (বড়-পুলে-তাজা-লেটেন্সি-দ্রুত)
