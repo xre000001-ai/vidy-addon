@@ -38,7 +38,10 @@ function cacheSet(key, streams, ttl = CACHE_TTL) {
 
 const BG = new Set();   // v2.9.4: keys with a bg re-resolve in flight
 const metaCache = new Map();   // v2.9.1: type:id -> { at, m } (30min)
+const RING = [];               // v2.10.2: শেষ-৫০-রিজলভ-ধাপ (stdio:'ignore'-এর-ভেতরে-চোখ)
+function ring(l) { RING.push((Date.now() % 1000000) + ' ' + l); if (RING.length > 50) RING.shift(); }
 async function meta(type, id) {
+  const __t0 = Date.now();
   const ck = `${type}:${id}`;
   const e = metaCache.get(ck);
   if (e && Date.now() - e.at < 30 * 60 * 1000) return e.m;
@@ -49,8 +52,8 @@ async function meta(type, id) {
     const r = await directFetch(`${CINEMETA}/meta/${type}/${id}.json`, { signal: AbortSignal.timeout(10000) });
     const m = (await r.json())?.meta || null;
     if (m && m.name) { if (metaCache.size >= 300) metaCache.delete(metaCache.keys().next().value); metaCache.set(ck, { at: Date.now(), m }); }
-    if (m && m.name) return m;
-  } catch { }
+    if (m && m.name) { ring(`meta cinemeta ok ${type}:${id} +${Date.now() - __t0}ms`); return m; }
+  } catch (e) { ring(`meta cinemeta ERR ${type}:${id} +${Date.now() - __t0}ms ${e && e.cause ? e.cause.code || e.cause.message : e && e.message || e}`); }
   // v2.9.7: cinemeta sometimes answers {} or a name-less skeleton for
   // ids it has not synced - IMDb's suggestion CDN carries the display
   // title for every id, so resolve can still search MovieBox's index.
@@ -61,9 +64,11 @@ async function meta(type, id) {
       const m = { name: x.l, releaseInfo: x.yr ? String(x.yr) : '', type, imdb_id: id };
       if (metaCache.size >= 300) metaCache.delete(metaCache.keys().next().value);
       metaCache.set(ck, { at: Date.now(), m });
+      ring(`meta imdb-fallback ok ${type}:${id} +${Date.now() - __t0}ms`);
       return m;
     }
-  } catch { }
+  } catch (e) { ring(`meta imdb-fallback ERR ${type}:${id} +${Date.now() - __t0}ms`); }
+  ring(`meta NONE ${type}:${id} +${Date.now() - __t0}ms`);
   return null;
 }
 function n(s) { return String(s || '').toLowerCase().replace(/[^a-z0-9]/g, ''); }
@@ -192,6 +197,7 @@ async function resolve(type, imdb, season, episode) {
     }
   }
   if (process.env.NMDEBUG) console.error('[nx] +' + (Date.now() - tR0) + 'ms search:', results.length, 'rows | chosen:', item?.title, '| matchQ:', matchQ(item), '| dp:', item?.detailPath);
+  ring(`search ${results.length}rows chosen:${item?.title || '-'} q:${matchQ(item)} dp:${item?.detailPath ? 1 : 0} +${Date.now() - tR0}ms`);
   // v2.9.7: Cinemeta sometimes carries ONLY the romaji/original title
   // ("Super no ura de yani su futari" for tt37614297) while MovieBox's
   // index stores the English display name - every search then honestly
@@ -216,7 +222,7 @@ async function resolve(type, imdb, season, episode) {
       }
     } catch { }
   }
-  if (!item?.detailPath || (matchQ(item) < 2 && !altOK)) return [];   // honest empty, never junk cards
+  if (!item?.detailPath || (matchQ(item) < 2 && !altOK)) { ring(`giveup q:${matchQ(item)} alt:${altOK ? 1 : 0} +${Date.now() - tR0}ms`); return []; }   // honest empty, never junk cards
   let r = await runMatrix({ id: item.detailPath, season, episode });
   if (process.env.NMDEBUG) console.error('[nx] +' + (Date.now() - tR0) + 'ms matrix status:', r.status, r.status === 200 ? `langs:${(r.body.languages || []).length} subs:${(r.body.subtitles || []).length}` : '');
   // v1.11-local: a chosen subject that answers langs:0 (exists but carries no links
@@ -240,7 +246,7 @@ async function resolve(type, imdb, season, episode) {
       if (rWin) r = rWin;
     }
   }
-  if (r.status !== 200) return [];
+  if (r.status !== 200) { ring(`matrix status:${r.status} +${Date.now() - tR0}ms`); return []; }
   const b = r.body;
   const streams = [];
   for (const lang of (b.languages || [])) {
@@ -250,6 +256,7 @@ async function resolve(type, imdb, season, episode) {
     }
   }
   if (process.env.NMDEBUG) console.error('[nx] +' + (Date.now() - tR0) + 'ms langs:', (b.languages || []).length, '| qualities:', streams.length, '| title:', b.title);
+  ring(`langs:${(b.languages || []).length} qualities:${streams.length} +${Date.now() - tR0}ms`);
   streams.sort((a, z) => (z._reso || 0) - (a._reso || 0));
   // old MovieBox glass: exact-title cards first, variant/spinoff rows sink,
   // readable cap 16 (audios always stay)
@@ -338,6 +345,7 @@ const server = http.createServer(async (req, res) => {
       return res.end(LOGO_BUF);
     }
     if (u.pathname === '/health') return send(res, 200, { ok: true, version: VERSION, mode: 'direct-mp4', pool: poolStats().healthy, waves: checkerStats().waves, size: poolStats().size }); // waves=মোট-স্ক্যান-ঢেউ (সব-মান-এক্সপোর্টেড-হেল্পার-থেকে)
+    if (u.pathname === '/debug/ring') return send(res, 200, RING.slice(-50)); // v2.10.2 রিজলভ-ধাপ-প্রমাণ
     if (u.pathname === '/debug/pool') {
       if (u.searchParams.get('k') !== 'nethex-dbg-7f3a') return send(res, 404, { error: 'not found' });
       return send(res, 200, poolStats());
