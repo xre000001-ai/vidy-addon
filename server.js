@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.26';
+const VERSION = '1.15.27';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -90,7 +90,7 @@ async function pxCheckerWave() {
   try {
     const tnow = Date.now();
     const wave = POOL.filter(c => (PX_COOL.get(c.px) || 0) <= tnow)
-      .sort((a, b) => (PX_LASTOK.get(a.px) || 0) - (PX_LASTOK.get(b.px) || 0)).slice(0, 14); // v1.15.19: ঢেউ ১২→১৪
+      .sort((a, b) => (PX_LASTOK.get(a.px) || 0) - (PX_LASTOK.get(b.px) || 0)).slice(0, 42); // v1.15.27 (ইউজার): সমান্তরাল-ট্রিপল ১৪→৪২
     if (!wave.length) return;
     PXCHK++;
     let cok = 0, cspare = 0, cdead = 0;
@@ -126,7 +126,7 @@ function pxCheckerStart() {
 }
 // v1.15.4 পুল-ট্রেইনার (enrich): পাবলিক-তালিকা → নমুনা-১২০ → সমান্তরাল-২০৪-যাচাই → দ্রুততম(<১.৮সে)-যোগ;
 // মূল-১৭-অক্ষত-প্রথমে, ক্যাপ-৭৭, জেতা-প্রক্সি-ফাইলেও-লেখা (রিস্টার্টে-উষ্ণ); PX_ENRICH=0 দিলে-বন্ধ
-const PX_BASE_N = 17, PX_CAP = 77, POOL_FILE = path.join(__dirname, 'vidy_proxy_pool.json');
+const PX_BASE_N = 17, PX_CAP = 154, POOL_FILE = path.join(__dirname, 'vidy_proxy_pool.json'); // v1.15.27 (ইউজার): ক্যাপ-ডাবল ৭৭→১৫৪
 let _training = false;
 async function enrichPool() {
   if (_training || process.env.PX_ENRICH === '0' || !POOL.length) return;
@@ -141,8 +141,8 @@ async function enrichPool() {
     const cands = [...new Set((txts.join('\n').match(/\b\d{1,3}(?:\.\d{1,3}){3}:\d{2,5}\b/g) || [])).values()].filter(px => !have.has(px));
     for (let i = cands.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); const w = cands[i]; cands[i] = cands[j]; cands[j] = w; }
     const sample = cands.slice(0, 200), good = []; // v1.15.18: নমুনা ১২০→২০০
-    for (let i = 0; i < sample.length && POOL.length < PX_CAP; i += 40) {
-      const res = await Promise.all(sample.slice(i, i + 40).map(px => new Promise(r2 => {
+    for (let i = 0; i < sample.length && POOL.length < PX_CAP; i += 120) { // v1.15.27 (ইউজার): হার্ভেস্ট-ব্যাচ-ট্রিপল ৪০→১২০
+      const res = await Promise.all(sample.slice(i, i + 120).map(px => new Promise(r2 => {
         const t0 = Date.now();
         proxiedGet(px, PX_PROBE_URL, 4000).then(() => { const ms = Date.now() - t0; r2(ms < 2500 ? { px, ms } : null); }).catch(() => r2(null)); // v1.15.22: ভর্তি-সীমা ১.৮→২.৫সে (পুল-ম্যাক্স-পর্যন্ত-ভরে; মান-বেঞ্চের-কাছে-আবার-ছাঁটা)
       })));

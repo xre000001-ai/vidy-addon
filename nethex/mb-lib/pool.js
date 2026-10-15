@@ -29,9 +29,9 @@ const SRCS = ['https://api.proxyscrape.com/v4/free-proxy-list/get?request=displa
               'https://raw.githubusercontent.com/TheSpeedX/PROXY-LIST/master/http.txt',
               'https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt',
               'https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/protocols/http/data.txt']; // proxifly: পৃথক-http-মডিউল, প্রতি-৫মিনিটে-যাচাইকৃত (ইউজার-প্রস্তাব)
-const BENCH_MAX = 64;             // r-20261016m (ইউজার: 'ম্যাক্স-পর্যন্ত'): বেঞ্চ-ক্যাপ ৩২→৬৪ — ঝড়ে-অর্ধেক-মরলেও-৩২-থাকে
+const BENCH_MAX = 128;             // v2.10.4 (ইউজার): ক্যাপ-ডাবল ৬৪→১২৮             // r-20261016m (ইউজার: 'ম্যাক্স-পর্যন্ত'): বেঞ্চ-ক্যাপ ৩২→৬৪ — ঝড়ে-অর্ধেক-মরলেও-৩২-থাকে
 const SAMPLE = 400;               // candidates probed per pass (২০০→৪০০)
-const BOOT_TARGET = 48;           // boot stops once this many exits are in (২৮→৪৮)
+const BOOT_TARGET = 96;           // v2.10.4 (ইউজার): বুট-টার্গেট-ডাবল ৪৮→৯৬           // boot stops once this many exits are in (২৮→৪৮)
 const POOL = [];                  // the ready bench, fastest first
 const BAD = new Map();            // url -> benched-until (ms epoch)
 const STATS = new Map();          // url -> {ok, fail, lat}
@@ -302,7 +302,7 @@ export async function poolOnce(force = false) {
     // shrinks from ~35s to ~5s); waves of 60 stop early at 28 exits.
     const tested = [];
     for (let w = 0; w < sample.length && POOL.length < BOOT_TARGET; w += 60) {
-      const wave = sample.slice(w, w + 60);
+      const wave = sample.slice(w, w + 180); // v2.10.4 (ইউজার): সমান্তরাল-ট্রিপল ৬০→১৮০
       const r = await Promise.all(wave.map(async (u) => {
         const p0 = await probe(u);
         if (!p0) return null;
