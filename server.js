@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.36';
+const VERSION = '1.15.37';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -1372,6 +1372,7 @@ function sendFile2(res, name) {
   } catch (e) { return sendJson(res, 500, { error: 'missing ' + name }); }
 }
 const server = http.createServer((req, res) => {
+  req.on('error', () => {}); res.on('error', () => {}); // v1.15.37 R2: ক্লায়েন্ট-মাঝপথে-ছেড়ে-গেলে (abort/EPIPE) socket-error-ইভেন্ট-শূন্যে-পড়ুক — বিপর্যয়-নয়
   const RVA = String(req.headers['user-agent'] || '');
   let pRaw = new URL(req.url, 'http://x').pathname;
   let p;
@@ -1512,7 +1513,7 @@ const server = http.createServer((req, res) => {
       return;
     }
     sendJson(res, 404, { error: 'not found' });
-  } catch (e) { sendJson(res, 500, { error: String(e && e.message) }); }
+  } catch (e) { try { if (!res.headersSent) sendJson(res, 500, { error: String(e && e.message) }); else { try { res.end(); } catch {} } } catch (e2) { try { res.destroy(); } catch {} } } // v1.15.37 R2: headers-পাঠানোর-পরে-বিপর্যয়-হলে সকেট-সৌজন্যে-বন্ধ — দ্বিতীয়-বিপর্যয়ের-ঝুঁকি-শূন্য
 });
 // v1.15.0: ৬০-সে-অন্তর-সব-agent-socket-ধ্বংস-বাদ — এটাই-কিপ-অ্যালাইভ-কে-অর্থহীন-করত (প্রতি-ট্যাপে-DNS+TLS-পুনরায়);
 // warmBases()-এর-৪৫-সে-অন্তর-ট্রাফিক-সকেট-সক্রিয়-রাখে (NAT-কাট-স্বাভাবিকভাবেই-টালানো); মরা-সকেট-সার্ভার-FIN-এ-এজেন্ট-নিজেই-ফেলে।
