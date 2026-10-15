@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.37';
+const VERSION = '1.15.38';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -1620,6 +1620,7 @@ setInterval(() => { nxBenchHealth(); }, 15000).unref();
   if (!NEXBASE) NEXBASE = await startEmbeddedNx();
   nxBenchHealth(); // v1.15.13: বুটেই-জানি (৬০সে-অপেক্ষা-নয়)
   server.listen(PORT, '0.0.0.0', () => console.log('[vidy] ' + VERSION + ' on :' + PORT + ' | pool=' + POOL.length + (NEXBASE ? ' | moviebox embedded' : '')));
+  server.on('error', e => { console.error('[listen] পোর্ট-' + PORT + ' ব্যর্থ: ' + (e && e.code || '') + (e && e.code === 'EADDRINUSE' ? ' — একই-পোর্টে-অন্য-vidy-চলছে; ওটা-বন্ধ-করো (pkill -f "node server.js") বা PORT=অন্য-দাও' : ' — ' + String(e && e.message).slice(0, 100))); process.exit(1); }); // v1.15.38 R3: EADDRINUSE-এ-স্পষ্ট-বাংলা-নির্দেশ (আগে-অলংকারহীন-স্ট্যাক-ছাপাত)
   setTimeout(probePool, 3000).unref(); // v1.15.0 বুট-প্রোব
   setTimeout(pxCheckerStart, 5000).unref(); // v1.15.19: বুটের-৫সে-পরেই-ঢেউ-শুরু
   // v1.15.18 (r68b ইউজার-অনুমোদিত): রেপ্লিকা-জাগ্রত নিজ-পিং — প্রতি-৪মিনিটে নিজের-পাবলিক-URL-এ /_health
