@@ -396,9 +396,7 @@ const server = http.createServer(async (req, res) => {
             // positive shelf lives 90min (sign urls ~2h).
             // v2.6.0: a THIN bench (boot/churn window) must never write
             // a negative cache — the next tap re-resolves on fresh exits
-            if (x.length || (poolStats().healthy ?? 0) >= 20) {
-              cacheSet(key, x, x.length ? 90 * 60 * 1000 : 60000);
-            }
+            if (x.length) cacheSet(key, x, 90 * 60 * 1000); // v2.10.3: শুধু-ধনাত্মক-ক্যাশ — খালি-ক্যাশ-লিখলে-MB-সাইট-ঢেউ-ভাঙা-৬০সে-মেমো-হয়ে-যেত (r57-নীতি)
             // v2.9.2 BINGE PREWARM: a successful series tap quietly resolves
             // the NEXT 3 episodes into the cache — the next tap is a cache hit
             // (1.2s-class) instead of a cold chain.  Pool untouched.

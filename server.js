@@ -587,7 +587,7 @@ async function nxStreams(imdb, type, s, e) {
     });
     if (arr.length) { // empty is NEVER cached — a rate-limited/slow NetHex window must not poison the key for 30min (same rule as inside NetHex itself); the next tap re-fetches
       if (NXCACHE.size > 300) NXCACHE.clear();
-      NXCACHE.set(k, { ts: Date.now(), v: arr });
+      if (arr.length) NXCACHE.set(k, { ts: Date.now(), v: arr }); // v2.10.3: শূন্য-মেমো-নিষিদ্ধ — MB-সাইট-সাময়িক langs:0-ঢেউ ৩০মিন-ধরে-MB-০-দেখাত (r57-নীতি: ফলে-ক্যাশ-নয়); শূন্য-হলে-পরের-ট্যাপে-তাজা-রিসলভ
     }
     return arr;
   } catch (e2) { if (DBG) console.error('[nxdbg] nethex ERR: ' + String(e2 && e2.message).slice(0, 80)); return []; } // NetHex down/slow/empty → silently nothing, vidy never breaks
