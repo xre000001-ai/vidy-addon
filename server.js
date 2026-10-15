@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.13';
+const VERSION = '1.15.14';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -884,7 +884,13 @@ async function withSources(cardsP, srcs, cfg, t0) {
       if (live[i].key === 'nx') {
         const nxAllow = qToList(cfg && cfg.nxq);
         const nxSel = Array.isArray(cfg && cfg.nxl) ? cfg.nxl : [];
-        all = all.concat(v.filter(z => qPass(z, nxAllow) && nxLangPass(z, nxSel)));
+        const strict = v.filter(z => qPass(z, nxAllow) && nxLangPass(z, nxSel));
+        if (strict.length || !v.length) all = all.concat(strict); // কড়া-মিল-থাকলে-সেটাই
+        else { // v1.15.14 শিথিল-ফলব্যাক: কড়া-কম্বোয়-০-হলে কাছের-যা-আছে-তা-ই (উদ্ধৃত-কেস: একমাত্র-1080=কান্নাড়া, English/Hindi=শুধু-480p → আগে-পরম-শূন্য)
+          const qOnly = v.filter(z => qPass(z, nxAllow));
+          all = all.concat(qOnly.length ? qOnly : v);
+          if (DBG) console.error('[nxFALLBACK] strict=0 -> ' + (qOnly.length ? 'quality-only ' + qOnly.length : 'raw ' + v.length) + ' cards');
+        }
       } else if (live[i].key === 'rt') {
         const rtSel = Array.isArray(cfg && cfg.rtl) ? cfg.rtl : [];
         all = all.concat(v.filter(z => rtLangPass(z, rtSel)));
