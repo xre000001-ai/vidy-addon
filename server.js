@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = "1.15.31";
+const VERSION = "1.15.32";
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -723,9 +723,11 @@ async function awPlayerGet(url, opts, ms) { // প্লেয়ার-API: ক
   return r;
 }
 const awNorm = t => String(t || '').toLowerCase().replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ').trim();
+function awSq(t) { return String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, ''); } // v1.15.32: স্কোয়াশ — উচ্চারণ+ফাঁক+চিহ্ন-শূন্য (বানানভেদ-সহ্য)
+function awSqSim(a, b) { const x = awSq(a), y = awSq(b); if (!x || !y) return 0; if (x === y) return 1; const m = x.length, n = y.length; if (Math.abs(m - n) > Math.max(m, n) * 0.3) return 0; const pv = new Array(n + 1), cu = new Array(n + 1); for (let j = 0; j <= n; j++) pv[j] = j; for (let i = 1; i <= m; i++) { cu[0] = i; for (let j = 1; j <= n; j++) cu[j] = Math.min(pv[j] + 1, cu[j - 1] + 1, pv[j - 1] + (x[i - 1] === y[j - 1] ? 0 : 1)); for (let j = 0; j <= n; j++) pv[j] = cu[j]; } return 1 - pv[n] / Math.max(m, n); } // লেভেনশটাইন-অনুপাত: narutoshippuden≈narutoshippuuden=০.৯৪
 function awSim(a, b) { const x = awNorm(a), y = awNorm(b); if (!x || !y) return 0; if (x === y) return 1; if (x.includes(y) || y.includes(x)) return 0.85; const wx = new Set(x.split(' ')), wy = new Set(y.split(' ')); let h = 0; for (const w of wx) if (wy.has(w)) h++; const un = new Set([...wx, ...wy]).size; return un ? h / un : 0; }
-async function awSearch(title, isSeries) {
-  const html = await awText('/?s=' + encodeURIComponent(title)).catch(() => '');
+async function awSearch(title, isSeries, ms) {
+  const html = await awText('/?s=' + encodeURIComponent(title), null, ms).catch(() => '');
   if (!html) return [];
   const $ = cheerio.load(html);
   const want = isSeries ? '/series/' : '/movies/';
@@ -748,7 +750,7 @@ async function awSearch(title, isSeries) {
       add(href, $(el).attr('title') || $(el).text().trim() || m2[1].replace(/-/g, ' '));
     });
   }
-  const good = found.filter(c => c.sim >= 0.5);
+  const good = found.filter(c => c.sim >= 0.5 || awSqSim(title, c.title) >= 0.85); // v1.15.32: বানানভেদ-ও-গণ্য (Shippuden≈Shippuuden)
   return (good.length ? good : found).sort((a, b) => b.sim - a.sim).slice(0, 2);
 }
 function awFindEp($, s, e) {
@@ -758,26 +760,26 @@ function awFindEp($, s, e) {
   for (const re of pats) { const hit = links.find(l => re.test(l.href || '') || re.test(l.text)); if (hit) return new URL(hit.href, AWBASE).href; }
   return null;
 }
-async function awResolveEpisode(seriesUrl, s, e) {
-  const html = await awText(seriesUrl.startsWith('http') ? seriesUrl.slice(AWBASE.length) : seriesUrl).catch(() => '');
+async function awResolveEpisode(seriesUrl, s, e, ms) {
+  const html = await awText(seriesUrl.startsWith('http') ? seriesUrl.slice(AWBASE.length) : seriesUrl, null, ms).catch(() => '');
   if (!html) return null;
   let $ = cheerio.load(html);
   const direct = awFindEp($, s, e);
   if (direct) return direct;
   const postId = (($('body').attr('class') || '').match(/postid-(\d+)/) || [])[1] || $('[data-post]').first().attr('data-post');
   if (!postId) return null;
-  const ajax = await awText(`/wp-admin/admin-ajax.php?action=action_select_season&season=${s}&post=${postId}`).catch(() => '');
+  const ajax = await awText(`/wp-admin/admin-ajax.php?action=action_select_season&season=${s}&post=${postId}`, null, ms).catch(() => '');
   if (!ajax) return null;
   return awFindEp(cheerio.load(ajax), s, e);
 }
-async function awZephyrix(playerUrl, referer) {
+async function awZephyrix(playerUrl, referer, ms) {
   try {
     const m2 = playerUrl.match(/^(https?:\/\/[^/]+)\/video\/([a-f0-9]+)/i);
     if (!m2) return null;
     const origin = m2[1], hash = m2[2];
-    const pr = await awPlayerGet(playerUrl, { headers: { Referer: referer, Accept: 'text/html,*/*' } }, 8000).catch(() => null);
+    const pr = await awPlayerGet(playerUrl, { headers: { Referer: referer, Accept: 'text/html,*/*' } }, Math.min(8000, ms || 8000)).catch(() => null); // v1.15.32: বাজেট-তার
     const cookie = pr ? (pr.headers.get('set-cookie') || '').split(/,(?=[^;]+=[^;]+)/).map(c => c.trim().split(';')[0]).filter(Boolean).join('; ') : '';
-    const r = await awPlayerGet(`${origin}/player/index.php?data=${hash}&do=getVideo`, { post: `hash=${hash}&r=${encodeURIComponent(AWBASE + '/')}`, headers: { 'Content-Type': 'application/x-www-form-urlencoded', Referer: playerUrl, Origin: origin, 'X-Requested-With': 'XMLHttpRequest', Accept: 'application/json', ...(cookie ? { Cookie: cookie } : {}) } }, 9000);
+    const r = await awPlayerGet(`${origin}/player/index.php?data=${hash}&do=getVideo`, { post: `hash=${hash}&r=${encodeURIComponent(AWBASE + '/')}`, headers: { 'Content-Type': 'application/x-www-form-urlencoded', Referer: playerUrl, Origin: origin, 'X-Requested-With': 'XMLHttpRequest', Accept: 'application/json', ...(cookie ? { Cookie: cookie } : {}) } }, Math.min(9000, ms || 9000)); // v1.15.32
     if (!r.ok) return null;
     const d = await r.json().catch(() => null);
     const url = d && (d.securedLink || d.videoSource || d.source || d.file);
@@ -787,23 +789,23 @@ async function awZephyrix(playerUrl, referer) {
     return { url, headers: { Referer: origin + '/', Origin: origin, 'User-Agent': AW_UA, ...(cookie ? { Cookie: cookie } : {}) }, subtitles: [{ url: `${origin}/cdn/down/${ch}/Subtitle/subtitle_eng.srt`, language: 'en', name: 'English' }] };
   } catch { return null; }
 }
-async function awAbyss(url) {
+async function awAbyss(url, ms) {
   try {
     const clean = url.replace('https://short.icu', 'https://player.abyssplayer.com');
     const RH = { Referer: 'https://playhydrax.com/', Origin: 'https://playhydrax.com' };
-    const r0 = await awPlayerGet(clean, { headers: Object.assign({ Accept: 'text/html,*/*' }, RH) }, 9000);
+    const r0 = await awPlayerGet(clean, { headers: Object.assign({ Accept: 'text/html,*/*' }, RH) }, Math.min(9000, ms || 9000)); // v1.15.32
     const html = r0.ok ? await r0.text() : '';
     const m2 = html.match(/const\s+datas\s*=\s*"([^"]*)"/);
     if (!m2) return [];
-    const r = await awPlayerGet('https://enc-dec.app/api/dec-abyss', { post: JSON.stringify({ text: m2[1] }), headers: Object.assign({ 'Content-Type': 'application/json' }, RH) }, 9000);
+    const r = await awPlayerGet('https://enc-dec.app/api/dec-abyss', { post: JSON.stringify({ text: m2[1] }), headers: Object.assign({ 'Content-Type': 'application/json' }, RH) }, Math.min(9000, ms || 9000)); // v1.15.32
     if (!r.ok) return [];
     const d = await r.json().catch(() => null);
     return (d && d.result && d.result.sources) || [];
   } catch { return []; }
 }
-async function awDubPlayer(iframeUrl, referer) {
+async function awDubPlayer(iframeUrl, referer, ms) {
   try {
-    const r = await awPlayerGet(iframeUrl, { headers: { Referer: referer, Accept: 'text/html,*/*' } }, 8000);
+    const r = await awPlayerGet(iframeUrl, { headers: { Referer: referer, Accept: 'text/html,*/*' } }, Math.min(8000, ms || 8000)); // v1.15.32
     const text = r.ok ? await r.text() : '';
     const m2 = text.match(/var\s+CONFIG\s*=\s*({[\s\S]*?});/);
     if (!m2) return [];
@@ -815,9 +817,9 @@ async function awDubPlayer(iframeUrl, referer) {
     return out;
   } catch { return []; }
 }
-async function awSources(pageUrl) {
+async function awSources(pageUrl, ms) {
   const rel = pageUrl.startsWith('http') ? pageUrl.slice(AWBASE.length) : pageUrl;
-  const html = await awText(rel).catch(() => '');
+  const html = await awText(rel, null, ms).catch(() => '');
   if (!html) return [];
   const $ = cheerio.load(html);
   const out = []; const dubTasks = []; let hasZ = false;
@@ -825,7 +827,7 @@ async function awSources(pageUrl) {
     let src = $(el).attr('src') || $(el).attr('data-src');
     if (!src) return;
     if (src.startsWith('//')) src = 'https:' + src; else if (src.startsWith('/')) src = AWBASE + src;
-    if (src.includes('dub-player')) dubTasks.push(awDubPlayer(src, pageUrl));
+    if (src.includes('dub-player')) dubTasks.push(awDubPlayer(src, pageUrl, Math.min(8000, ms || 8000))); // v1.15.32
     else if (/play\.(?:zephyrix|zephyrflick)\./i.test(src)) { hasZ = true; out.push({ type: 'zephyrix', url: src, lang: 'Multi-Dub' }); }
     else if (/\/video\/[a-f0-9]{6,}\/?$/i.test(src)) { hasZ = true; out.push({ type: 'zephyrix', url: src, lang: 'Multi-Dub' }); } // v1.15.31: সম-অরিজিন/পাথ-আকৃতির zephyrix-এমবেড (GET /video/<hash> → POST getVideo)
   });
@@ -838,29 +840,30 @@ async function awSources(pageUrl) {
 const AW_LANG = { hin: 'Hindi', tam: 'Tamil', tel: 'Telugu', mal: 'Malayalam', eng: 'English', jpn: 'Japanese', ben: 'Bengali' };
 async function awStreams(base, title, type, s, e) { // v1.15.29: ভেতরে-স্ক্র্যাপ; base=AWBASE (সিগনেচার-অক্ষত)
   if (!AWBASE || !title) return [];
-  const t3 = Date.now();
+  const t3 = Date.now(); const AWB = 9500; const left = () => Math.max(250, AWB - (Date.now() - t3)); // v1.15.32: সামগ্রিক-বাজেট — ধীর-সাইটে-জম্বি-প্রমিস-পুল-চিবুক-নয় (ক্লায়েন্ট-দেয়ালের-ভেতরে-সৎ-উত্তর)
   try {
     const isSeries = type === 'series';
-    const cands = await awSearch(title, isSeries);
+    const cands = await awSearch(title, isSeries, left());
     if (!cands.length) { if (DBG) console.error('[aw] search-শূন্য: ' + String(title).slice(0, 30)); return []; }
     const show = cands[0].title || title;
     let pageUrl = cands[0].href;
     if (isSeries) {
       pageUrl = null;
-      for (const c of cands) { let ep = await awResolveEpisode(c.href, s, e); if (!ep && s !== 1) ep = await awResolveEpisode(c.href, 1, e); if (ep) { pageUrl = ep; break; } }
+      for (const c of cands) { if (Date.now() - t3 > AWB) break; let ep = await awResolveEpisode(c.href, s, e, left()); if (!ep && s !== 1) ep = await awResolveEpisode(c.href, 1, e, left()); if (ep) { pageUrl = ep; break; } } // v1.15.32: প্রতি-ধাপে-বাজেট-তার
       if (!pageUrl) { if (DBG) console.error('[aw] পর্ব-নেই: ' + String(title).slice(0, 30) + ' S' + s + 'E' + e); return []; }
     }
-    const srcs = await awSources(pageUrl);
+    if (Date.now() - t3 > AWB) { if (DBG) console.error('[aw] বাজেট-শেষ: ' + String(title).slice(0, 30)); return []; }
+    const srcs = await awSources(pageUrl, left());
     const raws = [];
-    for (const sc of srcs) {
-      if (sc.type === 'zephyrix') { const z = await awZephyrix(sc.url, pageUrl); if (z) raws.push({ lang: sc.lang || 'Multi-Dub', url: z.url, headers: z.headers, subtitles: z.subtitles, q: '1080' }); }
-      else if (sc.type === 'abyss') { const dec = await awAbyss(sc.url); for (const d of dec) { if (!d || !d.url) continue; const q = (String(d.label || d.quality || d.res || '').match(/(\d{3,4})\s*p/i) || [])[1] || (String(d.label || '').match(/(\d{3,4})/) || [])[1] || ''; raws.push({ lang: sc.lang || 'Multi', url: d.url, headers: { Referer: 'https://playhydrax.com/', 'User-Agent': AW_UA }, q }); } }
+    for (const sc of srcs) { if (Date.now() - t3 > AWB) break; // v1.15.32
+      if (sc.type === 'zephyrix') { const z = await awZephyrix(sc.url, pageUrl, left()); if (z) raws.push({ lang: sc.lang || 'Multi-Dub', url: z.url, headers: z.headers, subtitles: z.subtitles, q: '1080' }); }
+      else if (sc.type === 'abyss') { const dec = await awAbyss(sc.url, left()); for (const d of dec) { if (!d || !d.url) continue; const q = (String(d.label || d.quality || d.res || '').match(/(\d{3,4})\s*p/i) || [])[1] || (String(d.label || '').match(/(\d{3,4})/) || [])[1] || ''; raws.push({ lang: sc.lang || 'Multi', url: d.url, headers: { Referer: 'https://playhydrax.com/', 'User-Agent': AW_UA }, q }); } }
       else raws.push({ lang: sc.lang || 'English', url: sc.url, headers: { Referer: AWBASE + '/', 'User-Agent': AW_UA }, q: sc.quality || '' });
     }
     const seen = new Set();
     const uniq = raws.filter(x => x.url && !seen.has(x.lang + '|' + x.url) && seen.add(x.lang + '|' + x.url));
     const catShow = show.replace(/-/g, ' ');
-    const keep = catShow ? twTitleOk(showCore(title), catShow) : uniq.length > 0;
+    const keep = catShow ? (twTitleOk(showCore(title), catShow) || awSqSim(title, catShow) >= 0.85) : uniq.length > 0; // v1.15.32: বানানভেদ-রক্ষা (Shippuuden-জাতীয়-আসল-শিরোনাম-বাদ-পড়া-নয়)
     const arr = (keep ? uniq : []).map(x => {
       const lang = String(x.lang || '');
       const hd = (x.headers && Object.keys(x.headers).length) ? x.headers : null;
