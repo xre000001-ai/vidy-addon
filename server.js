@@ -1400,7 +1400,7 @@ const server = http.createServer((req, res) => {
         return res.end(lb);
       } catch (eL) { return sendJson(res, 404, { error: 'no rt logo' }); }
     }
-    if (p === '/_health') return sendJson(res, 200, { ok: 1, version: VERSION, pool: POOL.length, pxbench: POOL.filter(c => PX_SITE.has(c.px)).length, memo: memo.size, nx: NEXBASE ? 1 : 0, nxpool: NXBENCH, tw: TWBASE ? 1 : 0, rt: RTBASE ? 1 : 0 }); // v1.15.18: pxbench=সাইট-প্রমাণিত-বেঞ্চ (v1.15.8: nxpool=MB-বেঞ্চ)
+    if (p === '/_health') return sendJson(res, 200, { ok: 1, version: VERSION, pool: POOL.length, pxbench: POOL.filter(c => PX_SITE.has(c.px)).length, memo: memo.size, nx: NEXBASE ? 1 : 0, nxpool: NXBENCH, nxwaves: NXWAVES, nxsize: NXSIZE, tw: TWBASE ? 1 : 0, rt: RTBASE ? 1 : 0 }); // v1.15.18: pxbench=সাইট-প্রমাণিত-বেঞ্চ (v1.15.8: nxpool=MB-বেঞ্চ)
     if (p === '/_pool') return sendJson(res, 200, POOL.map(c => Object.assign({}, c, PX_RUN.get(c.px) || {}))); // v1.15.0: রানটাইম-স্বাস্থ্য-সহ
     if (p === '/_log') return sendJson(res, 200, reqLog.slice(-40).reverse());
     if (p === '/_servers') return sendJson(res, 200, { order: srvOrder(), scores: SRV_SCORE }); // কনফিগ-পেজের-লাইভ-হেলথ
@@ -1590,10 +1590,10 @@ function startEmbeddedNx() {
   });
 }
 const PORT = Number(process.env.PORT || 7000);
-let NXBENCH = -1; // v1.15.13: চাইল্ড-বেঞ্চ-সুস্থ-এক্সিট-সংখ্যা (১৫সে-পোল — আগে ৬০সে: বুটের-প্রথম-মিনিট-জুড়েই MB-ভুল-বন্ধ থাকত)
+let NXBENCH = -1, NXWAVES = -1, NXSIZE = -1; // v2.10.1: waves=চাইল্ডের-মোট-স্ক্যান-ঢেউ (কম্পাঙ্ক-যাচাইযোগ্য)
 function nxBenchHealth() {
   if (!NEXBASE) { NXBENCH = -1; return Promise.resolve(-1); }
-  return directGet(NEXBASE + '/health', 3000).then(b => { const j = JSON.parse(b); NXBENCH = typeof j.pool === 'number' ? j.pool : -1; return NXBENCH; }).catch(() => { NXBENCH = -1; return -1; });
+  return directGet(NEXBASE + '/health', 3000).then(b => { const j = JSON.parse(b); NXBENCH = typeof j.pool === 'number' ? j.pool : -1; NXWAVES = typeof j.waves === 'number' ? j.waves : NXWAVES; NXSIZE = typeof j.size === 'number' ? j.size : NXSIZE; return NXBENCH; }).catch(() => { NXBENCH = -1; return -1; });
 }
 let nxBenchWait = null; // single-flight — ঘন-ট্যাপে-এক-অপেক্ষাই (বেঞ্চ-ঝড়-নয়)
 function waitNxBench(maxMs) { // v1.15.13: NXBENCH===0 → হার্ড-[]-এর-বদলে-প্রথম-বেঞ্চ-ঢেউয়ের-সীমিত-অপেক্ষা (শিশু-স্ট্রিমিং-বুট ~৫-১৫সে)

@@ -337,7 +337,7 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=86400', 'Access-Control-Allow-Origin': '*' });
       return res.end(LOGO_BUF);
     }
-    if (u.pathname === '/health') return send(res, 200, { ok: true, version: VERSION, mode: 'direct-mp4', pool: poolStats().healthy });
+    if (u.pathname === '/health') return send(res, 200, { ok: true, version: VERSION, mode: 'direct-mp4', pool: poolStats().healthy, waves: CHK, size: POOL.length }); // waves=মোট-স্ক্যান-ঢেউ (কম্পাঙ্ক-লাইভ-পর্যবেক্ষণ)
     if (u.pathname === '/debug/pool') {
       if (u.searchParams.get('k') !== 'nethex-dbg-7f3a') return send(res, 404, { error: 'not found' });
       return send(res, 200, poolStats());
