@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.22';
+const VERSION = '1.15.23';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -134,7 +134,8 @@ async function enrichPool() {
   try {
     const lists = ['https://raw.githubusercontent.com/TheSpeedX/PROXY-LIST/master/http.txt',
                    'https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt',
-                   'https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=3000'];
+                   'https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=3000',
+                   'https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/protocols/http/data.txt']; // v1.15.23: proxifly-http-মডিউল (ইউজার-প্রস্তাব)
     const txts = await Promise.all(lists.map(u => directGet(u, 12000).catch(() => '')));
     const have = new Set(POOL.map(c => c.px));
     const cands = [...new Set((txts.join('\n').match(/\b\d{1,3}(?:\.\d{1,3}){3}:\d{2,5}\b/g) || [])).values()].filter(px => !have.has(px));

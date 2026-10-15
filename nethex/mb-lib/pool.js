@@ -27,7 +27,8 @@ import { SITE, UA } from './upstream.js';
 // (প্রোড-ঘটনা: beamup-IP-প্রতি-proxyscrape-সীমা → শিশু-পুল-০-আটকে; লোকাল-IP-সুস্থ — উৎস-বৈচিত্র্যই-ওষুধ)
 const SRCS = ['https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&proxy_format=protocolipport&format=text',
               'https://raw.githubusercontent.com/TheSpeedX/PROXY-LIST/master/http.txt',
-              'https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt'];
+              'https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt',
+              'https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/protocols/http/data.txt']; // proxifly: পৃথক-http-মডিউল, প্রতি-৫মিনিটে-যাচাইকৃত (ইউজার-প্রস্তাব)
 const BENCH_MAX = 32;
 const SAMPLE = 200;               // candidates probed per pass
 const BOOT_TARGET = 28;           // boot stops once this many exits are in
