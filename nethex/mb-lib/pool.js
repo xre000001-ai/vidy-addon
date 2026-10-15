@@ -233,7 +233,7 @@ async function probe(u) {
       SITE + '/wefeed-h5api-bff/subject/search-suggest',
       { method: 'POST', body: JSON.stringify({ keyword: 'a', perPage: 1 }),
         headers: { 'Content-Type': 'application/json', 'User-Agent': UA },
-        dispatcher: agentFor(u), signal: AbortSignal.timeout(6000) });
+        dispatcher: agentFor(u), signal: AbortSignal.timeout(5000) }); // r-20261016m2: ৬→৫সে (মৃত-দ্রুত-ছেঁটা — ঢেউ-চক্র-ছোট)
     return r.status < 400 ? [Date.now() - t0, u] : null;
   } catch { return null; }
 }
@@ -352,10 +352,10 @@ async function checkerWave() {
   chkBusy = true;
   try {
   const now = Date.now();
-  // r-20261016m (ইউজার: 'অন্তত-৭০০-স্ক্যান/১.৫মিনিট'): ঢেউ ১৪→৭০ — ৮সে-ব্যবধানে ~১১-ঢেউ/১.৫মিন ≈ ৭৭০-স্ক্যান;
-  // busy-গার্ড-আছে বলে ধীর-ঢেউ-ওভারল্যাপ-করবে-না; পুল<৭০-হলে-যত-আছে-তত
+  // r-20261016m2 (সংশোধন — আগের-হিসাব-ভুল-ছিল): ঢেউ=সম্পূর্ণ-ব্যবহারযোগ্য-পুল (প্রতি-ঢেউয়ে-সবাই-স্ক্যান) +
+  // gap ৮→৫সে + প্রোব-টাইমআউট ৬→৫সে → চক্র ~৮-১১সে → পুল-৫০-৬৪-এ ~৫০০-৮০০ স্ক্যান/১.৫মিন (ইউজার-লক্ষ্য ৭০০)
   const wave = POOL.filter(u => { const b = BAD.get(u); return !b || b <= now; })
-    .sort((a, b) => (LASTOK.get(a) || 0) - (LASTOK.get(b) || 0)).slice(0, 70);
+    .sort((a, b) => (LASTOK.get(a) || 0) - (LASTOK.get(b) || 0));
   if (!wave.length) return;
   CHK++;
   let cok = 0, cblind = 0, cdead = 0;
@@ -378,7 +378,7 @@ async function checkerWave() {
   } finally { chkBusy = false; }
 }
 function checkerStart() {
-  const loop = () => { setTimeout(() => { Promise.resolve(checkerWave()).catch(() => {}).finally(loop); }, 8000); }; // r-20261016j: ব্যবধান ১২সে→৮সে (busy-গার্ড-আছে — ধীর-ঢেউ-ওভারল্যাপ-নয়)
+  const loop = () => { setTimeout(() => { Promise.resolve(checkerWave()).catch(() => {}).finally(loop); }, 5000); }; // r-20261016m2: gap ৮→৫সে (ঢেউ-চক্র ~৮-১১সে → সর্বোচ্চ-কম্পাঙ্ক)
   loop();
 }
 
