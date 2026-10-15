@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.24';
+const VERSION = '1.15.25';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -537,9 +537,9 @@ process.on('unhandledRejection', e => { if (DBG) console.error('[urej] ' + Strin
 // v1.11.8: NEXBASE-বাইরে-থেকে-দেওয়া-যায়; না-দিলে-ভেন্ডর-করা-MovieBox(nethex)-চাইল্ড-নিজেই-বুট-হয় (এক-অ্যাপ-ডিপ্লয়)
 let NEXBASE = (process.env.NEXBASE || '').replace(/\/$/, '');
 const NXDEADLINE = Math.max(Number(process.env.NXDEADLINE || 0), 22000); // absolute cap (stale-env-ও-নিচে-টানবে-না)
-const NXEXTRA = Math.max(Number(process.env.NXEXTRA || 0), 2500); // vidy answered -> hold at most this for NetHex (instant-answer calls must stay instant)
-const NXCOLDX = Math.max(Number(process.env.NXCOLDX || 0), 3000); // v1.13.6: →৩সে — কার্ড-থাকতে-ই-ধীর-সোর্সের-বাড়তি-অপেক্ষা (nx-ব্যাকগ্রাউন্ডে-শেষ-করে-ক্যাশে-রাখে → পরের-ট্যাপ-তাৎক্ষণিক)
-const NXHARD = Math.max(Number(process.env.NXHARD || 0), 7000); // v1.13.6: →৭সে — সব-সোর্স-মিলিয়ে-পূর্ণ-বরাদ্দ (Stremio-দেয়াল ~১০সে-র-নিচে-সবসময়)
+const NXEXTRA = Math.max(Number(process.env.NXEXTRA || 0), 12000); // v1.15.25 (ইউজার: "আগে শেষ হলে আগেই রেজাল্ট, না হলে ১২সে পর্যন্ত"): NetHex-এর-জন্য-১২সে-পর্যন্ত-ধরে-রাখো — রেডি-হলে-রেস-আগেই-জেতে, instant-অক্ষত
+const NXCOLDX = Math.max(Number(process.env.NXCOLDX || 0), 12000); // v1.15.25: ১২সে-ইউজার-সীমা (কার্ড-থাকলেও-না-শেষ-হলে-১২সে-পর্যন্ত-ধরো; শেষ-হলে-আগেই)
+const NXHARD = Math.max(Number(process.env.NXHARD || 0), 12000); // v1.15.25 (ইউজার-নির্দেশ): ফাঁকা-কার্ডে-পূর্ণ-১২সে-বরাদ্দ — স্ট্রিম-উত্তর-সর্বোচ্চ-১২সে (আগে-শেষ=আগে-ফল)
 const NXCACHE = new Map(); // nx:imdb:s:e -> {ts, v} — NetHex links are signed/fresh + it caches 30min itself
 async function nxStreams(imdb, type, s, e) {
   if (!NEXBASE || !imdb) return [];
