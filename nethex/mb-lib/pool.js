@@ -23,7 +23,11 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import { SITE, UA } from './upstream.js';
 
-const SRC = 'https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&proxy_format=protocolipport&format=text';
+// r-20261016j: বহু-উৎস-ফসল (রেজলভার/vidy-এনরিচ-প্যারিটি) — এক-উৎস-নিঃশেষ/রেট-লিমিটে-পুল-অনাহারে-মরবে-না
+// (প্রোড-ঘটনা: beamup-IP-প্রতি-proxyscrape-সীমা → শিশু-পুল-০-আটকে; লোকাল-IP-সুস্থ — উৎস-বৈচিত্র্যই-ওষুধ)
+const SRCS = ['https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&proxy_format=protocolipport&format=text',
+              'https://raw.githubusercontent.com/TheSpeedX/PROXY-LIST/master/http.txt',
+              'https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt'];
 const BENCH_MAX = 32;
 const SAMPLE = 200;               // candidates probed per pass
 const BOOT_TARGET = 28;           // boot stops once this many exits are in
@@ -285,9 +289,9 @@ export async function poolOnce(force = false) {
     if (seeded) {
       cand = seeded.map(x => x.u);
     } else {
-      const r = await undiciFetch(SRC, { signal: AbortSignal.timeout(20000) });
-      cand = (await r.text()).split('\n').map(s => s.trim())
-        .filter(u => u.startsWith('http://'));
+      const txts = await Promise.all(SRCS.map(u => undiciFetch(u, { signal: AbortSignal.timeout(20000) }).then(r => r.text()).catch(() => '')));
+      cand = [...new Set(txts.join('\n').split('\n').map(s => s.trim())
+        .filter(u => u.startsWith('http://')))];
       cand.sort(() => Math.random() - 0.5);
     }
     if (seeded) { const byU = new Map(seeded.map(x => [x.u, x.ms])); cand.sort((a, b) => (byU.get(a) || 9999) - (byU.get(b) || 9999)); }
