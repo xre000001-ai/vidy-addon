@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.14';
+const VERSION = '1.15.15';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -1401,8 +1401,8 @@ const server = http.createServer((req, res) => {
       const nxP = nxOn ? nxFor('movie', m[1], 0, 0) : null;
       const infoP = vOn ? findTmdbInfo(m[1], 'movie') : null; // v1.12: এক-কলেই-সব-সোর্স-খাওয়ানো
       const nmP = suggName(m[1]); // v1.12.6: rt/tw-দ্রুত-নাম
-      const twP = ((TWBASE && infoP) && !(cfg && cfg.tw === 0)) ? nmP.then(nm => nm ? twrStreams(TWBASE, 'toonworld', nm, 'movie', 0, 0) : []).catch(() => []) : null;
-      const rtP = ((RTBASE && infoP) && !(cfg && cfg.rt === 0)) ? nmP.then(nm => nm ? twrStreams(RTBASE, 'raretoons', nm, 'movie', 0, 0) : []).catch(() => []) : null;
+      const twP = (TWBASE && !(cfg && cfg.tw === 0)) ? nmP.then(nm => nm ? twrStreams(TWBASE, 'toonworld', nm, 'movie', 0, 0) : []).catch(() => []) : null; // v1.15.15: infoP-গেট-বাদ — v=0-কনফিগেও TW/RT-জীবন্ত (আগে vidy-সোর্স-বন্ধ=TW/RT-ও-নীরবে-মৃত — 'শুধু-MovieBox'-মূল-কারণ)
+      const rtP = (RTBASE && !(cfg && cfg.rt === 0)) ? nmP.then(nm => nm ? twrStreams(RTBASE, 'raretoons', nm, 'movie', 0, 0) : []).catch(() => []) : null;
       kickSubs(m[1], 'movie', null, null, cfg);
       return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'movie', null, null, info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }], cfg, t0), 11300 /* রুট-সেফটি — NXHARD(৭সে)-এর-উপরে, এজ-কাট (~১২সে)-এর-নিচে: Stremio-কখনো-ছাড়া-উত্তর-না-পাওয়া */, p).then(
         cards => { sendStreams(res, req.url, p, Date.now() - t0, cards, RVA); },
@@ -1414,8 +1414,8 @@ const server = http.createServer((req, res) => {
       const nxP = nxOn ? nxFor('series', m[1], Number(m[2]), Number(m[3])) : null;
       const infoP = vOn ? findTmdbInfo(m[1], 'series') : null;
       const nmP = suggName(m[1]); // v1.12.6: rt/tw-দ্রুত-নাম
-      const twP = ((TWBASE && infoP) && !(cfg && cfg.tw === 0)) ? nmP.then(nm => nm ? twrStreams(TWBASE, 'toonworld', nm, 'series', Number(m[2]), Number(m[3])) : []).catch(() => []) : null;
-      const rtP = ((RTBASE && infoP) && !(cfg && cfg.rt === 0)) ? nmP.then(nm => nm ? twrStreams(RTBASE, 'raretoons', nm, 'series', Number(m[2]), Number(m[3])) : []).catch(() => []) : null;
+      const twP = (TWBASE && !(cfg && cfg.tw === 0)) ? nmP.then(nm => nm ? twrStreams(TWBASE, 'toonworld', nm, 'series', Number(m[2]), Number(m[3])) : []).catch(() => []) : null; // v1.15.15: infoP-গেট-বাদ — v=0-তেও TW/RT-জীবন্ত (nmP=IMDb-suggestion, v-নিরপেক্ষ)
+      const rtP = (RTBASE && !(cfg && cfg.rt === 0)) ? nmP.then(nm => nm ? twrStreams(RTBASE, 'raretoons', nm, 'series', Number(m[2]), Number(m[3])) : []).catch(() => []) : null;
       if (nxOn) nxPrewarm('series', m[1], Number(m[2]), Number(m[3]));
       twRtPrewarm(nmP, 'series', Number(m[2]), Number(m[3]));
       kickSubs(m[1], 'series', Number(m[2]), Number(m[3]), cfg);
