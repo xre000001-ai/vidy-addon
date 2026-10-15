@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.30';
+const VERSION = "1.15.31";
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -827,6 +827,7 @@ async function awSources(pageUrl) {
     if (src.startsWith('//')) src = 'https:' + src; else if (src.startsWith('/')) src = AWBASE + src;
     if (src.includes('dub-player')) dubTasks.push(awDubPlayer(src, pageUrl));
     else if (/play\.(?:zephyrix|zephyrflick)\./i.test(src)) { hasZ = true; out.push({ type: 'zephyrix', url: src, lang: 'Multi-Dub' }); }
+    else if (/\/video\/[a-f0-9]{6,}\/?$/i.test(src)) { hasZ = true; out.push({ type: 'zephyrix', url: src, lang: 'Multi-Dub' }); } // v1.15.31: সম-অরিজিন/পাথ-আকৃতির zephyrix-এমবেড (GET /video/<hash> → POST getVideo)
   });
   if (!hasZ) { const loose = html.match(/https?:\/\/play\.(?:zephyrflick|zephyrix)\.[^/\s"']+\/video\/[a-f0-9]+/i); if (loose) out.push({ type: 'zephyrix', url: loose[0], lang: 'Multi-Dub' }); }
   const p1 = html.match(/player1\.php\?data=([a-zA-Z0-9+=/]+)/);
@@ -1536,7 +1537,7 @@ function sendJson(res, code, obj) {
   res.end(b);
 }
 // v1.13.9 স্ট্রিম-উত্তর-ক্যাশ — nethex-v2.4.0-প্যারিটি: TTL-৩০মি + সর্বোচ্চ-৪০০, পুরনো-আগে-বাদ
-const stripCards = cards => (cards || []).map(({ _hq, _lang, quality, headers, subtitles, ...r }) => r); // nethex-প্যারিটি-শেপ: ভেতরে-গাঁথা-সাব+অ-স্পেক-ফিল্ড-ছাঁটা
+const stripCards = cards => (cards || []).map(({ _hq, _lang, quality, headers, ...r }) => r); // v1.15.31: subtitles-এখন-রাখা-হয় (Stremio-স্পেক-ফিল্ড — AW-zephyrix-এক্সটার্নাল-CC-ট্র্যাক); শুধু-ভেতরের-ফিল্ড-ছাঁটা
 function sendStreams(res, skey, plog, ms, cards, ua) {
   const partial = !!(cards && cards.$partial);
   const n = (cards || []).length; // v1.15.8: কোনো-stash-নেই — প্রতি-উত্তর-তাজা
