@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.20';
+const VERSION = '1.15.21';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -81,6 +81,7 @@ function prunePool(snap) {
 // জীবিত-কিন্তু-সাইট-অন্ধ=স্পেয়ার (থাকে, স্কোর-জরিমানায়-পিছিয়ে); Google-204-ও-মরা=প্রমাণহীন → ৬০০সে-কাটা → এনরিচ
 const PX_SITE_URL = VIDY_REFERER; // টার্গেট-সাইট-নিজেই
 const PX_SITE = new Set(); // v1.15.17 বেঞ্চ-মানদণ্ড (ইউজার): বেঞ্চ = সাইটে-যেতে-পারে + জীবিত — চেকার-ই-একমাত্র-কর্তৃত্ব (রেস-জয়/Google-204 সাইট-প্রমাণ-নয়)
+const PX_MISS = new Map(); // v1.15.21 কম্পন-সহনশীলতা: সাইট-উত্তর-পাতলা/CF-পাতা = ২-টানা-ব্যর্থতায়-নামা (১-বারে-বেঞ্চ-দোলে-নয়; হার্ড-ব্যর্থ=তাৎক্ষণিক)
 const PX_COOL = new Map(); // v1.15.16b: পূর্ণ-মৃত → ১২০সে-শীতল (রেজলভার-প্যারিটি — একই-১২-মৃত-ঢেউয়ে-ঢেউয়ে-পিটানো-বন্ধ; ৬০০সে-কাটার-আগে-৫-সুযোগ)
 let PXCHK = 0, pxChkBusy = false;
 async function pxCheckerWave() {
@@ -98,22 +99,25 @@ async function pxCheckerWave() {
       proxiedGet(c.px, PX_SITE_URL, 6000).then(body => {
         const okSite = !!body && String(body).length > 500;
         pxRec(c.px, okSite, Date.now() - t0); // সাইট-প্রমাণিত=ভালো; সাইট-অন্ধ=জরিমানা (ল্যাটেন্সি-মিথ্যা-নয়)
-        if (okSite) { PX_SITE.add(c.px); PX_COOL.delete(c.px); } else PX_SITE.delete(c.px); // বেঞ্চ-সদস্যপদ শুধু-সাইট-প্রমাণে
-        okSite ? cok++ : cspare++; r2();
+        if (okSite) { PX_SITE.add(c.px); PX_MISS.delete(c.px); PX_COOL.delete(c.px); } // বেঞ্চ-সদস্যপদ শুধু-সাইট-প্রমাণে
+        else { const m = (PX_MISS.get(c.px) || 0) + 1; if (m >= 2) { PX_SITE.delete(c.px); PX_MISS.set(c.px, 0); } else PX_MISS.set(c.px, m); } // পাতলা-উত্তর ২-টানা-হলে-নামা
+        okSite ? cok++ : cspare++; r2(); // v1.15.21: ঢেউ-প্রমিস-মুক্ত — ঠিক-একবারই
       }).catch(() => { // সাইট-ব্যর্থ → Google-ফলব্যাক: জীবিত=স্পেয়ার (বেঞ্চ-থেকে-নেমে-রিজার্ভ), মরা=প্রমাণহীন
         const t1 = Date.now();
-        PX_SITE.delete(c.px);
+        PX_SITE.delete(c.px); PX_MISS.delete(c.px); // হার্ড-ব্যর্থ = তাৎক্ষণিক-নামা (কম্পন-সহনশীলতা-প্রযোজ্য-নয়)
         proxiedGet(c.px, PX_PROBE_URL, 4000).then(() => { pxRec(c.px, true, Date.now() - t1); pxRec(c.px, false, 0); cspare++; r2(); })
           .catch(() => { pxRec(c.px, false, 0); cdead++; PX_COOL.set(c.px, Date.now() + 120000); r2(); });
       });
     })));
     const t2 = Date.now();
     let cut = 0;
-    for (let i = POOL.length - 1; i >= 0 && POOL.length > 12; i--) {
-      if (t2 - (PX_LASTOK.get(POOL[i].px) || t2) > 600000) { const g = POOL.splice(i, 1)[0]; PX_RUN.delete(g.px); PX_LASTOK.delete(g.px); PX_COOL.delete(g.px); PX_SITE.delete(g.px); cut++; }
+    for (let i = POOL.length - 1; i >= 0 && POOL.length > 20; i--) { // v1.15.21: ফ্লোর ১২→২০ (বেঞ্চ-রক্ষকের-জন্য-যথেষ্ট-প্রার্থী-সবসময়)
+      if (t2 - (PX_LASTOK.get(POOL[i].px) || t2) > 600000) { const g = POOL.splice(i, 1)[0]; PX_RUN.delete(g.px); PX_LASTOK.delete(g.px); PX_COOL.delete(g.px); PX_SITE.delete(g.px); PX_MISS.delete(g.px); cut++; }
     }
     if (cut) { try { fs.writeFileSync(POOL_FILE, JSON.stringify(POOL)); } catch (e) {} setTimeout(enrichPool, 1500).unref(); }
-    if (cut || PXCHK % 15 === 1 || process.env.VPCHK) console.log('[pxchk] wave=' + wave.length + ' site=' + cok + ' spare=' + cspare + ' dead=' + cdead + ' pool=' + POOL.length + ' bench=' + POOL.filter(c => PX_SITE.has(c.px)).length + ' cut=' + cut); // VPCHK=1: প্রতি-ঢেউয়ে-লগ (ডিবাগ)
+    const benchN = POOL.filter(c => PX_SITE.has(c.px)).length;
+    if (benchN < 18) { setTimeout(enrichPool, 2000).unref(); if (PXCHK % 10 === 1) console.log('[pxbench-keeper] bench=' + benchN + ' < ১৮ → এনরিচ-ফসল-তাৎক্ষণিক'); } // v1.15.21 বেঞ্চ-রক্ষক: বেঞ্চ-সর্বদা-সক্রিয়
+    if (cut || PXCHK % 15 === 1 || process.env.VPCHK) console.log('[pxchk] wave=' + wave.length + ' site=' + cok + ' spare=' + cspare + ' dead=' + cdead + ' pool=' + POOL.length + ' bench=' + benchN + ' cut=' + cut); // VPCHK=1: প্রতি-ঢেউয়ে-লগ (ডিবাগ)
   } finally { pxChkBusy = false; }
 }
 function pxCheckerStart() {

@@ -364,12 +364,12 @@ async function checkerWave() {
   }));
   const t2 = Date.now();
   let cut = 0;
-  for (let i = POOL.length - 1; i >= 0 && POOL.length > 8; i--) {
+  for (let i = POOL.length - 1; i >= 0 && POOL.length > 12; i--) { // r-20261016k: ফ্লোর ৮→১২ (বেঞ্চ-সর্বদা-মোটা)
     if (t2 - (LASTOK.get(POOL[i]) || t2) > 600000) { const du = POOL.splice(i, 1)[0]; LASTOK.delete(du); STATS.delete(du); cut++; } // ৬০০সে-কোনো-প্রমাণ-নেই
   }
   // কাটা-ইচ্ছাকৃতভাবে-ফাইলে-লেখা-হয়-না: NX_POOL_FILE=vidy-র-মূল-vidy_proxy_pool.json — লিখলে-দুই-পুল-মিশে-যেত;
   // কাটা-মেম্বার-পরের-রিফিল-পাসে-আবার-পূর্ণ-যাচাই-দিয়ে-ফিরতে-পারে (রেজলভার-গ্রোয়ার-সমতুল্য দ্বিতীয়-সুযোগ)
-  if ((POOL.length < BENCH_MAX && Date.now() - TS > 90000) || POOL.length < 8) poolOnce().catch(() => {}); // ৯০সে-গার্ড-মান্য-রিফিল
+  if ((POOL.length < BENCH_MAX && Date.now() - TS > 90000) || POOL.length < 12) poolOnce().catch(() => {}); // ৯০সে-গার্ড-মান্য-রিফিল (ফ্লোর ১২)
   if (cut || CHK % 15 === 1) console.log(`[mbchk] wave=${wave.length} ok=${cok} blind=${cblind} dead=${cdead} bench=${POOL.length} cut=${cut}`);
   } finally { chkBusy = false; }
 }
