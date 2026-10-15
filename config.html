@@ -227,6 +227,23 @@ h1 .g{color:var(--acc)}
     </div>
   </div>
 
+  <div class="card src-card nx" id="cardW">
+    <div class="src-hd">
+      <div class="tile nx" style="background:#0f1a12;color:#9fe6a8;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:20px;letter-spacing:1px">WO</div>
+      <div class="s-body">
+        <div class="s-name">Watchout <span class="badge n">tmdb-native &middot; movies &amp; series</span></div>
+        <div class="s-sub">Public tmdb-keyed HLS index &middot; multi-server &middot; Hindi/Multi &middot; subtitles built-in</div>
+      </div>
+      <div class="sw nx on" id="swW"></div>
+    </div>
+
+    <div class="fzone">
+      <div class="flab">Quality <em>&middot; watchout-only filter</em></div>
+      <div class="chips" id="woChips"></div>
+      <div class="fhint" style="margin-top:9px">Nothing picked = every quality stays. Stream tokens rotate fast &mdash; cards are always freshly resolved on tap.</div>
+    </div>
+  </div>
+
   <div class="seclab">Preview</div>
   <p class="sub" style="margin-bottom:4px">How stream cards will look in your app — both sources, one anatomy:</p>
   <div class="card">
@@ -259,7 +276,7 @@ h1 .g{color:var(--acc)}
   var SRVS=[["miami","Miami","Primary · always-on workhorse"],["boise","Boise","Primary · up to 4K"],["atlanta","Atlanta","Primary · official subtitles"],["phoenix","Phoenix","Extra · 1080p mirror"],["dallas","Dallas","Extra · Auto-HLS feed"],["austin","Austin","Extra · audio variants (Hindi/English)"],["seattle","Seattle","Backup · Auto-HLS feed"],["delhi","Delhi","Extra · multi-audio (Hindi/English)"],["munich","Munich","Extra · 1080p (EU)"],["paris","Paris","Extra · always-on single feed"],["orlando","Orlando","Extra · 1080p feed"],["reno","Reno","Extra · Auto-HLS feed"],["oakland","Oakland","Extra · Auto-HLS feed"],["vegas","Vegas","Extra · Vidara feed"],["cancun","Cancun","Extra · Vimeos feed"],["tampa","Tampa","Extra · Auto-HLS feed"]];
   var LANGS=[["original","Original"],["english","English"],["hindi","Hindi"],["spanish","Spanish"],["russian","Russian"],["japanese","Japanese"],["tamil","Tamil"],["portuguese","Portuguese (BR)"],["french","French"],["german","German"],["korean","Korean"],["arabic","Arabic"]];
 
-  var st={ v:1, q:[], sub:1, srv:SRVS.map(function(x){return x[0];}), nx:1, nxq:[], nxl:[], rt:1, rtl:[], tw:1, twq:[] };
+  var st={ v:1, q:[], sub:1, srv:SRVS.map(function(x){return x[0];}), nx:1, nxq:[], nxl:[], rt:1, rtl:[], tw:1, twq:[], wo:1, woq:[] };
 
   function b64u(o){return btoa(unescape(encodeURIComponent(JSON.stringify(o)))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');}
   function base(){return location.origin;}
@@ -281,6 +298,8 @@ h1 .g{color:var(--acc)}
     else if(st.rtl.length)c.rtl=st.rtl.slice();
     if(st.tw===0)c.tw=0;
     else if(st.twq.length)c.twq=st.twq.slice();
+    if(st.wo===0)c.wo=0;
+    else if(st.woq.length)c.woq=st.woq.slice().sort(function(a,b){return b-a;});
     var u=base()+(Object.keys(c).length?'/cfg/'+b64u(c):'')+'/manifest.json';
     document.getElementById('url').value=u;
     document.getElementById('inst').href='stremio://'+u.replace(/^https?:\/\//,'');
@@ -341,6 +360,7 @@ h1 .g{color:var(--acc)}
   }
   var drawQ=chipRow('qChips',st.q,rebuild);
   var drawNQ=chipRow('nqChips',st.nxq,rebuild);
+  var drawWQ=chipRow('woChips',st.woq,rebuild);
 
   /* language chips (moviebox only) */
   var nlEl=document.getElementById('nlChips');
@@ -430,6 +450,15 @@ h1 .g{color:var(--acc)}
     st.rt=st.rt?0:1;
     swR.classList.toggle('on',!!st.rt);
     cardR.classList.toggle('off',!st.rt);
+    rebuild();
+  };
+
+  /* watchout master switch */
+  var swW=document.getElementById('swW'), cardW=document.getElementById('cardW');
+  swW.onclick=function(){
+    st.wo=st.wo?0:1;
+    swW.classList.toggle('on',!!st.wo);
+    cardW.classList.toggle('off',!st.wo);
     rebuild();
   };
 
