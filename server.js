@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.21';
+const VERSION = '1.15.22';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -116,7 +116,7 @@ async function pxCheckerWave() {
     }
     if (cut) { try { fs.writeFileSync(POOL_FILE, JSON.stringify(POOL)); } catch (e) {} setTimeout(enrichPool, 1500).unref(); }
     const benchN = POOL.filter(c => PX_SITE.has(c.px)).length;
-    if (benchN < 18) { setTimeout(enrichPool, 2000).unref(); if (PXCHK % 10 === 1) console.log('[pxbench-keeper] bench=' + benchN + ' < ১৮ → এনরিচ-ফসল-তাৎক্ষণিক'); } // v1.15.21 বেঞ্চ-রক্ষক: বেঞ্চ-সর্বদা-সক্রিয়
+    if (benchN < 24) { setTimeout(enrichPool, 2000).unref(); if (PXCHK % 10 === 1) console.log('[pxbench-keeper] bench=' + benchN + ' < ২৪ → এনরিচ-ফসল-তাৎক্ষণিক'); } // v1.15.22 বেঞ্চ-রক্ষক: ম্যাক্স-টানা (থ্রেশহোল্ড ১৮→২৪)
     if (cut || PXCHK % 15 === 1 || process.env.VPCHK) console.log('[pxchk] wave=' + wave.length + ' site=' + cok + ' spare=' + cspare + ' dead=' + cdead + ' pool=' + POOL.length + ' bench=' + benchN + ' cut=' + cut); // VPCHK=1: প্রতি-ঢেউয়ে-লগ (ডিবাগ)
   } finally { pxChkBusy = false; }
 }
@@ -143,7 +143,7 @@ async function enrichPool() {
     for (let i = 0; i < sample.length && POOL.length < PX_CAP; i += 40) {
       const res = await Promise.all(sample.slice(i, i + 40).map(px => new Promise(r2 => {
         const t0 = Date.now();
-        proxiedGet(px, PX_PROBE_URL, 4000).then(() => { const ms = Date.now() - t0; r2(ms < 1800 ? { px, ms } : null); }).catch(() => r2(null));
+        proxiedGet(px, PX_PROBE_URL, 4000).then(() => { const ms = Date.now() - t0; r2(ms < 2500 ? { px, ms } : null); }).catch(() => r2(null)); // v1.15.22: ভর্তি-সীমা ১.৮→২.৫সে (পুল-ম্যাক্স-পর্যন্ত-ভরে; মান-বেঞ্চের-কাছে-আবার-ছাঁটা)
       })));
       for (const g of res) if (g) good.push(g);
     }

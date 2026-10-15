@@ -369,7 +369,8 @@ async function checkerWave() {
   }
   // কাটা-ইচ্ছাকৃতভাবে-ফাইলে-লেখা-হয়-না: NX_POOL_FILE=vidy-র-মূল-vidy_proxy_pool.json — লিখলে-দুই-পুল-মিশে-যেত;
   // কাটা-মেম্বার-পরের-রিফিল-পাসে-আবার-পূর্ণ-যাচাই-দিয়ে-ফিরতে-পারে (রেজলভার-গ্রোয়ার-সমতুল্য দ্বিতীয়-সুযোগ)
-  if ((POOL.length < BENCH_MAX && Date.now() - TS > 90000) || POOL.length < 12) poolOnce().catch(() => {}); // ৯০সে-গার্ড-মান্য-রিফিল (ফ্লোর ১২)
+  const usable = POOL.filter(u => { const b = BAD.get(u); return !b || b <= Date.now(); }).length;
+  if ((usable < BENCH_MAX && Date.now() - TS > 90000) || POOL.length < 12) poolOnce().catch(() => {}); // r-20261016k2: গেট=ব্যবহারযোগ্য-গণনা (শাস্তির-বসে-থাকা-২০টা-মাঝে-ফসল-আটকাতে-পারবে-না — ম্যাক্স-পর্যন্ত-ফসল)
   if (cut || CHK % 15 === 1) console.log(`[mbchk] wave=${wave.length} ok=${cok} blind=${cblind} dead=${cdead} bench=${POOL.length} cut=${cut}`);
   } finally { chkBusy = false; }
 }
