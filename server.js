@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.17';
+const VERSION = '1.15.18';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -135,7 +135,7 @@ async function enrichPool() {
     const have = new Set(POOL.map(c => c.px));
     const cands = [...new Set((txts.join('\n').match(/\b\d{1,3}(?:\.\d{1,3}){3}:\d{2,5}\b/g) || [])).values()].filter(px => !have.has(px));
     for (let i = cands.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); const w = cands[i]; cands[i] = cands[j]; cands[j] = w; }
-    const sample = cands.slice(0, 120), good = [];
+    const sample = cands.slice(0, 200), good = []; // v1.15.18: নমুনা ১২০→২০০
     for (let i = 0; i < sample.length && POOL.length < PX_CAP; i += 40) {
       const res = await Promise.all(sample.slice(i, i + 40).map(px => new Promise(r2 => {
         const t0 = Date.now();
@@ -1395,7 +1395,7 @@ const server = http.createServer((req, res) => {
         return res.end(lb);
       } catch (eL) { return sendJson(res, 404, { error: 'no rt logo' }); }
     }
-    if (p === '/_health') return sendJson(res, 200, { ok: 1, version: VERSION, pool: POOL.length, memo: memo.size, nx: NEXBASE ? 1 : 0, nxpool: NXBENCH, tw: TWBASE ? 1 : 0, rt: RTBASE ? 1 : 0 }); // v1.15.8: nxpool=MB-বেঞ্চ-সুস্থ-এক্সিট-সংখ্যা (MB0-হলে-সৎ-কারণ-চোখেই)
+    if (p === '/_health') return sendJson(res, 200, { ok: 1, version: VERSION, pool: POOL.length, pxbench: POOL.filter(c => PX_SITE.has(c.px)).length, memo: memo.size, nx: NEXBASE ? 1 : 0, nxpool: NXBENCH, tw: TWBASE ? 1 : 0, rt: RTBASE ? 1 : 0 }); // v1.15.18: pxbench=সাইট-প্রমাণিত-বেঞ্চ (v1.15.8: nxpool=MB-বেঞ্চ)
     if (p === '/_pool') return sendJson(res, 200, POOL.map(c => Object.assign({}, c, PX_RUN.get(c.px) || {}))); // v1.15.0: রানটাইম-স্বাস্থ্য-সহ
     if (p === '/_log') return sendJson(res, 200, reqLog.slice(-40).reverse());
     if (p === '/_servers') return sendJson(res, 200, { order: srvOrder(), scores: SRV_SCORE }); // কনফিগ-পেজের-লাইভ-হেলথ
@@ -1613,9 +1613,16 @@ setInterval(() => { nxBenchHealth(); }, 15000).unref();
   server.listen(PORT, '0.0.0.0', () => console.log('[vidy] ' + VERSION + ' on :' + PORT + ' | pool=' + POOL.length + (NEXBASE ? ' | moviebox embedded' : '')));
   setTimeout(probePool, 3000).unref(); // v1.15.0 বুট-প্রোব
   setTimeout(pxCheckerStart, 8000).unref(); // v1.15.16: ২৪ঘণ্টা-জাগ্রত সাইট-প্রমাণ-ঢেউ (বুটের-৮সে-পরে-থেকে)
+  // v1.15.18 (r68b ইউজার-অনুমোদিত): রেপ্লিকা-জাগ্রত নিজ-পিং — প্রতি-৪মিনিটে নিজের-পাবলিক-URL-এ /_health
+  // (স্কেল-টু-জিরো/নিষ্ক্রিয়তা-ঘুম-বন্ধ; রাউটার-সর্বদা-গরম) + warmBases (রেজলভার/শিশুর-সকেট-DNS+TLS-হাত গরম — ঠান্ডা-১ম-ট্যাপের-মূল-কারণ)
+  const SELF_URL = String(process.env.SELFPING_URL || 'https://3404d3c5dc63-vidy.baby-beamup.club/_health');
+  const SELF_SEC = Math.max(60, Number(process.env.SELFPING_SEC || 240));
+  const selfPing = () => { directGet(SELF_URL, 8000).then(() => { if (DBG) console.error('[selfping] ok ' + SELF_URL); }).catch(() => {}); try { warmBases(); } catch (e) {} };
+  setInterval(selfPing, SELF_SEC * 1000).unref();
+  setTimeout(selfPing, 20000).unref(); // বুটের-২০সে-পরেই-প্রথম-পিং
   setInterval(probePool, 180000).unref(); // v1.15.4: প্রতি-৩-মিনিট (বড়-পুলে-তাজা-লেটেন্সি-দ্রুত)
   setTimeout(enrichPool, 20000).unref(); // v1.15.4 বুট-এনরিচ
-  setInterval(enrichPool, 1800000).unref(); // v1.15.4: প্রতি-৩০-মিনিটে-তাজা-ফসল
+  setInterval(enrichPool, 600000).unref(); // v1.15.18: প্রতি-১০-মিনিটে-তাজা-ফসল (আগে-৩০: বেঞ্চ-বৃদ্ধি-ধীর-ছিল — প্রতি-১২-ঢেউয়ে-মাত্র ১-৪টা সাইট-প্রমাণিত হয়)
   const warmBases0 = () => { try { warmBases(); } catch (e) {} };
   setTimeout(warmBases0, 1500).unref();
   setInterval(warmBases0, 45000).unref(); // প্রতি-৪৫-সে-সকেট-উষ্ণ
