@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.23';
+const VERSION = '1.15.24';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -1121,7 +1121,7 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
         if (DBG) console.error('[t1g] ' + srv + ' BUDGET-CUT');
         pend.delete(srv); // v1.14.2: বসে-গেছে — early-harvest-গণিত-যেন-ভুল-না-হয়
         fire({ srv, err: new Error('srv-budget') });
-      }, GIANT.indexOf(srv) >= 0 ? (viaProxy ? 8500 : 5500) : (viaProxy ? 7000 : 3800)); // v1.11.2 পথ-সচেতন-বাজেট: সরাসরি-পথে 6.5/4.5সে (ঝুলন্ত-সার্ভার-কখনো-কার্ড-দেয়-না), প্রক্সি-পথে (৪২৯-উইন্ডো) 9.5/8সে — প্রক্সি-চেইনের-সফল-ফেচ ৪.৭-৬.৩সে-তে
+      }, GIANT.indexOf(srv) >= 0 ? (viaProxy ? 6500 : 5500) : (viaProxy ? 5500 : 3800)); // v1.15.24 (ইউজার: '৬-৭সে-তে-সব-কার্ড'): প্রক্সি-পথ-বাজেট ৮.৫/৭→৬.৫/৫.৫সে — vidy-শাখা-নিজেই-ধীরতম-হয়ে-গোটা-উত্তর-৮-১০সে-টানছিল; প্রক্সি-চেইনের-সফল-ফেচ ৪.৭-৬.৩সে-তে-বলে-৬.৫সে-দৈত্য-সীমা-ওদের-ধরে; সরাসরি-পথ ৫.৫/৩.৮-অক্ষত
       return Promise.race([
         one(srv).then(r => { done = true; clearTimeout(tmo); pend.delete(srv); if (r.ok) okWave++; return r; }), // timer cleared on win — no dangling timeouts
         new Promise(r => { fire = r; pend.set(srv, v => { done = true; clearTimeout(tmo); fire(v); }); }) // v1.14.2: tighten-কাটও-টাইমার-পরিষ্কার-করে — পরের-আসল-বাজেট-কাট/শাস্তি-আর-গুলে-খায়-না
