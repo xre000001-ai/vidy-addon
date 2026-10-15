@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.29';
+const VERSION = '1.15.30';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -870,6 +870,7 @@ async function awStreams(base, title, type, s, e) { // v1.15.29: ভেতরে
       const txt = '\u29c9 ' + String(title) + '\n' + epLine + '\n\u229e AnimeWorld \u00b7 ' + (isHls ? 'AW-HLS' : 'AW') + ' \u2317 ' + lang;
       const st = {
         name: '\u25a5 ' + q2 + ' \u25a5', title: txt, description: txt, quality: q2 + 'p',
+        _hq: parseInt(q2, 10) || 0, _lang: lang.toLowerCase(), // awq/awl-ফিল্টারের-আসল-ভিত্তি (v1.15.30)
         url: hu,
         behaviorHints: { notWebReady: !!hd, isBingeable: true, filename: 'animeworld.' + (isHls ? 'm3u8' : 'mp4') },
         bingeGroup: 'aw|' + String(title).toLowerCase() + '::|' + lang,
@@ -1126,6 +1127,10 @@ async function withSources(cardsP, srcs, cfg, t0) {
       } else if (live[i].key === 'tw') {
         const twAllow = qToList(cfg && cfg.twq); // ToonWorld-নিজের-চিপস — রেজলভারের-আসল-উচ্চতায়
         all = all.concat(twAllow.length ? v.filter(z => !z._hq || twAllow.indexOf(z._hq) >= 0) : v);
+      } else if (live[i].key === 'aw') { // v1.15.30: AnimeWorld-নিজের-ফিল্টার (awq=গুণমান, awl=অডিও-ভাষা)
+        const awAllow = qToList(cfg && cfg.awq);
+        const awSel = Array.isArray(cfg && cfg.awl) ? cfg.awl : [];
+        all = all.concat(v.filter(z => (!awAllow.length || !z._hq || awAllow.indexOf(z._hq) >= 0) && (!awSel.length || !z._lang || awSel.indexOf(String(z._lang).toLowerCase()) >= 0)));
       } else all = all.concat(v);
     }
     if (DBG) console.error('[srcdbg] withSources el=' + el + 'ms uniLeft=' + uniLeft + 'ms → ' + all.length + ' কার্ড (partial=' + !!all.$partial + ')');
@@ -1458,7 +1463,7 @@ function qToList(q) { // মাল্টি-রেজোলিউশন: অ্�
   const n = Math.min(2160, Math.max(0, Number(q) || 0));
   return n ? QH.filter(h => h <= n) : [];
 }
-const DEFAULT_CFG = { q: 0, sub: 1, cat: 'kd,mv', lang: '', sort: 'pop', era: '', g: [], srv: [], v: 1, nx: 1, nxq: 0, nxl: [], tw: 1, rt: 1, aw: 1, twq: [], rtl: [] }; // aw=AnimeWorld (v1.15.28) // v/nx/tw/rt = per-source master switches (tw=ToonWorld, rt=RareToons) // v/nx = per-source master switches; nxq/nxl = NetHex's OWN quality/audio-language filters (independent of the vidy-side q)
+const DEFAULT_CFG = { q: 0, sub: 1, cat: 'kd,mv', lang: '', sort: 'pop', era: '', g: [], srv: [], v: 1, nx: 1, nxq: 0, nxl: [], tw: 1, rt: 1, aw: 1, twq: [], rtl: [], awq: [], awl: [] }; // awq/awl=AnimeWorld-নিজের-গুণমান/অডিও-ফিল্টার (v1.15.30) // aw=AnimeWorld (v1.15.28) // v/nx/tw/rt = per-source master switches (tw=ToonWorld, rt=RareToons) // v/nx = per-source master switches; nxq/nxl = NetHex's OWN quality/audio-language filters (independent of the vidy-side q)
 function parseCfgFromObj(o) {
   const c = Object.assign({}, DEFAULT_CFG, { g: [] });
   if (o) {
@@ -1479,6 +1484,8 @@ function parseCfgFromObj(o) {
     if (o.nxq !== undefined && o.nxq !== null && o.nxq !== '') c.nxq = qToList(o.nxq);
     if (Array.isArray(o.nxl)) c.nxl = o.nxl.map(x => String(x).toLowerCase().replace(/[^a-z]/g, '')).filter(x => x.length >= 2 && x.length <= 12).slice(0, 12);
     if (Array.isArray(o.rtl)) c.rtl = o.rtl.map(x => String(x).toLowerCase().replace(/[^a-z]/g, '')).filter(x => ['hindi', 'tamil', 'telugu', 'malayalam', 'bengali'].indexOf(x) >= 0).slice(0, 5); // RareToons-নিজের-অডিও-ভাষা-ফিল্টার
+    if (o.awq !== undefined && o.awq !== null && o.awq !== '') c.awq = qToList(o.awq); // AnimeWorld-নিজের-কোয়ালিটি-চিপস (v1.15.30)
+    if (Array.isArray(o.awl)) c.awl = o.awl.map(x => String(x).toLowerCase().replace(/[^a-z]/g, '')).filter(x => ['hindi', 'tamil', 'telugu', 'malayalam', 'bengali', 'english', 'japanese'].indexOf(x) >= 0).slice(0, 7); // AnimeWorld-নিজের-অডিও-ভাষা-ফিল্টার (v1.15.30)
   }
   return c;
 }
@@ -1556,8 +1563,9 @@ const server = http.createServer((req, res) => {
     const cm2 = p.match(/^\/cfg\/([^\/]+)(\/.*)$/); // যেকোনো-অক্ষর-সহ্য — ভাঙা-b64-ও decodeCfg-এর-catch-এ-ডিফল্ট-হয় (404-নয়)
     if (cm2) { cfg = decodeCfg(cm2[1]); p = cm2[2]; cfgged = true; }
     else {
+      // qs: awq/awl=অ্যারে (ঠিক-ওইগুলো-সেমেন্টিক্স; awq-ক্যাপ-নয়) — v1.15.30
       const qs = new URL(req.url, 'http://x').searchParams;
-      if ([...qs.keys()].length) cfg = parseCfgFromObj({ q: qs.get('q') || qs.get('maxq'), sub: qs.get('sub') === '0' ? 0 : 1, cat: qs.get('cat') || '', lang: qs.get('lang') || '', sort: qs.get('sort') || '', era: qs.get('era') || '', g: (qs.get('g') || '').split(',').filter(Boolean), srv: (qs.get('srv') || '').split(',').filter(Boolean), v: qs.get('v') === '0' ? 0 : undefined, nx: qs.get('nx') === '0' ? 0 : undefined, tw: qs.get('tw') === '0' ? 0 : undefined, rt: qs.get('rt') === '0' ? 0 : undefined, rtl: qs.get('rtl') ? qs.get('rtl').split(',') : undefined, nxq: qs.get('nxq') || undefined, nxl: qs.get('nxl') ? qs.get('nxl').split(',') : undefined });
+      if ([...qs.keys()].length) cfg = parseCfgFromObj({ q: qs.get('q') || qs.get('maxq'), sub: qs.get('sub') === '0' ? 0 : 1, cat: qs.get('cat') || '', lang: qs.get('lang') || '', sort: qs.get('sort') || '', era: qs.get('era') || '', g: (qs.get('g') || '').split(',').filter(Boolean), srv: (qs.get('srv') || '').split(',').filter(Boolean), v: qs.get('v') === '0' ? 0 : undefined, nx: qs.get('nx') === '0' ? 0 : undefined, tw: qs.get('tw') === '0' ? 0 : undefined, rt: qs.get('rt') === '0' ? 0 : undefined, rtl: qs.get('rtl') ? qs.get('rtl').split(',') : undefined, aw: qs.get('aw') === '0' ? 0 : undefined, awq: qs.get('awq') ? qs.get('awq').split(',').map(Number) : undefined, awl: qs.get('awl') ? qs.get('awl').split(',') : undefined, nxq: qs.get('nxq') || undefined, nxl: qs.get('nxl') ? qs.get('nxl').split(',') : undefined }); // v1.15.30
     }
     if (!cfg) cfg = Object.assign({}, DEFAULT_CFG, { g: [], srv: [] });
     if (p === '/' || p === '/config' || p === '/configure') return sendFile2(res, 'config.html');

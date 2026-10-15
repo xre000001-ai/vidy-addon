@@ -236,6 +236,18 @@ h1 .g{color:var(--acc)}
       </div>
       <div class="sw nx on" id="swA"></div>
     </div>
+
+    <div class="fzone">
+      <div class="flab">Quality <em>&middot; animeworld-only filter</em></div>
+      <div class="chips" id="awChips"></div>
+      <div class="fhint" style="margin-top:9px">Nothing picked = every quality stays. Uses the real file height.</div>
+    </div>
+
+    <div class="fzone">
+      <div class="flab">Audio languages <em>&middot; animeworld-only filter</em></div>
+      <div class="chips" id="awLChips"></div>
+      <div class="fhint" style="margin-top:9px">Nothing picked = every dub stays (Hindi/Tamil/Telugu/Malayalam/Bengali/English/Japanese).</div>
+    </div>
   </div>
 
   <div class="seclab">Preview</div>
@@ -271,7 +283,7 @@ h1 .g{color:var(--acc)}
   var SRVS=[["miami","Miami","Primary · always-on workhorse"],["boise","Boise","Primary · up to 4K"],["atlanta","Atlanta","Primary · official subtitles"],["phoenix","Phoenix","Extra · 1080p mirror"],["dallas","Dallas","Extra · Auto-HLS feed"],["austin","Austin","Extra · audio variants (Hindi/English)"],["seattle","Seattle","Backup · Auto-HLS feed"],["delhi","Delhi","Extra · multi-audio (Hindi/English)"],["munich","Munich","Extra · 1080p (EU)"],["paris","Paris","Extra · always-on single feed"],["orlando","Orlando","Extra · 1080p feed"],["reno","Reno","Extra · Auto-HLS feed"],["oakland","Oakland","Extra · Auto-HLS feed"],["vegas","Vegas","Extra · Vidara feed"],["cancun","Cancun","Extra · Vimeos feed"],["tampa","Tampa","Extra · Auto-HLS feed"]];
   var LANGS=[["original","Original"],["english","English"],["hindi","Hindi"],["spanish","Spanish"],["russian","Russian"],["japanese","Japanese"],["tamil","Tamil"],["portuguese","Portuguese (BR)"],["french","French"],["german","German"],["korean","Korean"],["arabic","Arabic"]];
 
-  var st={ v:1, q:[], sub:1, srv:SRVS.map(function(x){return x[0];}), nx:1, nxq:[], nxl:[], rt:1, rtl:[], tw:1, twq:[], aw:1 };
+  var st={ v:1, q:[], sub:1, srv:SRVS.map(function(x){return x[0];}), nx:1, nxq:[], nxl:[], rt:1, rtl:[], tw:1, twq:[], aw:1, awq:[], awl:[] };
 
   function b64u(o){return btoa(unescape(encodeURIComponent(JSON.stringify(o)))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');}
   function base(){return location.origin;}
@@ -294,6 +306,10 @@ h1 .g{color:var(--acc)}
     if(st.tw===0)c.tw=0;
     else if(st.twq.length)c.twq=st.twq.slice();
     if(st.aw===0)c.aw=0;
+    else{
+      if(st.awq.length)c.awq=st.awq.slice().sort(function(a,b){return b-a;});
+      if(st.awl.length)c.awl=st.awl.slice();
+    }
     var u=base()+(Object.keys(c).length?'/cfg/'+b64u(c):'')+'/manifest.json';
     document.getElementById('url').value=u;
     document.getElementById('inst').href='stremio://'+u.replace(/^https?:\/\//,'');
@@ -327,7 +343,7 @@ h1 .g{color:var(--acc)}
     document.getElementById('pvA').style.display=st.aw?'':'none';
     document.getElementById('pvAh').textContent='\u25a5 1080 \u25a5';
     document.getElementById('pvAt').textContent='\u29c9 Dandadan | 2024 |\n\u29e0 S1E5 \u2022 Episode Title\n\u229e AnimeWorld \u00b7 AW-HLS \u2317 Multi-Dub';
-    document.getElementById('pvAq').textContent='1080p';
+    document.getElementById('pvAq').textContent=(st.awq.length?st.awq.slice().sort(function(a,b){return b-a;}).join(', '):'All')+(st.awl.length?' · '+st.awl.map(function(x){return x.charAt(0).toUpperCase()+x.slice(1);}).join(', '):'');
   }
 
   /* resolution chips factory (per source) */
@@ -407,6 +423,32 @@ h1 .g{color:var(--acc)}
     });
   }
   drawRT();
+
+  /* animeworld-only chips: quality + audio languages */
+  var drawAWQ=chipRow('awChips',st.awq,rebuild);
+  var AWLANGS=[["hindi","Hindi"],["tamil","Tamil"],["telugu","Telugu"],["malayalam","Malayalam"],["bengali","Bengali"],["english","English"],["japanese","Japanese"]];
+  var awLEl=document.getElementById('awLChips');
+  var awLAll=document.createElement('div');
+  awLAll.className='chip all';awLAll.textContent='All';
+  awLAll.onclick=function(){st.awl=[];drawAWL();rebuild();};
+  awLEl.appendChild(awLAll);
+  AWLANGS.forEach(function(l){
+    var c=document.createElement('div');c.className='chip';c.textContent=l[1];c.dataset.k=l[0];
+    c.onclick=function(){
+      var i=st.awl.indexOf(l[0]);
+      if(i>=0)st.awl.splice(i,1);else st.awl.push(l[0]);
+      if(st.awl.length===AWLANGS.length)st.awl=[];
+      drawAWL();rebuild();
+    };
+    awLEl.appendChild(c);
+  });
+  function drawAWL(){
+    awLAll.classList.toggle('on',st.awl.length===0);
+    [].forEach.call(awLEl.querySelectorAll('.chip[data-k]'),function(c){
+      c.classList.toggle('on',st.awl.indexOf(c.dataset.k)>=0);
+    });
+  }
+  drawAWL();
 
   /* toonworld-only quality chips */
   var TWQ=[[1080,"1080p"],[720,"720p"],[480,"480p"]];
