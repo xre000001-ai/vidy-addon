@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = "1.15.32";
+const VERSION = "1.15.33";
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -716,7 +716,8 @@ const AW_LOCAL = () => /^https?:\/\/(127\.|localhost)/.test(AWBASE);
 function awText(path2, referer, ms) { // সাইট-পেজ: পুল-রেস (শেয়ার্ড) | লোকাল-মক: সরাসরি
   const u = AWBASE + path2;
   if (AW_LOCAL()) return directGet(u, ms || 9000);
-  return racePool(u, 5, ms || 9000).catch(() => directGet(u, ms || 9000));
+  const T = ms || 9000;
+  return racePool(u, 5, Math.ceil(T * 0.65)).catch(() => directGet(u, Math.ceil(T * 0.35))); // v1.15.32: ৬৫/৩৫-ভাগ — ফলব্যাক-সহ-সর্বোচ্চ=টি-মিলিসে (বাজেট-ওয়াদা)
 }
 async function awPlayerGet(url, opts, ms) { // প্লেয়ার-API: কাস্টম-হেডার/POST — সরাসরি
   const r = await fetch(url, Object.assign({ headers: Object.assign({ 'User-Agent': AW_UA }, opts && opts.headers || {}), signal: AbortSignal.timeout(ms || 9000) }, opts && opts.post ? { method: 'POST', body: opts.post } : {}));
