@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.18';
+const VERSION = '1.15.19';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -89,7 +89,7 @@ async function pxCheckerWave() {
   try {
     const tnow = Date.now();
     const wave = POOL.filter(c => (PX_COOL.get(c.px) || 0) <= tnow)
-      .sort((a, b) => (PX_LASTOK.get(a.px) || 0) - (PX_LASTOK.get(b.px) || 0)).slice(0, 12);
+      .sort((a, b) => (PX_LASTOK.get(a.px) || 0) - (PX_LASTOK.get(b.px) || 0)).slice(0, 14); // v1.15.19: ঢেউ ১২→১৪
     if (!wave.length) return;
     PXCHK++;
     let cok = 0, cspare = 0, cdead = 0;
@@ -117,7 +117,7 @@ async function pxCheckerWave() {
   } finally { pxChkBusy = false; }
 }
 function pxCheckerStart() {
-  const loop = () => { setTimeout(() => { Promise.resolve(pxCheckerWave()).catch(() => {}).finally(loop); }, 12000); };
+  const loop = () => { setTimeout(() => { Promise.resolve(pxCheckerWave()).catch(() => {}).finally(loop); }, 8000); }; // v1.15.19: ব্যবধান ১২সে→৮সে (পুল-৪৩ → সম্পূর্ণ-চক্র ~২৫সে)
   loop();
 }
 // v1.15.4 পুল-ট্রেইনার (enrich): পাবলিক-তালিকা → নমুনা-১২০ → সমান্তরাল-২০৪-যাচাই → দ্রুততম(<১.৮সে)-যোগ;
@@ -1612,17 +1612,17 @@ setInterval(() => { nxBenchHealth(); }, 15000).unref();
   nxBenchHealth(); // v1.15.13: বুটেই-জানি (৬০সে-অপেক্ষা-নয়)
   server.listen(PORT, '0.0.0.0', () => console.log('[vidy] ' + VERSION + ' on :' + PORT + ' | pool=' + POOL.length + (NEXBASE ? ' | moviebox embedded' : '')));
   setTimeout(probePool, 3000).unref(); // v1.15.0 বুট-প্রোব
-  setTimeout(pxCheckerStart, 8000).unref(); // v1.15.16: ২৪ঘণ্টা-জাগ্রত সাইট-প্রমাণ-ঢেউ (বুটের-৮সে-পরে-থেকে)
+  setTimeout(pxCheckerStart, 5000).unref(); // v1.15.19: বুটের-৫সে-পরেই-ঢেউ-শুরু
   // v1.15.18 (r68b ইউজার-অনুমোদিত): রেপ্লিকা-জাগ্রত নিজ-পিং — প্রতি-৪মিনিটে নিজের-পাবলিক-URL-এ /_health
   // (স্কেল-টু-জিরো/নিষ্ক্রিয়তা-ঘুম-বন্ধ; রাউটার-সর্বদা-গরম) + warmBases (রেজলভার/শিশুর-সকেট-DNS+TLS-হাত গরম — ঠান্ডা-১ম-ট্যাপের-মূল-কারণ)
   const SELF_URL = String(process.env.SELFPING_URL || 'https://3404d3c5dc63-vidy.baby-beamup.club/_health');
-  const SELF_SEC = Math.max(60, Number(process.env.SELFPING_SEC || 240));
+  const SELF_SEC = Math.max(60, Number(process.env.SELFPING_SEC || 180)); // v1.15.19: ৪মিন→৩মিন
   const selfPing = () => { directGet(SELF_URL, 8000).then(() => { if (DBG) console.error('[selfping] ok ' + SELF_URL); }).catch(() => {}); try { warmBases(); } catch (e) {} };
   setInterval(selfPing, SELF_SEC * 1000).unref();
   setTimeout(selfPing, 20000).unref(); // বুটের-২০সে-পরেই-প্রথম-পিং
   setInterval(probePool, 180000).unref(); // v1.15.4: প্রতি-৩-মিনিট (বড়-পুলে-তাজা-লেটেন্সি-দ্রুত)
   setTimeout(enrichPool, 20000).unref(); // v1.15.4 বুট-এনরিচ
-  setInterval(enrichPool, 600000).unref(); // v1.15.18: প্রতি-১০-মিনিটে-তাজা-ফসল (আগে-৩০: বেঞ্চ-বৃদ্ধি-ধীর-ছিল — প্রতি-১২-ঢেউয়ে-মাত্র ১-৪টা সাইট-প্রমাণিত হয়)
+  setInterval(enrichPool, 420000).unref(); // v1.15.19: প্রতি-৭-মিনিটে-তাজা-ফসল (আগে-৩০: বেঞ্চ-বৃদ্ধি-ধীর-ছিল — প্রতি-১২-ঢেউয়ে-মাত্র ১-৪টা সাইট-প্রমাণিত হয়)
   const warmBases0 = () => { try { warmBases(); } catch (e) {} };
   setTimeout(warmBases0, 1500).unref();
   setInterval(warmBases0, 45000).unref(); // প্রতি-৪৫-সে-সকেট-উষ্ণ

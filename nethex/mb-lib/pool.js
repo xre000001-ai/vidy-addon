@@ -370,7 +370,7 @@ async function checkerWave() {
   } finally { chkBusy = false; }
 }
 function checkerStart() {
-  const loop = () => { setTimeout(() => { Promise.resolve(checkerWave()).catch(() => {}).finally(loop); }, 12000); };
+  const loop = () => { setTimeout(() => { Promise.resolve(checkerWave()).catch(() => {}).finally(loop); }, 8000); }; // r-20261016j: ব্যবধান ১২সে→৮সে (busy-গার্ড-আছে — ধীর-ঢেউ-ওভারল্যাপ-নয়)
   loop();
 }
 
