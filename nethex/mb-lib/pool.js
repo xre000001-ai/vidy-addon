@@ -377,6 +377,7 @@ async function checkerWave() {
   if (cut || CHK % 15 === 1) console.log(`[mbchk] wave=${wave.length} ok=${cok} blind=${cblind} dead=${cdead} bench=${POOL.length} cut=${cut}`);
   } finally { chkBusy = false; }
 }
+export function checkerStats() { return { waves: CHK }; } // v2.10.2: CHK-তাল-বাইরে-দৃশ্যমান (server.js-/health-এর-জন্য)
 function checkerStart() {
   const loop = () => { setTimeout(() => { Promise.resolve(checkerWave()).catch(() => {}).finally(loop); }, 5000); }; // r-20261016m2: gap ৮→৫সে (ঢেউ-চক্র ~৮-১১সে → সর্বোচ্চ-কম্পাঙ্ক)
   loop();

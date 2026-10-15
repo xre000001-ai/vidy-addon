@@ -4,7 +4,7 @@ import { run as search } from './mb-lib/search.js';
 import { run as runMatrix } from './mb-lib/episode-matrix.js';
 import { fetch as directFetch } from 'undici';   // Cinemeta only
 import { apiFetch } from './mb-lib/http.js';
-import { poolStart, poolStats } from './mb-lib/pool.js';
+import { poolStart, poolStats, checkerStats } from './mb-lib/pool.js';
 
 const PORT = Number(process.env.PORT || 7000);
 const VERSION = '2.10.0';
@@ -337,7 +337,7 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=86400', 'Access-Control-Allow-Origin': '*' });
       return res.end(LOGO_BUF);
     }
-    if (u.pathname === '/health') return send(res, 200, { ok: true, version: VERSION, mode: 'direct-mp4', pool: poolStats().healthy, waves: CHK, size: POOL.length }); // waves=মোট-স্ক্যান-ঢেউ (কম্পাঙ্ক-লাইভ-পর্যবেক্ষণ)
+    if (u.pathname === '/health') return send(res, 200, { ok: true, version: VERSION, mode: 'direct-mp4', pool: poolStats().healthy, waves: checkerStats().waves, size: poolStats().size }); // waves=মোট-স্ক্যান-ঢেউ (সব-মান-এক্সপোর্টেড-হেল্পার-থেকে)
     if (u.pathname === '/debug/pool') {
       if (u.searchParams.get('k') !== 'nethex-dbg-7f3a') return send(res, 404, { error: 'not found' });
       return send(res, 200, poolStats());
