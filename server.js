@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = "1.15.34";
+const VERSION = "1.15.35";
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -846,46 +846,52 @@ async function awStreams(base, title, type, s, e) { // v1.15.29: ভেতরে
     const isSeries = type === 'series';
     const cands = await awSearch(title, isSeries, left());
     if (!cands.length) { if (DBG) console.error('[aw] search-শূন্য: ' + String(title).slice(0, 30)); return []; }
-    const show = cands[0].title || title;
-    let pageUrl = cands[0].href;
-    if (isSeries) {
-      pageUrl = null;
-      for (const c of cands) { if (Date.now() - t3 > AWB) break; let ep = await awResolveEpisode(c.href, s, e, left()); if (!ep && s !== 1) ep = await awResolveEpisode(c.href, 1, e, left()); if (ep) { pageUrl = ep; break; } } // v1.15.32: প্রতি-ধাপে-বাজেট-তার
-      if (!pageUrl) { if (DBG) console.error('[aw] পর্ব-নেই: ' + String(title).slice(0, 30) + ' S' + s + 'E' + e); return []; }
+    for (const cand of cands) { // v1.15.35: প্রার্থী-ফলব্যাক — ভুল-শো-ম্যাচ-টাইটেল-গেটে-বাদ-পড়লে পরের-প্রার্থী-থেকে-কার্ড (আগে ১ম-প্রার্থী-বাধাতেই ০-ফিরত)
+      if (Date.now() - t3 > AWB) break;
+      const show = cand.title || title;
+      let pageUrl = cand.href;
+      if (isSeries) {
+        let ep = await awResolveEpisode(cand.href, s, e, left());
+        if (!ep && s !== 1) ep = await awResolveEpisode(cand.href, 1, e, left());
+        if (!ep) continue; // এ-প্রার্থীতে-পর্ব-নেই → পরের-প্রার্থী
+        pageUrl = ep;
+      }
+      const srcs = await awSources(pageUrl, left());
+      const raws = [];
+      for (const sc of srcs) { if (Date.now() - t3 > AWB) break; // v1.15.32
+        if (sc.type === 'zephyrix') { const z = await awZephyrix(sc.url, pageUrl, left()); if (z) raws.push({ lang: sc.lang || 'Multi-Dub', url: z.url, headers: z.headers, subtitles: z.subtitles, q: '1080' }); }
+        else if (sc.type === 'abyss') { const dec = await awAbyss(sc.url, left()); for (const d of dec) { if (!d || !d.url) continue; const q = (String(d.label || d.quality || d.res || '').match(/(\d{3,4})\s*p/i) || [])[1] || (String(d.label || '').match(/(\d{3,4})/) || [])[1] || ''; raws.push({ lang: sc.lang || 'Multi', url: d.url, headers: { Referer: 'https://playhydrax.com/', 'User-Agent': AW_UA }, q }); } }
+        else raws.push({ lang: sc.lang || 'English', url: sc.url, headers: { Referer: AWBASE + '/', 'User-Agent': AW_UA }, q: sc.quality || '' });
+      }
+      const seen = new Set();
+      const uniq = raws.filter(x => x.url && !seen.has(x.lang + '|' + x.url) && seen.add(x.lang + '|' + x.url));
+      const catShow = show.replace(/-/g, ' ');
+      const keep = catShow ? (twTitleOk(showCore(title), catShow) || awSqSim(title, catShow) >= 0.85) : uniq.length > 0; // v1.15.32: বানানভেদ-রক্ষা (Shippuuden-জাতীয়-আসল-শিরোনাম-বাদ-পড়া-নয়)
+      if (!keep) { if (DBG) console.error('[aw] গেট-বাদ-প্রার্থী: ' + String(show).slice(0, 30) + ' → পরের-প্রার্থী'); continue; } // v1.15.35
+      const arr = uniq.map(x => {
+        const lang = String(x.lang || '');
+        const hd = (x.headers && Object.keys(x.headers).length) ? x.headers : null;
+        const hu = String(x.url || '');
+        const isHls = /\.m3u8|\/hls\//i.test(hu);
+        const q2 = String(x.q || '1080').replace(/[^0-9]/g, '') || '1080';
+        const epLine = type === 'series' ? ('\u29e0 S' + (s || 1) + 'E' + (e || 1)) : '\u29e0 Movie';
+        const txt = '\u29c9 ' + String(title) + '\n' + epLine + '\n\u229e AnimeWorld \u00b7 ' + (isHls ? 'AW-HLS' : 'AW') + ' \u2317 ' + lang;
+        const st = {
+          name: '\u25a5 ' + q2 + ' \u25a5', title: txt, description: txt, quality: q2 + 'p',
+          _hq: parseInt(q2, 10) || 0, _lang: lang.toLowerCase(), // awq/awl-ফিল্টারের-আসল-ভিত্তি (v1.15.30)
+          url: hu,
+          behaviorHints: { notWebReady: !!hd, isBingeable: true, filename: 'animeworld.' + (isHls ? 'm3u8' : 'mp4') },
+          bingeGroup: 'aw|' + String(title).toLowerCase() + '::|' + lang,
+        };
+        if (hd) st.behaviorHints.proxyHeaders = { request: hd }; // v1.15.34: স্থিতিশীল-প্যারিটি (MB/TW/RT-প্রোড-কার্ডের-মতো request-নেস্ট — ফ্ল্যাট-হলে Stremio-হেডার-ফরওয়ার্ড-করত-না, প্লে-আটকাত)
+        if (Array.isArray(x.subtitles) && x.subtitles.length) st.subtitles = x.subtitles.slice(0, 4).map(t2 => ({ id: String(t2.name || 'eng'), url: String(t2.url), lang: String(t2.language || 'eng') }));
+        return st;
+      });
+      if (DBG) console.error('[aw] ' + String(title).slice(0, 30) + ' S' + (s || 1) + 'E' + (e || 1) + ' -> ' + arr.length + ' কার্ড @' + (Date.now() - t3) + 'ms পেজ:' + String(pageUrl).slice(0, 40));
+      if (arr.length) return arr; // v1.15.35: খালি-হলে পরের-প্রার্থী
     }
-    if (Date.now() - t3 > AWB) { if (DBG) console.error('[aw] বাজেট-শেষ: ' + String(title).slice(0, 30)); return []; }
-    const srcs = await awSources(pageUrl, left());
-    const raws = [];
-    for (const sc of srcs) { if (Date.now() - t3 > AWB) break; // v1.15.32
-      if (sc.type === 'zephyrix') { const z = await awZephyrix(sc.url, pageUrl, left()); if (z) raws.push({ lang: sc.lang || 'Multi-Dub', url: z.url, headers: z.headers, subtitles: z.subtitles, q: '1080' }); }
-      else if (sc.type === 'abyss') { const dec = await awAbyss(sc.url, left()); for (const d of dec) { if (!d || !d.url) continue; const q = (String(d.label || d.quality || d.res || '').match(/(\d{3,4})\s*p/i) || [])[1] || (String(d.label || '').match(/(\d{3,4})/) || [])[1] || ''; raws.push({ lang: sc.lang || 'Multi', url: d.url, headers: { Referer: 'https://playhydrax.com/', 'User-Agent': AW_UA }, q }); } }
-      else raws.push({ lang: sc.lang || 'English', url: sc.url, headers: { Referer: AWBASE + '/', 'User-Agent': AW_UA }, q: sc.quality || '' });
-    }
-    const seen = new Set();
-    const uniq = raws.filter(x => x.url && !seen.has(x.lang + '|' + x.url) && seen.add(x.lang + '|' + x.url));
-    const catShow = show.replace(/-/g, ' ');
-    const keep = catShow ? (twTitleOk(showCore(title), catShow) || awSqSim(title, catShow) >= 0.85) : uniq.length > 0; // v1.15.32: বানানভেদ-রক্ষা (Shippuuden-জাতীয়-আসল-শিরোনাম-বাদ-পড়া-নয়)
-    const arr = (keep ? uniq : []).map(x => {
-      const lang = String(x.lang || '');
-      const hd = (x.headers && Object.keys(x.headers).length) ? x.headers : null;
-      const hu = String(x.url || '');
-      const isHls = /\.m3u8|\/hls\//i.test(hu);
-      const q2 = String(x.q || '1080').replace(/[^0-9]/g, '') || '1080';
-      const epLine = type === 'series' ? ('\u29e0 S' + (s || 1) + 'E' + (e || 1)) : '\u29e0 Movie';
-      const txt = '\u29c9 ' + String(title) + '\n' + epLine + '\n\u229e AnimeWorld \u00b7 ' + (isHls ? 'AW-HLS' : 'AW') + ' \u2317 ' + lang;
-      const st = {
-        name: '\u25a5 ' + q2 + ' \u25a5', title: txt, description: txt, quality: q2 + 'p',
-        _hq: parseInt(q2, 10) || 0, _lang: lang.toLowerCase(), // awq/awl-ফিল্টারের-আসল-ভিত্তি (v1.15.30)
-        url: hu,
-        behaviorHints: { notWebReady: !!hd, isBingeable: true, filename: 'animeworld.' + (isHls ? 'm3u8' : 'mp4') },
-        bingeGroup: 'aw|' + String(title).toLowerCase() + '::|' + lang,
-      };
-      if (hd) st.behaviorHints.proxyHeaders = { request: hd }; // v1.15.34: স্থিতিশীল-প্যারিটি (MB/TW/RT-প্রোড-কার্ডের-মতো request-নেস্ট — ফ্ল্যাট-হলে Stremio-হেডার-ফরওয়ার্ড-করত-না, প্লে-আটকাত)
-      if (Array.isArray(x.subtitles) && x.subtitles.length) st.subtitles = x.subtitles.slice(0, 4).map(t2 => ({ id: String(t2.name || 'eng'), url: String(t2.url), lang: String(t2.language || 'eng') }));
-      return st;
-    });
-    if (DBG) console.error('[aw] ' + String(title).slice(0, 30) + ' S' + (s || 1) + 'E' + (e || 1) + ' -> ' + arr.length + ' কার্ড @' + (Date.now() - t3) + 'ms পেজ:' + String(pageUrl).slice(0, 40));
-    return arr;
+    if (DBG) console.error('[aw] সব-প্রার্থী-অগ্রহণযোগ্য/পর্ব-নেই: ' + String(title).slice(0, 30) + ' S' + s + 'E' + e);
+    return [];
   } catch (e2) { if (DBG) console.error('[aw] ERR ' + String(e2 && e2.message).slice(0, 70)); return []; }
 }
 function twRtPrewarm(nameP, type, s, e) { // v1.14.5 series tap → পরের-২-এপিসোড-রেজলভার-আগেই-গরম (ঠান্ধা-এপিসোড-রেজলভ ৮সে+ → binge-২য়-ক্লিক-তাৎক্ষণিক)
