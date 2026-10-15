@@ -43,12 +43,14 @@ function agentFor(u) {
 
 function inflight(u) { return INFLIGHT.get(u) || 0; }
 
+const LASTOK = new Map();         // r-20261016k (রেজলভার-মানদণ্ড): url → শেষ-প্রমাণ-কখন (চেকার-ঢেউ বা লাইভ-ট্রাফিক)
 function noteGood(u, ms) {
   const s = STATS.get(u) || { ok: 0, fail: 0, lat: null };
   s.ok += 1;
   s.lat = s.lat == null ? ms : Math.round(0.6 * s.lat + 0.4 * ms);
   STATS.set(u, s);
   BAD.delete(u);
+  LASTOK.set(u, Date.now());
 }
 
 function noteFail(u, kind) {
@@ -336,9 +338,45 @@ export async function poolOnce(force = false) {
   }
 }
 
+// ---- r-20261016k রেজলভার-স্থাপত্য (ইউজার: 'resolver-এর-মতো কঠোর, ২৪-ঘণ্টা জাগ্রত') ----
+// ৯০সে-পূর্ণ-পাসের-বদলে: সর্বদা-চলা-ঢেউ — প্রতি-১২সে-য় ১২টা সবচেয়ে-পুরনো-প্রমাণ-যার; প্রমাণ=প্রোব+MB-সার্চ-যাচাই (বেঞ্চ-মানদণ্ড-ই);
+// ৬০০সে-অনুত্তপ → বেঞ্চ-কাটা (DEAD_AFTER-প্যারিটি); পাতলা-হলে ৯০সে-গার্ড-মান্য poolOnce-রিফিল (স্ট্রিমিং-ঢোকা)
+let CHK = 0, chkBusy = false; // chkBusy: ঢেউ-সর্বোচ্চ ~১৩সে (probe ৬সে+verify ৭সে) > ১২সে-ব্যবধান — ওভারল্যাপে-একই-১২-পুনঃপ্রোব-নিষিদ্ধ (রেজলভারের-সিকোয়েন্সিয়াল-লুপ-প্যারিটি)
+async function checkerWave() {
+  if (chkBusy || FETCHING || !POOL.length) return;
+  chkBusy = true;
+  try {
+  const now = Date.now();
+  const wave = POOL.filter(u => { const b = BAD.get(u); return !b || b <= now; })
+    .sort((a, b) => (LASTOK.get(a) || 0) - (LASTOK.get(b) || 0)).slice(0, 12);
+  if (!wave.length) return;
+  CHK++;
+  let cok = 0, cblind = 0, cdead = 0;
+  await Promise.all(wave.map(async (u) => {
+    const p0 = await probe(u);
+    if (!p0) { noteFail(u, 'dead'); cdead++; return; }        // প্রোব-ই-মরা → প্রমাণ-নেই
+    if (!(await searchVerify(u))) { noteFail(u, 'block'); cblind++; return; } // জীবিত-কিন্তু-MB-অন্ধ → ৫মিন-বহিষ্কার (কঠোর-অক্ষত)
+    noteGood(u, p0[0]); cok++;                                // পূর্ণ-প্রমাণিত → LASTOK-তাজা
+  }));
+  const t2 = Date.now();
+  let cut = 0;
+  for (let i = POOL.length - 1; i >= 0 && POOL.length > 8; i--) {
+    if (t2 - (LASTOK.get(POOL[i]) || t2) > 600000) { const du = POOL.splice(i, 1)[0]; LASTOK.delete(du); STATS.delete(du); cut++; } // ৬০০সে-কোনো-প্রমাণ-নেই
+  }
+  // কাটা-ইচ্ছাকৃতভাবে-ফাইলে-লেখা-হয়-না: NX_POOL_FILE=vidy-র-মূল-vidy_proxy_pool.json — লিখলে-দুই-পুল-মিশে-যেত;
+  // কাটা-মেম্বার-পরের-রিফিল-পাসে-আবার-পূর্ণ-যাচাই-দিয়ে-ফিরতে-পারে (রেজলভার-গ্রোয়ার-সমতুল্য দ্বিতীয়-সুযোগ)
+  if ((POOL.length < BENCH_MAX && Date.now() - TS > 90000) || POOL.length < 8) poolOnce().catch(() => {}); // ৯০সে-গার্ড-মান্য-রিফিল
+  if (cut || CHK % 15 === 1) console.log(`[mbchk] wave=${wave.length} ok=${cok} blind=${cblind} dead=${cdead} bench=${POOL.length} cut=${cut}`);
+  } finally { chkBusy = false; }
+}
+function checkerStart() {
+  const loop = () => { setTimeout(() => { Promise.resolve(checkerWave()).catch(() => {}).finally(loop); }, 12000); };
+  loop();
+}
+
 export function poolStart() {
   poolOnce(true);
-  setInterval(() => poolOnce(), 90000); // r-20261016a: প্রতি-১.৫-মিনিট
+  checkerStart(); // r-20261016k: ২৪ঘণ্টা-জাগ্রত ঢেউ (৯০সে-পূর্ণ-পাসের-বদলে — রেজলভারের-মতো; রিফিল-পাস-চেকার-থেকেই)
 }
 
 export function poolStats() {

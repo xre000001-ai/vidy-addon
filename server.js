@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.15';
+const VERSION = '1.15.17';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -26,7 +26,9 @@ let POOL = [];
 try { POOL = JSON.parse(fs.readFileSync(path.join(__dirname, 'vidy_proxy_pool.json'), 'utf8')); } catch (e) {}
 // v1.15.0 রানটাইম-প্রক্সি-স্বাস্থ্য: বুট-সময়ের-ms-আর-বাস্তব-নয় — জয়/ব্যর্থতা/EMA-লেটেন্সি-মনে-থাকে, রেস-স্কোর-অনুযায়ী-হয়
 const PX_RUN = new Map(); // px → { ok, fail, ms, last }
+const PX_LASTOK = new Map(); // v1.15.16 (রেজলভার-মানদণ্ড): px → শেষ-যেকোনো-প্রমাণ (চেকার/প্রোব)
 function pxRec(px, good, ms) {
+  if (good) PX_LASTOK.set(px, Date.now());
   const h = PX_RUN.get(px) || { ok: 0, fail: 0, ms: 0, last: 0 };
   if (good) { h.ok++; h.ms = h.ms ? Math.round(h.ms * 0.7 + ms * 0.3) : ms; } else h.fail++;
   h.last = Date.now();
@@ -73,6 +75,50 @@ function prunePool(snap) {
   POOL.length = 0;
   for (const c of alive) POOL.push(c);
   if (DBG) console.error('[pool] probe: ' + alive.length + '/' + snap.length + ' জীবিত');
+}
+// v1.15.16 রেজলভার-স্থাপত্য (ইউজার: 'vidy-ও resolver-এর-মতো কঠোর, ২৪ঘণ্টা জাগ্রত'):
+// প্রতি-১২সে-য় ১২টা সবচেয়ে-পুরনো-প্রমাণ; প্রমাণ-সিঁড়ি: vidy.st-নিজেই খোলা=পূর্ণ (রেজলভার _TARGETS-প্যারিটি);
+// জীবিত-কিন্তু-সাইট-অন্ধ=স্পেয়ার (থাকে, স্কোর-জরিমানায়-পিছিয়ে); Google-204-ও-মরা=প্রমাণহীন → ৬০০সে-কাটা → এনরিচ
+const PX_SITE_URL = VIDY_REFERER; // টার্গেট-সাইট-নিজেই
+const PX_SITE = new Set(); // v1.15.17 বেঞ্চ-মানদণ্ড (ইউজার): বেঞ্চ = সাইটে-যেতে-পারে + জীবিত — চেকার-ই-একমাত্র-কর্তৃত্ব (রেস-জয়/Google-204 সাইট-প্রমাণ-নয়)
+const PX_COOL = new Map(); // v1.15.16b: পূর্ণ-মৃত → ১২০সে-শীতল (রেজলভার-প্যারিটি — একই-১২-মৃত-ঢেউয়ে-ঢেউয়ে-পিটানো-বন্ধ; ৬০০সে-কাটার-আগে-৫-সুযোগ)
+let PXCHK = 0, pxChkBusy = false;
+async function pxCheckerWave() {
+  if (pxChkBusy || !POOL.length) return;
+  pxChkBusy = true;
+  try {
+    const tnow = Date.now();
+    const wave = POOL.filter(c => (PX_COOL.get(c.px) || 0) <= tnow)
+      .sort((a, b) => (PX_LASTOK.get(a.px) || 0) - (PX_LASTOK.get(b.px) || 0)).slice(0, 12);
+    if (!wave.length) return;
+    PXCHK++;
+    let cok = 0, cspare = 0, cdead = 0;
+    await Promise.all(wave.map(c => new Promise(r2 => {
+      const t0 = Date.now();
+      proxiedGet(c.px, PX_SITE_URL, 6000).then(body => {
+        const okSite = !!body && String(body).length > 500;
+        pxRec(c.px, okSite, Date.now() - t0); // সাইট-প্রমাণিত=ভালো; সাইট-অন্ধ=জরিমানা (ল্যাটেন্সি-মিথ্যা-নয়)
+        if (okSite) { PX_SITE.add(c.px); PX_COOL.delete(c.px); } else PX_SITE.delete(c.px); // বেঞ্চ-সদস্যপদ শুধু-সাইট-প্রমাণে
+        okSite ? cok++ : cspare++; r2();
+      }).catch(() => { // সাইট-ব্যর্থ → Google-ফলব্যাক: জীবিত=স্পেয়ার (বেঞ্চ-থেকে-নেমে-রিজার্ভ), মরা=প্রমাণহীন
+        const t1 = Date.now();
+        PX_SITE.delete(c.px);
+        proxiedGet(c.px, PX_PROBE_URL, 4000).then(() => { pxRec(c.px, true, Date.now() - t1); pxRec(c.px, false, 0); cspare++; r2(); })
+          .catch(() => { pxRec(c.px, false, 0); cdead++; PX_COOL.set(c.px, Date.now() + 120000); r2(); });
+      });
+    })));
+    const t2 = Date.now();
+    let cut = 0;
+    for (let i = POOL.length - 1; i >= 0 && POOL.length > 12; i--) {
+      if (t2 - (PX_LASTOK.get(POOL[i].px) || t2) > 600000) { const g = POOL.splice(i, 1)[0]; PX_RUN.delete(g.px); PX_LASTOK.delete(g.px); PX_COOL.delete(g.px); PX_SITE.delete(g.px); cut++; }
+    }
+    if (cut) { try { fs.writeFileSync(POOL_FILE, JSON.stringify(POOL)); } catch (e) {} setTimeout(enrichPool, 1500).unref(); }
+    if (cut || PXCHK % 15 === 1 || process.env.VPCHK) console.log('[pxchk] wave=' + wave.length + ' site=' + cok + ' spare=' + cspare + ' dead=' + cdead + ' pool=' + POOL.length + ' bench=' + POOL.filter(c => PX_SITE.has(c.px)).length + ' cut=' + cut); // VPCHK=1: প্রতি-ঢেউয়ে-লগ (ডিবাগ)
+  } finally { pxChkBusy = false; }
+}
+function pxCheckerStart() {
+  const loop = () => { setTimeout(() => { Promise.resolve(pxCheckerWave()).catch(() => {}).finally(loop); }, 12000); };
+  loop();
 }
 // v1.15.4 পুল-ট্রেইনার (enrich): পাবলিক-তালিকা → নমুনা-১২০ → সমান্তরাল-২০৪-যাচাই → দ্রুততম(<১.৮সে)-যোগ;
 // মূল-১৭-অক্ষত-প্রথমে, ক্যাপ-৭৭, জেতা-প্রক্সি-ফাইলেও-লেখা (রিস্টার্টে-উষ্ণ); PX_ENRICH=0 দিলে-বন্ধ
@@ -278,7 +324,10 @@ function racePool(url, n, timeoutMs) {
   // v1.15.0: ক্রম-রানটাইম-স্কোরে (ব্যর্থতা-ভারী-পিছিয়ে), মৃত-ভারী-পুলে-রেস-প্রস্থ-বাড়ে, ফল-PX_RUN-এ-জমে
   const srt = POOL.slice().sort((a, b) => pxScore(a.px, a.ms) - pxScore(b.px, b.ms));
   const alive = srt.filter(c => { const h = PX_RUN.get(c.px); return !h || h.ok > 0 || h.fail < 3; }); // প্রমাণিত-মৃত (৩-ব্যর্থ-শূন্য-জয়) রেসে-নয়
-  const use = alive.length >= 3 ? alive : srt; // সব-দোষী-সাব্যস্ত-হলে-পুরো-পুল-ই-শেষ-ভরসা
+  // v1.15.17 বেঞ্চ-গেট (ইউজার-মানদণ্ড: বেঞ্চ=সাইটে-যেতে-পারে+জীবিত): ৩+ সাইট-প্রমাণিত-থাকলে রেস-শুধু-বেঞ্চে
+  // (স্পেয়ার=জীবিত-কিন্তু-সাইট-অন্ধ শুধু-আপাতকালীন-রিজার্ভ; চেকার-ঢেউ-প্রতিনিয়ত-তাদের-পুনঃপরীক্ষা-করে-বেঞ্চে-তুলবে)
+  const good = alive.filter(c => PX_SITE.has(c.px));
+  const use = good.length >= 3 ? good : (alive.length >= 3 ? alive : srt); // সব-দোষী-সাব্যস্ত-হলে-পুরো-পুল-ই-শেষ-ভরসা
   const n2 = Math.min(use.length, Math.max(n, (srt.length - alive.length) >= srt.length / 2 ? n + 3 : n)); // অর্ধেকের-বেশি-মৃত → প্রস্থ+৩
   const cands = [];
   for (let i = 0; i < n2 && use.length; i++) {
@@ -1563,6 +1612,7 @@ setInterval(() => { nxBenchHealth(); }, 15000).unref();
   nxBenchHealth(); // v1.15.13: বুটেই-জানি (৬০সে-অপেক্ষা-নয়)
   server.listen(PORT, '0.0.0.0', () => console.log('[vidy] ' + VERSION + ' on :' + PORT + ' | pool=' + POOL.length + (NEXBASE ? ' | moviebox embedded' : '')));
   setTimeout(probePool, 3000).unref(); // v1.15.0 বুট-প্রোব
+  setTimeout(pxCheckerStart, 8000).unref(); // v1.15.16: ২৪ঘণ্টা-জাগ্রত সাইট-প্রমাণ-ঢেউ (বুটের-৮সে-পরে-থেকে)
   setInterval(probePool, 180000).unref(); // v1.15.4: প্রতি-৩-মিনিট (বড়-পুলে-তাজা-লেটেন্সি-দ্রুত)
   setTimeout(enrichPool, 20000).unref(); // v1.15.4 বুট-এনরিচ
   setInterval(enrichPool, 1800000).unref(); // v1.15.4: প্রতি-৩০-মিনিটে-তাজা-ফসল
