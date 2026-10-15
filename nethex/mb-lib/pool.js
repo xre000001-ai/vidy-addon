@@ -29,9 +29,9 @@ const SRCS = ['https://api.proxyscrape.com/v4/free-proxy-list/get?request=displa
               'https://raw.githubusercontent.com/TheSpeedX/PROXY-LIST/master/http.txt',
               'https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt',
               'https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/protocols/http/data.txt']; // proxifly: পৃথক-http-মডিউল, প্রতি-৫মিনিটে-যাচাইকৃত (ইউজার-প্রস্তাব)
-const BENCH_MAX = 32;
-const SAMPLE = 200;               // candidates probed per pass
-const BOOT_TARGET = 28;           // boot stops once this many exits are in
+const BENCH_MAX = 64;             // r-20261016m (ইউজার: 'ম্যাক্স-পর্যন্ত'): বেঞ্চ-ক্যাপ ৩২→৬৪ — ঝড়ে-অর্ধেক-মরলেও-৩২-থাকে
+const SAMPLE = 400;               // candidates probed per pass (২০০→৪০০)
+const BOOT_TARGET = 48;           // boot stops once this many exits are in (২৮→৪৮)
 const POOL = [];                  // the ready bench, fastest first
 const BAD = new Map();            // url -> benched-until (ms epoch)
 const STATS = new Map();          // url -> {ok, fail, lat}
@@ -352,8 +352,10 @@ async function checkerWave() {
   chkBusy = true;
   try {
   const now = Date.now();
+  // r-20261016m (ইউজার: 'অন্তত-৭০০-স্ক্যান/১.৫মিনিট'): ঢেউ ১৪→৭০ — ৮সে-ব্যবধানে ~১১-ঢেউ/১.৫মিন ≈ ৭৭০-স্ক্যান;
+  // busy-গার্ড-আছে বলে ধীর-ঢেউ-ওভারল্যাপ-করবে-না; পুল<৭০-হলে-যত-আছে-তত
   const wave = POOL.filter(u => { const b = BAD.get(u); return !b || b <= now; })
-    .sort((a, b) => (LASTOK.get(a) || 0) - (LASTOK.get(b) || 0)).slice(0, 12);
+    .sort((a, b) => (LASTOK.get(a) || 0) - (LASTOK.get(b) || 0)).slice(0, 70);
   if (!wave.length) return;
   CHK++;
   let cok = 0, cblind = 0, cdead = 0;
@@ -371,7 +373,7 @@ async function checkerWave() {
   // কাটা-ইচ্ছাকৃতভাবে-ফাইলে-লেখা-হয়-না: NX_POOL_FILE=vidy-র-মূল-vidy_proxy_pool.json — লিখলে-দুই-পুল-মিশে-যেত;
   // কাটা-মেম্বার-পরের-রিফিল-পাসে-আবার-পূর্ণ-যাচাই-দিয়ে-ফিরতে-পারে (রেজলভার-গ্রোয়ার-সমতুল্য দ্বিতীয়-সুযোগ)
   const usable = POOL.filter(u => { const b = BAD.get(u); return !b || b <= Date.now(); }).length;
-  if ((usable < BENCH_MAX && Date.now() - TS > 90000) || POOL.length < 12) poolOnce().catch(() => {}); // r-20261016k2: গেট=ব্যবহারযোগ্য-গণনা (শাস্তির-বসে-থাকা-২০টা-মাঝে-ফসল-আটকাতে-পারবে-না — ম্যাক্স-পর্যন্ত-ফসল)
+  if ((usable < BENCH_MAX && Date.now() - TS > 45000) || POOL.length < 20) poolOnce().catch(() => {}); // r-20261016m: ফসল-গেট ৯০→৪৫সে (ম্যাক্স-দিকে-দ্রুত), ফ্লোর ১২→২০
   if (cut || CHK % 15 === 1) console.log(`[mbchk] wave=${wave.length} ok=${cok} blind=${cblind} dead=${cdead} bench=${POOL.length} cut=${cut}`);
   } finally { chkBusy = false; }
 }
