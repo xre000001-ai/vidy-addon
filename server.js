@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = "1.15.33";
+const VERSION = "1.15.34";
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -880,7 +880,7 @@ async function awStreams(base, title, type, s, e) { // v1.15.29: ভেতরে
         behaviorHints: { notWebReady: !!hd, isBingeable: true, filename: 'animeworld.' + (isHls ? 'm3u8' : 'mp4') },
         bingeGroup: 'aw|' + String(title).toLowerCase() + '::|' + lang,
       };
-      if (hd) st.behaviorHints.proxyHeaders = hd;
+      if (hd) st.behaviorHints.proxyHeaders = { request: hd }; // v1.15.34: স্থিতিশীল-প্যারিটি (MB/TW/RT-প্রোড-কার্ডের-মতো request-নেস্ট — ফ্ল্যাট-হলে Stremio-হেডার-ফরওয়ার্ড-করত-না, প্লে-আটকাত)
       if (Array.isArray(x.subtitles) && x.subtitles.length) st.subtitles = x.subtitles.slice(0, 4).map(t2 => ({ id: String(t2.name || 'eng'), url: String(t2.url), lang: String(t2.language || 'eng') }));
       return st;
     });
