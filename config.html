@@ -227,6 +227,17 @@ h1 .g{color:var(--acc)}
     </div>
   </div>
 
+  <div class="card src-card nx" id="cardA">
+    <div class="src-hd">
+      <div class="tile nx" style="background:#101c14;color:#7fe0a0;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:20px;letter-spacing:1px">AW</div>
+      <div class="s-body">
+        <div class="s-name">AnimeWorld <span class="badge n">sub+dub &middot; multi-dub HLS</span></div>
+        <div class="s-sub">English subs &middot; Hindi/Tamil/Telugu dubs &middot; headers-সহ সরাসরি</div>
+      </div>
+      <div class="sw nx on" id="swA"></div>
+    </div>
+  </div>
+
   <div class="seclab">Preview</div>
   <p class="sub" style="margin-bottom:4px">How stream cards will look in your app — both sources, one anatomy:</p>
   <div class="card">
@@ -235,6 +246,7 @@ h1 .g{color:var(--acc)}
       <div class="pcard nxc" id="pvN"><div class="dot n"></div><div class="pbody"><div class="hd n" id="pvNh"></div><div class="t" id="pvNt"></div></div><div class="q n" id="pvNq"></div></div>
       <div class="pcard nxc" id="pvR"><div class="dot n"></div><div class="pbody"><div class="hd n" id="pvRh"></div><div class="t" id="pvRt"></div></div><div class="q n" id="pvRq"></div></div>
       <div class="pcard nxc" id="pvT"><div class="dot n"></div><div class="pbody"><div class="hd n" id="pvTh"></div><div class="t" id="pvTt"></div></div><div class="q n" id="pvTq"></div></div>
+      <div class="pcard nxc" id="pvA"><div class="dot n"></div><div class="pbody"><div class="hd n" id="pvAh"></div><div class="t" id="pvAt"></div></div><div class="q n" id="pvAq"></div></div>
     </div>
   </div>
 
@@ -259,7 +271,7 @@ h1 .g{color:var(--acc)}
   var SRVS=[["miami","Miami","Primary · always-on workhorse"],["boise","Boise","Primary · up to 4K"],["atlanta","Atlanta","Primary · official subtitles"],["phoenix","Phoenix","Extra · 1080p mirror"],["dallas","Dallas","Extra · Auto-HLS feed"],["austin","Austin","Extra · audio variants (Hindi/English)"],["seattle","Seattle","Backup · Auto-HLS feed"],["delhi","Delhi","Extra · multi-audio (Hindi/English)"],["munich","Munich","Extra · 1080p (EU)"],["paris","Paris","Extra · always-on single feed"],["orlando","Orlando","Extra · 1080p feed"],["reno","Reno","Extra · Auto-HLS feed"],["oakland","Oakland","Extra · Auto-HLS feed"],["vegas","Vegas","Extra · Vidara feed"],["cancun","Cancun","Extra · Vimeos feed"],["tampa","Tampa","Extra · Auto-HLS feed"]];
   var LANGS=[["original","Original"],["english","English"],["hindi","Hindi"],["spanish","Spanish"],["russian","Russian"],["japanese","Japanese"],["tamil","Tamil"],["portuguese","Portuguese (BR)"],["french","French"],["german","German"],["korean","Korean"],["arabic","Arabic"]];
 
-  var st={ v:1, q:[], sub:1, srv:SRVS.map(function(x){return x[0];}), nx:1, nxq:[], nxl:[], rt:1, rtl:[], tw:1, twq:[] };
+  var st={ v:1, q:[], sub:1, srv:SRVS.map(function(x){return x[0];}), nx:1, nxq:[], nxl:[], rt:1, rtl:[], tw:1, twq:[], aw:1 };
 
   function b64u(o){return btoa(unescape(encodeURIComponent(JSON.stringify(o)))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');}
   function base(){return location.origin;}
@@ -281,6 +293,7 @@ h1 .g{color:var(--acc)}
     else if(st.rtl.length)c.rtl=st.rtl.slice();
     if(st.tw===0)c.tw=0;
     else if(st.twq.length)c.twq=st.twq.slice();
+    if(st.aw===0)c.aw=0;
     var u=base()+(Object.keys(c).length?'/cfg/'+b64u(c):'')+'/manifest.json';
     document.getElementById('url').value=u;
     document.getElementById('inst').href='stremio://'+u.replace(/^https?:\/\//,'');
@@ -311,6 +324,10 @@ h1 .g{color:var(--acc)}
     document.getElementById('pvTh').textContent='\u25a5 1080 \u25a5';
     document.getElementById('pvTt').textContent='\u29c9 Scarlet | 2025 |\n\u29e0 Movie\n\u229e ToonWorld \u2317 Multi Audio';
     document.getElementById('pvTq').textContent=st.twq.length?st.twq.slice().sort(function(a,b){return b-a;}).join(', '):'All';
+    document.getElementById('pvA').style.display=st.aw?'':'none';
+    document.getElementById('pvAh').textContent='\u25a5 1080 \u25a5';
+    document.getElementById('pvAt').textContent='\u29c9 Dandadan | 2024 |\n\u29e0 S1E5 \u2022 Episode Title\n\u229e AnimeWorld \u00b7 AW-HLS \u2317 Multi-Dub';
+    document.getElementById('pvAq').textContent='1080p';
   }
 
   /* resolution chips factory (per source) */
@@ -425,6 +442,13 @@ h1 .g{color:var(--acc)}
   };
 
   /* raretoons master switch */
+  var swA=document.getElementById('swA'), cardA=document.getElementById('cardA');
+  swA.onclick=function(){
+    st.aw=st.aw?0:1;
+    swA.classList.toggle('on',!!st.aw);
+    cardA.classList.toggle('off',!st.aw);
+    rebuild();
+  };
   var swR=document.getElementById('swR'), cardR=document.getElementById('cardR');
   swR.onclick=function(){
     st.rt=st.rt?0:1;
