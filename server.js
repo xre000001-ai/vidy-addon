@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.57';
+const VERSION = '1.15.59';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -542,9 +542,14 @@ function getSeed(tmdbId, force) {
     // v1.15.7 (ইউজার-নির্দেশ, MovieBox-মডেল): টোকেন/সিড **পুল-থেকেই** — sticky-px-এ-পরের-সব-পথ-কল-ও-পুলে;
     // প্লে-সবসময়-ইউজারের-নিজ-IP-তে। পুল-শূন্য/সর্বমৃত-হলে-শেষ-ভরসা direct (কখনো-ভাঙবে-না)
     try {
-      let wbody = '';
-      if (HUB) wbody = await hubText(url, 9000, 'api'); // v1.15.57: হাব-পুল-আগে
-      let wpx = 'hub';
+      let wbody = ''; let wpx = '';
+      if (HUB) { // v1.15.59: হাব-আঁকা — হাব-যে-px-দিয়ে-seed-আনল সেটাই-ফেরত (পরের-সোর্স-কল-ও-সেই-px-ই — seed-IP-বাঁধন; প্রমাণ: ভিন্ন-px-এ-'decrypt failed: bad seed')
+        try {
+          const r = await fetch(HUB + '/fetch?src=api&ms=9000&url=' + encodeURIComponent(url), { signal: AbortSignal.timeout(10500) });
+          const j2 = await r.json().catch(() => null);
+          if (j2 && j2.ok) { wbody = String(j2.body || ''); wpx = 'hub:' + String(j2.px || ''); }
+        } catch { }
+      }
       if (!wbody) { const w = await racePool(url, 5, 9000, 'api'); wbody = w.body; wpx = w.px; } // v1.15.56: vidy-seed-স্পেস
       const j = JSON.parse(wbody);
       if (!j.seed) throw new Error('seed-empty-proxy');
@@ -562,7 +567,8 @@ function getSeed(tmdbId, force) {
   return p;
 }
 function pathGet(url, via, px, timeoutMs) {
-  if (via === 'proxy' && HUB) return hubText(url, timeoutMs, 'api').then(t => { if (!t) throw new Error('hub-empty'); return t; }).catch(() => directGet(url, timeoutMs)); // v1.15.57: হাব-পথ — হাব-মরলে-সরাসরি ('পুল-শূন্য→সরাসরি'-নীতি-অনুরূপ)
+  if (via === 'proxy' && HUB && px && String(px).indexOf('hub:') === 0) return hubText(url, timeoutMs, 'api', String(px).slice(4)).then(t => { if (!t) throw new Error('hub-empty'); return t; }).catch(() => directGet(url, timeoutMs)); // v1.15.59: হাব-স্টিকি-px — seed-ও-সোর্স-এক-px-ই (ডিক্রিপ্ট-ভাঙা-বন্ধ); হাব-মরলে-সরাসরি
+  if (via === 'proxy' && HUB) return hubText(url, timeoutMs, 'api').then(t => { if (!t) throw new Error('hub-empty'); return t; }).catch(() => directGet(url, timeoutMs)); // v1.15.57: হাব-পথ
   return via === 'proxy' && px ? proxiedGet(px, url, timeoutMs) : directGet(url, timeoutMs);
 }
 // v1.15.5 রাউন্ড-২ (ইউজার: সব-সোর্স-পুল-না-হলে-IP-flag-ঝুঁকি): সুখপথে-direct (শূন্য-দেরি); ৪২৯/৪০৩/৫xx/নেট-ত্রুটিতে-
@@ -581,10 +587,20 @@ function pooledGet(url, timeoutMs, n) {
 const DBG = !!process.env.VDBG; // সব-debug-লগ-এই-এক-ফ্ল্যাগে-গেটেড (VDBG=1-এ-চালু)
 // v1.15.57 PoolHub-মোড (ইউজার-নকশা: ইউনিভার্সাল-পুল-আলাদা-সার্ভিস+API): POOLHUB=http://host:port দিলে-vidy-র-প্রক্সি-চাহিদা-আগে-হাবের-/fetch-এ; হাব-মরলে/না-দিলে-আগের-স্থানীয়-পুল-পথ-অক্ষত
 const HUB = String(process.env.POOLHUB || '').replace(/\/$/, '');
-async function hubText(url, ms, src) {
+// v1.15.58 (ইউজার-নকশা): সোর্স-ঘোষিত-শর্ত — vidy-বুটে-নিজের-প্রতিটা-সোর্সের-কন্ডিশন-হাবে-নিবন্ধন-করে; হাব-তখন-সব-প্রক্সিকে-এই-শর্তে-বেঞ্চ-করে-পাস-কে-ওই-স্পেসে-জমায় (এক-প্রক্সি-বহু-সোর্সে-পার-হলে-সব-স্পেসে)
+if (HUB) {
+  const PX_DECL = {
+    site: { url: 'https://www.vidy.st/robots.txt', min: 80 },
+    api: { url: API + '/seed?mediaId=95350', min: 30, contains: '"seed"' },
+    vb: { url: 'https://vidbolt.xyz/api/resolve?type=tv&id=1&season=1&episode=1', min: 5 },
+    wo: { url: 'https://raw.githubusercontent.com/Watchout2025/api/refs/heads/main/hls/tv/1/S1.json', min: 20 }
+  };
+  setTimeout(() => { for (const sk of Object.keys(PX_DECL)) fetch(HUB + '/register', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(Object.assign({ src: sk }, PX_DECL[sk])) }).catch(() => { }); }, 2500);
+}
+async function hubText(url, ms, src, px) { // v1.15.59: px-দিলে-স্টিকি (হাব-একই-px-দিয়ে-একক-কল — seed-IP-বাঁধন-রক্ষা)
   if (!HUB) return '';
   try {
-    const r = await fetch(HUB + '/fetch?src=' + encodeURIComponent(src || 'api') + '&ms=' + Math.min(12000, ms || 8000) + '&url=' + encodeURIComponent(url), { signal: AbortSignal.timeout(Math.min(13000, (ms || 8000) + 1500)) });
+    const r = await fetch(HUB + '/fetch?src=' + encodeURIComponent(src || 'api') + (px ? '&px=' + encodeURIComponent(px) : '') + '&ms=' + Math.min(12000, ms || 8000) + '&url=' + encodeURIComponent(url), { signal: AbortSignal.timeout(Math.min(13000, (ms || 8000) + 1500)) });
     const j = await r.json().catch(() => null);
     return j && j.ok ? String(j.body || '') : '';
   } catch { return ''; }
