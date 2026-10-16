@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.44';
+const VERSION = '1.15.45';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -943,7 +943,7 @@ async function woSubs(tmdb, type, s, e, ms) { // sub/tv/{id}/{s}/{e}/subtitles.j
 async function woVidbolt(tmdbId, isSeries, s, e, ms) { // v1.15.41: MultiMovies-এর-বিশাল-লাইব্রেরির-চাবি — vidbolt-TMDB-রেজলভার (JSON→m3u8, সার্ভার-বান্ধব প্রমাণিত)
   try {
     const q = isSeries ? ('type=tv&id=' + tmdbId + '&season=' + (parseInt(s, 10) || 1) + '&episode=' + (parseInt(e, 10) || 1)) : ('type=movie&id=' + tmdbId);
-    const jtxt = await woPoolText('https://vidbolt.xyz/api/resolve?' + q, Math.min(6500, ms || 6500)); // v1.15.43: পুল-প্রথম
+    const jtxt = await woPoolText('https://vidbolt.xyz/api/resolve?' + q, Math.min(6500, ms || 6500)); // v1.15.44: সরাসরি-প্রথম, ভিডি-পুল-উদ্ধারে (vidbolt-রেফারারহীন-চলে → পুল-জিততে-পারে)
     let j = null; try { j = jtxt ? JSON.parse(jtxt) : null; } catch { } // ভাঙা-JSON→null (নিরাপদ)
     if (!j) return [];
     const srcs = (j && j.stream && j.stream.sources) || [];
@@ -952,7 +952,7 @@ async function woVidbolt(tmdbId, isSeries, s, e, ms) { // v1.15.41: MultiMovies-
       const u = sc && sc.url;
       if (!u || !/^https?:/.test(u)) continue;
       try {
-        const pl = await woPoolText(u, Math.min(5500, ms || 5500)); // v1.15.42: শেয়ার্ড-পুল
+        const pl = await woPoolText(u, Math.min(5500, ms || 5500)); // v1.15.44: সরাসরি-প্রথম, পুল-উদ্ধারে (vidbolt-only — পুল-জয়-সম্ভব)
         if (!pl || pl.indexOf('#EXTM') < 0) continue;
         let base = u; try { base = new URL(u).href.replace(/[^/]*$/, ''); } catch { }
         const lines = pl.split('\n');
@@ -980,7 +980,8 @@ async function woStreams(tmdbId, title, type, s, e, cfg) { // TMDB-আইডি-
     const isSeries = type === 'series';
     const u = isSeries ? (WOBASE + '/hls/tv/' + tmdbId + '/S' + (parseInt(s, 10) || 1) + '.json') : (WOBASE + '/hls/movie/' + tmdbId);
     const vbP = woVidbolt(tmdbId, isSeries, s, e, left()).catch(() => []); // v1.15.41: সমান্তরাল — সূচি-থাকুক-বা-না-থাকুক
-    const idxTxt = await woPoolText(u, left()); // v1.15.43: পুল-প্রথম
+    const idxRes = await woFetch(u, left()).catch(() => null); // v1.15.45: সরাসরি-woFetch(WO_REF) — vidout-সূচি-পথে-হেডারহীন-পুল-রেস-৪০৪-নিশ্চিত-ব্যর্থ (রেফারার-বাধ্যতামূলক, পুনঃপ্রমাণিত) — বৃথা-প্রোব+pxRec-শাস্তি-বন্ধ
+    const idxTxt = idxRes && idxRes.ok ? await idxRes.text().catch(() => '') : '';
     const r0ok = !!idxTxt;
     let servers = [];
     if (r0ok) {
@@ -994,7 +995,7 @@ async function woStreams(tmdbId, title, type, s, e, cfg) { // TMDB-আইডি-
       }
     }
     servers = servers.slice(0, 6);
-    const lists = servers.length ? await Promise.all(servers.map(su => woPoolText(su, Math.min(6500, left())))) : []; // v1.15.42: শেয়ার্ড-পুল; শূন্য-সূচি=শূন্য-তালিকা — vidbolt-ই-কার্ড-দেবে
+    const lists = servers.length ? await Promise.all(servers.map(su => woFetch(su, Math.min(6500, left())).then(x => x.ok ? x.text() : '').catch(() => ''))) : []; // v1.15.45: সরাসরি-woFetch(WO_REF) (.41-প্রমাণিত); শূন্য-সূচি=শূন্য-তালিকা — vidbolt-ই-কার্ড-দেবে
     const woq = Array.isArray(cfg && cfg.woq) ? cfg.woq : [];
     const seen = new Set(); const raws = [];
     for (let i = 0; i < lists.length; i++) {
