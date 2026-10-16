@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.56';
+const VERSION = '1.15.57';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -542,10 +542,13 @@ function getSeed(tmdbId, force) {
     // v1.15.7 (ইউজার-নির্দেশ, MovieBox-মডেল): টোকেন/সিড **পুল-থেকেই** — sticky-px-এ-পরের-সব-পথ-কল-ও-পুলে;
     // প্লে-সবসময়-ইউজারের-নিজ-IP-তে। পুল-শূন্য/সর্বমৃত-হলে-শেষ-ভরসা direct (কখনো-ভাঙবে-না)
     try {
-      const w = await racePool(url, 5, 9000, 'api'); // v1.15.56: vidy-seed-স্পেস
-      const j = JSON.parse(w.body);
+      let wbody = '';
+      if (HUB) wbody = await hubText(url, 9000, 'api'); // v1.15.57: হাব-পুল-আগে
+      let wpx = 'hub';
+      if (!wbody) { const w = await racePool(url, 5, 9000, 'api'); wbody = w.body; wpx = w.px; } // v1.15.56: vidy-seed-স্পেস
+      const j = JSON.parse(wbody);
       if (!j.seed) throw new Error('seed-empty-proxy');
-      seedCache = { key: tmdbId, seed: j.seed, via: 'proxy', px: w.px, ts: Date.now() };
+      seedCache = { key: tmdbId, seed: j.seed, via: 'proxy', px: wpx, ts: Date.now() };
       return seedCache;
     } catch (e) {
       const b = await directGet(url, 6000);
@@ -559,6 +562,7 @@ function getSeed(tmdbId, force) {
   return p;
 }
 function pathGet(url, via, px, timeoutMs) {
+  if (via === 'proxy' && HUB) return hubText(url, timeoutMs, 'api').then(t => { if (!t) throw new Error('hub-empty'); return t; }).catch(() => directGet(url, timeoutMs)); // v1.15.57: হাব-পথ — হাব-মরলে-সরাসরি ('পুল-শূন্য→সরাসরি'-নীতি-অনুরূপ)
   return via === 'proxy' && px ? proxiedGet(px, url, timeoutMs) : directGet(url, timeoutMs);
 }
 // v1.15.5 রাউন্ড-২ (ইউজার: সব-সোর্স-পুল-না-হলে-IP-flag-ঝুঁকি): সুখপথে-direct (শূন্য-দেরি); ৪২৯/৪০৩/৫xx/নেট-ত্রুটিতে-
@@ -575,6 +579,16 @@ function pooledGet(url, timeoutMs, n) {
 // vidy servers + NetHex (MovieBox direct-MP4) run in parallel; NetHex cards (♧, distinct style)
 // are appended after the vidy cards. Any NetHex failure/timeout/slow = vidy cards alone, never an error.
 const DBG = !!process.env.VDBG; // সব-debug-লগ-এই-এক-ফ্ল্যাগে-গেটেড (VDBG=1-এ-চালু)
+// v1.15.57 PoolHub-মোড (ইউজার-নকশা: ইউনিভার্সাল-পুল-আলাদা-সার্ভিস+API): POOLHUB=http://host:port দিলে-vidy-র-প্রক্সি-চাহিদা-আগে-হাবের-/fetch-এ; হাব-মরলে/না-দিলে-আগের-স্থানীয়-পুল-পথ-অক্ষত
+const HUB = String(process.env.POOLHUB || '').replace(/\/$/, '');
+async function hubText(url, ms, src) {
+  if (!HUB) return '';
+  try {
+    const r = await fetch(HUB + '/fetch?src=' + encodeURIComponent(src || 'api') + '&ms=' + Math.min(12000, ms || 8000) + '&url=' + encodeURIComponent(url), { signal: AbortSignal.timeout(Math.min(13000, (ms || 8000) + 1500)) });
+    const j = await r.json().catch(() => null);
+    return j && j.ok ? String(j.body || '') : '';
+  } catch { return ''; }
+}
 process.on('unhandledRejection', e => { if (DBG) console.error('[urej] ' + String((e && (e.stack || e.message)) || e).slice(0, 160)); }); // v1.15.6 রাউন্ড-৪৩: স্ট্রে-promise-রিজেকশন-এ-প্রসেস-মরা-বন্ধ (Node-১৫+ ডিফল্ট-ক্র্যাশ) — লগ-অনলি, পরিষেবা-চলতে-থাকে
 let UCEX = 0; // v1.15.36: ধরা-না-পড়া-এক্সেপশন-গণক (/_health-এ-স্বচ্ছ)
 process.on('uncaughtException', e => { UCEX++; try { if (DBG) console.error('[ucex#' + UCEX + '] ' + String((e && (e.stack || e.message)) || e).slice(0, 200)); } catch {} }); // v1.15.36: স্ট্রে-সিঙ্ক্রোনাস-বিপর্যয়েও-পরিষেবা-মরবে-না (Node-ডিফল্ট=ক্র্যাশ) — লগ+গণনা, স্টেট-অক্ষত-ধরে-চলতে-থাকে
@@ -1024,7 +1038,9 @@ function woPoolText(url, ms) { // v1.15.44: সরাসরি-প্রথম; 
   const T = ms || 7000;
   return fetch(url, { headers: { 'User-Agent': UA, Referer: VB_REF }, signal: AbortSignal.timeout(Math.ceil(T * 0.55)) }).then(x => x.ok ? x.text() : '').catch(() => '').then(t => {
     if (t) return t;
-    return racePool(url, 4, Math.ceil(T * 0.4), String(url).indexOf('vidbolt') >= 0 ? 'vb' : 'wo').then(r => String(r.body || '')).catch(() => ''); // v1.15.56: vidbolt/vidout-নিজ-নিজ-স্পেস
+    const sk = String(url).indexOf('vidbolt') >= 0 ? 'vb' : 'wo';
+    if (HUB) return hubText(url, T, sk).then(h2 => h2 || racePool(url, 4, Math.ceil(T * 0.4), sk).then(r => String(r.body || '')).catch(() => '')).catch(() => ''); // v1.15.57: হাব-পুল-আগে → স্থানীয়-রেস-ফলব্যাক
+    return racePool(url, 4, Math.ceil(T * 0.4), sk).then(r => String(r.body || '')).catch(() => '');
   });
 }
 function woFetch(url, ms) {
