@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.41';
+const VERSION = '1.15.42';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -920,6 +920,13 @@ async function twrFetch(base, tag, title, type, s, e, t3) {
 const WOBASE = String(process.env.WOBASE || 'https://raw.githubusercontent.com/Watchout2025/api/refs/heads/main'); // স্ট্রিম-সূচি (মুভি: hls/movie/{tmdb}, টিভি: hls/tv/{tmdb}/S{n}.json); লোকাল-টেস্ট: WOBASE=http://127.0.0.1:8320
 const WO_REF = 'https://vidout.pages.dev/'; // গোপন-চাবি: এই-Referer-ই স্ট্রিম-CDN-খোলে (না-দিলে-404)
 const WO_LANGS = { eng: 'English', en: 'English', hin: 'Hindi', hi: 'Hindi', ara: 'Arabic', fra: 'French', spa: 'Spanish', por: 'Portuguese', rus: 'Russian', zho: 'Chinese', ben: 'Bengali', tam: 'Tamil', tel: 'Telugu' };
+function woPoolText(url, ms) { // v1.15.42: সরাসরি-বনাম-শেয়ার্ড-পুল-একসাথে-রেস — যে-আগে-সত্যিকারের-লেখা-আনে-সে-জেতে; পুল=রক্ষাকবচ (r86: POOL-ই, আলাদা-পুল-নয়)
+  const T = ms || 7000;
+  const directP = fetch(url, { headers: { 'User-Agent': UA, Referer: 'https://vidbolt.xyz/' }, signal: AbortSignal.timeout(Math.ceil(T * 0.8)) }).then(x => x.ok ? x.text() : '').catch(() => '').then(t => t ? t : new Promise(() => { })); // খালি=জেতা-নিষেধ — সত্যিকারের-লেখা-ছাড়া-রেস-শেষ-নয়
+  const poolP = racePool(url, 4, Math.ceil(T * 0.8)).then(r => { const b = String(r.body || ''); return b ? b : new Promise(() => { }); }).catch(() => new Promise(() => { })); // পুলের-খালি-জবাবও-জেতা-নিষেধ
+  const guard = new Promise(res => setTimeout(() => res(''), Math.ceil(T * 0.9))); // দুটোই-ফেলে-ঝুলবে-না
+  return Promise.race([directP, poolP, guard]);
+}
 function woFetch(url, ms) {
   return fetch(url, { headers: { 'User-Agent': UA, Referer: WO_REF, Accept: '*/*' }, signal: AbortSignal.timeout(ms || 7000) });
 }
@@ -936,19 +943,17 @@ async function woSubs(tmdb, type, s, e, ms) { // sub/tv/{id}/{s}/{e}/subtitles.j
 async function woVidbolt(tmdbId, isSeries, s, e, ms) { // v1.15.41: MultiMovies-এর-বিশাল-লাইব্রেরির-চাবি — vidbolt-TMDB-রেজলভার (JSON→m3u8, সার্ভার-বান্ধব প্রমাণিত)
   try {
     const q = isSeries ? ('type=tv&id=' + tmdbId + '&season=' + (parseInt(s, 10) || 1) + '&episode=' + (parseInt(e, 10) || 1)) : ('type=movie&id=' + tmdbId);
-    const r = await fetch('https://vidbolt.xyz/api/resolve?' + q, { headers: { 'User-Agent': UA, Referer: 'https://vidbolt.xyz/', Accept: 'application/json' }, signal: AbortSignal.timeout(Math.min(6500, ms || 6500)) });
-    if (!r.ok) return [];
-    const j = await r.json().catch(() => null);
+    const jtxt = await woPoolText('https://vidbolt.xyz/api/resolve?' + q, Math.min(6500, ms || 6500)); // v1.15.42: শেয়ার্ড-পুল
+    let j = null; try { j = jtxt ? JSON.parse(jtxt) : null; } catch { } // ভাঙা-JSON→null (নিরাপদ)
+    if (!j) return [];
     const srcs = (j && j.stream && j.stream.sources) || [];
     const out = [];
     for (const sc of srcs.slice(0, 2)) {
       const u = sc && sc.url;
       if (!u || !/^https?:/.test(u)) continue;
       try {
-        const pr = await fetch(u, { headers: { 'User-Agent': UA, Referer: 'https://vidbolt.xyz/' }, signal: AbortSignal.timeout(Math.min(5500, ms || 5500)) });
-        if (!pr.ok) continue;
-        const pl = await pr.text();
-        if (pl.indexOf('#EXTM') < 0) continue;
+        const pl = await woPoolText(u, Math.min(5500, ms || 5500)); // v1.15.42: শেয়ার্ড-পুল
+        if (!pl || pl.indexOf('#EXTM') < 0) continue;
         let base = u; try { base = new URL(u).href.replace(/[^/]*$/, ''); } catch { }
         const lines = pl.split('\n');
         let found = 0;
@@ -975,19 +980,21 @@ async function woStreams(tmdbId, title, type, s, e, cfg) { // TMDB-আইডি-
     const isSeries = type === 'series';
     const u = isSeries ? (WOBASE + '/hls/tv/' + tmdbId + '/S' + (parseInt(s, 10) || 1) + '.json') : (WOBASE + '/hls/movie/' + tmdbId);
     const vbP = woVidbolt(tmdbId, isSeries, s, e, left()).catch(() => []); // v1.15.41: সমান্তরাল — সূচি-থাকুক-বা-না-থাকুক
-    const r0 = await woFetch(u, left());
-    if (!r0.ok && DBG) console.error('[wo] সূচি-নেই ' + tmdbId + '/' + type + ' http_' + r0.status + ' → vidbolt-ই'); // v1.15.41: শূন্য-নয় — vidbolt-কভারেজ
+    const idxTxt = await woPoolText(u, left()); // v1.15.42: শেয়ার্ড-পুল
+    const r0ok = !!idxTxt;
     let servers = [];
-    if (isSeries) {
-      const d = await r0.json().catch(() => null);
-      const ep = String(parseInt(e, 10) || 1);
-      if (d && typeof d[ep] === 'string') servers = [d[ep]]; // হুবহু-পর্বই — ভুল-পর্ব-নয় (সৎ)
-    } else {
-      const txt = (await r0.text()).trim();
-      if (txt && /^https?:/.test(txt)) servers = [txt.split('\n')[0].trim()];
+    if (r0ok) {
+      if (isSeries) {
+        const d = (() => { try { return JSON.parse(idxTxt); } catch { return null; } })();
+        const ep = String(parseInt(e, 10) || 1);
+        if (d && typeof d[ep] === 'string') servers = [d[ep]]; // হুবহু-পর্বই — ভুল-পর্ব-নয় (সৎ)
+      } else {
+        const txt = idxTxt.trim();
+        if (txt && /^https?:/.test(txt)) servers = [txt.split('\n')[0].trim()];
+      }
     }
     servers = servers.slice(0, 6);
-    const lists = servers.length ? await Promise.all(servers.map(su => woFetch(su, Math.min(6500, left())).then(x => x.ok ? x.text() : '').catch(() => ''))) : []; // v1.15.41: শূন্য-সূচি=শূন্য-তালিকা — vidbolt-ই-কার্ড-দেবে
+    const lists = servers.length ? await Promise.all(servers.map(su => woPoolText(su, Math.min(6500, left())))) : []; // v1.15.42: শেয়ার্ড-পুল; শূন্য-সূচি=শূন্য-তালিকা — vidbolt-ই-কার্ড-দেবে
     const woq = Array.isArray(cfg && cfg.woq) ? cfg.woq : [];
     const seen = new Set(); const raws = [];
     for (let i = 0; i < lists.length; i++) {
@@ -1009,30 +1016,30 @@ async function woStreams(tmdbId, title, type, s, e, cfg) { // TMDB-আইডি-
       if (!found && /#EXTINF/.test(pl) && !seen.has(servers[i])) { seen.add(servers[i]); raws.push({ h: 0, url: servers[i] }); } // মাস্টার-ই-মিডিয়া-প্লেলিস্ট
     }
     try { const vbl = await vbP; for (const v of (vbl || [])) if (v && v.url && !seen.has(v.url)) { seen.add(v.url); raws.push(v); } } catch { } // v1.15.41: vidbolt-ভেরিয়েন্ট-মেশানো
-        if (DBG) console.error('[wo] ' + tmdbId + '/' + (isSeries ? 'S' + (s || 1) + 'E' + (e || 1) : 'movie') + ' সার্ভার=' + servers.length + ' ভেরিয়েন্ট=' + raws.length + ' @' + (Date.now() - t3) + 'ms');
+        if (DBG) console.error('[mm] ' + tmdbId + '/' + (isSeries ? 'S' + (s || 1) + 'E' + (e || 1) : 'movie') + ' সার্ভার=' + servers.length + ' ভেরিয়েন্ট=' + raws.length + ' @' + (Date.now() - t3) + 'ms');
     let vars = raws.filter(x => !woq.length || woq.indexOf(x.h) >= 0);
     vars.sort((a, b) => b.h - a.h);
     vars = vars.slice(0, 12);
     if (!vars.length) return [];
     const subs = await woSubs(tmdbId, type, s, e, left()).catch(() => []);
-    const T = String(title || 'Watchout');
+    const T = String(title || 'Multimovies');
     const epLine = isSeries ? ('\u29e0 S' + (parseInt(s, 10) || 1) + 'E' + (parseInt(e, 10) || 1)) : '\u29e0 Movie';
     return vars.map(x => {
       const q2 = x.h ? String(x.h) : 'HLS';
-      const txt = '\u29c9 ' + T + '\n' + epLine + '\n\u229e Watchout \u00b7 WO-HLS \u2317 Multi Audio' + (subs.length ? ' \u2022 \ud83c\udfac' : '');
+      const txt = '\u29c9 ' + T + '\n' + epLine + '\n\u229e Multimovies \u00b7 MM-HLS \u2317 Multi Audio' + (subs.length ? ' \u2022 \ud83c\udfac' : '');
       return {
         name: '\u25a5 ' + q2 + ' \u25a5',
         title: txt,
         description: txt,
         quality: q2,
         url: x.url,
-        behaviorHints: { notWebReady: false, isBingeable: true, filename: 'watchout.m3u8', proxyHeaders: { request: { Referer: x.ref || WO_REF, 'User-Agent': UA } } }, // v1.15.41: প্রতি-সার্ভার-নিজের-রেফারার
-        bingeGroup: 'wo|' + T.toLowerCase() + '::|Multi',
+        behaviorHints: { notWebReady: false, isBingeable: true, filename: 'multimovies.m3u8', proxyHeaders: { request: { Referer: x.ref || WO_REF, 'User-Agent': UA } } }, // v1.15.41: প্রতি-সার্ভার-নিজের-রেফারার
+        bingeGroup: 'mm|' + T.toLowerCase() + '::|Multi',
         ...(subs.length ? { subtitles: subs.map(y => ({ url: y.url, lang: y.lang })) } : {})
       };
     });
   } catch (e2) {
-    if (DBG) console.error('[wo] ERR ' + String(e2 && e2.message).slice(0, 70) + ' @' + (Date.now() - t3) + 'ms');
+    if (DBG) console.error('[mm] ERR ' + String(e2 && e2.message).slice(0, 70) + ' @' + (Date.now() - t3) + 'ms');
     return [];
   }
 }
