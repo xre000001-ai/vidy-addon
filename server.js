@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.59';
+const VERSION = '1.15.60';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -593,7 +593,11 @@ if (HUB) {
     site: { url: 'https://www.vidy.st/robots.txt', min: 80 },
     api: { url: API + '/seed?mediaId=95350', min: 30, contains: '"seed"' },
     vb: { url: 'https://vidbolt.xyz/api/resolve?type=tv&id=1&season=1&episode=1', min: 5 },
-    wo: { url: 'https://raw.githubusercontent.com/Watchout2025/api/refs/heads/main/hls/tv/1/S1.json', min: 20 }
+    wo: { url: 'https://raw.githubusercontent.com/Watchout2025/api/refs/heads/main/hls/tv/1/S1.json', min: 20 },
+    // v1.15.60 (ইউজার-পরিকল্পনা §5: প্রতি-অ্যাপের-ভিন্ন-শর্ত, টার্গেট-সাইটের-বিরুদ্ধে-যাচাই): tw/rt/mb-আসল-শর্ত — স্থানধারক-bench-বাদ
+    tw: { url: 'https://toonworld4all.me/robots.txt', min: 100, contains: 'wp-admin' }, // টুনওয়ার্ল্ড৪অল-আসল-টার্গেট+WordPress-স্বাক্ষর (robots=120B)
+    rt: { url: 'https://www.rareanimes.mov/robots.txt', min: 100, contains: 'wp-admin' }, // রেয়ারটুনস-ক্রলার-টার্গেট+স্বাক্ষর (crawler.py; robots=116B)
+    mb: { url: 'https://movieboxonline.net/robots.txt', min: 250, contains: 'Allow: /' } // মুভিবক্স-চাইল্ড-টার্গেট+স্বাক্ষর (robots=313B)
   };
   setTimeout(() => { for (const sk of Object.keys(PX_DECL)) fetch(HUB + '/register', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(Object.assign({ src: sk }, PX_DECL[sk])) }).catch(() => { }); }, 2500);
 }

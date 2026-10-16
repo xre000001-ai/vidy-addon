@@ -2,7 +2,8 @@ import http from 'node:http';
 import fs from 'node:fs';
 import { run as search } from './mb-lib/search.js';
 import { run as runMatrix } from './mb-lib/episode-matrix.js';
-import { fetch as directFetch } from 'undici';   // Cinemeta only
+let directFetch = (...a) => fetch(...a);            // v1.15.60: প্রথমে-Node-নিজস্ব-fetch (নির্ভরতা-মুক্ত-বুট)
+try { ({ fetch: directFetch } = await import('undici')); } catch { } // undici-থাকলে-সেটাই (beamup-এ-ইনস্টল-হয়); না-থাকলে-ও-চলে (Cinemeta-মাত্র)
 import { apiFetch } from './mb-lib/http.js';
 import { poolStart, poolStats, checkerStats } from './mb-lib/pool.js';
 

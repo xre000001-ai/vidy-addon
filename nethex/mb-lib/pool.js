@@ -18,7 +18,8 @@
 //   - fetchJsonRotating(): the retry-until-REAL-empty transport — each
 //     attempt goes through a DIFFERENT exit; the CALLER decides what an
 //     honest empty is (content-driven), this layer only rotates exits
-import { fetch as undiciFetch, ProxyAgent } from 'undici';
+let undiciFetch = (...a) => fetch(...a), ProxyAgent = null; // v1.15.60: undici-অনুপস্থিতিতেও-বুট-হয় (নির্ভরতা-মুক্ত-ফলব্যাক)
+try { ({ fetch: undiciFetch, ProxyAgent } = await import('undici')); } catch { } // থাকলে-আসল-undici (beamup-এ-স্বাভাবিক)
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import { SITE, UA } from './upstream.js';
@@ -41,6 +42,7 @@ let TS = 0;
 let FETCHING = false;
 
 function agentFor(u) {
+  if (!ProxyAgent) throw new Error('pool-cold'); // v1.15.60: undici-নেই=প্রক্সি-ডিসপ্যাচ-অসম্ভব — সৎ-ব্যর্থতা (সরাসরি-server-IP-প্ল্যাটফর্ম-কল-কখনো-নয়)
   let a = AGENTS.get(u);
   if (!a) { a = new ProxyAgent(u); AGENTS.set(u, a); }
   return a;
