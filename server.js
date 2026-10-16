@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.48';
+const VERSION = '1.15.49';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -933,30 +933,33 @@ function woAudioTag(pl) { // v1.15.47: সত্য-অডিও-দাবি �
   return '';
 }
 const MM_MINI = new Map(); // v1.15.48: কী → {m,ref,h,at} — মিনি-মাস্টার-নির্মাণ-প্যারাম (প্রতি-গুণমান-আলাদা-কার্ড; এন্ডপয়েন্ট-প্রতিবার-উজ্জ্বল-ফেচে-নেয় — স্ট্রিম-ক্যাশ-নয়)
-function mmMiniKey(m, ref, h) { // v1.15.48
+function mmMiniKey(m, ref, h, vbq) { // v1.15.49: +vbq (তাটা-রেজলভ-প্রশ্ন — প্রতি-অনুরোধে-উজ্জ্বল-স্বাক্ষর)
   const k = Buffer.from(m + '|' + (h | 0)).toString('base64url');
-  MM_MINI.set(k, { m: m, ref: ref || WO_REF, h: h | 0, at: Date.now() });
+  MM_MINI.set(k, { m: m, ref: ref || WO_REF, h: h | 0, at: Date.now(), vbq: vbq || '' });
   if (MM_MINI.size > 600) { const cut = Date.now() - 21600e3; for (const [kk, vv] of MM_MINI) if (vv.at < cut) MM_MINI.delete(kk); } // ৬ঘ-বয়সী-বাদ (কার্ড-ক্যাশ ৩০মি-এর-চেয়ে-দীর্ঘ-রাখা-নিরাপদ)
   if (MM_MINI.size > 900) { const arr = [...MM_MINI.entries()].sort((a, b) => a[1].at - b[1].at).slice(0, MM_MINI.size - 600); for (const [kk] of arr) MM_MINI.delete(kk); } // বয়সে-কাটে-না-হলে-পুরনোতম-বাদ (মেমো-সীমা)
   return k;
 }
-function mmMiniBuild(masterUrl, wantH, raw) { // v1.15.48: এক-গুণমানের-মিনি-মাস্টার — অডিও/সাব/KEY/MAP-URI-সব-পরম (মাস্টার-প্রসঙ্গ) — প্লেয়ারে-রেজোলিউশন-আটকানো-যায়, অডিও-অক্ষত
-  const L = String(raw).split('\n'); const out = []; let kept = 0;
+function mmMiniBuild(masterUrl, wantH, raw) { // v1.15.49: সব-গুণমান-থাকে (প্লেয়ার-মেনুতে-বদলানো-যায় — ইউজার-প্রমাণ: এক-ভেরিয়েন্ট-মিনিতে-অপশন-ই-নেই), চাওয়া-গুণমান-প্রথমে (শুরু-সেটাই); অডিও/সাব/KEY/MAP-URI-সব-পরম
+  const L = String(raw).split('\n'); const tags = []; const vars = [];
   for (let i = 0; i < L.length; i++) {
     let ln = L[i];
-    if (ln.charAt(0) === '#' && /EXT-X-(MEDIA|KEY|MAP|I-FRAME-STREAM-INF)/.test(ln)) ln = ln.replace(/URI="([^"]*)"/g, (mm, uu) => { try { return 'URI="' + new URL(uu, masterUrl).href + '"'; } catch { return mm; } });
+    if (ln.charAt(0) === '#' && /EXT-X-(MEDIA|KEY|MAP|I-FRAME-STREAM-INF|SESSION)/.test(ln)) { tags.push(ln.replace(/URI="([^"]*)"/g, (mm, uu) => { try { return 'URI="' + new URL(uu, masterUrl).href + '"'; } catch { return mm; } })); continue; }
     if (/^#EXT-X-STREAM-INF/.test(ln)) {
       const nxt = L[i + 1] && L[i + 1].charAt(0) !== '#' ? L[i + 1].trim() : '';
       if (!nxt) continue;
       const r2 = (ln.match(/RESOLUTION=(\d+)x(\d+)/i) || [])[2];
       const hh = r2 ? parseInt(r2, 10) || 0 : 0;
-      if (wantH && hh && hh !== wantH) { i++; continue; } // শুধু-চাওয়া-গুণমান
-      out.push(ln); out.push((() => { try { return new URL(nxt, masterUrl).href; } catch { return nxt; } })()); kept++; i++;
+      let abs2 = nxt; try { abs2 = new URL(nxt, masterUrl).href; } catch { }
+      vars.push({ ln: ln, uri: abs2, h: hh, w: hh === wantH ? 0 : 1 });
+      i++;
       continue;
     }
-    out.push(ln);
   }
-  if (wantH && !kept) return null; // চাওয়া-গুণমান-নেই → কলার-সম্পূর্ণ-ফলব্যাক
+  vars.sort((a, b) => a.w - b.w || b.h - a.h); // চাওয়া-গুণমান-আগে, তারপর-উঁচু-থেকে-নিচু
+  const seenK = new Set(); const out = tags.slice();
+  for (const v of vars.slice(0, 6)) { if (seenK.has(v.uri)) continue; seenK.add(v.uri); out.push(v.ln, v.uri); }
+  if (!vars.length) return null; // ভেরিয়েন্ট-ই-নেই → কলার-raw-ফলব্যাক
   return out.join('\n');
 }
 function woHasAudioGrp(pl) { // v1.15.47: EXT-X-MEDIA:TYPE=AUDIO = অডিও-বাইরের-গ্রুপে → ভেরিয়েন্ট-শুধু-ভিডিও (হলস-স্পেক); মাস্টার-URL-না-দিলে-প্লেয়ার-অডিও-পায়-ই-না
@@ -991,7 +994,7 @@ async function woVidbolt(tmdbId, isSeries, s, e, ms) { // v1.15.46: MM-রেজ
     const srcs = (j && j.stream && Array.isArray(j.stream.sources) ? j.stream.sources : []).slice(0, 8);
     if (!srcs.length) return [];
     const out = []; const oseen = new Set();
-    const push = (h, url, ref, mp4, lang, aud, mini, k) => { const kk = k || url; if (kk && !oseen.has(kk)) { oseen.add(kk); out.push({ h: h | 0, url: url, ref: ref, mp4: mp4 ? 1 : 0, lang: lang || '', aud: aud || '', mini: mini ? 1 : 0 }); } };
+    const push = (h, url, ref, mp4, lang, aud, mini, k) => { const kk = k || url; if (kk && !oseen.has(kk)) { oseen.add(kk); out.push({ h: h | 0, url: url, ref: ref, mp4: mp4 ? 1 : 0, lang: lang || '', aud: aud || '', mini: mini ? 1 : 0, vbq: mini ? q : '' }); } };
     await Promise.all(srcs.map(async sc => {
       const u = sc && sc.url;
       if (!u || !/^https?:/.test(u)) return;
@@ -1118,7 +1121,7 @@ async function woStreams(tmdbId, title, type, s, e, cfg, origin) { // origin: v1
         title: txt,
         description: txt,
         quality: q2,
-        url: x.mini ? (origin ? origin + '/mm/' + mmMiniKey(x.url, x.ref || WO_REF, x.h) + '/mini.m3u8' : x.url) : x.url, // v1.15.48: মিনি-মাস্টার — গুণমান-আটকানো+অডিও-অক্ষত
+        url: x.mini ? (origin ? origin + '/mm/' + mmMiniKey(x.url, x.ref || WO_REF, x.h, x.vbq) + '/mini.m3u8' : x.url) : x.url, // v1.15.49: +vbq — উজ্জ্বল-স্বাক্ষর-প্রতি-অনুরোধে
         behaviorHints: { notWebReady: false, isBingeable: true, filename: x.mp4 ? 'multimovies.mp4' : 'multimovies.m3u8', proxyHeaders: { request: { Referer: x.ref || WO_REF, 'User-Agent': UA } } }, // v1.15.41: প্রতি-সার্ভার-নিজের-রেফারার
         bingeGroup: 'mm|' + T.toLowerCase() + '::',
         ...(subs.length ? { subtitles: subs.map(y => ({ url: y.url, lang: y.lang })) } : {})
@@ -1619,16 +1622,23 @@ const server = http.createServer((req, res) => {
         return res.end(lb);
       } catch (eL) { return sendJson(res, 404, { error: 'no rt logo' }); }
     }
-    const mmR = p.match(/^\/mm\/([A-Za-z0-9_-]{8,300})\/mini\.m3u8$/);
+    const mmR = p.match(/^\/mm\/([A-Za-z0-9_-]{8,2400})\/mini\.m3u8$/); // v1.15.49: স্বাক্ষর-সহ-ব্রিজ-মাস্টার-কী ~১৪০০-অক্ষর — ৩০০-সীমায়-সব-404 হচ্ছিল (ইউজার-প্রমাণ)
     if (mmR) return (async () => { // v1.15.48: মিনি-মাস্টার — রেজোলিউশন-হাতে-আটকানো+অডিও-অক্ষত; উজ্জ্বল-উজ্জ্বল-উজ্জ্বল (স্ট্রিম-ফল-ক্যাশ-নয় — প্রতি-অনুরোধে-উজ্জ্বল-ফেচ)
       const ent = MM_MINI.get(mmR[1]);
       if (!ent) { res.writeHead(404, { 'content-type': 'text/plain' }); return res.end('gone'); }
       try {
+        if (ent.vbq) { // v1.15.49: স্বাক্ষর-দ্রুত-ঘোরে — প্রতি-অনুরোধে-তাটা-উজ্জ্বল-রেজলভ (কার্ডের-বাঁধানো-URL-মৃত-হলেও-বাজবে)
+          try {
+            const rj2 = await woPoolText('https://vidbolt.xyz/api/resolve?' + ent.vbq, 6000);
+            const jj2 = rj2 ? JSON.parse(rj2) : null;
+            const fh = jj2 && jj2.stream && jj2.stream.sources && jj2.stream.sources.find(x2 => x2 && x2.kind === 'hls' && /^https?:/.test(x2.url || ''));
+            if (fh) ent.m = fh.url;
+          } catch { }
+        }
         const rr = await fetch(ent.m, { headers: { 'User-Agent': UA, Referer: ent.ref }, signal: AbortSignal.timeout(8000) });
         const raw = rr.ok ? await rr.text() : '';
         if (raw.indexOf('#EXTM') < 0) { res.writeHead(502, { 'content-type': 'text/plain' }); return res.end('upstream'); }
-        let mini = mmMiniBuild(ent.m, ent.h, raw);
-        if (!mini) mini = mmMiniBuild(ent.m, 0, raw) || raw; // চাওয়া-গুণমান-মুহূর্তে-নেই → সম্পূর্ণ-পরম-মাস্টার (ABR+অডিও-অক্ষত)
+        const mini = mmMiniBuild(ent.m, ent.h, raw) || raw; // ভেরিয়েন্ট-শূন্য-হলে-সম্পূর্ণ-পরম-মাস্টার
         ent.at = Date.now();
         res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl', 'access-control-allow-origin': '*', 'cache-control': 'no-store' });
         return res.end(mini);
