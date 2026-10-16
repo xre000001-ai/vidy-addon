@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.55';
+const VERSION = '1.15.56';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -30,7 +30,7 @@ const PX_LASTOK = new Map(); // v1.15.16 (রেজলভার-মানদণ�
 // v1.15.55 A3 blackout-গভর্নর: শেষ-৬০-ফলে ≥৯০%-ব্যর্থ (≥৩০-নমুনা) = সিস্টেমিক-বিপর্যয় (আজকের-১৬/১৬-মৃত-উইন্ডোর-মতো) → ব্যর্থতা-লেখা-স্থগিত (গণনা-চলে; নির্দোষ-ভালো-px-ভুল-শাস্তি-পায়-না); <৫০%-হলে-স্বাভাবিক
 const PX_GLOB = { ring: [] };
 function pxBlackout() { const r = PX_GLOB.ring; if (r.length < 30) return false; let f = 0; for (const g of r) if (!g) f++; const fr = f / r.length; return fr >= 0.9 ? 1 : (fr < 0.5 ? 0 : -1); }
-function pxRec(px, good, ms) {
+function pxRec(px, good, ms, srcKey) { // v1.15.56: srcKey-দিলে-ওই-সোর্সের-স্পেসও-আপডেট (জয়=তোলা, ব্যর্থ=নামা)
   PX_GLOB.ring.push(good ? 1 : 0); if (PX_GLOB.ring.length > 60) PX_GLOB.ring.shift();
   if (good) PX_LASTOK.set(px, Date.now());
   const h = PX_RUN.get(px) || { ok: 0, fail: 0, ms: 0, last: 0 };
@@ -39,6 +39,7 @@ function pxRec(px, good, ms) {
   else h.fail++;
   h.last = Date.now();
   PX_RUN.set(px, h);
+  if (srcKey && PX_SPACES[srcKey]) { const SP = PX_SPACES[srcKey]; if (good) { SP.set.add(px); SP.ts.set(px, Date.now()); pxSpaceSave(); } else { SP.set.delete(px); pxSpaceSave(); } }
 }
 function pxScore(px, bootMs) { // কম-ভালো; ব্যর্থতা-ভারী-প্রক্সি-পিছিয়ে, নিখরচয়ী-এগিয়ে
   const h = PX_RUN.get(px);
@@ -89,13 +90,27 @@ const PX_SITE_URL = VIDY_REFERER; // টার্গেট-সাইট-নি�
 const PX_SITE = new Set(); // v1.15.17 বেঞ্চ-মানদণ্ড (ইউজার): বেঞ্চ = সাইটে-যেতে-পারে + জীবিত — চেকার-ই-একমাত্র-কর্তৃত্ব (রেস-জয়/Google-204 সাইট-প্রমাণ-নয়)
 const PX_MISS = new Map(); // v1.15.21 কম্পন-সহনশীলতা: সাইট-উত্তর-পাতলা/CF-পাতা = ২-টানা-ব্যর্থতায়-নামা (১-বারে-বেঞ্চ-দোলে-নয়; হার্ড-ব্যর্থ=তাৎক্ষণিক)
 const PX_COOL = new Map(); // v1.15.16b: পূর্ণ-মৃত → ১২০সে-শীতল (রেজলভার-প্যারিটি — একই-১২-মৃত-ঢেউয়ে-ঢেউয়ে-পিটানো-বন্ধ; ৬০০সে-কাটার-আগে-৫-সুযোগ)
-const PX_API = new Set(); // v1.15.55 A2: আসল-কাজের-ব্যাজ (seed-API; R2-প্রমাণ: ৩০সে-TTL-সার্ভার-ক্যাশে-প্রোব-খরচ≈শূন্য; R3: site-ব্যাজের-৮৯%-মতৈক্য — ফাঁক-সদস্য-রেসে-না-গিয়ে-লাভ)
+// v1.15.56 ইউনিভার্সাল-পুল (ইউজার-নকশা): একটাই-ভাণ্ডার (POOL) + প্রতি-সোর্সের-আলাদা-'স্পেস' — যে-px-যে-সোর্সে-সত্যিই-কাজ-করে সেই-স্পেসে-তোলা-হয়; রেসে-আগে-নিজের-স্পেস। স্থায়ী-ফাইল-একটাই, ভেতরে-সোর্সভেদ-আলাদা-ভাগ (ইউজার: 'alada alada space')
+const PX_API = new Set(); // স্পেস 'api' — আসল-কাজ (seed-API; R2: TTL-ক্যাশে-প্রোব-খরচ≈শূন্য)
+const PX_VB = new Set(); // স্পেস 'vb' — vidbolt.xyz-রেজলভ
+const PX_WO = new Set(); // স্পেস 'wo' — vidout-পাইপলাইন
 const PX_API_URL = API + '/seed?mediaId=95350';
-const PX_SITE_TS = new Map(); // v1.15.55 A4: px → bench-ওঠার-টাইমস্ট্যাম্প (স্থায়ী-ফাইলের-TTL-ভিত্তি)
-const PXSITE_FILE = path.join(__dirname, 'vidy_px_site.json');
-try { const oPX = JSON.parse(fs.readFileSync(PXSITE_FILE, 'utf8')); const nowPX = Date.now(); for (const px of Object.keys(oPX)) if (nowPX - oPX[px] < 600000) { PX_SITE.add(px); PX_SITE_TS.set(px, oPX[px]); } } catch (e) { } // রিস্টার্টে-bench=০-থেকে-৯০সে-পুনর্নির্মাণ-বন্ধ (R5); ১০মিন-টিটিএল-বাসি-বাদ
-let PXSITE_T = null;
-function pxSiteSave() { if (PXSITE_T) return; PXSITE_T = setTimeout(() => { PXSITE_T = null; try { fs.writeFileSync(PXSITE_FILE, JSON.stringify(Object.fromEntries([...PX_SITE].map(px => [px, PX_SITE_TS.get(px) || Date.now()])))); } catch (e) { } }, 3000); }
+const PX_SPACES = {
+  site: { url: 'https://www.vidy.st/robots.txt', min: 80, set: PX_SITE, ts: new Map() }, // v1.15.55 A1 (R1: ১০৬B; প্রতি-৩২-ঢেউয়ে-পূর্ণ-হোমপেজ-থরোফে)
+  api: { url: PX_API_URL, min: 30, set: PX_API, ts: new Map() },
+  vb: { url: 'https://vidbolt.xyz/', min: 200, set: PX_VB, ts: new Map() },
+  wo: { url: 'https://vidout.pages.dev/', min: 200, set: PX_WO, ts: new Map() }
+};
+const PX_SITE_TS = PX_SPACES.site.ts;
+const PXSRC_FILE = path.join(__dirname, 'vidy_px_sources.json');
+try {
+  let oS = null; try { oS = JSON.parse(fs.readFileSync(PXSRC_FILE, 'utf8')); } catch (e2) { }
+  if (!oS) { try { oS = { site: JSON.parse(fs.readFileSync(path.join(__dirname, 'vidy_px_site.json'), 'utf8')) }; } catch (e3) { oS = {}; } } // .55-ফাইল-মাইগ্রেশন
+  const nowPX = Date.now();
+  for (const sk of Object.keys(PX_SPACES)) for (const px of Object.keys(oS[sk] || {})) if (nowPX - oS[sk][px] < 600000) { PX_SPACES[sk].set.add(px); PX_SPACES[sk].ts.set(px, oS[sk][px]); }
+} catch (e) { }
+let PXSRC_T = null;
+function pxSpaceSave() { if (PXSRC_T) return; PXSRC_T = setTimeout(() => { PXSRC_T = null; const o = {}; for (const sk of Object.keys(PX_SPACES)) { o[sk] = {}; for (const px of PX_SPACES[sk].set) o[sk][px] = PX_SPACES[sk].ts.get(px) || Date.now(); } try { fs.writeFileSync(PXSRC_FILE, JSON.stringify(o)); } catch (e) { } }, 3000); }
 let PXCHK = 0, pxChkBusy = false;
 async function pxCheckerWave() {
   if (pxChkBusy || !POOL.length) return;
@@ -106,44 +121,39 @@ async function pxCheckerWave() {
       .sort((a, b) => (PX_LASTOK.get(a.px) || 0) - (PX_LASTOK.get(b.px) || 0)).slice(0, 42); // v1.15.27 (ইউজার): সমান্তরাল-ট্রিপল ১৪→৪২
     if (!wave.length) return;
     PXCHK++;
-    const WAVE_HOME = (PXCHK % 8 === 0); // v1.15.55 A1 (R1-প্রমাণ: হোমপেজ ৪৭.৬KB×৪২/৮সে ≈ ৯০০MB/ঘ — robots.txt ১০৬B = ৪৫০×-সস্তা; প্রতি-৮ম-ঢেউয়ে-পূর্ণ-হোমপেজ-থরোফে-bench-রক্ষা)
-    const siteURL = WAVE_HOME ? VIDY_REFERER : 'https://www.vidy.st/robots.txt';
-    const minBody = WAVE_HOME ? 500 : 80;
-    let cok = 0, cspare = 0, cdead = 0; // v1.15.55-fix: A1-প্যাচে-এই-ঘোষণা-মুছে-গিয়েছিল → ঢেউ-ReferenceError ([urej]-প্রমাণ)
-    let capi = 0;
-    await Promise.all(wave.map(c => new Promise(r2 => {
+    // v1.15.56 ইউনিভার্সাল: প্রতি-ঢেউয়ে-দুই-স্পেস × ২১-px (ঘূর্ণন site→api→vb→wo) — প্রতি-স্পেস-পূর্ণ-কভার ~২মিন; প্রতি-px-যেকোনো-স্পেসে ~৩১সে
+    const SPKEYS = ['site', 'api', 'vb', 'wo'];
+    const SPK = SPKEYS[PXCHK % 4], SPK2 = SPKEYS[(PXCHK + 1) % 4];
+    const HALF = Math.ceil(wave.length / 2);
+    const jobs = [];
+    for (let wi = 0; wi < wave.length; wi++) jobs.push({ c: wave[wi], sk: wi < HALF ? SPK : SPK2 });
+    let cok = 0, cspare = 0, cdead = 0;
+    await Promise.all(jobs.map(j => new Promise(r2 => {
+      const SP = PX_SPACES[j.sk];
+      const HOME = j.sk === 'site' && (PXCHK % 32 === 0); // R1: হোমপেজ-থরোফে-bench-রক্ষা (৪৫০×-ব্যয়বহুল — বিরল)
+      const chkURL = HOME ? VIDY_REFERER : SP.url;
+      const minBody = HOME ? 500 : SP.min;
       const t0 = Date.now();
-      proxiedGet(c.px, siteURL, 6000).then(body => {
-        const okSite = !!body && String(body).length > minBody;
-        pxRec(c.px, okSite, Date.now() - t0); // সাইট-প্রমাণিত=ভালো; সাইট-অন্ধ=জরিমানা (ল্যাটেন্সি-মিথ্যা-নয়)
-        if (okSite) { PX_SITE.add(c.px); PX_SITE_TS.set(c.px, Date.now()); pxSiteSave(); PX_MISS.delete(c.px); PX_COOL.delete(c.px); } // বেঞ্চ-সদস্যপদ শুধু-সাইট-প্রমাণে
-        else { const m = (PX_MISS.get(c.px) || 0) + 1; if (m >= 2) { PX_SITE.delete(c.px); PX_MISS.set(c.px, 0); } else PX_MISS.set(c.px, m); } // পাতলা-উত্তর ২-টানা-হলে-নামা
-        okSite ? cok++ : cspare++; r2(); // v1.15.21: ঢেউ-প্রমিস-মুক্ত — ঠিক-একবারই
-      }).catch(() => { // সাইট-ব্যর্থ → Google-ফলব্যাক: জীবিত=স্পেয়ার (বেঞ্চ-থেকে-নেমে-রিজার্ভ), মরা=প্রমাণহীন
+      proxiedGet(j.c.px, chkURL, 6000).then(body => {
+        const okS = !!body && String(body).length > minBody;
+        pxRec(j.c.px, okS, Date.now() - t0, j.sk); // স্পেস-যাচাই — পাস=স্পেসে-তোলা, ফেল=নামা
+        if (okS) { SP.set.add(j.c.px); SP.ts.set(j.c.px, Date.now()); pxSpaceSave(); PX_MISS.delete(j.c.px); PX_COOL.delete(j.c.px); cok++; }
+        else { SP.set.delete(j.c.px); const m = (PX_MISS.get(j.c.px) || 0) + 1; if (m >= 2) PX_MISS.set(j.c.px, 0); else PX_MISS.set(j.c.px, m); cspare++; }
+        r2(); // v1.15.21: ঢেউ-প্রমিস-মুক্ত
+      }).catch(() => { // ব্যর্থ → Google-ফলব্যাক: জীবিত=স্পেয়ার, মরা=প্রমাণহীন
         const t1 = Date.now();
-        PX_SITE.delete(c.px); PX_MISS.delete(c.px); // হার্ড-ব্যর্থ = তাৎক্ষণিক-নামা (কম্পন-সহনশীলতা-প্রযোজ্য-নয়)
-        proxiedGet(c.px, PX_PROBE_URL, 4000).then(() => { pxRec(c.px, true, Date.now() - t1); pxRec(c.px, false, 0); cspare++; r2(); })
-          .catch(() => { pxRec(c.px, false, 0); cdead++; PX_COOL.set(c.px, Date.now() + 120000); r2(); });
+        SP.set.delete(j.c.px); PX_MISS.delete(j.c.px);
+        proxiedGet(j.c.px, PX_PROBE_URL, 4000).then(() => { pxRec(j.c.px, true, Date.now() - t1); pxRec(j.c.px, false, 0); cspare++; r2(); })
+          .catch(() => { pxRec(j.c.px, false, 0); cdead++; PX_COOL.set(j.c.px, Date.now() + 120000); r2(); });
       });
     })));
+    if (PXCHK % 15 === 1) console.error('[pxchk] স্পেস=' + SPK + '+' + SPK2 + ' ওকে=' + cok + ' স্পেয়ার=' + cspare + ' মৃত=' + cdead + ' | সাইট=' + PX_SITE.size + ' api=' + PX_API.size + ' vb=' + PX_VB.size + ' wo=' + PX_WO.size);
     const t2 = Date.now();
     let cut = 0;
     for (let i = POOL.length - 1; i >= 0 && POOL.length > 20; i--) { // v1.15.21: ফ্লোর ১২→২০ (বেঞ্চ-রক্ষকের-জন্য-যথেষ্ট-প্রার্থী-সবসময়)
-      if (t2 - (PX_LASTOK.get(POOL[i].px) || t2) > 600000) { const g = POOL.splice(i, 1)[0]; PX_RUN.delete(g.px); PX_LASTOK.delete(g.px); PX_COOL.delete(g.px); PX_SITE.delete(g.px); PX_SITE_TS.delete(g.px); PX_MISS.delete(g.px); cut++; pxSiteSave(); }
+      if (t2 - (PX_LASTOK.get(POOL[i].px) || t2) > 600000) { const g = POOL.splice(i, 1)[0]; PX_RUN.delete(g.px); PX_LASTOK.delete(g.px); PX_COOL.delete(g.px); for (const sk of SPKEYS) { PX_SPACES[sk].set.delete(g.px); PX_SPACES[sk].ts.delete(g.px); } PX_MISS.delete(g.px); cut++; pxSpaceSave(); }
     }
     if (cut) { try { fs.writeFileSync(POOL_FILE, JSON.stringify(POOL)); } catch (e) {} setTimeout(enrichPool, 1500).unref(); }
-    if (PXCHK % 4 === 1) { // v1.15.55 A2: হাইব্রিব-ঢেউ — ১২-px-এ-seed-API-যাচাই (গড় ০.৩৭৫-কল/সে; TTL-ক্যাশে-upstream-খরচ≈০) → রেসে-api-ব্যাজ-আগে
-      const hyb = wave.slice(0, 12);
-      await Promise.all(hyb.map(c => new Promise(r3 => {
-        const tH = Date.now();
-        proxiedGet(c.px, PX_API_URL, 6000).then(bH => {
-          const okApi = !!bH && String(bH).indexOf('"seed"') >= 0;
-          pxRec(c.px, okApi, Date.now() - tH);
-          if (okApi) { PX_API.add(c.px); capi++; } else PX_API.delete(c.px); r3();
-        }).catch(() => { PX_API.delete(c.px); r3(); });
-      })));
-      if (DBG && capi) console.error('[pxchk-hybrid] api-ব্যাজ +' + capi + '/' + hyb.length);
-    }
     const benchN = POOL.filter(c => PX_SITE.has(c.px)).length;
     if (benchN < 24) { setTimeout(enrichPool, 2000).unref(); if (PXCHK % 10 === 1) console.log('[pxbench-keeper] bench=' + benchN + ' < ২৪ → এনরিচ-ফসল-তাৎক্ষণিক'); } // v1.15.22 বেঞ্চ-রক্ষক: ম্যাক্স-টানা (থ্রেশহোল্ড ১৮→২৪)
     if (cut || PXCHK % 15 === 1 || process.env.VPCHK) console.log('[pxchk] wave=' + wave.length + ' site=' + cok + ' spare=' + cspare + ' dead=' + cdead + ' pool=' + POOL.length + ' bench=' + benchN + ' cut=' + cut); // VPCHK=1: প্রতি-ঢেউয়ে-লগ (ডিবাগ)
@@ -352,7 +362,7 @@ function proxiedGet(px, url, timeoutMs) {
     sock.on('data', onData);
   });
 }
-function racePool(url, n, timeoutMs) {
+function racePool(url, n, timeoutMs, srcKey) { // v1.15.56: srcKey = কোন-সোর্সের-জন্য — আগে-ওই-সোর্সের-নিজ-স্পেস, তারপর api→site→জীবিত
   // v1.11.2: সুস্থতা-ব্যান্ড-জুড়ে-ছড়ানো-নমুনা — আগে-তালিকার-প্রথম-n-টা-নিত; ওই-৫টা-একসাথে-মৃত-থাকলে
   // বাকি ১৯-সুস্থ-px-থাকতেও-পুরো-পুল 'pool-exhausted' ঘোষিত-হত ( BreakingBad-runে-ঠিক-তা-ই-হয়েছিল)
   // v1.15.0: ক্রম-রানটাইম-স্কোরে (ব্যর্থতা-ভারী-পিছিয়ে), মৃত-ভারী-পুলে-রেস-প্রস্থ-বাড়ে, ফল-PX_RUN-এ-জমে
@@ -360,9 +370,11 @@ function racePool(url, n, timeoutMs) {
   const alive = srt.filter(c => { const h = PX_RUN.get(c.px); return !h || h.ok > 0 || h.fail < 3; }); // প্রমাণিত-মৃত (৩-ব্যর্থ-শূন্য-জয়) রেসে-নয়
   // v1.15.17 বেঞ্চ-গেট (ইউজার-মানদণ্ড: বেঞ্চ=সাইটে-যেতে-পারে+জীবিত): ৩+ সাইট-প্রমাণিত-থাকলে রেস-শুধু-বেঞ্চে
   // (স্পেয়ার=জীবিত-কিন্তু-সাইট-অন্ধ শুধু-আপাতকালীন-রিজার্ভ; চেকার-ঢেউ-প্রতিনিয়ত-তাদের-পুনঃপরীক্ষা-করে-বেঞ্চে-তুলবে)
+  const SPB = (srcKey && PX_SPACES[srcKey]) ? PX_SPACES[srcKey].set : null;
+  const sb = SPB ? alive.filter(c => SPB.has(c.px)) : [];
   const good = alive.filter(c => PX_SITE.has(c.px));
   const api3 = alive.filter(c => PX_API.has(c.px));
-  const use = api3.length >= 3 ? api3 : (good.length >= 3 ? good : (alive.length >= 3 ? alive : srt)); // v1.15.55 A2: আসল-কাজের-ব্যাজ(api)≥৩-হলে-সেরাই; তারপর-বেঞ্চ → জীবিত → সর্বশেষ-ভরসা-পুরো-পুল
+  const use = sb.length >= 3 ? sb : (api3.length >= 3 ? api3 : (good.length >= 3 ? good : (alive.length >= 3 ? alive : srt))); // নিজ-স্পেস≥৩ → api → site → জীবিত → সর্বশেষ-ভরসা
   const n2 = Math.min(use.length, Math.max(n, (srt.length - alive.length) >= srt.length / 2 ? n + 3 : n)); // অর্ধেকের-বেশি-মৃত → প্রস্থ+৩
   const cands = [];
   for (let i = 0; i < n2 && use.length; i++) {
@@ -377,12 +389,12 @@ function racePool(url, n, timeoutMs) {
     for (const c of cands) {
       const tP = Date.now();
       proxiedGet(c.px, url, timeoutMs).then(body => {
-        pxRec(c.px, true, Date.now() - tP);
+        pxRec(c.px, true, Date.now() - tP, srcKey); // রেস-জয়=আসল-প্রমাণ — সরাসরি-স্পেসে-তোলা
         if (done) return;
         done = true; clearTimeout(to);
         resolve({ body, px: c.px });
       }).catch(() => {
-        pxRec(c.px, false, 0);
+        pxRec(c.px, false, 0, srcKey); // রেস-ব্যর্থ = ওই-সোর্সের-স্পেস-থেকে-নামা
         if (++fails === cands.length && !done) { done = true; clearTimeout(to); reject(new Error('pool-exhausted')); }
       });
     }
@@ -530,7 +542,7 @@ function getSeed(tmdbId, force) {
     // v1.15.7 (ইউজার-নির্দেশ, MovieBox-মডেল): টোকেন/সিড **পুল-থেকেই** — sticky-px-এ-পরের-সব-পথ-কল-ও-পুলে;
     // প্লে-সবসময়-ইউজারের-নিজ-IP-তে। পুল-শূন্য/সর্বমৃত-হলে-শেষ-ভরসা direct (কখনো-ভাঙবে-না)
     try {
-      const w = await racePool(url, 5, 9000);
+      const w = await racePool(url, 5, 9000, 'api'); // v1.15.56: vidy-seed-স্পেস
       const j = JSON.parse(w.body);
       if (!j.seed) throw new Error('seed-empty-proxy');
       seedCache = { key: tmdbId, seed: j.seed, via: 'proxy', px: w.px, ts: Date.now() };
@@ -1012,7 +1024,7 @@ function woPoolText(url, ms) { // v1.15.44: সরাসরি-প্রথম; 
   const T = ms || 7000;
   return fetch(url, { headers: { 'User-Agent': UA, Referer: VB_REF }, signal: AbortSignal.timeout(Math.ceil(T * 0.55)) }).then(x => x.ok ? x.text() : '').catch(() => '').then(t => {
     if (t) return t;
-    return racePool(url, 4, Math.ceil(T * 0.4)).then(r => String(r.body || '')).catch(() => '');
+    return racePool(url, 4, Math.ceil(T * 0.4), String(url).indexOf('vidbolt') >= 0 ? 'vb' : 'wo').then(r => String(r.body || '')).catch(() => ''); // v1.15.56: vidbolt/vidout-নিজ-নিজ-স্পেস
   });
 }
 function woFetch(url, ms) {
@@ -1711,8 +1723,8 @@ const server = http.createServer((req, res) => {
         return res.end(mini);
       } catch { res.writeHead(502, { 'content-type': 'text/plain' }); return res.end('upstream-err'); }
     })();
-    if (p === '/_health') return sendJson(res, 200, { ok: 1, version: VERSION, pool: POOL.length, pxbench: POOL.filter(c => PX_SITE.has(c.px)).length, memo: memo.size, nx: NEXBASE ? 1 : 0, nxpool: NXBENCH, nxwaves: NXWAVES, nxsize: NXSIZE, tw: TWBASE ? 1 : 0, rt: RTBASE ? 1 : 0, wo: WOBASE ? 1 : 0, up: Math.floor(process.uptime()), ucex: UCEX }); // v1.15.36: +up(সেকেন্ড)+ucex — যোগাত্মক-মাত্র // v1.15.18: pxbench=সাইট-প্রমাণিত-বেঞ্চ (v1.15.8: nxpool=MB-বেঞ্চ)
-    if (p === '/_pool') return sendJson(res, 200, POOL.map(c => Object.assign({}, c, PX_RUN.get(c.px) || {}, { site: PX_SITE.has(c.px) ? 1 : 0, cool: Math.max(0, ((PX_COOL.get(c.px) || 0) - Date.now()) / 1000 | 0), lastok: PX_LASTOK.get(c.px) || 0 }))); // v1.15.54-ডায়াগ: +site(bench-সদস্যপদ)+cool(শীতল-বাকি-সে)+lastok — বেঞ্চ-গভীর-খতিয়ান
+    if (p === '/_health') return sendJson(res, 200, { ok: 1, version: VERSION, pool: POOL.length, pxbench: POOL.filter(c => PX_SITE.has(c.px)).length, apibench: PX_API.size, vbbench: PX_VB.size, wobench: PX_WO.size, memo: memo.size, nx: NEXBASE ? 1 : 0, nxpool: NXBENCH, nxwaves: NXWAVES, nxsize: NXSIZE, tw: TWBASE ? 1 : 0, rt: RTBASE ? 1 : 0, wo: WOBASE ? 1 : 0, up: Math.floor(process.uptime()), ucex: UCEX }); // v1.15.36: +up(সেকেন্ড)+ucex — যোগাত্মক-মাত্র // v1.15.18: pxbench=সাইট-প্রমাণিত-বেঞ্চ (v1.15.8: nxpool=MB-বেঞ্চ)
+    if (p === '/_pool') return sendJson(res, 200, POOL.map(c => Object.assign({}, c, PX_RUN.get(c.px) || {}, { site: PX_SITE.has(c.px) ? 1 : 0, cool: Math.max(0, ((PX_COOL.get(c.px) || 0) - Date.now()) / 1000 | 0), lastok: PX_LASTOK.get(c.px) || 0, sp: ['site', 'api', 'vb', 'wo'].filter(k => PX_SPACES[k].set.has(c.px)) }))); // v1.15.56: +sp(যে-যে-সোর্স-স্পেসে-সদস্য)
     if (p === '/_nxring') { if (!NEXBASE) return sendJson(res, 200, { off: 1 }); directGet(NEXBASE + '/debug/ring', 4000).then(b => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(b); }).catch(() => { res.writeHead(200, { 'content-type': 'application/json' }); res.end('{"err":1}'); }); return; } // v2.10.2 চাইল্ড-রিজলভ-ধাপ-প্রমাণ
     if (p === '/_log') return sendJson(res, 200, reqLog.slice(-40).reverse());
     if (p === '/_servers') return sendJson(res, 200, { order: srvOrder(), scores: SRV_SCORE }); // কনফিগ-পেজের-লাইভ-হেলথ
