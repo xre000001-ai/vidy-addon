@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.47';
+const VERSION = '1.15.48';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -932,6 +932,33 @@ function woAudioTag(pl) { // v1.15.47: সত্য-অডিও-দাবি �
   if (uniq.length === 1) return uniq[0];
   return '';
 }
+const MM_MINI = new Map(); // v1.15.48: কী → {m,ref,h,at} — মিনি-মাস্টার-নির্মাণ-প্যারাম (প্রতি-গুণমান-আলাদা-কার্ড; এন্ডপয়েন্ট-প্রতিবার-উজ্জ্বল-ফেচে-নেয় — স্ট্রিম-ক্যাশ-নয়)
+function mmMiniKey(m, ref, h) { // v1.15.48
+  const k = Buffer.from(m + '|' + (h | 0)).toString('base64url');
+  MM_MINI.set(k, { m: m, ref: ref || WO_REF, h: h | 0, at: Date.now() });
+  if (MM_MINI.size > 600) { const cut = Date.now() - 21600e3; for (const [kk, vv] of MM_MINI) if (vv.at < cut) MM_MINI.delete(kk); } // ৬ঘ-বয়সী-বাদ (কার্ড-ক্যাশ ৩০মি-এর-চেয়ে-দীর্ঘ-রাখা-নিরাপদ)
+  if (MM_MINI.size > 900) { const arr = [...MM_MINI.entries()].sort((a, b) => a[1].at - b[1].at).slice(0, MM_MINI.size - 600); for (const [kk] of arr) MM_MINI.delete(kk); } // বয়সে-কাটে-না-হলে-পুরনোতম-বাদ (মেমো-সীমা)
+  return k;
+}
+function mmMiniBuild(masterUrl, wantH, raw) { // v1.15.48: এক-গুণমানের-মিনি-মাস্টার — অডিও/সাব/KEY/MAP-URI-সব-পরম (মাস্টার-প্রসঙ্গ) — প্লেয়ারে-রেজোলিউশন-আটকানো-যায়, অডিও-অক্ষত
+  const L = String(raw).split('\n'); const out = []; let kept = 0;
+  for (let i = 0; i < L.length; i++) {
+    let ln = L[i];
+    if (ln.charAt(0) === '#' && /EXT-X-(MEDIA|KEY|MAP|I-FRAME-STREAM-INF)/.test(ln)) ln = ln.replace(/URI="([^"]*)"/g, (mm, uu) => { try { return 'URI="' + new URL(uu, masterUrl).href + '"'; } catch { return mm; } });
+    if (/^#EXT-X-STREAM-INF/.test(ln)) {
+      const nxt = L[i + 1] && L[i + 1].charAt(0) !== '#' ? L[i + 1].trim() : '';
+      if (!nxt) continue;
+      const r2 = (ln.match(/RESOLUTION=(\d+)x(\d+)/i) || [])[2];
+      const hh = r2 ? parseInt(r2, 10) || 0 : 0;
+      if (wantH && hh && hh !== wantH) { i++; continue; } // শুধু-চাওয়া-গুণমান
+      out.push(ln); out.push((() => { try { return new URL(nxt, masterUrl).href; } catch { return nxt; } })()); kept++; i++;
+      continue;
+    }
+    out.push(ln);
+  }
+  if (wantH && !kept) return null; // চাওয়া-গুণমান-নেই → কলার-সম্পূর্ণ-ফলব্যাক
+  return out.join('\n');
+}
 function woHasAudioGrp(pl) { // v1.15.47: EXT-X-MEDIA:TYPE=AUDIO = অডিও-বাইরের-গ্রুপে → ভেরিয়েন্ট-শুধু-ভিডিও (হলস-স্পেক); মাস্টার-URL-না-দিলে-প্লেয়ার-অডিও-পায়-ই-না
   return /#EXT-X-MEDIA:TYPE=AUDIO/i.test(String(pl || ''));
 }
@@ -964,7 +991,7 @@ async function woVidbolt(tmdbId, isSeries, s, e, ms) { // v1.15.46: MM-রেজ
     const srcs = (j && j.stream && Array.isArray(j.stream.sources) ? j.stream.sources : []).slice(0, 8);
     if (!srcs.length) return [];
     const out = []; const oseen = new Set();
-    const push = (h, url, ref, mp4, lang, aud) => { if (url && !oseen.has(url)) { oseen.add(url); out.push({ h: h | 0, url: url, ref: ref, mp4: mp4 ? 1 : 0, lang: lang || '', aud: aud || '' }); } };
+    const push = (h, url, ref, mp4, lang, aud, mini, k) => { const kk = k || url; if (kk && !oseen.has(kk)) { oseen.add(kk); out.push({ h: h | 0, url: url, ref: ref, mp4: mp4 ? 1 : 0, lang: lang || '', aud: aud || '', mini: mini ? 1 : 0 }); } };
     await Promise.all(srcs.map(async sc => {
       const u = sc && sc.url;
       if (!u || !/^https?:/.test(u)) return;
@@ -982,10 +1009,19 @@ async function woVidbolt(tmdbId, isSeries, s, e, ms) { // v1.15.46: MM-রেজ
         if (!pl || pl.indexOf('#EXTM') < 0) return;
         let base = u; try { base = new URL(u).href.replace(/[^/]*$/, ''); } catch { }
         const lines = pl.split('\n'); let found = 0; const atag = woAudioTag(pl); // v1.15.47: এ-প্লেলিস্টের-সত্য-অডিও
-        if (woHasAudioGrp(pl)) { // অডিও-গ্রুপ-ঘোষিত → মাস্টার-URL-ই (প্লেয়ার-অডিও-রেন্ডিশন+মেনু-নিজে-মেলে; ভেরিয়েন্ট-সরাসরি=নীরব-ভিডিও — ইউজার-প্রমাণিত)
-          let topH = 0;
-          for (let jj = 0; jj < lines.length - 1; jj++) { if (lines[jj].indexOf('#EXT-X-STREAM-INF') < 0) continue; const r2 = lines[jj].match(/RESOLUTION=(\d+)x(\d+)/i); const hh = r2 ? parseInt(r2[2], 10) || 0 : 0; if (hh > topH) topH = hh; }
-          push(topH || hq, u, VB_REF, 0, lang, atag);
+        if (woHasAudioGrp(pl)) { // অডিও-গ্রুপ-ঘোষিত → প্রতি-গুণমানে-মিনি-মাস্টার-কার্ড (রেজোলিউশন-হাতে-আটকানো+অডিও-অক্ষত; v1.15.48)
+          let pcount = 0;
+          for (let jj = 0; jj < lines.length - 1 && pcount < 4; jj++) {
+            if (lines[jj].indexOf('#EXT-X-STREAM-INF') < 0) continue;
+            const r2 = lines[jj].match(/RESOLUTION=(\d+)x(\d+)/i);
+            const hh = r2 ? parseInt(r2[2], 10) || 0 : 0;
+            const kk = 'm' + hh;
+            if (oseen.has(kk)) continue;
+            oseen.add(kk);
+            push(hh || hq, u, VB_REF, 0, lang, atag, 1, kk);
+            pcount++;
+          }
+          if (!pcount) push(hq, u, VB_REF, 0, lang, atag, 1, 'mx');
           return;
         }
         for (let jj = 0; jj < lines.length - 1 && found < 3; jj++) {
@@ -1005,7 +1041,7 @@ async function woVidbolt(tmdbId, isSeries, s, e, ms) { // v1.15.46: MM-রেজ
   } catch { return []; }
 }
 
-async function woStreams(tmdbId, title, type, s, e, cfg) { // TMDB-আইডি-সরাসরি — টাইটেল-ম্যাচ-দরকার-নেই (হুবহু-নির্ভুল)
+async function woStreams(tmdbId, title, type, s, e, cfg, origin) { // origin: v1.15.48-মিনি-মাস্টার-URL-এর-জন্য // TMDB-আইডি-সরাসরি — টাইটেল-ম্যাচ-দরকার-নেই (হুবহু-নির্ভুল)
   if (!WOBASE || !tmdbId) return [];
   const t3 = Date.now(); const WOB = 9000; const left = () => Math.max(300, WOB - (Date.now() - t3));
   try {
@@ -1036,10 +1072,19 @@ async function woStreams(tmdbId, title, type, s, e, cfg) { // TMDB-আইডি-
       let base = servers[i]; try { base = new URL(servers[i]).href.replace(/[^/]*$/, ''); } catch { }
       const atag = woAudioTag(pl); // v1.15.47: সত্য-অডিও (যেমন-স্কয়ার-গেমে hi+en)
       const lines = pl.split('\n'); // ঘোষণা-আগে (TDZ-দোষ-সংশোধন)
-      if (woHasAudioGrp(pl)) { // অডিও-গ্রুপ-ঘোষিত → ভেরিয়েন্ট-নয়, মাস্টার-URL — প্লেয়ার-অডিও-ট্র্যাক-মেনু-পায় (hi/en), নীরব-ভিডিও-বন্ধ
-        let topH = 0;
-        for (let j2 = 0; j2 < lines.length - 1; j2++) { if (lines[j2].indexOf('#EXT-X-STREAM-INF') < 0) continue; const r3 = lines[j2].match(/RESOLUTION=(\d+)x(\d+)/i); const hh = r3 ? parseInt(r3[2], 10) || 0 : 0; if (hh > topH) topH = hh; }
-        if (!seen.has(servers[i])) { seen.add(servers[i]); raws.push({ h: topH, url: servers[i], aud: atag }); }
+      if (woHasAudioGrp(pl)) { // অডিও-গ্রুপ-ঘোষিত → প্রতি-গুণমানে-মিনি-মাস্টার-কার্ড (রেজোলিউশন-হাতে-আটকানো+অডিও-অক্ষত; v1.15.48)
+        let pcount = 0;
+        for (let j2 = 0; j2 < lines.length - 1 && pcount < 4; j2++) {
+          if (lines[j2].indexOf('#EXT-X-STREAM-INF') < 0) continue;
+          const r3 = lines[j2].match(/RESOLUTION=(\d+)x(\d+)/i);
+          const hh = r3 ? parseInt(r3[2], 10) || 0 : 0;
+          const kk = 'm' + i + 'h' + hh;
+          if (seen.has(kk)) continue;
+          seen.add(kk);
+          raws.push({ h: hh, url: servers[i], aud: atag, mini: 1 });
+          pcount++;
+        }
+        if (!pcount && !seen.has(servers[i])) { seen.add(servers[i]); raws.push({ h: 0, url: servers[i], aud: atag, mini: 1 }); }
         continue;
       }
       let found = 0;
@@ -1073,7 +1118,7 @@ async function woStreams(tmdbId, title, type, s, e, cfg) { // TMDB-আইডি-
         title: txt,
         description: txt,
         quality: q2,
-        url: x.url,
+        url: x.mini ? (origin ? origin + '/mm/' + mmMiniKey(x.url, x.ref || WO_REF, x.h) + '/mini.m3u8' : x.url) : x.url, // v1.15.48: মিনি-মাস্টার — গুণমান-আটকানো+অডিও-অক্ষত
         behaviorHints: { notWebReady: false, isBingeable: true, filename: x.mp4 ? 'multimovies.mp4' : 'multimovies.m3u8', proxyHeaders: { request: { Referer: x.ref || WO_REF, 'User-Agent': UA } } }, // v1.15.41: প্রতি-সার্ভার-নিজের-রেফারার
         bingeGroup: 'mm|' + T.toLowerCase() + '::',
         ...(subs.length ? { subtitles: subs.map(y => ({ url: y.url, lang: y.lang })) } : {})
@@ -1574,6 +1619,21 @@ const server = http.createServer((req, res) => {
         return res.end(lb);
       } catch (eL) { return sendJson(res, 404, { error: 'no rt logo' }); }
     }
+    const mmR = p.match(/^\/mm\/([A-Za-z0-9_-]{8,300})\/mini\.m3u8$/);
+    if (mmR) return (async () => { // v1.15.48: মিনি-মাস্টার — রেজোলিউশন-হাতে-আটকানো+অডিও-অক্ষত; উজ্জ্বল-উজ্জ্বল-উজ্জ্বল (স্ট্রিম-ফল-ক্যাশ-নয় — প্রতি-অনুরোধে-উজ্জ্বল-ফেচ)
+      const ent = MM_MINI.get(mmR[1]);
+      if (!ent) { res.writeHead(404, { 'content-type': 'text/plain' }); return res.end('gone'); }
+      try {
+        const rr = await fetch(ent.m, { headers: { 'User-Agent': UA, Referer: ent.ref }, signal: AbortSignal.timeout(8000) });
+        const raw = rr.ok ? await rr.text() : '';
+        if (raw.indexOf('#EXTM') < 0) { res.writeHead(502, { 'content-type': 'text/plain' }); return res.end('upstream'); }
+        let mini = mmMiniBuild(ent.m, ent.h, raw);
+        if (!mini) mini = mmMiniBuild(ent.m, 0, raw) || raw; // চাওয়া-গুণমান-মুহূর্তে-নেই → সম্পূর্ণ-পরম-মাস্টার (ABR+অডিও-অক্ষত)
+        ent.at = Date.now();
+        res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl', 'access-control-allow-origin': '*', 'cache-control': 'no-store' });
+        return res.end(mini);
+      } catch { res.writeHead(502, { 'content-type': 'text/plain' }); return res.end('upstream-err'); }
+    })();
     if (p === '/_health') return sendJson(res, 200, { ok: 1, version: VERSION, pool: POOL.length, pxbench: POOL.filter(c => PX_SITE.has(c.px)).length, memo: memo.size, nx: NEXBASE ? 1 : 0, nxpool: NXBENCH, nxwaves: NXWAVES, nxsize: NXSIZE, tw: TWBASE ? 1 : 0, rt: RTBASE ? 1 : 0, wo: WOBASE ? 1 : 0, up: Math.floor(process.uptime()), ucex: UCEX }); // v1.15.36: +up(সেকেন্ড)+ucex — যোগাত্মক-মাত্র // v1.15.18: pxbench=সাইট-প্রমাণিত-বেঞ্চ (v1.15.8: nxpool=MB-বেঞ্চ)
     if (p === '/_pool') return sendJson(res, 200, POOL.map(c => Object.assign({}, c, PX_RUN.get(c.px) || {}))); // v1.15.0: রানটাইম-স্বাস্থ্য-সহ
     if (p === '/_nxring') { if (!NEXBASE) return sendJson(res, 200, { off: 1 }); directGet(NEXBASE + '/debug/ring', 4000).then(b => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(b); }).catch(() => { res.writeHead(200, { 'content-type': 'application/json' }); res.end('{"err":1}'); }); return; } // v2.10.2 চাইল্ড-রিজলভ-ধাপ-প্রমাণ
@@ -1605,7 +1665,7 @@ const server = http.createServer((req, res) => {
       const nxP = nxOn ? nxFor('movie', String(m[1]), 0, 0) : null;
       const twP = (TWBASE && !(cfg && cfg.tw === 0)) ? tp.then(n => twrStreams(TWBASE, 'toonworld', n, 'movie', 0, 0)).catch(() => []) : null; // v1.12: টাইটেল-প্রমিস-থেকেই-সমান্তরালে-ছোটা
       const rtP = (RTBASE && !(cfg && cfg.rt === 0)) ? tp.then(n => twrStreams(RTBASE, 'raretoons', n, 'movie', 0, 0)).catch(() => []) : null;
-      const woP = (WOBASE && !(cfg && cfg.wo === 0)) ? tp.then(n => woStreams(Number(m[1]), n, 'movie', 0, 0, cfg)).catch(() => []) : null; // v1.15.39: TMDB-নেটিভ
+      const woP = (WOBASE && !(cfg && cfg.wo === 0)) ? tp.then(n => woStreams(Number(m[1]), n, 'movie', 0, 0, cfg, originOf(req))).catch(() => []) : null; // v1.15.39: TMDB-নেটিভ
       kickSubs('tmdb' + m[1], 'movie', null, null, cfg);
       return withDeadline(withSources(vOn ? getSources(Number(m[1]), 'movie', null, null, '', cfg, tp) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: woP, key: 'wo' }], cfg, t0), 11900 /* v1.15.26 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
         cards => { sendStreams(res, req.url, p, Date.now() - t0, cards, RVA); },
@@ -1618,7 +1678,7 @@ const server = http.createServer((req, res) => {
       const nxP = nxOn ? nxFor('series', String(m[1]), Number(m[2] || 1), Number(m[3] || 1)) : null;
       const twP = (TWBASE && !(cfg && cfg.tw === 0)) ? tp.then(n => twrStreams(TWBASE, 'toonworld', n, 'series', Number(m[2] || 1), Number(m[3] || 1))).catch(() => []) : null;
       const rtP = (RTBASE && !(cfg && cfg.rt === 0)) ? tp.then(n => twrStreams(RTBASE, 'raretoons', n, 'series', Number(m[2] || 1), Number(m[3] || 1))).catch(() => []) : null;
-      const woP = (WOBASE && !(cfg && cfg.wo === 0)) ? tp.then(n => woStreams(Number(m[1]), n, 'series', Number(m[2] || 1), Number(m[3] || 1), cfg)).catch(() => []) : null; // v1.15.39
+      const woP = (WOBASE && !(cfg && cfg.wo === 0)) ? tp.then(n => woStreams(Number(m[1]), n, 'series', Number(m[2] || 1), Number(m[3] || 1), cfg, originOf(req))).catch(() => []) : null; // v1.15.39
       if (nxOn) nxPrewarm('series', String(m[1]), Number(m[2] || 1), Number(m[3] || 1));
       twRtPrewarm(tp, 'series', Number(m[2] || 1), Number(m[3] || 1));
       kickSubs('tmdb' + m[1], 'series', Number(m[2] || 1), Number(m[3] || 1), cfg);
@@ -1636,7 +1696,7 @@ const server = http.createServer((req, res) => {
       const rtP = (RTBASE && !(cfg && cfg.rt === 0)) ? nmP.then(nm => nm ? twrStreams(RTBASE, 'raretoons', nm, 'movie', 0, 0) : []).catch(() => []) : null;
       const woOn = !!WOBASE && !(cfg && cfg.wo === 0); // v1.15.39
       const woIdP = woOn ? ((vOn && infoP) ? infoP.then(v => (v && v.id > 0) ? v.id : 0) : findTmdb(m[1], 'movie').catch(() => 0)) : null; // infoP-থেকেই-আইডি-ভাগ (দ্বিতীয়-কল-নয়)
-      const woP = woOn ? woIdP.then(id => id ? nmP.then(nm => woStreams(id, nm || '', 'movie', 0, 0, cfg)) : []).catch(() => []) : null;
+      const woP = woOn ? woIdP.then(id => id ? nmP.then(nm => woStreams(id, nm || '', 'movie', 0, 0, cfg, originOf(req))) : []).catch(() => []) : null;
       kickSubs(m[1], 'movie', null, null, cfg);
       return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'movie', null, null, info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: woP, key: 'wo' }], cfg, t0), 11900 /* v1.15.26 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
         cards => { sendStreams(res, req.url, p, Date.now() - t0, cards, RVA); },
@@ -1652,7 +1712,7 @@ const server = http.createServer((req, res) => {
       const rtP = (RTBASE && !(cfg && cfg.rt === 0)) ? nmP.then(nm => nm ? twrStreams(RTBASE, 'raretoons', nm, 'series', Number(m[2]), Number(m[3])) : []).catch(() => []) : null;
       const woOn = !!WOBASE && !(cfg && cfg.wo === 0); // v1.15.39
       const woIdP = woOn ? ((vOn && infoP) ? infoP.then(v => (v && v.id > 0) ? v.id : 0) : findTmdb(m[1], 'series').catch(() => 0)) : null;
-      const woP2 = woOn ? woIdP.then(id => id ? nmP.then(nm => woStreams(id, nm || '', 'series', Number(m[2]), Number(m[3]), cfg)) : []).catch(() => []) : null;
+      const woP2 = woOn ? woIdP.then(id => id ? nmP.then(nm => woStreams(id, nm || '', 'series', Number(m[2]), Number(m[3]), cfg, originOf(req))) : []).catch(() => []) : null;
       if (nxOn) nxPrewarm('series', m[1], Number(m[2]), Number(m[3]));
       twRtPrewarm(nmP, 'series', Number(m[2]), Number(m[3]));
       kickSubs(m[1], 'series', Number(m[2]), Number(m[3]), cfg);
