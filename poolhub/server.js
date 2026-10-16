@@ -8,10 +8,10 @@
 const http = require('http'), https = require('https'), net = require('net'), tls = require('tls'), crypto = require('crypto');
 const fs = require('fs'), path = require('path');
 const { URL } = require('url');
-const VERSION = '1.2.2';
+const VERSION = '1.2.3';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const PORT = Number(process.env.PORT || 8399);
-const PX_CAP = 154, DIR = __dirname;
+const PX_CAP = 300, DIR = __dirname;
 const POOL_FILE = path.join(DIR, 'vidy_px_pool.json'), SRC_FILE = path.join(DIR, 'vidy_px_sources.json'), COND_FILE = path.join(DIR, 'vidy_px_conditions.json');
 const TOK_FILE = path.join(DIR, 'poolhub_tokens.json'), ADMIN_FILE = path.join(DIR, 'poolhub_admin.txt');
 const PX_PROBE_URL = 'https://www.google.com/generate_204';
