@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.54';
+const VERSION = '1.15.55';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -27,10 +27,16 @@ try { POOL = JSON.parse(fs.readFileSync(path.join(__dirname, 'vidy_proxy_pool.js
 // v1.15.0 রানটাইম-প্রক্সি-স্বাস্থ্য: বুট-সময়ের-ms-আর-বাস্তব-নয় — জয়/ব্যর্থতা/EMA-লেটেন্সি-মনে-থাকে, রেস-স্কোর-অনুযায়ী-হয়
 const PX_RUN = new Map(); // px → { ok, fail, ms, last }
 const PX_LASTOK = new Map(); // v1.15.16 (রেজলভার-মানদণ্ড): px → শেষ-যেকোনো-প্রমাণ (চেকার/প্রোব)
+// v1.15.55 A3 blackout-গভর্নর: শেষ-৬০-ফলে ≥৯০%-ব্যর্থ (≥৩০-নমুনা) = সিস্টেমিক-বিপর্যয় (আজকের-১৬/১৬-মৃত-উইন্ডোর-মতো) → ব্যর্থতা-লেখা-স্থগিত (গণনা-চলে; নির্দোষ-ভালো-px-ভুল-শাস্তি-পায়-না); <৫০%-হলে-স্বাভাবিক
+const PX_GLOB = { ring: [] };
+function pxBlackout() { const r = PX_GLOB.ring; if (r.length < 30) return false; let f = 0; for (const g of r) if (!g) f++; const fr = f / r.length; return fr >= 0.9 ? 1 : (fr < 0.5 ? 0 : -1); }
 function pxRec(px, good, ms) {
+  PX_GLOB.ring.push(good ? 1 : 0); if (PX_GLOB.ring.length > 60) PX_GLOB.ring.shift();
   if (good) PX_LASTOK.set(px, Date.now());
   const h = PX_RUN.get(px) || { ok: 0, fail: 0, ms: 0, last: 0 };
-  if (good) { h.ok++; h.ms = h.ms ? Math.round(h.ms * 0.7 + ms * 0.3) : ms; } else h.fail++;
+  if (good) { h.ok++; h.ms = h.ms ? Math.round(h.ms * 0.7 + ms * 0.3) : ms; }
+  else if (pxBlackout() === 1) { /* blackout-স্থগিত — দোষ-লেখা-নয় */ }
+  else h.fail++;
   h.last = Date.now();
   PX_RUN.set(px, h);
 }
@@ -83,6 +89,13 @@ const PX_SITE_URL = VIDY_REFERER; // টার্গেট-সাইট-নি�
 const PX_SITE = new Set(); // v1.15.17 বেঞ্চ-মানদণ্ড (ইউজার): বেঞ্চ = সাইটে-যেতে-পারে + জীবিত — চেকার-ই-একমাত্র-কর্তৃত্ব (রেস-জয়/Google-204 সাইট-প্রমাণ-নয়)
 const PX_MISS = new Map(); // v1.15.21 কম্পন-সহনশীলতা: সাইট-উত্তর-পাতলা/CF-পাতা = ২-টানা-ব্যর্থতায়-নামা (১-বারে-বেঞ্চ-দোলে-নয়; হার্ড-ব্যর্থ=তাৎক্ষণিক)
 const PX_COOL = new Map(); // v1.15.16b: পূর্ণ-মৃত → ১২০সে-শীতল (রেজলভার-প্যারিটি — একই-১২-মৃত-ঢেউয়ে-ঢেউয়ে-পিটানো-বন্ধ; ৬০০সে-কাটার-আগে-৫-সুযোগ)
+const PX_API = new Set(); // v1.15.55 A2: আসল-কাজের-ব্যাজ (seed-API; R2-প্রমাণ: ৩০সে-TTL-সার্ভার-ক্যাশে-প্রোব-খরচ≈শূন্য; R3: site-ব্যাজের-৮৯%-মতৈক্য — ফাঁক-সদস্য-রেসে-না-গিয়ে-লাভ)
+const PX_API_URL = API + '/seed?mediaId=95350';
+const PX_SITE_TS = new Map(); // v1.15.55 A4: px → bench-ওঠার-টাইমস্ট্যাম্প (স্থায়ী-ফাইলের-TTL-ভিত্তি)
+const PXSITE_FILE = path.join(__dirname, 'vidy_px_site.json');
+try { const oPX = JSON.parse(fs.readFileSync(PXSITE_FILE, 'utf8')); const nowPX = Date.now(); for (const px of Object.keys(oPX)) if (nowPX - oPX[px] < 600000) { PX_SITE.add(px); PX_SITE_TS.set(px, oPX[px]); } } catch (e) { } // রিস্টার্টে-bench=০-থেকে-৯০সে-পুনর্নির্মাণ-বন্ধ (R5); ১০মিন-টিটিএল-বাসি-বাদ
+let PXSITE_T = null;
+function pxSiteSave() { if (PXSITE_T) return; PXSITE_T = setTimeout(() => { PXSITE_T = null; try { fs.writeFileSync(PXSITE_FILE, JSON.stringify(Object.fromEntries([...PX_SITE].map(px => [px, PX_SITE_TS.get(px) || Date.now()])))); } catch (e) { } }, 3000); }
 let PXCHK = 0, pxChkBusy = false;
 async function pxCheckerWave() {
   if (pxChkBusy || !POOL.length) return;
@@ -93,13 +106,17 @@ async function pxCheckerWave() {
       .sort((a, b) => (PX_LASTOK.get(a.px) || 0) - (PX_LASTOK.get(b.px) || 0)).slice(0, 42); // v1.15.27 (ইউজার): সমান্তরাল-ট্রিপল ১৪→৪২
     if (!wave.length) return;
     PXCHK++;
-    let cok = 0, cspare = 0, cdead = 0;
+    const WAVE_HOME = (PXCHK % 8 === 0); // v1.15.55 A1 (R1-প্রমাণ: হোমপেজ ৪৭.৬KB×৪২/৮সে ≈ ৯০০MB/ঘ — robots.txt ১০৬B = ৪৫০×-সস্তা; প্রতি-৮ম-ঢেউয়ে-পূর্ণ-হোমপেজ-থরোফে-bench-রক্ষা)
+    const siteURL = WAVE_HOME ? VIDY_REFERER : 'https://www.vidy.st/robots.txt';
+    const minBody = WAVE_HOME ? 500 : 80;
+    let cok = 0, cspare = 0, cdead = 0; // v1.15.55-fix: A1-প্যাচে-এই-ঘোষণা-মুছে-গিয়েছিল → ঢেউ-ReferenceError ([urej]-প্রমাণ)
+    let capi = 0;
     await Promise.all(wave.map(c => new Promise(r2 => {
       const t0 = Date.now();
-      proxiedGet(c.px, PX_SITE_URL, 6000).then(body => {
-        const okSite = !!body && String(body).length > 500;
+      proxiedGet(c.px, siteURL, 6000).then(body => {
+        const okSite = !!body && String(body).length > minBody;
         pxRec(c.px, okSite, Date.now() - t0); // সাইট-প্রমাণিত=ভালো; সাইট-অন্ধ=জরিমানা (ল্যাটেন্সি-মিথ্যা-নয়)
-        if (okSite) { PX_SITE.add(c.px); PX_MISS.delete(c.px); PX_COOL.delete(c.px); } // বেঞ্চ-সদস্যপদ শুধু-সাইট-প্রমাণে
+        if (okSite) { PX_SITE.add(c.px); PX_SITE_TS.set(c.px, Date.now()); pxSiteSave(); PX_MISS.delete(c.px); PX_COOL.delete(c.px); } // বেঞ্চ-সদস্যপদ শুধু-সাইট-প্রমাণে
         else { const m = (PX_MISS.get(c.px) || 0) + 1; if (m >= 2) { PX_SITE.delete(c.px); PX_MISS.set(c.px, 0); } else PX_MISS.set(c.px, m); } // পাতলা-উত্তর ২-টানা-হলে-নামা
         okSite ? cok++ : cspare++; r2(); // v1.15.21: ঢেউ-প্রমিস-মুক্ত — ঠিক-একবারই
       }).catch(() => { // সাইট-ব্যর্থ → Google-ফলব্যাক: জীবিত=স্পেয়ার (বেঞ্চ-থেকে-নেমে-রিজার্ভ), মরা=প্রমাণহীন
@@ -112,9 +129,21 @@ async function pxCheckerWave() {
     const t2 = Date.now();
     let cut = 0;
     for (let i = POOL.length - 1; i >= 0 && POOL.length > 20; i--) { // v1.15.21: ফ্লোর ১২→২০ (বেঞ্চ-রক্ষকের-জন্য-যথেষ্ট-প্রার্থী-সবসময়)
-      if (t2 - (PX_LASTOK.get(POOL[i].px) || t2) > 600000) { const g = POOL.splice(i, 1)[0]; PX_RUN.delete(g.px); PX_LASTOK.delete(g.px); PX_COOL.delete(g.px); PX_SITE.delete(g.px); PX_MISS.delete(g.px); cut++; }
+      if (t2 - (PX_LASTOK.get(POOL[i].px) || t2) > 600000) { const g = POOL.splice(i, 1)[0]; PX_RUN.delete(g.px); PX_LASTOK.delete(g.px); PX_COOL.delete(g.px); PX_SITE.delete(g.px); PX_SITE_TS.delete(g.px); PX_MISS.delete(g.px); cut++; pxSiteSave(); }
     }
     if (cut) { try { fs.writeFileSync(POOL_FILE, JSON.stringify(POOL)); } catch (e) {} setTimeout(enrichPool, 1500).unref(); }
+    if (PXCHK % 4 === 1) { // v1.15.55 A2: হাইব্রিব-ঢেউ — ১২-px-এ-seed-API-যাচাই (গড় ০.৩৭৫-কল/সে; TTL-ক্যাশে-upstream-খরচ≈০) → রেসে-api-ব্যাজ-আগে
+      const hyb = wave.slice(0, 12);
+      await Promise.all(hyb.map(c => new Promise(r3 => {
+        const tH = Date.now();
+        proxiedGet(c.px, PX_API_URL, 6000).then(bH => {
+          const okApi = !!bH && String(bH).indexOf('"seed"') >= 0;
+          pxRec(c.px, okApi, Date.now() - tH);
+          if (okApi) { PX_API.add(c.px); capi++; } else PX_API.delete(c.px); r3();
+        }).catch(() => { PX_API.delete(c.px); r3(); });
+      })));
+      if (DBG && capi) console.error('[pxchk-hybrid] api-ব্যাজ +' + capi + '/' + hyb.length);
+    }
     const benchN = POOL.filter(c => PX_SITE.has(c.px)).length;
     if (benchN < 24) { setTimeout(enrichPool, 2000).unref(); if (PXCHK % 10 === 1) console.log('[pxbench-keeper] bench=' + benchN + ' < ২৪ → এনরিচ-ফসল-তাৎক্ষণিক'); } // v1.15.22 বেঞ্চ-রক্ষক: ম্যাক্স-টানা (থ্রেশহোল্ড ১৮→২৪)
     if (cut || PXCHK % 15 === 1 || process.env.VPCHK) console.log('[pxchk] wave=' + wave.length + ' site=' + cok + ' spare=' + cspare + ' dead=' + cdead + ' pool=' + POOL.length + ' bench=' + benchN + ' cut=' + cut); // VPCHK=1: প্রতি-ঢেউয়ে-লগ (ডিবাগ)
@@ -332,7 +361,8 @@ function racePool(url, n, timeoutMs) {
   // v1.15.17 বেঞ্চ-গেট (ইউজার-মানদণ্ড: বেঞ্চ=সাইটে-যেতে-পারে+জীবিত): ৩+ সাইট-প্রমাণিত-থাকলে রেস-শুধু-বেঞ্চে
   // (স্পেয়ার=জীবিত-কিন্তু-সাইট-অন্ধ শুধু-আপাতকালীন-রিজার্ভ; চেকার-ঢেউ-প্রতিনিয়ত-তাদের-পুনঃপরীক্ষা-করে-বেঞ্চে-তুলবে)
   const good = alive.filter(c => PX_SITE.has(c.px));
-  const use = good.length >= 3 ? good : (alive.length >= 3 ? alive : srt); // সব-দোষী-সাব্যস্ত-হলে-পুরো-পুল-ই-শেষ-ভরসা
+  const api3 = alive.filter(c => PX_API.has(c.px));
+  const use = api3.length >= 3 ? api3 : (good.length >= 3 ? good : (alive.length >= 3 ? alive : srt)); // v1.15.55 A2: আসল-কাজের-ব্যাজ(api)≥৩-হলে-সেরাই; তারপর-বেঞ্চ → জীবিত → সর্বশেষ-ভরসা-পুরো-পুল
   const n2 = Math.min(use.length, Math.max(n, (srt.length - alive.length) >= srt.length / 2 ? n + 3 : n)); // অর্ধেকের-বেশি-মৃত → প্রস্থ+৩
   const cands = [];
   for (let i = 0; i < n2 && use.length; i++) {
@@ -925,6 +955,10 @@ const MMHC_FILE = require('path').join(__dirname, 'vidy_mm_hashes.json');
 const MMHC = new Map();
 try { for (const [kk, vv] of Object.entries(JSON.parse(require('fs').readFileSync(MMHC_FILE, 'utf8')))) MMHC.set(kk, vv); } catch { }
 let MMHC_T = null;
+const MM_MC = new Map(); // v1.15.55 খুঁত#৯: m → {ts, raw} — ৬০সে-মাস্টার-টেক্সট-ক্যাশ (প্লেয়ার-পুনঃঅনুরোধে-প্রতিবার-আপস্ট্রিম-ভ্রমণ-বন্ধ; সেগমেন্ট-তবু-সরাসরি-CDN)
+const MM_VC = new Map(); // v1.15.55: vbq → {ts, m} — তাটা-রেজলভ-৬০সে-স্মৃতি (ঘা-ঘা-করে-vidbolt-রেজলভ-নয়)
+function mmPut(map, k, v) { if (map.size > 300) map.clear(); map.set(k, { ts: Date.now(), v }); }
+function mmGet(map, k, ttl) { const e = map.get(k); return e && (Date.now() - e.ts) < ttl ? e.v : null; }
 function mmhcSave() { if (MMHC_T) return; MMHC_T = setTimeout(() => { MMHC_T = null; try { require('fs').writeFileSync(MMHC_FILE, JSON.stringify(Object.fromEntries(MMHC))); } catch { } }, 4000); }
 function mmhcKey(isSeries, tmdbId, s2, e2) { return isSeries ? ('tv:' + tmdbId + ':' + (parseInt(s2, 10) || 1) + ':' + (parseInt(e2, 10) || 1)) : ('mv:' + tmdbId); }
 const WO_LANGS = { eng: 'English', en: 'English', hin: 'Hindi', hi: 'Hindi', ara: 'Arabic', fra: 'French', spa: 'Spanish', por: 'Portuguese', rus: 'Russian', zho: 'Chinese', ben: 'Bengali', tam: 'Tamil', tel: 'Telugu' };
@@ -1652,17 +1686,25 @@ const server = http.createServer((req, res) => {
       const ent = mmMiniOpen(mmR[1]); // কী-ই-সব-জানে — স্মৃতি-লাগে-না; সত্যিকারের-কী-কখনো-মরে-না
       if (!ent) { res.writeHead(404, { 'content-type': 'text/plain' }); return res.end('gone'); }
       try {
-        if (ent.vbq) { // v1.15.49: স্বাক্ষর-দ্রুত-ঘোরে — প্রতি-অনুরোধে-তাটা-উজ্জ্বল-রেজলভ (কার্ডের-বাঁধানো-URL-মৃত-হলেও-বাজবে)
-          try {
-            const rj2 = await woPoolText('https://vidbolt.xyz/api/resolve?' + ent.vbq, 6000);
-            const jj2 = rj2 ? JSON.parse(rj2) : null;
-            const fh = jj2 && jj2.stream && jj2.stream.sources && jj2.stream.sources.find(x2 => x2 && x2.kind === 'hls' && /^https?:/.test(x2.url || ''));
-            if (fh) ent.m = fh.url;
-          } catch { }
+        if (ent.vbq) { // v1.15.49: স্বাক্ষর-দ্রুত-ঘোরে — তাটা-রেজলভ (v1.15.55: ৬০সে-স্মৃতি — প্লেয়ার-প্রতি-মাস্টার-টানায়-ঘা-ঘা-রেজলভ-বন্ধ)
+          const cm2 = mmGet(MM_VC, ent.vbq, 60000);
+          if (cm2) ent.m = cm2;
+          else {
+            try {
+              const rj2 = await woPoolText('https://vidbolt.xyz/api/resolve?' + ent.vbq, 6000);
+              const jj2 = rj2 ? JSON.parse(rj2) : null;
+              const fh = jj2 && jj2.stream && jj2.stream.sources && jj2.stream.sources.find(x2 => x2 && x2.kind === 'hls' && /^https?:/.test(x2.url || ''));
+              if (fh) { ent.m = fh.url; mmPut(MM_VC, ent.vbq, ent.m); }
+            } catch { }
+          }
         }
-        const rr = await fetch(ent.m, { headers: { 'User-Agent': UA, Referer: ent.ref }, signal: AbortSignal.timeout(8000) });
-        const raw = rr.ok ? await rr.text() : '';
-        if (raw.indexOf('#EXTM') < 0) { res.writeHead(502, { 'content-type': 'text/plain' }); return res.end('upstream'); }
+        let raw = mmGet(MM_MC, ent.m, 60000); // v1.15.55: ৬০সে-মাস্টার-ক্যাশ — হিট-হলে-আপস্ট্রিম-ভ্রমণ-ই-নেই
+        if (!raw) {
+          const rr = await fetch(ent.m, { headers: { 'User-Agent': UA, Referer: ent.ref }, signal: AbortSignal.timeout(8000) });
+          raw = rr.ok ? await rr.text() : '';
+          if (raw.indexOf('#EXTM') < 0) { res.writeHead(502, { 'content-type': 'text/plain' }); return res.end('upstream'); }
+          mmPut(MM_MC, ent.m, raw);
+        } else if (DBG) console.error('[mm] মিনি-ক্যাশ-হিট');
         const mini = mmMiniBuild(ent.m, ent.h, raw) || raw; // ভেরিয়েন্ট-শূন্য-হলে-সম্পূর্ণ-পরম-মাস্টার
         ent.at = Date.now();
         res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl', 'access-control-allow-origin': '*', 'cache-control': 'no-store' });
@@ -1670,7 +1712,7 @@ const server = http.createServer((req, res) => {
       } catch { res.writeHead(502, { 'content-type': 'text/plain' }); return res.end('upstream-err'); }
     })();
     if (p === '/_health') return sendJson(res, 200, { ok: 1, version: VERSION, pool: POOL.length, pxbench: POOL.filter(c => PX_SITE.has(c.px)).length, memo: memo.size, nx: NEXBASE ? 1 : 0, nxpool: NXBENCH, nxwaves: NXWAVES, nxsize: NXSIZE, tw: TWBASE ? 1 : 0, rt: RTBASE ? 1 : 0, wo: WOBASE ? 1 : 0, up: Math.floor(process.uptime()), ucex: UCEX }); // v1.15.36: +up(সেকেন্ড)+ucex — যোগাত্মক-মাত্র // v1.15.18: pxbench=সাইট-প্রমাণিত-বেঞ্চ (v1.15.8: nxpool=MB-বেঞ্চ)
-    if (p === '/_pool') return sendJson(res, 200, POOL.map(c => Object.assign({}, c, PX_RUN.get(c.px) || {}))); // v1.15.0: রানটাইম-স্বাস্থ্য-সহ
+    if (p === '/_pool') return sendJson(res, 200, POOL.map(c => Object.assign({}, c, PX_RUN.get(c.px) || {}, { site: PX_SITE.has(c.px) ? 1 : 0, cool: Math.max(0, ((PX_COOL.get(c.px) || 0) - Date.now()) / 1000 | 0), lastok: PX_LASTOK.get(c.px) || 0 }))); // v1.15.54-ডায়াগ: +site(bench-সদস্যপদ)+cool(শীতল-বাকি-সে)+lastok — বেঞ্চ-গভীর-খতিয়ান
     if (p === '/_nxring') { if (!NEXBASE) return sendJson(res, 200, { off: 1 }); directGet(NEXBASE + '/debug/ring', 4000).then(b => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(b); }).catch(() => { res.writeHead(200, { 'content-type': 'application/json' }); res.end('{"err":1}'); }); return; } // v2.10.2 চাইল্ড-রিজলভ-ধাপ-প্রমাণ
     if (p === '/_log') return sendJson(res, 200, reqLog.slice(-40).reverse());
     if (p === '/_servers') return sendJson(res, 200, { order: srvOrder(), scores: SRV_SCORE }); // কনফিগ-পেজের-লাইভ-হেলথ
