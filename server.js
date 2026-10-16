@@ -967,7 +967,7 @@ function woHasAudioGrp(pl) { // v1.15.47: EXT-X-MEDIA:TYPE=AUDIO = অডিও-
 }
 function woPoolText(url, ms) { // v1.15.44: সরাসরি-প্রথম; ভিডি-র-নিজের-পুল-শুধু-উদ্ধারে — .42/.43-এ-প্রতি-ট্যাপে ~৪০-পুল-প্রোব-ঝড়ে-শেয়ার্ড-পুল+PX-পাইপলাইন-ডুবে-১২সে-চুক্তি-ভাঙছিল (প্রোড-প্রমাণিত); এখন-সুখ-পথে-শূন্য-অতিরিক্ত-প্রোব, সরাসরি-ফেললে-পুল-রেস
   const T = ms || 7000;
-  return fetch(url, { headers: { 'User-Agent': UA, Referer: 'https://vidbolt.xyz/' }, signal: AbortSignal.timeout(Math.ceil(T * 0.55)) }).then(x => x.ok ? x.text() : '').catch(() => '').then(t => {
+  return fetch(url, { headers: { 'User-Agent': UA, Referer: VB_REF }, signal: AbortSignal.timeout(Math.ceil(T * 0.55)) }).then(x => x.ok ? x.text() : '').catch(() => '').then(t => {
     if (t) return t;
     return racePool(url, 4, Math.ceil(T * 0.4)).then(r => String(r.body || '')).catch(() => '');
   });
