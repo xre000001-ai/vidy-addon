@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.46';
+const VERSION = '1.15.47';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -921,6 +921,20 @@ const WOBASE = String(process.env.WOBASE || 'https://raw.githubusercontent.com/W
 const WO_REF = 'https://vidout.pages.dev/'; // গোপন-চাবি: এই-Referer-ই স্ট্রিম-CDN-খোলে (না-দিলে-404)
 const VB_REF = 'https://vidbolt.xyz/'; // v1.15.46: vidbolt-MM-রেজলভার-রেফারার (পেশাদার-ধ্রুবক — হার্ডকোড-বাদ)
 const WO_LANGS = { eng: 'English', en: 'English', hin: 'Hindi', hi: 'Hindi', ara: 'Arabic', fra: 'French', spa: 'Spanish', por: 'Portuguese', rus: 'Russian', zho: 'Chinese', ben: 'Bengali', tam: 'Tamil', tel: 'Telugu' };
+function woAudioTag(pl) { // v1.15.47: সত্য-অডিও-দাবি — মাস্টার-প্লেলিস্টের EXT-X-MEDIA:TYPE=AUDIO গণনা (ইউজার-প্রমাণ: বেশিরভাগ-স্ট্রিমে-১টাই-অডিও, 'Multi Audio'-লেখা-মিথ্যা-ছিল)
+  if (!pl) return '';
+  const langs = [...String(pl).matchAll(/#EXT-X-MEDIA:TYPE=AUDIO[^\n]*/g)].map(m => {
+    const l = (String(m[0]).match(/LANGUAGE="([^"]+)"/i) || [])[1] || (String(m[0]).match(/NAME="([^"]+)"/i) || [])[1] || '';
+    return String(l).trim();
+  }).filter(l => l && !/^(audio|def|main|default)$/i.test(l));
+  const uniq = [...new Set(langs)];
+  if (uniq.length >= 2) return uniq.length + ' Audio (' + uniq.slice(0, 3).join('+') + ')';
+  if (uniq.length === 1) return uniq[0];
+  return '';
+}
+function woHasAudioGrp(pl) { // v1.15.47: EXT-X-MEDIA:TYPE=AUDIO = অডিও-বাইরের-গ্রুপে → ভেরিয়েন্ট-শুধু-ভিডিও (হলস-স্পেক); মাস্টার-URL-না-দিলে-প্লেয়ার-অডিও-পায়-ই-না
+  return /#EXT-X-MEDIA:TYPE=AUDIO/i.test(String(pl || ''));
+}
 function woPoolText(url, ms) { // v1.15.44: সরাসরি-প্রথম; ভিডি-র-নিজের-পুল-শুধু-উদ্ধারে — .42/.43-এ-প্রতি-ট্যাপে ~৪০-পুল-প্রোব-ঝড়ে-শেয়ার্ড-পুল+PX-পাইপলাইন-ডুবে-১২সে-চুক্তি-ভাঙছিল (প্রোড-প্রমাণিত); এখন-সুখ-পথে-শূন্য-অতিরিক্ত-প্রোব, সরাসরি-ফেললে-পুল-রেস
   const T = ms || 7000;
   return fetch(url, { headers: { 'User-Agent': UA, Referer: 'https://vidbolt.xyz/' }, signal: AbortSignal.timeout(Math.ceil(T * 0.55)) }).then(x => x.ok ? x.text() : '').catch(() => '').then(t => {
@@ -950,7 +964,7 @@ async function woVidbolt(tmdbId, isSeries, s, e, ms) { // v1.15.46: MM-রেজ
     const srcs = (j && j.stream && Array.isArray(j.stream.sources) ? j.stream.sources : []).slice(0, 8);
     if (!srcs.length) return [];
     const out = []; const oseen = new Set();
-    const push = (h, url, ref, mp4, lang) => { if (url && !oseen.has(url)) { oseen.add(url); out.push({ h: h | 0, url: url, ref: ref, mp4: mp4 ? 1 : 0, lang: lang || '' }); } };
+    const push = (h, url, ref, mp4, lang, aud) => { if (url && !oseen.has(url)) { oseen.add(url); out.push({ h: h | 0, url: url, ref: ref, mp4: mp4 ? 1 : 0, lang: lang || '', aud: aud || '' }); } };
     await Promise.all(srcs.map(async sc => {
       const u = sc && sc.url;
       if (!u || !/^https?:/.test(u)) return;
@@ -967,17 +981,23 @@ async function woVidbolt(tmdbId, isSeries, s, e, ms) { // v1.15.46: MM-রেজ
         const pl = await woPoolText(u, vLeft(5500)); // hls-ব্রিজ — সরাসরি-প্রথম, পুল-উদ্ধারে
         if (!pl || pl.indexOf('#EXTM') < 0) return;
         let base = u; try { base = new URL(u).href.replace(/[^/]*$/, ''); } catch { }
-        const lines = pl.split('\n'); let found = 0;
+        const lines = pl.split('\n'); let found = 0; const atag = woAudioTag(pl); // v1.15.47: এ-প্লেলিস্টের-সত্য-অডিও
+        if (woHasAudioGrp(pl)) { // অডিও-গ্রুপ-ঘোষিত → মাস্টার-URL-ই (প্লেয়ার-অডিও-রেন্ডিশন+মেনু-নিজে-মেলে; ভেরিয়েন্ট-সরাসরি=নীরব-ভিডিও — ইউজার-প্রমাণিত)
+          let topH = 0;
+          for (let jj = 0; jj < lines.length - 1; jj++) { if (lines[jj].indexOf('#EXT-X-STREAM-INF') < 0) continue; const r2 = lines[jj].match(/RESOLUTION=(\d+)x(\d+)/i); const hh = r2 ? parseInt(r2[2], 10) || 0 : 0; if (hh > topH) topH = hh; }
+          push(topH || hq, u, VB_REF, 0, lang, atag);
+          return;
+        }
         for (let jj = 0; jj < lines.length - 1 && found < 3; jj++) {
           if (lines[jj].indexOf('#EXT-X-STREAM-INF') < 0) continue;
           const rm = lines[jj].match(/RESOLUTION=(\d+)x(\d+)/i);
           const uri = String(lines[jj + 1] || '').trim();
           if (!uri || uri.charAt(0) === '#') continue;
           let abs = uri; try { abs = new URL(uri, base).href; } catch { }
-          push(rm ? parseInt(rm[2], 10) || 0 : hq, abs, VB_REF, 0, lang);
+          push(rm ? parseInt(rm[2], 10) || 0 : hq, abs, VB_REF, 0, lang, atag);
           found++;
         }
-        if (!found && /#EXTINF/.test(pl)) push(hq, u, VB_REF, 0, lang); // মিডিয়া-প্লেলিস্ট-সরাসরি — quality-ফিল্ড-থেকে-উচ্চতা
+        if (!found && /#EXTINF/.test(pl)) push(hq, u, VB_REF, 0, lang, atag); // মিডিয়া-প্লেলিস্ট-সরাসরি — quality-ফিল্ড-থেকে-উচ্চতা
       } catch { }
     }));
     if (DBG) console.error('[mm] vidbolt সোর্স=' + srcs.length + ' ফল=' + out.length + ' @' + (Date.now() - vT0) + 'ms');
@@ -1014,7 +1034,14 @@ async function woStreams(tmdbId, title, type, s, e, cfg) { // TMDB-আইডি-
       const pl = lists[i];
       if (!pl || pl.indexOf('#EXTM') < 0) continue;
       let base = servers[i]; try { base = new URL(servers[i]).href.replace(/[^/]*$/, ''); } catch { }
-      const lines = pl.split('\n');
+      const atag = woAudioTag(pl); // v1.15.47: সত্য-অডিও (যেমন-স্কয়ার-গেমে hi+en)
+      const lines = pl.split('\n'); // ঘোষণা-আগে (TDZ-দোষ-সংশোধন)
+      if (woHasAudioGrp(pl)) { // অডিও-গ্রুপ-ঘোষিত → ভেরিয়েন্ট-নয়, মাস্টার-URL — প্লেয়ার-অডিও-ট্র্যাক-মেনু-পায় (hi/en), নীরব-ভিডিও-বন্ধ
+        let topH = 0;
+        for (let j2 = 0; j2 < lines.length - 1; j2++) { if (lines[j2].indexOf('#EXT-X-STREAM-INF') < 0) continue; const r3 = lines[j2].match(/RESOLUTION=(\d+)x(\d+)/i); const hh = r3 ? parseInt(r3[2], 10) || 0 : 0; if (hh > topH) topH = hh; }
+        if (!seen.has(servers[i])) { seen.add(servers[i]); raws.push({ h: topH, url: servers[i], aud: atag }); }
+        continue;
+      }
       let found = 0;
       for (let j = 0; j < lines.length - 1; j++) {
         if (lines[j].indexOf('#EXT-X-STREAM-INF') < 0) continue;
@@ -1023,10 +1050,10 @@ async function woStreams(tmdbId, title, type, s, e, cfg) { // TMDB-আইডি-
         if (!uri || uri.charAt(0) === '#') continue;
         let abs = uri; try { abs = new URL(uri, base).href; } catch { }
         const h = rm ? parseInt(rm[2], 10) || 0 : 0;
-        if (!seen.has(abs)) { seen.add(abs); raws.push({ h, url: abs }); found++; }
+        if (!seen.has(abs)) { seen.add(abs); raws.push({ h, url: abs, aud: atag }); found++; }
         if (found >= 6) break;
       }
-      if (!found && /#EXTINF/.test(pl) && !seen.has(servers[i])) { seen.add(servers[i]); raws.push({ h: 0, url: servers[i] }); } // মাস্টার-ই-মিডিয়া-প্লেলিস্ট
+      if (!found && /#EXTINF/.test(pl) && !seen.has(servers[i])) { seen.add(servers[i]); raws.push({ h: 0, url: servers[i], aud: atag }); } // মাস্টার-ই-মিডিয়া-প্লেলিস্ট
     }
     try { const vbl = await vbP; for (const v of (vbl || [])) if (v && v.url && !seen.has(v.url)) { seen.add(v.url); raws.push(v); } } catch { } // v1.15.41: vidbolt-ভেরিয়েন্ট-মেশানো
         if (DBG) console.error('[mm] ' + tmdbId + '/' + (isSeries ? 'S' + (s || 1) + 'E' + (e || 1) : 'movie') + ' সার্ভার=' + servers.length + ' ভেরিয়েন্ট=' + raws.length + ' @' + (Date.now() - t3) + 'ms');
@@ -1039,8 +1066,8 @@ async function woStreams(tmdbId, title, type, s, e, cfg) { // TMDB-আইডি-
     const epLine = isSeries ? ('\u29e0 S' + (parseInt(s, 10) || 1) + 'E' + (parseInt(e, 10) || 1)) : '\u29e0 Movie';
     return vars.map(x => {
       const q2 = x.h ? String(x.h) : (x.mp4 ? 'MP4' : 'HLS');
-      const aud = x.lang || 'Multi Audio';
-      const txt = '\u29c9 ' + T + '\n' + epLine + '\n\u229e Multimovies \u00b7 ' + (x.mp4 ? 'MM-MP4 \u2317' : 'MM-HLS \u2317') + ' ' + aud + (subs.length ? ' \u2022 \ud83c\udfac' : '');
+      const aud = [x.aud, x.lang].filter(Boolean).join(' \u00b7 '); // v1.15.47: সত্য-অডিও-গণনা+vidbolt-ভাষা — দাবি-নেই-হলে-কিছু-লেখা-নয়
+      const txt = '\u29c9 ' + T + '\n' + epLine + '\n\u229e Multimovies \u00b7 ' + (x.mp4 ? 'MM-MP4' : 'MM-HLS') + (aud ? ' \u2317 ' + aud : '') + (subs.length ? ' \u2022 \ud83c\udfac' : '');
       return {
         name: '\u25a5 ' + q2 + ' \u25a5',
         title: txt,
@@ -1048,7 +1075,7 @@ async function woStreams(tmdbId, title, type, s, e, cfg) { // TMDB-আইডি-
         quality: q2,
         url: x.url,
         behaviorHints: { notWebReady: false, isBingeable: true, filename: x.mp4 ? 'multimovies.mp4' : 'multimovies.m3u8', proxyHeaders: { request: { Referer: x.ref || WO_REF, 'User-Agent': UA } } }, // v1.15.41: প্রতি-সার্ভার-নিজের-রেফারার
-        bingeGroup: 'mm|' + T.toLowerCase() + '::|Multi',
+        bingeGroup: 'mm|' + T.toLowerCase() + '::',
         ...(subs.length ? { subtitles: subs.map(y => ({ url: y.url, lang: y.lang })) } : {})
       };
     });
