@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.53';
+const VERSION = '1.15.54';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -998,23 +998,25 @@ async function woVidbolt(tmdbId, isSeries, s, e, ms) { // v1.15.46: MM-রেজ
   const vT0 = Date.now(); const vLeft = cap => Math.max(350, Math.min(cap, (ms || 6500) - (Date.now() - vT0)));
   try {
     const q = isSeries ? ('type=tv&id=' + tmdbId + '&season=' + (parseInt(s, 10) || 1) + '&episode=' + (parseInt(e, 10) || 1)) : ('type=movie&id=' + tmdbId);
-    const jtxt = await woPoolText('https://vidbolt.xyz/api/resolve?' + q, vLeft(6500)); // সরাসরি-প্রথম, ভিডি-র-পুল-উদ্ধারে
-    let j = null; try { j = jtxt ? JSON.parse(jtxt) : null; } catch { }
     const ck = mmhcKey(isSeries, tmdbId, s, e);
-    let srcs = (j && j.stream && Array.isArray(j.stream.sources) ? j.stream.sources : []).slice(0, 8);
-    if (!srcs.length) { // ঘূর্ণন-ফাঁক → স্মৃতির-হ্যাশ (সরাসরি-মাস্টার; পাইপলাইন-নিজেই-যাচায় — মৃত-হলে-সৎ-শূন্য)
-      const cm = MMHC.get(ck);
-      if (cm && cm.m) { if (DBG) console.error('[mm] হ্যাশ-স্মৃতি-ব্যবহার ' + ck); srcs = [{ url: cm.m, kind: 'hls', quality: cm.q || '', language: cm.lang || '' }]; }
-      if (!srcs.length) return [];
-    } else {
-      for (const sc of srcs) { // স্থায়ী-প্রকৃতির-হ্যাশ-মনে-রাখা (স্বাক্ষরযুক্ত-অন্য-হোস্ট-বাদ — ওগুলো-মেয়াদ-শেষে-মৃত)
-        const hm = sc && sc.url && String(sc.url).match(/\/tvshows\/([a-f0-9]{8,40})\/index\.m3u8/);
-        if (hm) { MMHC.set(ck, { m: sc.url, q: String(sc.quality || ''), lang: String(sc.language || ''), at: Date.now() }); mmhcSave(); break; }
-      }
-      if (MMHC.size > 2500) { const cut = Date.now() - 30 * 86400e3; for (const [kk2, vv2] of MMHC) if (vv2.at < cut) MMHC.delete(kk2); }
-    }
     const out = []; const oseen = new Set();
     const push = (h, url, ref, mp4, lang, aud, mini, k) => { const kk = k || url; if (kk && !oseen.has(kk)) { oseen.add(kk); out.push({ h: h | 0, url: url, ref: ref, mp4: mp4 ? 1 : 0, lang: lang || '', aud: aud || '', mini: mini ? 1 : 0, vbq: mini ? q : '' }); } };
+    for (let draw = 0; draw < 3; draw++) { // v1.15.54: ঘূর্ণন-প্রতি-আঁকায়-ভিন্ন-সার্ভার — মৃত-আঁকা (ফল=০) হলে ৪৫০ms-পরে-আবার; প্রমাণ: একই-মুহূর্তে-বাইরের-কল ১০/১০-সফল, অ্যাডন-আঁকায়-মাঝে-মাঝে-৪০৪-সার্ভার
+      let j = null;
+      const jtxt = await woPoolText('https://vidbolt.xyz/api/resolve?' + q, vLeft(6500));
+      try { j = jtxt ? JSON.parse(jtxt) : null; } catch { }
+      let srcs = (j && j.stream && Array.isArray(j.stream.sources) ? j.stream.sources : []).slice(0, 8);
+      if (!srcs.length) { // ঘূর্ণন-ফাঁক → স্মৃতির-হ্যাশ (সরাসরি-মাস্টার; পাইপলাইন-নিজেই-যাচায় — মৃত-হলে-সৎ-শূন্য)
+        const cm = MMHC.get(ck);
+        if (cm && cm.m) { if (DBG) console.error('[mm] হ্যাশ-স্মৃতি-ব্যবহার ' + ck); srcs = [{ url: cm.m, kind: 'hls', quality: cm.q || '', language: cm.lang || '' }]; }
+        if (!srcs.length) continue;
+      } else {
+        for (const sc of srcs) { // স্থায়ী-প্রকৃতির-হ্যাশ-মনে-রাখা (স্বাক্ষরযুক্ত-অন্য-হোস্ট-বাদ — ওগুলো-মেয়াদ-শেষে-মৃত)
+          const hm = sc && sc.url && String(sc.url).match(/\/tvshows\/([a-f0-9]{8,40})\/index\.m3u8/);
+          if (hm) { MMHC.set(ck, { m: sc.url, q: String(sc.quality || ''), lang: String(sc.language || ''), at: Date.now() }); mmhcSave(); break; }
+        }
+        if (MMHC.size > 2500) { const cut = Date.now() - 30 * 86400e3; for (const [kk2, vv2] of MMHC) if (vv2.at < cut) MMHC.delete(kk2); }
+      }
     await Promise.all(srcs.map(async sc => {
       const u = sc && sc.url;
       if (!u || !/^https?:/.test(u)) return;
@@ -1059,7 +1061,10 @@ async function woVidbolt(tmdbId, isSeries, s, e, ms) { // v1.15.46: MM-রেজ
         if (!found && /#EXTINF/.test(pl)) push(hq, u, VB_REF, 0, lang, atag); // মিডিয়া-প্লেলিস্ট-সরাসরি — quality-ফিল্ড-থেকে-উচ্চতা
       } catch { }
     }));
-    if (DBG) console.error('[mm] vidbolt সোর্স=' + srcs.length + ' ফল=' + out.length + ' @' + (Date.now() - vT0) + 'ms');
+      if (DBG) console.error('[mm] vb আঁকা-' + draw + ' সোর্স=' + srcs.length + ' ফল=' + out.length + ' @' + (Date.now() - vT0) + 'ms');
+      if (out.length) break;
+      if (draw < 2 && vLeft(1500) > 800) await new Promise(r3 => setTimeout(r3, 450));
+    }
     return out.slice(0, 10);
   } catch { return []; }
 }
