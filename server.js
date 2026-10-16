@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.43';
+const VERSION = '1.15.44';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -920,13 +920,12 @@ async function twrFetch(base, tag, title, type, s, e, t3) {
 const WOBASE = String(process.env.WOBASE || 'https://raw.githubusercontent.com/Watchout2025/api/refs/heads/main'); // স্ট্রিম-সূচি (মুভি: hls/movie/{tmdb}, টিভি: hls/tv/{tmdb}/S{n}.json); লোকাল-টেস্ট: WOBASE=http://127.0.0.1:8320
 const WO_REF = 'https://vidout.pages.dev/'; // গোপন-চাবি: এই-Referer-ই স্ট্রিম-CDN-খোলে (না-দিলে-404)
 const WO_LANGS = { eng: 'English', en: 'English', hin: 'Hindi', hi: 'Hindi', ara: 'Arabic', fra: 'French', spa: 'Spanish', por: 'Portuguese', rus: 'Russian', zho: 'Chinese', ben: 'Bengali', tam: 'Tamil', tel: 'Telugu' };
-function woPoolText(url, ms, hold) { // v1.15.43: ভিডি-র-নিজের-পুল-প্রথম — পুল-রেস তৎক্ষণাৎ, সরাসরি hold-ms পরে-যোগদান (পুল-প্রকৃতই-ব্যবহৃত+জিততে-পারে; দেরি-চুক্তি-নিরাপদ)
+function woPoolText(url, ms) { // v1.15.44: সরাসরি-প্রথম; ভিডি-র-নিজের-পুল-শুধু-উদ্ধারে — .42/.43-এ-প্রতি-ট্যাপে ~৪০-পুল-প্রোব-ঝড়ে-শেয়ার্ড-পুল+PX-পাইপলাইন-ডুবে-১২সে-চুক্তি-ভাঙছিল (প্রোড-প্রমাণিত); এখন-সুখ-পথে-শূন্য-অতিরিক্ত-প্রোব, সরাসরি-ফেললে-পুল-রেস
   const T = ms || 7000;
-  const H = Math.max(0, hold | 0);
-  const directP = (H ? new Promise(res => setTimeout(res, H)) : Promise.resolve()).then(() => fetch(url, { headers: { 'User-Agent': UA, Referer: 'https://vidbolt.xyz/' }, signal: AbortSignal.timeout(Math.ceil(T * 0.8)) }).then(x => x.ok ? x.text() : '').catch(() => '')).then(t => t ? t : new Promise(() => { })); // খালি=জেতা-নিষেধ
-  const poolP = racePool(url, 4, Math.ceil(T * 0.8)).then(r => { const b = String(r.body || ''); return b ? b : new Promise(() => { }); }).catch(() => new Promise(() => { })); // পুলের-খালি-জবাবও-জেতা-নিষেধ
-  const guard = new Promise(res => setTimeout(() => res(''), Math.ceil(T * 0.9))); // দুটোই-ফেলে-ঝুলবে-না
-  return Promise.race([directP, poolP, guard]);
+  return fetch(url, { headers: { 'User-Agent': UA, Referer: 'https://vidbolt.xyz/' }, signal: AbortSignal.timeout(Math.ceil(T * 0.55)) }).then(x => x.ok ? x.text() : '').catch(() => '').then(t => {
+    if (t) return t;
+    return racePool(url, 4, Math.ceil(T * 0.4)).then(r => String(r.body || '')).catch(() => '');
+  });
 }
 function woFetch(url, ms) {
   return fetch(url, { headers: { 'User-Agent': UA, Referer: WO_REF, Accept: '*/*' }, signal: AbortSignal.timeout(ms || 7000) });
@@ -944,7 +943,7 @@ async function woSubs(tmdb, type, s, e, ms) { // sub/tv/{id}/{s}/{e}/subtitles.j
 async function woVidbolt(tmdbId, isSeries, s, e, ms) { // v1.15.41: MultiMovies-এর-বিশাল-লাইব্রেরির-চাবি — vidbolt-TMDB-রেজলভার (JSON→m3u8, সার্ভার-বান্ধব প্রমাণিত)
   try {
     const q = isSeries ? ('type=tv&id=' + tmdbId + '&season=' + (parseInt(s, 10) || 1) + '&episode=' + (parseInt(e, 10) || 1)) : ('type=movie&id=' + tmdbId);
-    const jtxt = await woPoolText('https://vidbolt.xyz/api/resolve?' + q, Math.min(6500, ms || 6500), 450); // v1.15.43: পুল-প্রথম
+    const jtxt = await woPoolText('https://vidbolt.xyz/api/resolve?' + q, Math.min(6500, ms || 6500)); // v1.15.43: পুল-প্রথম
     let j = null; try { j = jtxt ? JSON.parse(jtxt) : null; } catch { } // ভাঙা-JSON→null (নিরাপদ)
     if (!j) return [];
     const srcs = (j && j.stream && j.stream.sources) || [];
@@ -981,7 +980,7 @@ async function woStreams(tmdbId, title, type, s, e, cfg) { // TMDB-আইডি-
     const isSeries = type === 'series';
     const u = isSeries ? (WOBASE + '/hls/tv/' + tmdbId + '/S' + (parseInt(s, 10) || 1) + '.json') : (WOBASE + '/hls/movie/' + tmdbId);
     const vbP = woVidbolt(tmdbId, isSeries, s, e, left()).catch(() => []); // v1.15.41: সমান্তরাল — সূচি-থাকুক-বা-না-থাকুক
-    const idxTxt = await woPoolText(u, left(), 450); // v1.15.43: পুল-প্রথম
+    const idxTxt = await woPoolText(u, left()); // v1.15.43: পুল-প্রথম
     const r0ok = !!idxTxt;
     let servers = [];
     if (r0ok) {
