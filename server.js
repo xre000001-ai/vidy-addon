@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.40';
+const VERSION = '1.15.41';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -933,14 +933,50 @@ async function woSubs(tmdb, type, s, e, ms) { // sub/tv/{id}/{s}/{e}/subtitles.j
     return Object.keys(subs).slice(0, 8).map(k => ({ url: String(subs[k]), lang: WO_LANGS[String(k).toLowerCase()] || String(k).toUpperCase() })).filter(x => /^https?:/.test(x.url));
   } catch { return []; }
 }
+async function woVidbolt(tmdbId, isSeries, s, e, ms) { // v1.15.41: MultiMovies-এর-বিশাল-লাইব্রেরির-চাবি — vidbolt-TMDB-রেজলভার (JSON→m3u8, সার্ভার-বান্ধব প্রমাণিত)
+  try {
+    const q = isSeries ? ('type=tv&id=' + tmdbId + '&season=' + (parseInt(s, 10) || 1) + '&episode=' + (parseInt(e, 10) || 1)) : ('type=movie&id=' + tmdbId);
+    const r = await fetch('https://vidbolt.xyz/api/resolve?' + q, { headers: { 'User-Agent': UA, Referer: 'https://vidbolt.xyz/', Accept: 'application/json' }, signal: AbortSignal.timeout(Math.min(6500, ms || 6500)) });
+    if (!r.ok) return [];
+    const j = await r.json().catch(() => null);
+    const srcs = (j && j.stream && j.stream.sources) || [];
+    const out = [];
+    for (const sc of srcs.slice(0, 2)) {
+      const u = sc && sc.url;
+      if (!u || !/^https?:/.test(u)) continue;
+      try {
+        const pr = await fetch(u, { headers: { 'User-Agent': UA, Referer: 'https://vidbolt.xyz/' }, signal: AbortSignal.timeout(Math.min(5500, ms || 5500)) });
+        if (!pr.ok) continue;
+        const pl = await pr.text();
+        if (pl.indexOf('#EXTM') < 0) continue;
+        let base = u; try { base = new URL(u).href.replace(/[^/]*$/, ''); } catch { }
+        const lines = pl.split('\n');
+        let found = 0;
+        for (let jj = 0; jj < lines.length - 1 && found < 4; jj++) {
+          if (lines[jj].indexOf('#EXT-X-STREAM-INF') < 0) continue;
+          const rm = lines[jj].match(/RESOLUTION=(\d+)x(\d+)/i);
+          const uri = String(lines[jj + 1] || '').trim();
+          if (!uri || uri.charAt(0) === '#') continue;
+          let abs = uri; try { abs = new URL(uri, base).href; } catch { }
+          out.push({ h: rm ? parseInt(rm[2], 10) || 0 : 0, url: abs, ref: 'https://vidbolt.xyz/' });
+          found++;
+        }
+        if (!found && /#EXTINF/.test(pl)) out.push({ h: 0, url: u, ref: 'https://vidbolt.xyz/' }); // মিডিয়া-প্লেলিস্ট-সরাসরি
+      } catch { }
+      if (out.length >= 6) break;
+    }
+    return out;
+  } catch { return []; }
+}
 async function woStreams(tmdbId, title, type, s, e, cfg) { // TMDB-আইডি-সরাসরি — টাইটেল-ম্যাচ-দরকার-নেই (হুবহু-নির্ভুল)
   if (!WOBASE || !tmdbId) return [];
   const t3 = Date.now(); const WOB = 9000; const left = () => Math.max(300, WOB - (Date.now() - t3));
   try {
     const isSeries = type === 'series';
     const u = isSeries ? (WOBASE + '/hls/tv/' + tmdbId + '/S' + (parseInt(s, 10) || 1) + '.json') : (WOBASE + '/hls/movie/' + tmdbId);
+    const vbP = woVidbolt(tmdbId, isSeries, s, e, left()).catch(() => []); // v1.15.41: সমান্তরাল — সূচি-থাকুক-বা-না-থাকুক
     const r0 = await woFetch(u, left());
-    if (!r0.ok) { if (DBG) console.error('[wo] সূচি-নেই ' + tmdbId + '/' + type + ' http_' + r0.status); return []; } // সূচিতে-নেই = সৎ-শূন্য
+    if (!r0.ok && DBG) console.error('[wo] সূচি-নেই ' + tmdbId + '/' + type + ' http_' + r0.status + ' → vidbolt-ই'); // v1.15.41: শূন্য-নয় — vidbolt-কভারেজ
     let servers = [];
     if (isSeries) {
       const d = await r0.json().catch(() => null);
@@ -951,8 +987,7 @@ async function woStreams(tmdbId, title, type, s, e, cfg) { // TMDB-আইডি-
       if (txt && /^https?:/.test(txt)) servers = [txt.split('\n')[0].trim()];
     }
     servers = servers.slice(0, 6);
-    if (!servers.length) { if (DBG) console.error('[wo] পর্ব-সূচি-শূন্য ' + tmdbId + ' S' + (s || 1) + 'E' + (e || 1)); return []; }
-    const lists = await Promise.all(servers.map(su => woFetch(su, Math.min(6500, left())).then(x => x.ok ? x.text() : '').catch(() => '')));
+    const lists = servers.length ? await Promise.all(servers.map(su => woFetch(su, Math.min(6500, left())).then(x => x.ok ? x.text() : '').catch(() => ''))) : []; // v1.15.41: শূন্য-সূচি=শূন্য-তালিকা — vidbolt-ই-কার্ড-দেবে
     const woq = Array.isArray(cfg && cfg.woq) ? cfg.woq : [];
     const seen = new Set(); const raws = [];
     for (let i = 0; i < lists.length; i++) {
@@ -973,7 +1008,8 @@ async function woStreams(tmdbId, title, type, s, e, cfg) { // TMDB-আইডি-
       }
       if (!found && /#EXTINF/.test(pl) && !seen.has(servers[i])) { seen.add(servers[i]); raws.push({ h: 0, url: servers[i] }); } // মাস্টার-ই-মিডিয়া-প্লেলিস্ট
     }
-    if (DBG) console.error('[wo] ' + tmdbId + '/' + (isSeries ? 'S' + (s || 1) + 'E' + (e || 1) : 'movie') + ' সার্ভার=' + servers.length + ' ভেরিয়েন্ট=' + raws.length + ' @' + (Date.now() - t3) + 'ms');
+    try { const vbl = await vbP; for (const v of (vbl || [])) if (v && v.url && !seen.has(v.url)) { seen.add(v.url); raws.push(v); } } catch { } // v1.15.41: vidbolt-ভেরিয়েন্ট-মেশানো
+        if (DBG) console.error('[wo] ' + tmdbId + '/' + (isSeries ? 'S' + (s || 1) + 'E' + (e || 1) : 'movie') + ' সার্ভার=' + servers.length + ' ভেরিয়েন্ট=' + raws.length + ' @' + (Date.now() - t3) + 'ms');
     let vars = raws.filter(x => !woq.length || woq.indexOf(x.h) >= 0);
     vars.sort((a, b) => b.h - a.h);
     vars = vars.slice(0, 12);
@@ -990,7 +1026,7 @@ async function woStreams(tmdbId, title, type, s, e, cfg) { // TMDB-আইডি-
         description: txt,
         quality: q2,
         url: x.url,
-        behaviorHints: { notWebReady: false, isBingeable: true, filename: 'watchout.m3u8', proxyHeaders: { request: { Referer: WO_REF, 'User-Agent': UA } } },
+        behaviorHints: { notWebReady: false, isBingeable: true, filename: 'watchout.m3u8', proxyHeaders: { request: { Referer: x.ref || WO_REF, 'User-Agent': UA } } }, // v1.15.41: প্রতি-সার্ভার-নিজের-রেফারার
         bingeGroup: 'wo|' + T.toLowerCase() + '::|Multi',
         ...(subs.length ? { subtitles: subs.map(y => ({ url: y.url, lang: y.lang })) } : {})
       };
