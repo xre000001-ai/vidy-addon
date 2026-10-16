@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.52';
+const VERSION = '1.15.53';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -939,13 +939,15 @@ function woAudioTag(pl) { // v1.15.47: সত্য-অডিও-দাবি �
   if (uniq.length === 1) return uniq[0];
   return '';
 }
-const MM_MINI = new Map(); // v1.15.48: কী → {m,ref,h,at} — মিনি-মাস্টার-নির্মাণ-প্যারাম (প্রতি-গুণমান-আলাদা-কার্ড; এন্ডপয়েন্ট-প্রতিবার-উজ্জ্বল-ফেচে-নেয় — স্ট্রিম-ক্যাশ-নয়)
-function mmMiniKey(m, ref, h, vbq) { // v1.15.49: +vbq (তাটা-রেজলভ-প্রশ্ন — প্রতি-অনুরোধে-উজ্জ্বল-স্বাক্ষর)
-  const k = Buffer.from(m + '|' + (h | 0)).toString('base64url');
-  MM_MINI.set(k, { m: m, ref: ref || WO_REF, h: h | 0, at: Date.now(), vbq: vbq || '' });
-  if (MM_MINI.size > 600) { const cut = Date.now() - 21600e3; for (const [kk, vv] of MM_MINI) if (vv.at < cut) MM_MINI.delete(kk); } // ৬ঘ-বয়সী-বাদ (কার্ড-ক্যাশ ৩০মি-এর-চেয়ে-দীর্ঘ-রাখা-নিরাপদ)
-  if (MM_MINI.size > 900) { const arr = [...MM_MINI.entries()].sort((a, b) => a[1].at - b[1].at).slice(0, MM_MINI.size - 600); for (const [kk] of arr) MM_MINI.delete(kk); } // বয়সে-কাটে-না-হলে-পুরনোতম-বাদ (মেমো-সীমা)
-  return k;
+function mmMiniKey(m, ref, h, vbq) { // v1.15.53: স্টেটলেস — কী-ই-সব-তথ্য-বহন-করে (মাস্টার|রেফ|উচ্চতা|vbq); .48-এর-সার্ভার-স্মৃতি-ম্যাপ MM_MINI রিস্টার্ট/ডিপ্লয়/অন্য-ইনস্ট্যান্সে-ফাঁকা-হত → প্লেয়ার-404-'gone' (ইউজার-রিপোর্টের-আসল-গল্প)
+  return Buffer.from(m + '|' + (ref || WO_REF) + '|' + (h | 0) + '|' + (vbq || '')).toString('base64url');
+}
+function mmMiniOpen(k) { // কী-থেকে-প্যারাম-উদ্ধার — যেকোনো-ইনস্ট্যান্স, যেকোনো-সময়
+  try {
+    const pp = Buffer.from(k, 'base64url').toString('utf8').split('|');
+    if (pp.length < 3 || !/^https?:\/\//.test(pp[0])) return null;
+    return { m: pp[0], ref: pp[1] || WO_REF, h: parseInt(pp[2], 10) || 0, vbq: pp[3] || '' };
+  } catch { return null; }
 }
 function mmMiniBuild(masterUrl, wantH, raw) { // v1.15.49: সব-গুণমান-থাকে (প্লেয়ার-মেনুতে-বদলানো-যায় — ইউজার-প্রমাণ: এক-ভেরিয়েন্ট-মিনিতে-অপশন-ই-নেই), চাওয়া-গুণমান-প্রথমে (শুরু-সেটাই); অডিও/সাব/KEY/MAP-URI-সব-পরম
   const L = String(raw).split('\n'); const tags = []; const vars = [];
@@ -1642,7 +1644,7 @@ const server = http.createServer((req, res) => {
     }
     const mmR = p.match(/^\/mm\/([A-Za-z0-9_-]{8,2400})\/mini\.m3u8$/); // v1.15.49: স্বাক্ষর-সহ-ব্রিজ-মাস্টার-কী ~১৪০০-অক্ষর — ৩০০-সীমায়-সব-404 হচ্ছিল (ইউজার-প্রমাণ)
     if (mmR) return (async () => { // v1.15.48: মিনি-মাস্টার — রেজোলিউশন-হাতে-আটকানো+অডিও-অক্ষত; উজ্জ্বল-উজ্জ্বল-উজ্জ্বল (স্ট্রিম-ফল-ক্যাশ-নয় — প্রতি-অনুরোধে-উজ্জ্বল-ফেচ)
-      const ent = MM_MINI.get(mmR[1]);
+      const ent = mmMiniOpen(mmR[1]); // কী-ই-সব-জানে — স্মৃতি-লাগে-না; সত্যিকারের-কী-কখনো-মরে-না
       if (!ent) { res.writeHead(404, { 'content-type': 'text/plain' }); return res.end('gone'); }
       try {
         if (ent.vbq) { // v1.15.49: স্বাক্ষর-দ্রুত-ঘোরে — প্রতি-অনুরোধে-তাটা-উজ্জ্বল-রেজলভ (কার্ডের-বাঁধানো-URL-মৃত-হলেও-বাজবে)
