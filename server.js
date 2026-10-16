@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.51';
+const VERSION = '1.15.52';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -920,6 +920,13 @@ async function twrFetch(base, tag, title, type, s, e, t3) {
 const WOBASE = String(process.env.WOBASE || 'https://raw.githubusercontent.com/Watchout2025/api/refs/heads/main'); // স্ট্রিম-সূচি (মুভি: hls/movie/{tmdb}, টিভি: hls/tv/{tmdb}/S{n}.json); লোকাল-টেস্ট: WOBASE=http://127.0.0.1:8320
 const WO_REF = 'https://vidout.pages.dev/'; // গোপন-চাবি: এই-Referer-ই স্ট্রিম-CDN-খোলে (না-দিলে-404)
 const VB_REF = 'https://vidbolt.xyz/'; // v1.15.46: vidbolt-MM-রেজলভার-রেফারার (পেশাদার-ধ্রুবক — হার্ডকোড-বাদ)
+// v1.15.52: স্থায়ী-হ্যাশ-স্মৃতি — vidbolt-ঘূর্ণন-ফাঁকে-আগে-দেখা-animecurx-হ্যাশ-থেকেই-কার্ড (প্রমাণ: পুরনো-হ্যাশ-বহুদিন-খোলে; ঘূর্ণনে-Lanterns-মাঝে-মাঝে-শূন্য-হয়)
+const MMHC_FILE = require('path').join(__dirname, 'vidy_mm_hashes.json');
+const MMHC = new Map();
+try { for (const [kk, vv] of Object.entries(JSON.parse(require('fs').readFileSync(MMHC_FILE, 'utf8')))) MMHC.set(kk, vv); } catch { }
+let MMHC_T = null;
+function mmhcSave() { if (MMHC_T) return; MMHC_T = setTimeout(() => { MMHC_T = null; try { require('fs').writeFileSync(MMHC_FILE, JSON.stringify(Object.fromEntries(MMHC))); } catch { } }, 4000); }
+function mmhcKey(isSeries, tmdbId, s2, e2) { return isSeries ? ('tv:' + tmdbId + ':' + (parseInt(s2, 10) || 1) + ':' + (parseInt(e2, 10) || 1)) : ('mv:' + tmdbId); }
 const WO_LANGS = { eng: 'English', en: 'English', hin: 'Hindi', hi: 'Hindi', ara: 'Arabic', fra: 'French', spa: 'Spanish', por: 'Portuguese', rus: 'Russian', zho: 'Chinese', ben: 'Bengali', tam: 'Tamil', tel: 'Telugu' };
 function woAudioTag(pl) { // v1.15.47: সত্য-অডিও-দাবি — মাস্টার-প্লেলিস্টের EXT-X-MEDIA:TYPE=AUDIO গণনা (ইউজার-প্রমাণ: বেশিরভাগ-স্ট্রিমে-১টাই-অডিও, 'Multi Audio'-লেখা-মিথ্যা-ছিল)
   if (!pl) return '';
@@ -991,8 +998,19 @@ async function woVidbolt(tmdbId, isSeries, s, e, ms) { // v1.15.46: MM-রেজ
     const q = isSeries ? ('type=tv&id=' + tmdbId + '&season=' + (parseInt(s, 10) || 1) + '&episode=' + (parseInt(e, 10) || 1)) : ('type=movie&id=' + tmdbId);
     const jtxt = await woPoolText('https://vidbolt.xyz/api/resolve?' + q, vLeft(6500)); // সরাসরি-প্রথম, ভিডি-র-পুল-উদ্ধারে
     let j = null; try { j = jtxt ? JSON.parse(jtxt) : null; } catch { }
-    const srcs = (j && j.stream && Array.isArray(j.stream.sources) ? j.stream.sources : []).slice(0, 8);
-    if (!srcs.length) return [];
+    const ck = mmhcKey(isSeries, tmdbId, s, e);
+    let srcs = (j && j.stream && Array.isArray(j.stream.sources) ? j.stream.sources : []).slice(0, 8);
+    if (!srcs.length) { // ঘূর্ণন-ফাঁক → স্মৃতির-হ্যাশ (সরাসরি-মাস্টার; পাইপলাইন-নিজেই-যাচায় — মৃত-হলে-সৎ-শূন্য)
+      const cm = MMHC.get(ck);
+      if (cm && cm.m) { if (DBG) console.error('[mm] হ্যাশ-স্মৃতি-ব্যবহার ' + ck); srcs = [{ url: cm.m, kind: 'hls', quality: cm.q || '', language: cm.lang || '' }]; }
+      if (!srcs.length) return [];
+    } else {
+      for (const sc of srcs) { // স্থায়ী-প্রকৃতির-হ্যাশ-মনে-রাখা (স্বাক্ষরযুক্ত-অন্য-হোস্ট-বাদ — ওগুলো-মেয়াদ-শেষে-মৃত)
+        const hm = sc && sc.url && String(sc.url).match(/\/tvshows\/([a-f0-9]{8,40})\/index\.m3u8/);
+        if (hm) { MMHC.set(ck, { m: sc.url, q: String(sc.quality || ''), lang: String(sc.language || ''), at: Date.now() }); mmhcSave(); break; }
+      }
+      if (MMHC.size > 2500) { const cut = Date.now() - 30 * 86400e3; for (const [kk2, vv2] of MMHC) if (vv2.at < cut) MMHC.delete(kk2); }
+    }
     const out = []; const oseen = new Set();
     const push = (h, url, ref, mp4, lang, aud, mini, k) => { const kk = k || url; if (kk && !oseen.has(kk)) { oseen.add(kk); out.push({ h: h | 0, url: url, ref: ref, mp4: mp4 ? 1 : 0, lang: lang || '', aud: aud || '', mini: mini ? 1 : 0, vbq: mini ? q : '' }); } };
     await Promise.all(srcs.map(async sc => {
