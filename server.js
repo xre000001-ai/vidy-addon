@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.33';
+const VERSION = '1.15.34';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -137,6 +137,22 @@ const WOBASE = String(process.env.WOBASE || 'https://raw.githubusercontent.com/W
 const WO_REF = 'https://vidout.pages.dev/'; // this exact Referer opens the multimovies CDN (404 without it)
 const WO_LANGS = { eng: 'English', en: 'English', hin: 'Hindi', hi: 'Hindi', ara: 'Arabic', fra: 'French', spa: 'Spanish', por: 'Portuguese', rus: 'Russian', zho: 'Chinese', ben: 'Bengali', tam: 'Tamil', tel: 'Telugu' };
 const MM_VC = new Map(); const MM_MC = new Map(); // v1.15.30: vbq->resolved master (60s sticky — no resolve hammering) and master->raw text (60s)
+const MM_TILE = new Set(); // v1.15.34: masters proven to be thumbnail reels — never carded again
+function mmIsTile(pl) { // thumbnail-reel detector: the segments are images, not video (orion-type 'streams': 5s .png tiles)
+  const L = String(pl).split('\n'); let img = 0, seg = 0;
+  for (const l of L) { const t = l.trim(); if (!t || t.charAt(0) === '#') continue; seg++; if (/\.(png|jpe?g|webp|avif)(\?|$)/i.test(t)) img++; if (seg >= 4) break; }
+  return seg >= 2 && img >= Math.max(1, seg - 1);
+}
+function mmFirstVar(pl, base) { // the first variant URI of a master playlist
+  const L = String(pl).split('\n');
+  for (let i = 0; i < L.length - 1; i++) {
+    if (L[i].indexOf('#EXT-X-STREAM-INF') < 0) continue;
+    const nxt = L[i + 1] && L[i + 1].charAt(0) !== '#' ? L[i + 1].trim() : '';
+    if (!nxt) continue;
+    try { return new URL(nxt, base).href; } catch { return ''; }
+  }
+  return '';
+}
 function mmPut(map, k, v) { if (map.size > 300) map.clear(); map.set(k, { ts: Date.now(), v }); }
 function mmGet(map, k, ttl) { const e = map.get(k); return e && (Date.now() - e.ts) < ttl ? e.v : null; }
 function mmMiniKey(m, ref, h, vbq) { // stateless — the key carries everything (master|ref|height|vbq); works on any instance after any restart
@@ -1073,7 +1089,7 @@ async function mmVidbolt(tmdbId, isSeries, s, e, ms) { // v1.15.28: the vidbolt 
       const srcs = (j && j.stream && Array.isArray(j.stream.sources) ? j.stream.sources : []).slice(0, 8);
       if (!srcs.length) { // v1.15.31: rotation gap — a remembered master (sticky resolve memory) still emits one card; playback proves it
         const cm = mmGet(MM_VC, q, 1800000);
-        if (cm) { push(0, cm, VB_REF, 0, '', '', 1, 'mem'); break; }
+        if (cm && !MM_TILE.has(cm)) { push(0, cm, VB_REF, 0, '', '', 1, 'mem'); break; }
         if (draw < 2) await new Promise(r3 => setTimeout(r3, 450)); continue;
       }
       // v1.15.31 (user: "too many requests in a short period of time" mid-playback): the hls
@@ -1100,6 +1116,12 @@ async function mmVidbolt(tmdbId, isSeries, s, e, ms) { // v1.15.28: the vidbolt 
           const hq0 = parseInt(String(sc0.quality || ''), 10) || 0;
           const lang0 = String(sc0.language || '').trim();
           const atag = woAudioTag(pl);
+        // v1.15.34 (user: Chainsaw Man never played — the card was a ~10min reel of .png tiles, ending in the upstream 'too many requests' overlay): a playlist
+        // whose segments are images is a PREVIEW REEL, not video — no card from it (honest empty), verdict remembered; embedded masters get one cheap variant peek
+        if (MM_TILE.has(sc0.url)) { if (draw < 2) await new Promise(r3 => setTimeout(r3, 450)); continue; }
+        if (mmIsTile(pl)) MM_TILE.add(sc0.url);
+        else if (em.indexOf('#EXTM') >= 0) { const v1 = mmFirstVar(pl, sc0.url); if (v1) { try { const vt = await mmPoolText(v1, vLeft(4500)); if (vt && mmIsTile(vt)) MM_TILE.add(sc0.url); } catch { } } }
+        if (MM_TILE.has(sc0.url)) { if (draw < 2) await new Promise(r3 => setTimeout(r3, 450)); continue; }
           if (woHasAudioGrp(pl)) { // v1.15.30: one mini-master card per quality, resolution pinned + audio intact
             const lines0 = pl.split('\n'); let pcount = 0;
             for (let jj = 0; jj < lines0.length - 1 && pcount < 4; jj++) {
@@ -1160,6 +1182,7 @@ async function mmStreams(tmdbId, title, type, s, e, origin) { // v1.15.28: Multi
     for (let i = 0; i < lists.length; i++) {
       const pl = lists[i];
       if (!pl || pl.indexOf('#EXTM') < 0) continue;
+      if (mmIsTile(pl)) continue; // v1.15.34: a thumbnail reel is not a stream
       let base = servers[i]; try { base = new URL(servers[i]).href.replace(/[^/]*$/, ''); } catch { }
       const atag = woAudioTag(pl);
       const lines = pl.split('\n');
@@ -1709,6 +1732,7 @@ const server = http.createServer((req, res) => {
     if (mmR) return (async () => { // mini-master — resolution pinned + audio intact; fresh fetch per request (not the stream-result cache)
       const ent = mmMiniOpen(mmR[1]); // the key knows everything — no memory needed; a real key never dies
       if (!ent) { res.writeHead(404, { 'content-type': 'text/plain' }); return res.end('gone'); }
+      if (MM_TILE.has(ent.m)) { res.writeHead(404, { 'content-type': 'text/plain' }); return res.end('preview-reel'); } // v1.15.34
       try {
         // v1.15.33 (user: Chainsaw Man stopped ~10min): the key's own master is tried first and
         // STAYS for the whole playback — the timer re-resolve used to switch servers mid-play;
