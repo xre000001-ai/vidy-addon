@@ -19,7 +19,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.76';
+const VERSION = '1.15.77';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -386,7 +386,7 @@ function tmdbSearchPick(name, year, type) { // keyless-search → // keyless sea
 }
 function findTmdbInfo(imdb, type) {
   const key = 'find:' + imdb + ':' + type;
-  const hit = memoGet(key, 3600000); // v1.15.75: 24h->1h — a poisoned pick (lying proxy body) now self-heals hourly instead of living all day
+  const hit = memoGet(key, 600000); // v1.15.77: ->10min (user: no long caches anywhere) — a poisoned pick (lying proxy body) now self-heals hourly instead of living all day
   if (hit) return Promise.resolve(hit);
   // v1.15.8: find-empty-// v1.15.8: find-empty memo removed
   const cinemetaMeta = ms => pooledGet(CINEMETA + '/meta/' + type + '/' + encodeURIComponent(imdb) + '.json', ms).then(b2 => (JSON.parse(b2).meta || {})); // // free-public — Stremio's own IMDb CDN, head of the IMDb-first chain
@@ -417,7 +417,7 @@ function findTmdbInfo(imdb, type) {
 function findTmdb(imdb, type) { return findTmdbInfo(imdb, type).then(v => v.id); }
 function suggName(imdb) { // // fast title (for rt/tw): IMDb suggestion — skips the TMDB chain
   const key = 'snm:' + imdb;
-  const hit = memoGet(key, 86400000);
+  const hit = memoGet(key, 600000); // v1.15.77: 24h->10min
   if (hit !== undefined && hit !== null) return Promise.resolve(hit);
   return dedupe(key, () => pooledGet('https://v2.sg.media-imdb.com/suggestion/' + encodeURIComponent(String(imdb)[2]) + '/' + encodeURIComponent(imdb) + '.json', 8000).then(b => {
     const hit2 = (JSON.parse(b).d || []).find(x => x && x.l && ['TV series', 'TV mini series', 'feature', 'movie', 'TV movie'].indexOf(String(x.q || '')) >= 0) || {};
@@ -1387,7 +1387,7 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: // titl
         if (DBG) console.error('[t1g] ' + srv + ' BUDGET-CUT');
         pend.delete(srv); // v1.14.2: // v1.14.2: settled — keep early-harvest math correct
         fire({ srv, err: new Error('srv-budget') });
-      }, GIANT.indexOf(srv) >= 0 ? (viaProxy ? 8500 : 7000) : (viaProxy ? 7000 : 5500)); // v1.15.76 (user: 1.15.27 was the stable era): back to 8.5/7s — first-try completeness beats the speed experiment — vidout needs a snappier wall
+      }, GIANT.indexOf(srv) >= 0 ? (viaProxy ? 9500 : 8000) : (viaProxy ? 7000 : 5500)); // v1.15.76 (user: 1.15.27 was the stable era): back to 8.5/7s — first-try completeness beats the speed experiment — vidout needs a snappier wall
       return Promise.race([
         one(srv).then(r => { done = true; clearTimeout(tmo); pend.delete(srv); if (r.ok) okWave++; return r; }) // timer cleared on win — no dangling timeouts
           .catch(e => { done = true; clearTimeout(tmo); pend.delete(srv); return { srv, err: e || new Error('one-reject') }; }), // v1.15.76: a reject used to kill the WHOLE vidy wave (live: 'cardsP died: srv-budget', ok=0/16)
@@ -1409,7 +1409,10 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: // titl
         for (const [srv2, f2] of Array.from(pend)) { pend.delete(srv2); f2({ srv: srv2, late: true }); }
       }
     }, 150);
-    let rs = await Promise.all(allow.map(s => budget(s)));
+    // v1.15.77 (user: only Atlanta was coming; Miami/Boise are the giants): fire the giants
+    // first and stagger the rest by 400ms — 16 concurrent hub races were thrashing the api
+    // space and the giants (3-8s fetches) lost the window; first-in gets the freshest exits.
+    let rs = await Promise.all(allow.map(s => (GIANT.indexOf(s) >= 0 ? budget(s) : new Promise(r2 => setTimeout(r2, 400)).then(() => budget(s)))));
     clearInterval(stopTighten); pend.clear();
     if (DBG) console.error('[t1g] ALL-SERVERS el=' + (Date.now() - t0) + 'ms ok=' + rs.filter(r => r.ok).length + '/' + rs.length);
     if (!rs.some(r => r.ok) && Date.now() - t0 < 3400) { // gate 3.4s (// gate 3.4s (tuned to the new budget): on a fast all-fail the retry still finishes inside the 9.8s limit

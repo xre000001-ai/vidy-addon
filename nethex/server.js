@@ -10,7 +10,7 @@ import { poolStart, poolStats, checkerStats } from './mb-lib/pool.js';
 if (typeof AbortSignal !== 'undefined' && !AbortSignal.timeout) { AbortSignal.timeout = (ms) => { const c = new AbortController(); const t = setTimeout(() => c.abort(new Error('timeout')), ms); if (t.unref) t.unref(); return c.signal; }; }
 
 const PORT = Number(process.env.PORT || 7000);
-const VERSION = '2.11.9';
+const VERSION = '2.11.10';
 const CINEMETA = 'https://v3-cinemeta.strem.io';
 const PUBLIC_BASE = process.env.PUBLIC_BASE || 'https://5a16d5684c14-nethex.baby-beamup.club';
 let LOGO_BUF = null;
@@ -445,7 +445,7 @@ const server = http.createServer(async (req, res) => {
               // positive shelf lives 90min (sign urls ~2h).
               // v2.6.0: a THIN bench (boot/churn window) must never write
               // a negative cache — the next tap re-resolves on fresh exits
-              if (x.length) cacheSet(key, x, 90 * 60 * 1000); // v2.10.3: // v2.10.3: positive-only caching — an empty cache would turn an MB site wave into a 60s memo of broken (r57 principle)
+              if (x.length) cacheSet(key, x, 10 * 60 * 1000); // v2.11.10: 90min->10min (user: no long caches) — positive only: // v2.10.3: positive-only caching — an empty cache would turn an MB site wave into a 60s memo of broken (r57 principle)
               // v2.9.2 BINGE PREWARM: a successful series tap quietly resolves
               // the NEXT 3 episodes into the cache — the next tap is a cache hit
               // (1.2s-class) instead of a cold chain.  Pool untouched.
@@ -453,7 +453,7 @@ const server = http.createServer(async (req, res) => {
                 setTimeout(() => {
                   for (let e = episode + 1; e <= episode + 3; e++) {
                     resolve('series', imdb, season, e)
-                      .then(y => { if (y.length) cacheSet(`${m[1]}:${imdb}:${season}:${e}`, y, 90 * 60 * 1000); })
+                      .then(y => { if (y.length) cacheSet(`${m[1]}:${imdb}:${season}:${e}`, y, 10 * 60 * 1000); }) // v2.11.10
                       .catch(() => {});
                   }
                 }, 1500).unref?.();
