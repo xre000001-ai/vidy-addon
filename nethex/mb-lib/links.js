@@ -10,7 +10,7 @@
 // them fresh when needed instead of storing them.
 
 import { API, SITE, commonHeaders, fetchJson } from "./upstream.js";
-import { playToken } from "./search.js"; // v2.11.1: play-টোকেন-গেট
+import { playToken } from "./search.js"; // v2.11.1: the play token gate
 
 /** Fetch the subject + season info for a detailPath (or an error marker). */
 async function fetchSubject(detailPath) {

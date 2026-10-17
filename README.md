@@ -1,88 +1,52 @@
-# vidy — Stremio Addon
+# Vidy
 
-Multi-source streaming addon for Stremio. One install, four source families, honest results.
+Stremio addon family: **Vidy · MovieBox · MultiMovies** in one package, with an embedded **resolver bridge** for ToonWorld4All + RareToons.
 
-> **Version 1.15.67** · Live: `https://3404d3c5dc63-vidy.baby-beamup.club/manifest.json`
+- Direct streams, multi-audio, subtitles — no media bytes ever pass through the server.
+- Proxies are supplied exclusively by [PoolHub](https://github.com/) sub-spaces (IP/geo-flag bypass only — never playback).
+- Embedded MovieBox engine (`nethex/`): catalog search → JWT gates → episode matrix → CDN-direct MP4.
+
+## Install
+
+Open the deployed manifest in Stremio, or paste it in Add-ons:
+
+```
+https://<deployment>/manifest.json
+```
+
+The configure page (`/configure`) offers quality, audio-language and subtitle filters encoded straight into the manifest URL.
+
+## Layout
+
+```
+server.js              HTTP addon: catalogs, streams, subtitles, config page
+nethex/                vendored MovieBox engine (own server, spawned as a child)
+  mb-lib/              pool · search · episode-matrix · links · subtitles
+resolver/twr_bridge.js ToonWorld + RareToons resolver bridge (hub-only)
+config/                PoolHub sub-space API keys
+docs/                  ARCHITECTURE · DEPLOY · CHANGELOG
+assets/                logos
+test.js                self-test suite (node test.js [baseURL])
+```
 
 ## Sources
 
-| Family | What it provides | Where it runs |
-|---|---|---|
-| **vidy** | Movies & series from vidy servers (16 server family, direct MP4/HLS) | this process |
-| **MovieBox** | Asian/global catalog, direct MP4 + soft subtitles | embedded child (`nethex/`) |
-| **toonworld4all · raretoons** | Cartoon/anime resolvers | `resolver/` bridge service |
-| **multimovies** | MM-HLS fallback streams | via resolver bridge |
+| Family | Path |
+|---|---|
+| vidy (own) | seed API → decrypt → CDN-direct |
+| MovieBox | embedded nethex child (`/stream` proxy) |
+| MultiMovies | vidbolt/vidout pipelines |
+| ToonWorld / RareToons | resolver bridge → PoolHub sub-spaces |
 
-## Architecture (one rule: nobody scans, everybody uses PoolHub)
-
-```
-                        ┌──────────────────────────────┐
-                        │   PoolHub (the only pool)    │
-                        │  5 sub-spaces, benched proxy │
-                        │  293c2a7d7dd6-poolhub…       │
-                        └──────┬───────────┬───────────┘
-              /pick every 60s  │           │  /fetch per call (+ /report wins)
-                ┌──────────────┘           └───────────────┐
-        ┌───────┴────────┐                        ┌────────┴─────────┐
-        │ vidy (this)    │                        │ resolver bridge  │
-        │ + moviebox     │                        │ tw+rt /find →    │
-        │   child        │                        │ hub /fetch       │
-        └───────┬────────┘                        └────────┬─────────┘
-                │                                          │
-        ┌───────┴──────────────────────────────────────────┴────────┐
-        │              Stremio plays DIRECT from CDN                │
-        └───────────────────────────────────────────────────────────┘
-```
-
-- **No component scans for proxies.** Every proxy is benched by PoolHub and handed out through sub-space `/pick`.
-- **MovieBox play/download/caption calls carry a minted Bearer JWT** (MovieBox gate, verified 2026-10); these token calls ride the pool exits directly (the hub transport is GET-only and cannot forward headers). Token-less GETs (detail) may ride the hub's `/fetch`.
-- **Every live success is reported back** (`/report`) so the hub's `moviebox` sub-space stays built from real-traffic proof.
-- **Playback is never proxied.** Only API/IP-flag calls ride the pool; video bytes go straight from the CDN to the player.
-
-## Folder layout
+## Run
 
 ```
-vidy-addon/
-├── server.js               # vidy addon entry (beamup start: node server.js)
-├── config.html             # addon configuration page
-├── config/
-│   └── poolhub_keys.json   # PoolHub sub-space API keys
-├── resolver/
-│   └── twr_bridge.js       # toonworld4all + raretoons resolver bridge (hub-only)
-├── nethex/                 # MovieBox child addon (community.nethex)
-│   ├── server.js
-│   └── mb-lib/             # search · episode-matrix · links · subtitles · pool
-├── docs/
-│   ├── ARCHITECTURE.md     # how the pieces talk
-│   ├── DEPLOY.md           # deployment runbook (beamup)
-│   └── HISTORY_BN.md       # full change history (Bengali)
-├── test.js                 # npm test
-└── assets/                 # logos
+npm i
+PORT=7000 node server.js
 ```
 
-## Run locally
-
-```bash
-# resolver bridge (port 8290)
-PORT=8290 POOLHUB_KEYS=./config/poolhub_keys.json node resolver/twr_bridge.js
-
-# vidy + embedded MovieBox child (port 8128, child = +137)
-PORT=8128 TWRT_BRIDGE=1 TWBASE=http://127.0.0.1:8290 RTBASE=http://127.0.0.1:8290 node server.js
-```
-
-## Health & debug
-
-| Endpoint | On | Shows |
-|---|---|---|
-| `/_health` | vidy | version, pool, apibench, nx (child), nxpool |
-| `/_pool` | vidy | current proxy roster + per-exit stats |
-| `/debug/ring` | child (:8265) | last resolve steps (search → matrix → cards) |
-| `/health` | bridge (:8290) | hub target, keys, usage counters |
-
-## Deploy
-
-See `docs/DEPLOY.md` (beamup runbook — note: this app deploys to the **main** branch).
+Environment: `POOLHUB` (hub base), `POOLHUB_KEYS` (keys JSON/path), `TWRT_BRIDGE=1` + `TWBASE`/`RTBASE` (resolver bridge), `NEXBASE` (external MovieBox engine), `VDBG=1` (debug logs).
 
 ## License
 
-Private project. Source history in `docs/HISTORY_BN.md`.
+MIT — see [LICENSE](LICENSE).

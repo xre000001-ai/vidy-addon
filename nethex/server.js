@@ -2,11 +2,11 @@ import http from 'node:http';
 import fs from 'node:fs';
 import { run as search } from './mb-lib/search.js';
 import { run as runMatrix } from './mb-lib/episode-matrix.js';
-let directFetch = (...a) => fetch(...a);            // v1.15.60: প্রথমে-Node-নিজস্ব-fetch (নির্ভরতা-মুক্ত-বুট)
-try { ({ fetch: directFetch } = await import('undici')); } catch { } // undici-থাকলে-সেটাই (beamup-এ-ইনস্টল-হয়); না-থাকলে-ও-চলে (Cinemeta-মাত্র)
+let directFetch = (...a) => fetch(...a);            // v1.15.60: // v1.15.60: Node's own fetch first (dependency-free boot)
+try { ({ fetch: directFetch } = await import('undici')); } catch { } // undici-// undici when present (installed on beamup); without it only Cinemeta-class calls run
 import { apiFetch } from './mb-lib/http.js';
 import { poolStart, poolStats, checkerStats } from './mb-lib/pool.js';
-// v2.11.0b (ডিপ্লয়ার-বিমা): পুরনো-Node (<17.3)-তে AbortSignal.timeout-নেই → হালকা-পলিফিল (নইলে-হাব-ফিড/কল-প্রতিটা-throw)
+// v2.11.0b (// v2.11.0b (deployer insurance): AbortSignal.timeout is missing on old Node (<17.3) -> a light polyfill (else every hub-feed/call throws)
 if (typeof AbortSignal !== 'undefined' && !AbortSignal.timeout) { AbortSignal.timeout = (ms) => { const c = new AbortController(); const t = setTimeout(() => c.abort(new Error('timeout')), ms); if (t.unref) t.unref(); return c.signal; }; }
 
 const PORT = Number(process.env.PORT || 7000);
@@ -41,7 +41,7 @@ function cacheSet(key, streams, ttl = CACHE_TTL) {
 
 const BG = new Set();   // v2.9.4: keys with a bg re-resolve in flight
 const metaCache = new Map();   // v2.9.1: type:id -> { at, m } (30min)
-const RING = [];               // v2.10.2: শেষ-৫০-রিজলভ-ধাপ (stdio:'ignore'-এর-ভেতরে-চোখ)
+const RING = [];               // v2.10.2: // v2.10.2: the last 50 resolve steps (eyes inside stdio-ignore)
 function ring(l) { RING.push((Date.now() % 1000000) + ' ' + l); if (RING.length > 50) RING.shift(); }
 async function meta(type, id) {
   const __t0 = Date.now();
@@ -151,8 +151,8 @@ async function resultsFor(q) {
   else if (r.length) srqCache.set(k, { at: Date.now(), ttl, r });
   return r;
 }
-// v2.11.5 (ইউজার: 'সব মিলিয়ে ৫ সেকেন্ড'): জয়ী-বিষয়-মানচিত্র (২৪ঘণ্টা) — চেনা-টাইটেল meta+search-হপ-দুটো-ই-বাদ
-// (matrix-মাত্র ~২-২.৫সে); প্রথম-দেখা-টাইটেল-আগের-মতো-পূর্ণ-চেইন (উষ্ণ-স্লটে ~৪-৫সে)।
+// v2.11.5 (// v2.11.5 (user: "5 seconds total"): the winning-subject map (24h) — familiar titles skip both the meta and search hops
+// (matrix-// (matrix only, ~2-2.5s); a first-seen title still runs the full chain (warm slots, ~4-5s).
 const PICK = new Map();
 async function resolve(type, imdb, season, episode) {
   const tR0 = Date.now();
@@ -238,14 +238,14 @@ async function resolve(type, imdb, season, episode) {
     } catch { }
   }
   if (!item?.detailPath || (matchQ(item) < 2 && !altOK)) { ring(`giveup q:${matchQ(item)} alt:${altOK ? 1 : 0} +${Date.now() - tR0}ms`); return []; }   // honest empty, never junk cards
-  let usedDp = item.detailPath; // v2.11.5: চূড়ান্ত-জয়ী-কোন-বিষয় (মানচিত্রে-ভরার-জন্য)
+  let usedDp = item.detailPath; // v2.11.5: // v2.11.5: which subject finally won (for the map)
   let r = await runMatrix({ id: item.detailPath, season, episode });
   if (process.env.NMDEBUG) console.error('[nx] +' + (Date.now() - tR0) + 'ms matrix status:', r.status, r.status === 200 ? `langs:${(r.body.languages || []).length} subs:${(r.body.subtitles || []).length}` : '');
   // v1.11-local: a chosen subject that answers langs:0 (exists but carries no links
   // for this episode) is not a real empty — walk the next-ranked catalog subjects
   if (r.status === 200 && !(r.body?.languages || []).length) {
-    // v2.9.9 PARALLEL LADDER: geo-churn একবারে-এক-সাবজেক্ট-খেয়ে-ফেলে — পরপর-হাঁটায়-প্রতি-ধাপে-পূর্ণ-রাউন্ড-ট্রিপ
-    // লাগত (E1 এখানেই ৩-৪সে হারাত)। প্রার্থীরা-এখন-একসাথে-ছোটে; লিংক-বহনকারী-প্রথম-ফল-জেতে।
+    // v2.9.9 PARALLEL LADDER: geo-churn // v2.9.9 PARALLEL LADDER: geo-churn eats one subject at a time — sequential walking paid a full round trip per step
+    // // (E1 lost 3-4s here). Candidates now race together; the first result carrying links wins.
     const cands = chooseList(results, m.name, year, type, 4).filter(x => x.detailPath !== item.detailPath).slice(0, 2);
     if (cands.length) {
       let rWin = null, winDp = '';
@@ -259,12 +259,12 @@ async function resolve(type, imdb, season, episode) {
             .finally(() => { if (--left === 0) res(); });
         });
       });
-      if (rWin) { r = rWin; usedDp = winDp || usedDp; } // v2.11.5: রেসে-জেতা-প্রার্থী-ই-মানচিত্রে
+      if (rWin) { r = rWin; usedDp = winDp || usedDp; } // v2.11.5: // v2.11.5: the race-winning candidate goes into the map
     }
   }
   if (r.status !== 200) { ring(`matrix status:${r.status} +${Date.now() - tR0}ms`); return []; }
   const b = r.body;
-  if ((b.languages || []).length) { // v2.11.5: জয়ী-বিষয়-মানচিত্রে-ভরা (২৪ঘণ্টা; পরের-ট্যাপ=matrix-মাত্র)
+  if ((b.languages || []).length) { // v2.11.5: // v2.11.5: feed the winning-subject map (24h; the next tap = matrix only)
     if (PICK.size >= 400) PICK.delete(PICK.keys().next().value);
     PICK.set(pk, { dp: usedDp, at: Date.now(), year });
   }
@@ -272,7 +272,7 @@ async function resolve(type, imdb, season, episode) {
   ring(`langs:${(b.languages || []).length} +${Date.now() - tR0}ms`);
   return toCards(r, type, season, episode, year);
 }
-function toCards(r, type, season, episode, year) { // v2.11.5: অ্যাসেম্বলি-হেল্পার (resolve+pick-cache-দুজনেই)
+function toCards(r, type, season, episode, year) { // v2.11.5: // v2.11.5: assembly helper (shared by resolve and the pick cache)
   const b = r.body;
   const streams = [];
   for (const lang of (b.languages || [])) {
@@ -367,8 +367,8 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=86400', 'Access-Control-Allow-Origin': '*' });
       return res.end(LOGO_BUF);
     }
-    if (u.pathname === '/health') return send(res, 200, { ok: true, version: VERSION, mode: 'direct-mp4', pool: poolStats().healthy, waves: checkerStats().waves, size: poolStats().size }); // waves=মোট-স্ক্যান-ঢেউ (সব-মান-এক্সপোর্টেড-হেল্পার-থেকে)
-    if (u.pathname === '/debug/ring') return send(res, 200, RING.slice(-50)); // v2.10.2 রিজলভ-ধাপ-প্রমাণ
+    if (u.pathname === '/health') return send(res, 200, { ok: true, version: VERSION, mode: 'direct-mp4', pool: poolStats().healthy, waves: checkerStats().waves, size: poolStats().size }); // waves=// v2.10.2 step-proof counters
+    if (u.pathname === '/debug/ring') return send(res, 200, RING.slice(-50)); // v2.10.2 // v2.10.2 resolve-step proof
     if (u.pathname === '/debug/pool') {
       if (u.searchParams.get('k') !== 'nethex-dbg-7f3a') return send(res, 404, { error: 'not found' });
       return send(res, 200, poolStats());
@@ -419,7 +419,7 @@ const server = http.createServer(async (req, res) => {
             // positive shelf lives 90min (sign urls ~2h).
             // v2.6.0: a THIN bench (boot/churn window) must never write
             // a negative cache — the next tap re-resolves on fresh exits
-            if (x.length) cacheSet(key, x, 90 * 60 * 1000); // v2.10.3: শুধু-ধনাত্মক-ক্যাশ — খালি-ক্যাশ-লিখলে-MB-সাইট-ঢেউ-ভাঙা-৬০সে-মেমো-হয়ে-যেত (r57-নীতি)
+            if (x.length) cacheSet(key, x, 90 * 60 * 1000); // v2.10.3: // v2.10.3: positive-only caching — an empty cache would turn an MB site wave into a 60s memo of broken (r57 principle)
             // v2.9.2 BINGE PREWARM: a successful series tap quietly resolves
             // the NEXT 3 episodes into the cache — the next tap is a cache hit
             // (1.2s-class) instead of a cold chain.  Pool untouched.
@@ -467,15 +467,15 @@ const server = http.createServer(async (req, res) => {
   } catch (e) { console.error(e); return send(res, 200, { streams: [] }); }
 });
 poolStart();   // v2.6.0: pool ALWAYS on for API calls (user directive)
-// v2.11.1c: উষ্ণকরণ — পুল-ফিড-ভরার-পরে (১২সে+২৫সে): playToken-মিন্ট + jwt-ক্যালিব্রেশন-সার্চ
-// (আগে-setImmediate-বুটে-হত → পুল-খালি → নীরব-ব্যর্থ → ১ম-ট্যাপে-সব-ক্যালিব্রেশন-লেগ)
-setInterval(() => { // v2.11.5: playToken-সর্বদা-<৪৫সে-তাজা — matrix-কখনো-মিন্ট-ব্যয় (~২সে) দেয়-না
+// v2.11.1c: // v2.11.1c: warm-up — after the pool feed lands (12s + 25s): playToken mint + a jwt-calibration search
+// (// (a setImmediate at boot used to run before the pool filled -> silent failure -> the whole calibration cost landed on the first tap)
+setInterval(() => { // v2.11.5: playToken-// v2.11.5: playToken always <45s fresh — the matrix never pays the mint (~2s)
   import('./mb-lib/search.js').then(m => m.playToken()).catch(() => { });
 }, 45000).unref();
-for (const WARM_AT of [4000, 12000]) { // v2.11.4: আগে-ওয়ার্ম (বুট-বেঞ্চ ~৩.৫সে-তে-প্রমাণ-করে — playToken-৪সে-তে-মিন্ট)
+for (const WARM_AT of [4000, 12000]) { // v2.11.4: // v2.11.4: warm earlier (the boot bench proves ~3.5s — playToken mints at 4s)
   setTimeout(() => {
     import('./mb-lib/search.js').then(m => Promise.all([m.playToken(), m.search({ q: 'a', limit: 1, page: 1 })]).catch(() => { })).catch(() => { });
   }, WARM_AT).unref();
 }
-// v2.11.3: v2.3.2-বুট-সার্চ-ওয়ার্ম-বাদ (পুল-ফিডের-আগে-চলত → নীরব-ব্যর্থ; ১২সে/২৫সে-ওয়ার্ম-ই-যথেষ্ট)
+// v2.11.3: v2.3.2-// v2.11.3: the v2.3.2 boot-search warm dropped (it ran before the pool feed -> silent failure; the 12s/25s warms suffice)
 server.listen(PORT, '0.0.0.0', () => console.log(`MovieBox (NETHEX) v${VERSION} on :${PORT}`));

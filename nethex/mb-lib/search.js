@@ -154,18 +154,18 @@ async function ensureJwt() {
   return jwtState.token;
 }
 
-/** v2.11.1 (রোগ-নির্ণয় r134): MovieBox এখন /subject/play-এও Bearer-JWT চায়
- *  (টোকেন-ছাড়া = hasResource:false, খালি-streams — লাইভ-প্রমাণিত)। matrix/links/subtitles
- *  এই-এক-গেট থেকে টোকেন নেয়। */
+/** v2.11.1 (r134 diagnosis): MovieBox now wants a Bearer JWT on /subject/play too
+ *  (no token = hasResource:false, empty streams — live-proven). matrix/links/subtitles
+ *  take their token from this one gate. */
 export async function bearerToken() {
   try { return (await ensureJwt()) || jwtState.token || ''; } catch { return jwtState.token || ''; }
 }
 
 const MAX_BFF_PAGES = 10; // safety cap for the page walk
 
-/** v2.11.1c (রোগ-নির্ণয় r135): PINNED/jwtState-টোকেন play-এর-জন্য-সার্ভার-সাইডে-নাকচ
- *  (hasResource:true কিন্তু streams:0 — লাইভ-প্রমাণিত); টাটকা-মিন্ট/টোকেনহীন=stream আসে।
- *  play/download/caption এই-টাটকা-টোকেন-নেয় (৬০সে-ক্যাশ, single-flight)। */
+/** v2.11.1c (r135 diagnosis): PINNED/jwtState tokens are rejected server-side for play
+ *  (hasResource:true but streams:0 — live-proven); a fresh mint or no token returns streams.
+ *  play/download/caption take this fresh token (60s cache, single-flight). */
 let _ptCache = { t: '', at: 0 };
 let _ptBusy = null;
 export async function playToken() {
@@ -185,7 +185,7 @@ async function searchPage(keyword, page) {
 /** v2.9.1: two pool exits race the same POST (600ms apart); the first OK
  *  response wins.  Cuts the single-exit latency tail — still 100% pool
  *  (apiFetch), no direct path exists. */
-async function hedgedPost(url, headers, body, { hedgeMs = 300, timeoutMs = 3000 } = {}) { // v2.11.5: টাইট-হেজ (উষ্ণ-স্লটে ১ম-উত্তর-দ্রুত)
+async function hedgedPost(url, headers, body, { hedgeMs = 300, timeoutMs = 3000 } = {}) { // v2.11.5: // v2.11.5: tight hedge (faster first answer on warm slots)
   return new Promise((resolve) => {
     let settled = false;
     const settle = (v) => { if (!settled) { settled = true; resolve(v); } };
@@ -257,10 +257,10 @@ function setScore(r, wanted) {
   return sc;
 }
 async function searchConsensus(keyword, page, wanted) {
-  // v2.9.9 EARLY-EXIT: যেকোনো-exit-যখনই-কাঙ্ক্ষিত-টাইটেল-নাম-মেনে-ফেরত-দেয় (score >= 3),
-  // তখনই-সেটেল — exact/prefix-ম্যাচের-পরে-majority-ভোট-আর-উন্নতি-করে-না, শুধু-লেটেন্সি-যোগ-করে
-  // (আগে-তিনটার-জন্য-অপেক্ষা → search ~2.9s; প্রথম-শক্তিশালী-সেট ~1.2s-এ-আসে)।
-  // অস্পষ্ট/জাংক-সেট-আগের-মতোই-majority-ভোটে-পড়ে।
+  // v2.9.9 EARLY-EXIT: // v2.9.9 EARLY-EXIT: as soon as any exit returns a set matching the wanted title (score >= 3),
+  // // settle — after an exact/prefix match a majority vote adds no improvement, only latency
+  // (// (waiting for all three -> search ~2.9s; the first strong set arrives ~1.2s).
+  // // unclear/junk sets still fall to the majority vote as before.
   return new Promise((resolve) => {
     let left = 3, settled = false, best = null, bs = -1; const okRs = [];
     const fin = (v) => { if (!settled) { settled = true; resolve(v); } };

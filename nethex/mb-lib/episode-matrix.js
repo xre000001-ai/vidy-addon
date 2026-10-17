@@ -22,7 +22,7 @@
 
 import { API, SITE, commonHeaders } from "./upstream.js";
 import { fetchJsonRotating } from "./pool.js";
-import { playToken } from "./search.js"; // v2.11.1: play-এ-টোকেন-বাধ্যতামূলক (হাব-অর্ডার-নয় — MovieBox-নতুন-গেট)
+import { playToken } from "./search.js"; // v2.11.1: the token is mandatory on play (not a hub order — a new MovieBox gate)
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -42,9 +42,9 @@ async function variantStreams(subjectId, detailPath, season, episode) {
     // v2.6.0 PARALLEL: play+download race TOGETHER (was sequential —
     // empty-play variants paid an extra full round-trip); both ride
     // hedged rotating exits (parallel search across proxies).
-    // v2.11.1 (রোগ-নির্ণয় r134): play-এ-প্রতি-IP-রেট-লিমিট (~১/২-৩-মিনিট) — বেশি-ভিন্ন-exit-ঘোরানো-ই-কোটা-বাড়ানো
+    // v2.11.1 (// v2.11.1 (r134 diagnosis): play has a per-IP rate limit (~1 per 2-3 min) — rotating many distinct exits grows the quota
     const [res, res2] = await Promise.all([
-      fetchJsonRotating(playUrl, H, { attempts: 3, ms: 2200, hedgeMs: 0, emptyCheck: (d) => !((d?.data?.streams || []).length) }), // v2.11.5: দুই-exit-সাথে-সাথে-ছোটে (hedge 0) — প্রথম-কনটেন্ট-জেতে ~১-২.২সে
+      fetchJsonRotating(playUrl, H, { attempts: 3, ms: 2200, hedgeMs: 0, emptyCheck: (d) => !((d?.data?.streams || []).length) }), // v2.11.5: two exits race together (hedge 0) — first content wins in ~1-2.2s
       fetchJsonRotating(dlUrl, H, { attempts: 2, ms: 2000, hedgeMs: 0, emptyCheck: (d) => !((d?.data?.downloads || []).length) }),
     ]);
     streams = res.ok ? res.data?.data?.streams || [] : [];

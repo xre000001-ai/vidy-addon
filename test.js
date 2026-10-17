@@ -56,7 +56,7 @@ async function tap(label, url, checks) {
     const lb = Buffer.from(await (await fetch(BASE + '/logo.png', { signal: AbortSignal.timeout(15000) })).arrayBuffer());
     ok(lb.length > 1000 && lb[0] === 0x89 && lb[1] === 0x50, '/logo.png served (' + lb.length + 'B PNG)');
   } catch (e) { ok(false, 'logo fetch: ' + e.message); }
-  try { // সাব-ট্র্যাক-ওয়ার্ম (ঠান্ডা-চাইল্ড-চেইনে-১-রিট্রাই) — প্রথম-ট্যাপেই-কার্ডে-ট্র্যাক-থাকবে
+  try { // // subtitle-track warm (one retry on the cold child chain) — tracks on cards from the very first tap
     let w = await (await fetch(BASE + '/subtitles/movie/tt0468569.json', { signal: AbortSignal.timeout(45000) })).json();
     if (!w.subtitles.length) w = await (await fetch(BASE + '/subtitles/movie/tt0468569.json', { signal: AbortSignal.timeout(45000) })).json();
     ok(Array.isArray(w.subtitles), 'subtitles warm ok');
@@ -95,7 +95,7 @@ async function tap(label, url, checks) {
   });
 
   // ── 4) more catalogue breadth ──
-  await tap('movie tt0114369 Se7en', BASE + '/stream/movie/tt0114369.json'); // MB-কভারেজ-ওঠানামা-করে — presence-DarkKnight/BrBa/SquidGame-এ-কঠোরভাবে-যাচাই
+  await tap('movie tt0114369 Se7en', BASE + '/stream/movie/tt0114369.json'); // MB-// MB coverage wobbles — presence is enforced on DarkKnight/BrBa/SquidGame instead
   await tap('movie tt0120737 Fellowship', BASE + '/stream/movie/tt0120737.json');
   await tap('series tt0903747:2:1 BreakingBad-S2E1', BASE + '/stream/series/tt0903747%3A2%3A1.json', (s) => {
     ok(s.length === 0 || s.some(c => /\u29e0 S2E1 \u2022 /.test(c.description)), 'S2E1 episode title');
@@ -125,15 +125,15 @@ async function tap(label, url, checks) {
     ok(s.length === 0 || s.every(c => !c.subtitles || c.subtitles.length === 0), 'sub=0: zero tracks on cards');
   });
 
-  // ── subtitles রিসোর্স (MovieBox-ট্র্যাক — 1.11.13-পুনরুদ্ধার) ──
+  // ── subtitles // -- subtitles resource (MovieBox tracks — restored in 1.11.13) --
   try {
     let sj = await (await fetch(BASE + '/subtitles/movie/tt0468569.json', { signal: AbortSignal.timeout(40000) })).json();
-    if (!sj.subtitles.length) sj = await (await fetch(BASE + '/subtitles/movie/tt0468569.json', { signal: AbortSignal.timeout(40000) })).json(); // ঠান্ডা-চাইল্ড-চেইনে-১-রিট্রাই
+    if (!sj.subtitles.length) sj = await (await fetch(BASE + '/subtitles/movie/tt0468569.json', { signal: AbortSignal.timeout(40000) })).json(); // // cold retry
     ok(Array.isArray(sj.subtitles), 'subtitles resource: array');
     ok(sj.subtitles.every(u3 => typeof u3.url === 'string' && /^https?:/.test(u3.url) && typeof u3.lang === 'string' && /^[a-z]{2,3}$/.test(u3.lang)), 'subtitles resource: lang codes sanitized');
     ok(sj.subtitles.length > 0, 'subtitles resource: MB tracks present (' + sj.subtitles.length + ')');
   } catch (e2) { ok(false, 'subtitles resource: ' + e2.message); }
-  // ── subtitles-রিসোর্স: series-সহ-s:e (পার্স-পথ-রিগ্রেশন-রক্ষা) ──
+  // ── subtitles-// -- subtitles resource: series with s:e (parse-path regression guard) --
   try {
     let sj2 = await (await fetch(BASE + '/subtitles/series/tt0903747:2:1.json', { signal: AbortSignal.timeout(45000) })).json();
     if (!sj2.subtitles.length) sj2 = await (await fetch(BASE + '/subtitles/series/tt0903747:2:1.json', { signal: AbortSignal.timeout(45000) })).json();

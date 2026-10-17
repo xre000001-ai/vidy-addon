@@ -9,7 +9,7 @@
 // from any HTTP client without special headers.
 
 import { API, SITE, commonHeaders, fetchJson } from "./upstream.js";
-import { playToken } from "./search.js"; // v2.11.1: play-টোকেন-গেট
+import { playToken } from "./search.js"; // v2.11.1: the play token gate
 
 /** Entry point. params: { id, season, episode } -> { status, body }. */
 export async function run(params) {

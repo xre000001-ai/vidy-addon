@@ -1,16 +1,16 @@
-// NETHEX proxy pool v2.11.0 — হাব-ফিড (ইউজার: "nijer proxy pool thakbe na — store from poolhub sub space and use them")
-//   - স্ক্যান/ফসল/বেঞ্চ-ঢেউ-কিছুই-নেই: POOL শুধু PoolHub-এর moviebox-সাব-স্পেস (/pick) থেকে জমা হয় (প্রতি-৬০সে)
-//   - ব্যবহার: apiFetch=আগে-হাব-/fetch, তারপর-হাব-ফিডেড- exits; লাইভ-ট্রাফিকের-ফল-হাবে /report-এ ফেরত (হাব-বেঞ্চের-খাবার)
-//   - TRAINED pick: হাব-ms-বীজ + লাইভ EWMA; 403/406→বেঞ্চ, মৃত→শীতল — সব-মেমোরিতে, কোনো-ফাইল-নেই
-let undiciFetch = (...a) => fetch(...a), ProxyAgent = null; // v1.15.60: undici-অনুপস্থিতিতেও-বুট-হয় (নির্ভরতা-মুক্ত-ফলব্যাক)
-try { ({ fetch: undiciFetch, ProxyAgent } = await import('undici')); } catch { } // থাকলে-আসল-undici (beamup-এ-স্বাভাবিক)
+// NETHEX proxy pool v2.11.0 — // NETHEX proxy pool v2.11 — hub-fed (user: "no proxy pool of its own — store from the PoolHub sub-space and use them")
+//   - //   - no scanning/harvest/checker waves at all: POOL fills only from PoolHub's moviebox sub-space (/pick, every 60s)
+//   - //   - use: apiFetch = own proven slots first, hub relay as backup; live wins report back to hub /report (feeds the hub bench)
+//   - TRAINED pick: //   - TRAINED pick: hub-ms seed + live EWMA; 403/406 -> bench, dead -> cooldown — all in memory, no files
+let undiciFetch = (...a) => fetch(...a), ProxyAgent = null; // v1.15.60: undici-// v1.15.60: boots even without undici (dependency-free fallback)
+try { ({ fetch: undiciFetch, ProxyAgent } = await import('undici')); } catch { } // // real undici when present (normal on beamup)
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import { API, SITE, UA } from './upstream.js';
 
-const BENCH_MAX = 128;             // v2.10.4 (ইউজার): ক্যাপ-ডাবল ৬৪→১২৮             // r-20261016m (ইউজার: 'ম্যাক্স-পর্যন্ত'): বেঞ্চ-ক্যাপ ৩২→৬৪ — ঝড়ে-অর্ধেক-মরলেও-৩২-থাকে
-const SAMPLE = 400;               // candidates probed per pass (২০০→৪০০)
-const BOOT_TARGET = 96;           // v2.10.4 (ইউজার): বুট-টার্গেট-ডাবল ৪৮→৯৬           // boot stops once this many exits are in (২৮→৪৮)
+const BENCH_MAX = 128;             // v2.10.4 (// v2.10.4 (user): cap doubled 64->128 — half the storm can die and 64 still stand
+const SAMPLE = 400;               // candidates probed per pass (// candidates probed per pass (200->400)
+const BOOT_TARGET = 96;           // v2.10.4 (// v2.10.4 (user): boot target doubled 48->96
 const POOL = [];                  // the ready bench, fastest first
 const BAD = new Map();            // url -> benched-until (ms epoch)
 const STATS = new Map();          // url -> {ok, fail, lat}
@@ -20,7 +20,7 @@ let TS = 0;
 let FETCHING = false;
 
 function agentFor(u) {
-  if (!ProxyAgent) throw new Error('pool-cold'); // v1.15.60: undici-নেই=প্রক্সি-ডিসপ্যাচ-অসম্ভব — সৎ-ব্যর্থতা (সরাসরি-server-IP-প্ল্যাটফর্ম-কল-কখনো-নয়)
+  if (!ProxyAgent) throw new Error('pool-cold'); // v1.15.60: undici-// v1.15.60: no undici = proxy dispatch impossible — honest failure (never a direct server-IP platform call)
   let a = AGENTS.get(u);
   if (!a) { a = new ProxyAgent(u); AGENTS.set(u, a); }
   return a;
@@ -29,7 +29,7 @@ function agentFor(u) {
 function inflight(u) { return INFLIGHT.get(u) || 0; }
 
 const LASTOK = new Map();
-const ADDED = new Map();          // v2.11.3: url → যোগ-হওয়ার-সময় (অনুগ্রহ-জানালা; মিথ্যা-প্রমাণ-নয়)         // r-20261016k (রেজলভার-মানদণ্ড): url → শেষ-প্রমাণ-কখন (চেকার-ঢেউ বা লাইভ-ট্রাফিক)
+const ADDED = new Map();          // v2.11.3: url → // v2.11.3: url -> time added (grace window; no fake proof) // r-20261016k (resolver standard): url -> last any proof
 function noteGood(u, ms) {
   const s = STATS.get(u) || { ok: 0, fail: 0, lat: null };
   s.ok += 1;
@@ -43,7 +43,7 @@ function noteFail(u, kind) {
   const s = STATS.get(u) || { ok: 0, fail: 0, lat: null };
   s.fail += 1;
   STATS.set(u, s);
-  BAD.set(u, Date.now() + (kind === 'block' ? 300000 : 180000)); // r-20261016a: 403→৫মিন (২০মিন-ছিল), মৃত→৩মিন — কঠোর-বেঞ্চে-MovieBox-না-খেতেই-বসে-থাকত
+  BAD.set(u, Date.now() + (kind === 'block' ? 300000 : 180000)); // r-20261016a: 403→// r-20261016a: 403 -> 5min (was 20), dead -> 3min — a hard bench used to starve MovieBox
 }
 
 export function pick(exclude) {
@@ -75,23 +75,23 @@ export function pick(exclude) {
 /** THE API TRANSPORT.  Pool-only: a cold bench waits <=2s once, then
  *  fails the call honestly — the server IP never fires a platform call.
  *  Outcome feedback keeps the bench self-training on live traffic. */
-const HUBP = (process.env.POOLHUB || 'https://293c2a7d7dd6-poolhub.baby-beamup.club').replace(/\/$/, ''); // v2.10.7: ডিফল্ট=ডিপ্লয়েড-হাব
-const MB_REP = new Map(); // u→শেষ-/report (৬০০সে-থ্রটল)
-function hubReport(u, ms) { // v2.10.6 (ইউজার: 'MovieBox আমার অ্যাপে চলে, হাবে ০ কেন?'): আসল-MB-API-পার-করা-px (probe+searchVerify-পূর্ণ-প্রমাণিত) হাবের-moviebox-সাব-স্পেসে-জমা — robots-শর্তের-চেয়ে-কঠোর-সত্য-মানদণ্ড
+const HUBP = (process.env.POOLHUB || 'https://293c2a7d7dd6-poolhub.baby-beamup.club').replace(/\/$/, ''); // v2.10.7: // v2.10.7: default = deployed hub
+const MB_REP = new Map(); // u→// u -> last /report (600s throttle)
+function hubReport(u, ms) { // v2.10.6 (// v2.10.6 (user: "MovieBox plays in my app, why 0 in the hub?"): a px proven to pass the real MB API gets reported into the hub moviebox sub-space — stricter and truer than robots
   if (!HUBP) return; const nw = Date.now(); if (nw - (MB_REP.get(u) || 0) < 600000) return; MB_REP.set(u, nw);
   fetch(HUBP + '/report', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ px: String(u).replace(/^https?:\/\//, ''), ok: true, ms: Math.round(ms), src: 'moviebox' }) }).catch(() => { });
-} // §4-ওয়্যারিং: হাব-থাকলে-mb-স্পেসে-bench-হওয়া-px-দিয়ে-আগে (vidy-spawn-ও-এটা-বহন-করে)
-let MBKEY = ''; try { // v1.15.62: সাব-স্পেস-API-কী (moviebox) — POOLHUB_KEYS=সরাসরি-JSON অথবা ফাইল-পথ (দুই-রকম-ই)
+} // §4-// §4 wiring: with a hub present, feed the mb space with benched px first (the vidy spawn carries this too)
+let MBKEY = ''; try { // v1.15.62: // v1.15.62: sub-space API key (moviebox) — POOLHUB_KEYS = raw JSON or a file path (both work)
   let kb = String(process.env.POOLHUB_KEYS || '');
   try { MBKEY = String((JSON.parse(kb) || {}).moviebox || ''); } catch (e1) { try { MBKEY = String((JSON.parse(fs.readFileSync(kb, 'utf8')) || {}).moviebox || ''); } catch (e2) { } }
 } catch { }
-let HUB_FAILS = 0, HUB_SKIP_UNTIL = 0; // v2.11.4 সার্কিট-ব্রেকার: হাব-স্পেস-বাসি-জানালায়-রিলে-৬০সে-বাইপাস
+let HUB_FAILS = 0, HUB_SKIP_UNTIL = 0; // v2.11.4 // v2.11.4 circuit breaker: bypass the hub relay for 60s when the hub space is stale
 export async function apiFetch(url, options = {}) {
-  // v2.11.4 (ইউজার: 'প্রথম-চেষ্টাতেই আসবে, স্লটে সবসময় প্রক্সি'): নিজ-স্লট-আগে — রোস্টার-তো-হাব-/pick-থেকেই-আসে
-  // (r136-স্থাপত্য ✓); হাব-রিলে-শুধু-নিজ-স্লট-শেষ-হলে (হাব-স্পেস-বাসি-হলে-৪.৫সে-কর-গ্রহণযোগ্য-ব্যাকআপ-পথে)
-  if (poolHealthy() === 0) await coldGate(); // স্লট-প্রমাণহীন-প্রক্সিতে-যাবে-না — গেট=সক্রিয়-বেঞ্চ
+  // v2.11.4 (// v2.11.4 (user: "first try, always a proxy in the slot"): own slots first — the roster comes from the hub /pick anyway
+  // (r136-// (r136 architecture); the hub relay only when own slots are exhausted (a 4.5s cost is an acceptable backup when the hub space is stale)
+  if (poolHealthy() === 0) await coldGate(); // // never send a slot to an unproven proxy — the gate = the active bench
   let px = pick();
-  if (!px && POOL.length === 0) poolOnce(true).catch(() => {}); // শূন্য-দোকানে-তাৎক্ষণিক-হাব-ফিড-কিক
+  if (!px && POOL.length === 0) poolOnce(true).catch(() => {}); // // instant hub-feed kick on an empty store
   if (!px) {
     for (let i = 0; i < 6 && !px; i++) { await new Promise(r => setTimeout(r, 250)); px = pick(); }
   }
@@ -101,22 +101,22 @@ export async function apiFetch(url, options = {}) {
     const p = undiciFetch(url, { ...options, dispatcher: agentFor(px) });
     p.then(r => {
       if (r.status === 403 || r.status === 406) noteFail(px, 'block');
-      else if (r.ok) { noteGood(px, Date.now() - t0); hubReport(px, Date.now() - t0); } // লাইভ-জয় → হাব-প্রমাণ
+      else if (r.ok) { noteGood(px, Date.now() - t0); hubReport(px, Date.now() - t0); } // // live win -> hub proof
     }, () => { if (!options.signal?.aborted) noteFail(px, 'dead'); }).catch(() => {})
       .finally(() => INFLIGHT.set(px, Math.max(0, inflight(px) - 1)));
     return p;
   }
-  if (HUBP && Date.now() >= HUB_SKIP_UNTIL) { // নিজ-স্লট-শেষ → হাব-রিলে (৪.৫সে-বাজেট, n=8, ২-ব্যর্থতায়-৬০সে-বাইপাস)
+  if (HUBP && Date.now() >= HUB_SKIP_UNTIL) { // // own slots exhausted -> hub relay (4.5s budget, n=8, 2 failures = 60s bypass)
     try {
       const hr = await fetch(HUBP + '/fetch?src=moviebox' + (MBKEY ? '&key=' + encodeURIComponent(MBKEY) : '') + '&ms=4500&n=8&url=' + encodeURIComponent(url), { signal: AbortSignal.timeout(6000) });
       const hj = await hr.json();
       if (hj && hj.ok) { HUB_FAILS = 0; return new Response(String(hj.body || ''), { status: 200, headers: { 'content-type': 'application/json; charset=utf-8' } }); }
       throw new Error('hub-empty');
     } catch {
-      if (++HUB_FAILS >= 2) { HUB_SKIP_UNTIL = Date.now() + 60000; HUB_FAILS = 0; console.log('[হাব-বাইপাস] ৬০সে — নিজ-স্লট-ই-মুখ্য'); }
+      if (++HUB_FAILS >= 2) { HUB_SKIP_UNTIL = Date.now() + 60000; HUB_FAILS = 0; console.log('[hub-bypass] 60s — own slots are primary'); }
     }
   }
-  throw new Error('pool-cold'); // সৎ-ব্যর্থতা: server-IP-প্ল্যাটফর্ম-কল-কখনো-নয়
+  throw new Error('pool-cold'); // // honest failure: never a direct server-IP platform call
 }
 
 /** Retry transport across DIFFERENT exits.  Returns the first
@@ -183,8 +183,8 @@ export async function fetchJsonRotating(url, headers, opts = {}) {
           noteFail(px, 'dead');                    // mangled body
           last = { ok: true, status: resp.status, data: null };
         } else if (opts.emptyCheck && opts.emptyCheck(data)) {
-          // v2.11.1c (রোগ-নির্ণয় r135): প্রতিরক্ষা-এন্ডপয়েন্টে (play/download) 200-কিন্তু-খালি = আসল-উত্তর-নয়
-          // (রেট/জিও-জানালা) — রেস-থামবে-না, স্টিকি-হবে-না: পরের-exit-এ-ঘুরে-আরও-চেষ্টা
+          // v2.11.1c (// v2.11.1c (r135 diagnosis): on defense endpoints (play/download) 200-but-empty is not a real answer
+          // (// (rate/geo window) — the race must not stop, nothing sticks: rotate to the next exit and try more
           last = { ok: true, status: resp.status, data };
         } else if (!settled2) {
           if (STICKY.size > 400) {
@@ -192,7 +192,7 @@ export async function fetchJsonRotating(url, headers, opts = {}) {
             for (const [k, v] of STICKY) if (now - v.at > 45000) STICKY.delete(k);
           }
           STICKY.set(key, { exit: px, at: Date.now() });   // train the route
-          hubReport(px, Date.now() - t0); // v2.11.1: লাইভ-জয় → হাবের-moviebox-স্পেসে-প্রমাণ (own-চক্র-বাঁচায় — ঢেউ-নেই-বলে-এটাই-এখন-একমাত্র-খাবার)
+          hubReport(px, Date.now() - t0); // v2.11.1: // v2.11.1: live win -> proof in the hub moviebox space (keeps the own-cycle alive — with no waves this is the only food)
           for (const o of aborts) { try { o.abort(); } catch {} }
           const win = { ok: true, status: resp.status, data, via: px };
           settle(win);
@@ -218,10 +218,10 @@ export async function fetchJsonRotating(url, headers, opts = {}) {
   const kickNext = () => { if (!settled2 && started < attempts) attempt().catch(() => {}); };
   const out = new Promise((res) => { resolveOut = res; });
   const pr = (async () => {
-    // v2.11.1 (রোগ-নির্ণয় r134): হাব-প্রথম — হাবের /fetch তার moviebox-স্পেস (/report-প্রমাণিত)-দিয়ে-রেস-করে;
-    // সফল-হলে-নিজের-exit-ঘোরানোই-লাগে-না।
-    // v2.11.1b সংশোধন: হাব-/fetch GET-only — Authorization-বহন-করতে-পারে-না; play/download/caption
-    // (MovieBox-এখন-টোকেন-চায় — টোকেনহীন=ok-কিন্তু-খালি!) হাব-দিয়ে-গেলে-বিষ-খালি-উত্তর-ফেরে → ওগুলো-শুধু-নিজের-exit-এ (টোকেন-সহ)
+    // v2.11.1 (// v2.11.1 (r134 diagnosis): hub first — the hub /fetch races its moviebox space (/report-proven);
+    // // on success there is no need to rotate own exits.
+    // v2.11.1b // v2.11.1b fix: hub /fetch is GET-only — it cannot carry Authorization; play/download/caption
+    // (MovieBox-// (MovieBox now wants a token — tokenless = ok-but-empty!) through the hub returns a poisoned empty -> those go only via own exits (with the token)
     if (HUBP && !/\/subject\/(play|download|caption)/.test(url)) {
       try {
         const hr = await fetch(HUBP + '/fetch?src=moviebox' + (MBKEY ? '&key=' + encodeURIComponent(MBKEY) : '') + '&ms=9000&url=' + encodeURIComponent(url), { signal: AbortSignal.timeout(11500) });
@@ -250,21 +250,21 @@ export async function fetchJsonRotating(url, headers, opts = {}) {
 
 let FEEDS = 0;
 export async function poolOnce(force = false) {
-  // v2.11.0 (ইউজার): পাবলিক-স্ক্র্যাপ/NX_POOL_FILE-বীজ/প্রোব-যাচাই-সব-বাদ — একমাত্র-উৎস PoolHub moviebox-সাব-স্পেস
+  // v2.11.0 (// v2.11.0 (user): public scrapes / NX_POOL_FILE seeds / probe-verification all dropped — the only source is the PoolHub moviebox sub-space
   if (!HUBP) return;
   if (!force && Date.now() - TS < 60000) return;
   if (FETCHING) return;
   FETCHING = true; TS = Date.now();
   try {
-    const r = await fetch(HUBP + '/pick?src=moviebox&n=40&cb=' + Date.now() + (MBKEY ? '&key=' + encodeURIComponent(MBKEY) : ''), { signal: AbortSignal.timeout(8000) }); // cb=nginx-ক্যাশ-ভেদ
+    const r = await fetch(HUBP + '/pick?src=moviebox&n=40&cb=' + Date.now() + (MBKEY ? '&key=' + encodeURIComponent(MBKEY) : ''), { signal: AbortSignal.timeout(8000) }); // cb=nginx-// cb busts the nginx cache
     const j = await r.json();
     if (!j || !Array.isArray(j.pick)) return;
-    // v2.11.1 (রোগ-নির্ণয় r134): own=true = হাবের-moviebox-স্পেসের /report-প্রমাণিত-সদস্য — এরাই-প্রথম;
-    // বাকি-হাব-পিক = ব্যাকআপ (EWMA-বীজ-ধীর → pick()-এ-পিছনে); পুরনো-সদস্য-যাদের-সাম্প্রতিক-লাইভ-প্রমাণ (৬০০সে) — রেখে-দেওয়া
+    // v2.11.1 (// v2.11.1 (r134 diagnosis): own=true = /report-proven members of the hub moviebox space — they go first;
+    // // the rest of the hub pick = backup (slow EWMA seed -> behind in pick()); old members with live proof within 600s are kept
     const own = j.pick.filter(p => p.own), rest = j.pick.filter(p => !p.own);
     const now2 = Date.now();
-    // keep = বেঞ্চ-বহিষ্কৃত-নয় + ৬০০সে-র-মধ্যে-লাইভ-প্রমাণ-আছে (জানা-ভালো-সদস্য-হারানো-নয়)
-    const keep = POOL.filter(u => { // v2.11.3: সত্য-প্রমাণ (৬০০সে) অথবা নতুন-সদস্যের ৯০০সে-প্রমাণ-জানালা
+    // keep = // keep = not bench-expelled + live proof within 600s (do not lose known-good members)
+    const keep = POOL.filter(u => { // v2.11.3: // v2.11.3: real proof (600s) or a newcomer's 900s proof window
       const b = BAD.get(u);
       if (b && b > now2) return false;
       return now2 - (LASTOK.get(u) || 0) < 600000 || now2 - (ADDED.get(u) || now2) < 900000;
@@ -275,34 +275,34 @@ export async function poolOnce(force = false) {
       if (next.includes(u) || next.length >= BENCH_MAX) return;
       next.push(u);
       if (!STATS.get(u)) STATS.set(u, { ok: 1, fail: 0, lat: Number(p.ms) || lat });
-      // v2.11.3 সততা: নতুন-সদস্যকে-মিথ্যা LASTOK-বীজ-নয় (অপ্রমাণিত=অপ্রমাণিত) — অনুগ্রহ-সময় ADDED-এ
+      // v2.11.3 // v2.11.3 honesty: no fake LASTOK seed for newcomers (unproven = unproven) — grace time lives in ADDED
       if (!ADDED.has(u)) ADDED.set(u, Date.now());
     };
-    own.forEach(p => add(p, 800));     // প্রমাণিত — দ্রুত-বীজ
+    own.forEach(p => add(p, 800));     // // proven — fast seed
     keep.forEach(u => { if (!next.includes(u) && next.length < BENCH_MAX) next.push(u); });
-    rest.forEach(p => add(p, 2600));   // ব্যাকআপ — ধীর-বীজ (লাইভে-প্রমাণ-করলে-ওঠবে)
+    rest.forEach(p => add(p, 2600));   // // backup — slow seed (climbs when it proves itself live)
     POOL.length = 0; POOL.push(...next);
     FEEDS++;
-    console.log(`[হাব-ফিড] moviebox bench=${POOL.length} (own=${own.length} রাখা=${keep.length} ব্যাকআপ=${rest.length})`);
+    console.log(`['[hub-feed] moviebox bench=${POOL.length} (own=${own.length} kept=${keep.length} backup=${rest.length})`);
   } catch (e) { } finally { FETCHING = false; }
 }
 
-// ---- r-20261016k রেজলভার-স্থাপত্য (ইউজার: 'resolver-এর-মতো কঠোর, ২৪-ঘণ্টা জাগ্রত') ----
-// ৯০সে-পূর্ণ-পাসের-বদলে: সর্বদা-চলা-ঢেউ — প্রতি-১২সে-য় ১২টা সবচেয়ে-পুরনো-প্রমাণ-যার; প্রমাণ=প্রোব+MB-সার্চ-যাচাই (বেঞ্চ-মানদণ্ড-ই);
-// ৬০০সে-অনুত্তপ → বেঞ্চ-কাটা (DEAD_AFTER-প্যারিটি); পাতলা-হলে ৯০সে-গার্ড-মান্য poolOnce-রিফিল (স্ট্রিমিং-ঢোকা)
-export function checkerStats() { return { waves: FEEDS }; } // v2.11.0: waves=হাব-ফিড-চক্র-গণক (পুরনো-স্ক্যান-ঢেউ-নেই)
+// ---- r-20261016k // ---- r-20261016k resolver architecture (user: "resolver-grade, awake 24h") ----
+// // instead of a 90s full pass: an always-running wave — every 12s re-prove the 12 oldest; proof = probe + MB search verify (the bench criterion itself);
+// // 600s unanswered -> bench cut (DEAD_AFTER parity); when thin, a 90s-guarded poolOnce refill (streaming intake)
+export function checkerStats() { return { waves: FEEDS }; } // v2.11.0: waves=// v2.11.0: waves = hub-feed cycle counter (no old scan waves)
 
-// ---- v2.11.3 (ইউজার: 'প্রথম-চেষ্টাতেই আসবে, স্লটে সবসময় প্রক্সি') ----
-// প্রথম-ট্যাপ-কখনো-প্রমাণ-আবিষ্কারক-হবে-না: ঠান্ডা-জানালায় প্ল্যাটফর্ম-কল আগে
-// সক্রিয়-বেঞ্চ দিয়ে রোস্টার-প্রমাণ করায় (সমান্তরাল, ~২-৪সে), তারপর স্লট-প্রতিটি
-// প্রমাণিত-প্রক্সি পায়। hub-পথ গেটের বাইরে (হাব জীবিত-হলে প্রথম-ট্যাপ তাতেই জেতে)।
-export function poolHealthy() { // সত্য-প্রমাণিত+জীবিত-সদস্য-গণনা
+// ---- v2.11.3 (// ---- v2.11.3 (user: "first try, always a proxy in the slot") ----
+// // the first tap must never be the proof-discoverer: in a cold window the platform call first
+// // proves the roster through the active bench (parallel, ~2-4s), then every slot gets a
+// // proven proxy. The hub path sits outside the gate (if the hub is alive, the first tap wins there).
+export function poolHealthy() { // // count of truly proven + alive members
   const now = Date.now();
   return POOL.filter(u => !(BAD.get(u) > now) && now - (LASTOK.get(u) || 0) < 600000).length;
 }
 
 let BENCHING = false;
-export async function benchWave(n = 14, ms = 2800) { // সমান্তরাল-প্রমাণ: search-suggest ২০০+JSON = প্রমাণ (apiFetch-বাইপাস — রিকার্শন-নেই)
+export async function benchWave(n = 14, ms = 2800) { // // parallel proof: search-suggest 200 + JSON = proof (apiFetch bypass — no recursion)
   if (BENCHING || !ProxyAgent || !POOL.length) return 0;
   BENCHING = true;
   try {
@@ -311,7 +311,7 @@ export async function benchWave(n = 14, ms = 2800) { // সমান্তরা
   let good = 0;
   if (cands.length) {
     const tok = (() => { const t = String(Math.floor(Date.now() / 1000)); return t + ',' + crypto.createHash('md5').update(t.split('').reverse().join('')).digest('hex'); })();
-    await Promise.all(cands.map(u => new Promise(res => { // v2.11.4: সত্য-মানদণ্ড = mintToken-এর-আসল-POST; x-user-টোকেন=পূর্ণ-প্রমাণ (play-যোগ্যতা)
+    await Promise.all(cands.map(u => new Promise(res => { // v2.11.4: // v2.11.4: true criterion = mintToken's real POST; the x-user token = full proof (play eligibility)
       const t0 = Date.now();
       undiciFetch(`${API}/wefeed-h5api-bff/subject/search-suggest`, {
         method: 'POST',
@@ -324,15 +324,15 @@ export async function benchWave(n = 14, ms = 2800) { // সমান্তরা
         else noteFail(u, r.ok ? 'dead' : 'fail');
       }, () => noteFail(u, 'dead')).finally(res);
     })));
-    if (good) console.log(`[বেঞ্চ] প্রমাণিত +${good}/${cands.length} (সুস্থ=${poolHealthy()})`);
+    if (good) console.log(`['[bench] proven +${good}/${cands.length} (healthy=${poolHealthy()})`);
   }
   return good;
   } finally { BENCHING = false; }
 }
 
 let GATE = null;
-async function coldGate(waitMs = 5000, need = 3) { // সিঙ্গেল-ফ্লাইট: প্রথম-ঠান্ডা-কল প্রমাণের-অপেক্ষায়; পরের-কল ভাগ করে
-  if (!ProxyAgent || !POOL.length) return; // undici-নেই/দোকান-খালি: গেট-অপেক্ষা-বৃথা — সৎ-ব্যর্থতায়-যাও
+async function coldGate(waitMs = 5000, need = 3) { // // single-flight: the first cold call waits for proof; later calls share it
+  if (!ProxyAgent || !POOL.length) return; // undici-// no undici/empty store: waiting at the gate is pointless — fail honestly
   if (poolHealthy() >= need) return;
   if (!GATE) {
     GATE = (async () => {
@@ -342,21 +342,21 @@ async function coldGate(waitMs = 5000, need = 3) { // সিঙ্গেল-ফ�
         if (!kicked) { kicked = true; benchWave().catch(() => { }); }
         await new Promise(r => setTimeout(r, 300));
       }
-      if (poolHealthy() < need) await benchWave(6, 2500).catch(() => { }); // শেষ-চেষ্টা
+      if (poolHealthy() < need) await benchWave(6, 2500).catch(() => { }); // // last attempt
     })().finally(() => { setTimeout(() => { GATE = null; }, 1500); });
   }
   await GATE;
 }
 
 export function poolStart() {
-  poolOnce(true) // v2.11.0: বুটেই-হাব-ফিড → ফিড-বসার-সাথে-সাথে-সক্রিয়-বেঞ্চ (পোলিং-কিক — স্থির-বিলম্ব-নয়)
+  poolOnce(true) // v2.11.0: // v2.11.0: hub-feed at boot -> the active bench right after the feed lands (polling kick — no fixed delay)
     .then(() => { const kick = () => { if (POOL.length) return benchWave(16).catch(() => { }); setTimeout(kick, 200); }; kick(); }).catch(() => { });
-  setInterval(() => { // প্রতি-৬০সে-রিফিল; চিকন-রোস্টারে-বেঞ্চ-ছাড়া-থাকে-না
+  setInterval(() => { // // 60s refill; a thin roster never goes un-benched
     poolOnce(true).then(() => { if (poolHealthy() < 8) return benchWave(16).catch(() => { }); }).catch(() => { });
   }, 60000).unref();
-  // v2.11.5 (ইউজার: 'সব মিলিয়ে ৫ সেকেন্ড'): keep-hot — পুরনো-দ্রুত-যুগের-জাদু (প্রতি-৮সে-ঢেউ, মধ্য ২.৪৪সে,
-  // দ্রুততম ১৫২ms) হাব-রোস্টার-সংস্করণ: প্রতি-১২০সে-প্রবীণতম-৮-স্লট-পুনঃপ্রমাণ → কোনো-স্লট-কখনো
-  // ৩০০সে-বার্ধক্য-ছুঁয়ে-ঠান্ডা-হয়-না → গেট-কখনো-ব্লক-করে-না, প্রতিটি-ধাপ-উষ্ণ-স্লটে (~০.৩-১.২সে)।
+  // v2.11.5 (// v2.11.5 (user: "5 seconds total"): keep-hot — the old fast-era magic (8s waves, median 2.44s,
+  // // fastest 152ms) in hub-roster form: re-prove the 8 oldest slots every 120s -> no slot ever
+  // // crosses the 300s staleness -> the gate never blocks, every step rides a warm slot (~0.3-1.2s).
   setInterval(() => { benchWave(8, 2500).catch(() => { }); }, 120000).unref();
 }
 
