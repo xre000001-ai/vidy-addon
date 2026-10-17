@@ -252,11 +252,11 @@ let FEEDS = 0;
 export async function poolOnce(force = false) {
   // v2.11.0 (// v2.11.0 (user): public scrapes / NX_POOL_FILE seeds / probe-verification all dropped — the only source is the PoolHub moviebox sub-space
   if (!HUBP) return;
-  if (!force && Date.now() - TS < 60000) return;
+  if (!force && Date.now() - TS < 45000) return; // v2.11.11: 60->45s — pre-stocking ahead of need
   if (FETCHING) return;
   FETCHING = true; TS = Date.now();
   try {
-    const r = await fetch(HUBP + '/pick?src=moviebox&n=40&cb=' + Date.now() + (MBKEY ? '&key=' + encodeURIComponent(MBKEY) : ''), { signal: AbortSignal.timeout(8000) }); // cb=nginx-// cb busts the nginx cache
+    const r = await fetch(HUBP + '/pick?src=moviebox&n=60&cb=' + Date.now() + (MBKEY ? '&key=' + encodeURIComponent(MBKEY) : ''), { signal: AbortSignal.timeout(8000) }); // cb=nginx-// cb busts the nginx cache
     const j = await r.json();
     if (!j || !Array.isArray(j.pick)) return;
     // v2.11.1 (// v2.11.1 (r134 diagnosis): own=true = /report-proven members of the hub moviebox space — they go first;
@@ -352,12 +352,12 @@ export function poolStart() {
   poolOnce(true) // v2.11.0: // v2.11.0: hub-feed at boot -> the active bench right after the feed lands (polling kick — no fixed delay)
     .then(() => { const kick = () => { if (POOL.length) return benchWave(16).catch(() => { }); setTimeout(kick, 200); }; kick(); }).catch(() => { });
   setInterval(() => { // // 60s refill; a thin roster never goes un-benched
-    poolOnce(true).then(() => { if (poolHealthy() < 8) return benchWave(16).catch(() => { }); }).catch(() => { });
+    poolOnce(true).then(() => { if (poolHealthy() < 30) return benchWave(16).catch(() => { }); }).catch(() => { }); // v2.11.11: reserve target 8->30 — stock BEFORE it starves
   }, 60000).unref();
   // v2.11.5 (// v2.11.5 (user: "5 seconds total"): keep-hot — the old fast-era magic (8s waves, median 2.44s,
   // // fastest 152ms) in hub-roster form: re-prove the 8 oldest slots every 120s -> no slot ever
   // // crosses the 300s staleness -> the gate never blocks, every step rides a warm slot (~0.3-1.2s).
-  setInterval(() => { benchWave(8, 2500).catch(() => { }); }, 120000).unref();
+  setInterval(() => { benchWave(12, 2500).catch(() => { }); }, 90000).unref(); // v2.11.11: keep-hot 8/120s -> 12/90s
 }
 
 export function poolStats() {

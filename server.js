@@ -19,7 +19,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.79';
+const VERSION = '1.15.80';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -99,7 +99,9 @@ async function hubMirror() {
   try {
     for (const sp of ['toonworld4all', 'raretoons', 'vidy', 'moviebox', 'multimovies']) {
       try {
-        const rM = await fetch(HUB + '/pick?src=' + sp + '&n=40&cb=' + Date.now() + (HKEY(sp) ? '&key=' + encodeURIComponent(HKEY(sp)) : ''), { signal: AbortSignal.timeout(6000) }); // v1.15.67: cb=nginx-// v1.15.67: cb busts the 2h nginx cache (prevents a stale pick cache)
+        // v1.15.80: adaptive depth — when the live reserve dips below target, pull deeper
+        const deep = (sp === 'vidy' && PX_API.size < 120) || (sp === 'multimovies' && PX_VB.size < 100);
+        const rM = await fetch(HUB + '/pick?src=' + sp + '&n=' + (deep ? 60 : 40) + '&cb=' + Date.now() + (HKEY(sp) ? '&key=' + encodeURIComponent(HKEY(sp)) : ''), { signal: AbortSignal.timeout(6000) }); // v1.15.67: cb=nginx-// v1.15.67: cb busts the 2h nginx cache (prevents a stale pick cache)
         const jM = await rM.json(); if (!jM || !Array.isArray(jM.pick)) continue;
         for (const p of jM.pick) { // v1.15.67: own-// v1.15.67: own-filter dropped — every px the hub gives is hub-benched (hub sorts its own spaces first)
           if (!POOL.some(c => c.px === p.px) && POOL.length < 300) POOL.push({ px: p.px, ms: p.ms || 2000 }); // // store locally
@@ -109,10 +111,10 @@ async function hubMirror() {
         }
       } catch (e) { }
     }
-    console.log('[hub-feed] pool=' + POOL.length + ' | spaces: site=' + PX_SITE.size + ' api=' + PX_API.size + ' vb=' + PX_VB.size + ' wo=' + PX_WO.size);
+    console.log('[hub-feed] reserve=' + (POOL.length >= 300 ? 'FULL' : 'filling') + ' |  pool=' + POOL.length + ' | spaces: site=' + PX_SITE.size + ' api=' + PX_API.size + ' vb=' + PX_VB.size + ' wo=' + PX_WO.size); // v1.15.80: pre-stocked reserve visible
   } finally { MIRR_B = false; }
 }
-setInterval(hubMirror, 60000).unref(); setTimeout(hubMirror, 12000).unref();
+setInterval(hubMirror, 40000).unref(); setTimeout(hubMirror, 8000).unref(); // v1.15.80: pre-stocked reserve — faster cadence (40s, first at 8s): proxies are pulled and stocked AHEAD of need, never at call time
 // v1.15.67 (// v1.15.67 (user): harvest scanning (enrich) fully removed — TheSpeedX/monosans/proxyscrape/proxifly never touched; proxies come from PoolHub only
 
 // ---------- memo + dedupe ----------
