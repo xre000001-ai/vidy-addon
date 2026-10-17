@@ -19,7 +19,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.78';
+const VERSION = '1.15.79';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -528,7 +528,7 @@ async function hubText(url, ms, src, px) { // v1.15.59: px-// v1.15.59: with px,
   if (!HUB) return '';
   try {
     const sp = HSPACE(src);
-    const r = await fetch(HUB + '/fetch?src=' + encodeURIComponent(sp) + (px ? '&px=' + encodeURIComponent(px) : '') + '&ms=' + Math.min(12000, ms || 8000) + (HKEY(sp) ? '&key=' + encodeURIComponent(HKEY(sp)) : '') + '&url=' + encodeURIComponent(url), { signal: AbortSignal.timeout(Math.min(13000, (ms || 8000) + 1500)) });
+    const r = await fetch(HUB + '/fetch?src=' + encodeURIComponent(sp) + (px ? '&px=' + encodeURIComponent(px) : '') + '&ms=' + Math.min(9000, ms || 8000) // v1.15.79: 12->9s hold — dead races release exits faster, the space stops self-congesting + (HKEY(sp) ? '&key=' + encodeURIComponent(HKEY(sp)) : '') + '&url=' + encodeURIComponent(url), { signal: AbortSignal.timeout(Math.min(13000, (ms || 8000) + 1500)) });
     const j = await r.json().catch(() => null);
     return j && j.ok ? String(j.body || '') : '';
   } catch { return ''; }
@@ -1327,7 +1327,7 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: // titl
         // concurrent exit connections; the small servers then ALL hedge-die (prod log proof). Smalls: one
         // clean 9s leg. Giants keep the hedge (their payloads are the heavy ones).
         const ct = GIANT.indexOf(srv) >= 0
-          ? await hedge2(() => pathGet(u, sc.via, sc.px, 12000), () => pathGet(u, sc.via, sc.px, 12000), 2500, 12500)
+          ? await hedge2(() => pathGet(u, sc.via, sc.px, 9000), () => pathGet(u, sc.via, sc.px, 9000), 2500, 10500)
           : await pathGet(u, sc.via, sc.px, 9000);
         const j = JSON.parse(vidyDecrypt(ct, sc.seed, tmdbId));
         if (DBG) console.error('[t1g] ' + srv + ' fetch=' + (Date.now() - tS) + 'ms n=' + (j.sources || []).length + ' | jkeys=' + Object.keys(j).join(',') + ' | s0=' + JSON.stringify((j.sources || [])[0] || {}).slice(0, 220) + (j.audios ? ' | audios=' + JSON.stringify(j.audios).slice(0, 200) : '') + (j.audio ? ' | audio=' + JSON.stringify(j.audio).slice(0, 120) : ''));
