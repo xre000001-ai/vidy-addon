@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.35';
+const VERSION = '1.15.36';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -138,6 +138,7 @@ const WO_REF = 'https://vidout.pages.dev/'; // this exact Referer opens the mult
 const WO_LANGS = { eng: 'English', en: 'English', hin: 'Hindi', hi: 'Hindi', ara: 'Arabic', fra: 'French', spa: 'Spanish', por: 'Portuguese', rus: 'Russian', zho: 'Chinese', ben: 'Bengali', tam: 'Tamil', tel: 'Telugu' };
 const MM_VC = new Map(); const MM_MC = new Map(); // v1.15.30: vbq->resolved master (60s sticky — no resolve hammering) and master->raw text (60s)
 const MM_TILE = new Set(); // v1.15.34: masters proven to be thumbnail reels — never carded again
+const MM_WC = new Map(); // v1.15.36: top-URL -> best variant text (60s) — player double-pulls don't re-roll the node lottery
 function mmIsTile(pl) { // thumbnail-reel detector: the segments are images, not video (orion-type 'streams': 5s .png tiles)
   const L = String(pl).split('\n'); let img = 0, seg = 0;
   for (const l of L) { const t = l.trim(); if (!t || t.charAt(0) === '#') continue; seg++; if (/\.(png|jpe?g|webp|avif)(\?|$)/i.test(t)) img++; if (seg >= 4) break; }
@@ -160,6 +161,43 @@ function mmFirstSeg(pl, base) { // the first segment URI of a media playlist, ab
     try { const a = new URL(t, base); if (!a.search) { try { a.search = new URL(base).search; } catch { } } return a.href; } catch { return ''; }
   }
   return '';
+}
+async function mmGrabMaster(u, ref) { // raced master fetch — the node lottery kills single shots; misses are eaten by the pool (v1.15.36)
+  for (let f1 = 0; f1 < 3; f1++) { try { const tx1 = await mmPoolText(u, 7000); if (tx1 && tx1.indexOf('#EXTM') >= 0) return tx1; } catch { } }
+  try { const rr = await fetch(u, { headers: { 'User-Agent': UA, Referer: ref || VB_REF }, signal: AbortSignal.timeout(8000) }); const tx2 = rr.ok ? await rr.text() : ''; if (tx2.indexOf('#EXTM') >= 0) return tx2; } catch { }
+  return '';
+}
+function mmPickVar(pl, base, wantH) { // the wanted variant's URI (resolution match first, else first in file)
+  const L = String(pl).split('\n'); let best = '', bestW = 9;
+  for (let i = 0; i < L.length - 1; i++) {
+    if (L[i].indexOf('#EXT-X-STREAM-INF') < 0) continue;
+    const nxt = L[i + 1] && L[i + 1].charAt(0) !== '#' ? L[i + 1].trim() : '';
+    if (!nxt) continue;
+    const r2 = (L[i].match(/RESOLUTION=(\d+)x(\d+)/i) || [])[2];
+    const hh = r2 ? parseInt(r2, 10) || 0 : 0;
+    const w2 = hh === wantH ? 0 : 1;
+    if (w2 < bestW) { bestW = w2; try { const a2 = new URL(nxt, base); if (!a2.search) { try { a2.search = new URL(base).search; } catch { } } best = a2.href; } catch { best = nxt; } if (bestW === 0) break; } // v1.15.33 rule here too: the key rides along
+    i++;
+  }
+  return best;
+}
+function mmMasterTags(pl, base) { // the master's MEDIA/KEY/SESSION tag lines, absolutized (base query inherited)
+  const L = String(pl).split('\n'); const out = [];
+  let bq = ''; try { bq = new URL(base).search; } catch { }
+  for (const l of L) {
+    if (l.charAt(0) === '#' && /EXT-X-(MEDIA|KEY|MAP|I-FRAME-STREAM-INF|SESSION)/.test(l)) out.push(l.replace(/URI="([^"]*)"/g, (m, uu) => { try { const a = new URL(uu, base); if (!a.search && bq) a.search = bq; return 'URI="' + a.href + '"'; } catch { return m; } }));
+  }
+  return out.join('\n');
+}
+function mmVarInline(varUrl, vraw) { // a variant playlist with EVERY segment URI absolute + keyed — the player pulls them straight from the CDN (no media byte ever passes through us)
+  let bq = ''; try { bq = new URL(varUrl).search; } catch { }
+  const L = String(vraw).split('\n'); const out = [];
+  for (const l of L) {
+    const t = l.trim(); if (!t) continue;
+    if (t.charAt(0) === '#') { out.push(l.replace(/URI="([^"]*)"/g, (m, uu) => { try { const a = new URL(uu, varUrl); if (!a.search && bq) a.search = bq; return 'URI="' + a.href + '"'; } catch { return m; } })); continue; }
+    try { const a = new URL(t, varUrl); if (!a.search && bq) a.search = bq; out.push(a.href); } catch { out.push(t); }
+  }
+  return out.join('\n');
 }
 async function mmProbeImg(u) { // image verdict by MAGIC BYTES, not extension — one tiny ranged fetch (v1.15.35: .png-named segments on orion/rousav are REAL MPEG-TS; the v1.15.34 extension rule blocked genuine video)
   try {
@@ -1760,10 +1798,7 @@ const server = http.createServer((req, res) => {
         // STAYS for the whole playback — the timer re-resolve used to switch servers mid-play;
         // the vbq re-resolve now runs only as a rescue when the key's master is truly dead.
         let raw = mmGet(MM_MC, ent.m, 60000); // 60s master cache — on a hit there is no upstream travel at all
-        if (!raw || raw.indexOf('#EXTM') < 0) {
-          raw = '';
-          try { const rr = await fetch(ent.m, { headers: { 'User-Agent': UA, Referer: ent.ref }, signal: AbortSignal.timeout(8000) }); raw = rr.ok ? await rr.text() : ''; } catch { }
-        }
+        if (!raw || raw.indexOf('#EXTM') < 0) { raw = await mmGrabMaster(ent.m, ent.ref); if (raw) mmPut(MM_MC, ent.m, raw); }
         if ((!raw || raw.indexOf('#EXTM') < 0) && ent.vbq) { // rescue: the key's master died — one fresh draw
           try {
             const rj2 = await mmPoolText('https://vidbolt.xyz/api/resolve?' + ent.vbq, 6000);
@@ -1771,11 +1806,30 @@ const server = http.createServer((req, res) => {
             const fh = jj2 && jj2.stream && jj2.stream.sources && jj2.stream.sources.find(x2 => x2 && x2.kind === 'hls' && /^https?:/.test(x2.url || ''));
             if (fh) { ent.m = fh.url; mmPut(MM_VC, ent.vbq, ent.m); raw = ''; }
           } catch { }
-          if (!raw) { raw = mmGet(MM_MC, ent.m, 60000) || ''; if (!raw || raw.indexOf('#EXTM') < 0) { try { const rr2 = await fetch(ent.m, { headers: { 'User-Agent': UA, Referer: ent.ref }, signal: AbortSignal.timeout(8000) }); raw = rr2.ok ? await rr2.text() : ''; } catch { } } }
+          raw = mmGet(MM_MC, ent.m, 60000) || '';
+          if (!raw || raw.indexOf('#EXTM') < 0) { raw = await mmGrabMaster(ent.m, ent.ref); if (raw) mmPut(MM_MC, ent.m, raw); }
         }
         if (!raw || raw.indexOf('#EXTM') < 0) { res.writeHead(502, { 'content-type': 'text/plain' }); return res.end('upstream'); }
         mmPut(MM_MC, ent.m, raw);
-        const mini = mmMiniBuild(ent.m, ent.h, raw) || raw; // fall back to the full absolute master when no variants
+        let mini = mmMiniBuild(ent.m, ent.h, raw) || raw; // fall back to the full absolute master when no variants
+        // v1.15.36 (user: NO media bytes through the server — our free proxies eat the limit-hitting fetches, the user plays the CDN DIRECT): inline the
+        // wanted VARIANT with absolute keyed segment URIs — the player then pulls every segment straight from the CDN carrying the key (warm nodes);
+        // we only ever touch the tiny .m3u8 TEXT. Up to 3 raced fetches keep the LONGEST listing (dodges the 29-segment stub nodes).
+        if (mini.indexOf('#EXT-X-STREAM-INF') >= 0) {
+          const top = mmPickVar(raw, ent.m, ent.h);
+          if (top) {
+            let vbest = mmGet(MM_WC, top, 60000) || ''; // null-safe — the race loop reads .length on the first iteration
+            if (!vbest) {
+              for (let a3 = 0; a3 < 5; a3++) { try { const vt3 = await mmPoolText(top, 6000); if (vt3 && vt3.indexOf('#EXTM') >= 0 && vt3.length > vbest.length) vbest = vt3; } catch { } if (vbest.length > 20000) break; } // longest listing wins — dodges the 29-segment stub nodes
+              if (vbest) mmPut(MM_WC, top, vbest);
+            }
+            if (vbest) {
+              const tg = mmMasterTags(raw, ent.m);
+              const inl = mmVarInline(top, vbest);
+              if (inl) mini = (tg ? tg + '\n' : '') + inl;
+            }
+          }
+        }
         res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl', 'access-control-allow-origin': '*', 'cache-control': 'no-store' });
         return res.end(mini);
       } catch { res.writeHead(502, { 'content-type': 'text/plain' }); return res.end('upstream-err'); }
