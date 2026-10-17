@@ -19,7 +19,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.81';
+const VERSION = '1.15.82';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -115,6 +115,15 @@ async function hubMirror() {
   } finally { MIRR_B = false; }
 }
 setInterval(hubMirror, 40000).unref(); setTimeout(hubMirror, 8000).unref();
+
+// v1.15.82 give-back: the addon POSTs its proven pool to the hub's /seed-in — after any hub
+// restart the whole ecosystem re-stocks in seconds from the apps' live reserves (no scanning).
+function giveBack() {
+  if (!HUB || !POOL.length) return;
+  const px = POOL.slice(0, 600).map(c => c.px);
+  fetch(HUB + '/seed-in', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ px }) }).then(r => r.json()).then(j => { if (DBG) console.error('[give-back] hub total=' + (j && j.total)); }).catch(() => { });
+}
+setTimeout(giveBack, 15000).unref(); setInterval(giveBack, 300000).unref();
 
 // v1.15.81 reserve warmer: stocked proxies are proven against the api space in the background —
 // the reserve is not just full, it is WARM; cold stock rotates into the working space before any tap needs it.
