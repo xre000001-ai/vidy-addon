@@ -18,7 +18,7 @@ A standalone addon process (`community.nethex`) owned by vidy.
   - `apiFetch` — hub `/fetch` first, then own pool exits (undici `ProxyAgent`).
   - `fetchJsonRotating` — hub `/fetch` first for **token-less GETs only** (the hub is GET-only and cannot forward `Authorization`); play/download/caption skip the hub and rotate own exits because MovieBox requires a Bearer JWT on those endpoints (verified live 2026-10: token-less `play` answers `hasResource:false`).
 - **Token gate**: `search.js` owns JWT minting (search-suggest → `x-user` header, 90-day anonymous JWT). `bearerToken()` is shared with `episode-matrix.js`, `links.js`, `subtitles.js`.
-- **Play rate-limit**: MovieBox limits `/subject/play` to roughly one success per IP per 2–3 minutes. The countermeasure is exit rotation (each exit = a fresh IP quota) — play uses 5 attempts per round across different exits.
+- **Play token**: MovieBox rejects stale/pinned JWTs on `/subject/play` server-side (HTTP 200 with `hasResource:true` but zero streams — live-proven). The play family therefore mints a **fresh token** (`playToken()`, 60 s cache) instead of using the pinned search identity, and a 200-but-empty answer rotates to the next exit (`emptyCheck`) instead of settling the race. The `Referer` must be the real `/play/<detailPath>` path — a fake path yields empties. There is **no per-IP rate limit** (disproven by matrix tests).
 - **Proof loop**: every live win (`fetchJsonRotating` own-exit success, `apiFetch` own-path success) is reported to the hub (`/report`), which grows the hub's `moviebox` sub-space. That space is what makes future `own` picks — the flywheel.
 
 ### 3. Resolver bridge (`resolver/twr_bridge.js`, port 8290)

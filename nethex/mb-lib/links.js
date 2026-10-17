@@ -10,7 +10,7 @@
 // them fresh when needed instead of storing them.
 
 import { API, SITE, commonHeaders, fetchJson } from "./upstream.js";
-import { bearerToken } from "./search.js"; // v2.11.1: play-টোকেন-গেট
+import { playToken } from "./search.js"; // v2.11.1: play-টোকেন-গেট
 
 /** Fetch the subject + season info for a detailPath (or an error marker). */
 async function fetchSubject(detailPath) {
@@ -63,7 +63,7 @@ export async function run(params) {
   const episode = isTv ? Math.max(parseInt(params.episode) || 1, 1) : 0;
 
   const playReferer = `${SITE}/play/${detailPath}`;
-  const btL = await bearerToken();
+  const btL = await playToken();
   const playResp = await fetchJson(
     `${API}/wefeed-h5api-bff/subject/play?subjectId=${subject.subjectId}&se=${season}&ep=${episode}&detailPath=${encodeURIComponent(detailPath)}`,
     btL ? { ...commonHeaders(playReferer), Authorization: `Bearer ${btL}` } : commonHeaders(playReferer)

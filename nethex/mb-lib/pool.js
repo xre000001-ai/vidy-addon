@@ -177,6 +177,10 @@ export async function fetchJsonRotating(url, headers, opts = {}) {
         if (data === null) {
           noteFail(px, 'dead');                    // mangled body
           last = { ok: true, status: resp.status, data: null };
+        } else if (opts.emptyCheck && opts.emptyCheck(data)) {
+          // v2.11.1c (রোগ-নির্ণয় r135): প্রতিরক্ষা-এন্ডপয়েন্টে (play/download) 200-কিন্তু-খালি = আসল-উত্তর-নয়
+          // (রেট/জিও-জানালা) — রেস-থামবে-না, স্টিকি-হবে-না: পরের-exit-এ-ঘুরে-আরও-চেষ্টা
+          last = { ok: true, status: resp.status, data };
         } else if (!settled2) {
           if (STICKY.size > 400) {
             const now = Date.now();

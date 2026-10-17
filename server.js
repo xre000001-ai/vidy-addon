@@ -19,7 +19,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.67';
+const VERSION = '1.15.67c';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -552,7 +552,7 @@ async function nxStreams(imdb, type, s, e) {
     const epP = epMetaForImdb(imdb, type, s, e); // বছর+এপি-টাইটেল — nethex-ফেচের-সমান্তরালে
     const olP2 = origLangForImdb(imdb); // আসল-ভাষা — ডাব-না-থাকলে-এ-নামই-বসবে ('Original'-লেখা-আর-নেই)
     const t3 = Date.now();
-    const b = await directGet(NEXBASE + '/stream/' + type + '/' + path2 + '.json', 25000);
+    const b = await directGet(NEXBASE + '/stream/' + type + '/' + path2 + '.json', 40000); // v1.15.67c: 25→40s (ঠান্ডা-চাইল্ড: সার্চ~10সে+matrix~14সে — 25s-এ-কাটা-পড়ে-MB-কার্ড-হারাত)
     const nxMs = Date.now() - t3;
     if (DBG) console.error('[nxdbg] nethex ' + type + '/' + path2 + ' -> ' + nxMs + 'ms');
     // v1.11.7: চূড়ান্ত-ইউনিফর্ম-কার্ড — ⧉ Title | Year | / ⧠ SsEe • EpTitle / ⊞ Server ⌗ Audio (resolution শুধু name-এ, Subs-লেখা নেই)

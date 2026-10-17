@@ -163,6 +163,21 @@ export async function bearerToken() {
 
 const MAX_BFF_PAGES = 10; // safety cap for the page walk
 
+/** v2.11.1c (রোগ-নির্ণয় r135): PINNED/jwtState-টোকেন play-এর-জন্য-সার্ভার-সাইডে-নাকচ
+ *  (hasResource:true কিন্তু streams:0 — লাইভ-প্রমাণিত); টাটকা-মিন্ট/টোকেনহীন=stream আসে।
+ *  play/download/caption এই-টাটকা-টোকেন-নেয় (৬০সে-ক্যাশ, single-flight)। */
+let _ptCache = { t: '', at: 0 };
+let _ptBusy = null;
+export async function playToken() {
+  if (_ptCache.t && Date.now() - _ptCache.at < 60000) return _ptCache.t;
+  if (_ptBusy) return _ptBusy;
+  _ptBusy = (async () => {
+    try { const t = await mintToken('movie'); if (t) _ptCache = { t, at: Date.now() }; return t; }
+    finally { _ptBusy = null; }
+  })();
+  return _ptBusy;
+}
+
 async function searchPage(keyword, page) {
   return searchPageWith(jwtState.token, keyword, page);
 }
