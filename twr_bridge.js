@@ -4,9 +4,9 @@
 // · মিরর: প্রতি-৬০সে-নিজ-কী-দিয়ে-হাব-/pick → twr_bridge_mirror.json (জমার-প্রমাণ)
 'use strict';
 const http = require('http'), fs = require('fs'), path = require('path');
-const VERSION = '1.0.0';
+const VERSION = '1.0.1';
 const PORT = Number(process.env.PORT || 8290);
-const HUB = String(process.env.POOLHUB || 'http://127.0.0.1:8399').replace(/\/$/, '');
+const HUB = String(process.env.POOLHUB || 'https://293c2a7d7dd6-poolhub.baby-beamup.club').replace(/\/$/, ''); // v1.0.1: ডিফল্ট=ডিপ্লয়েড-হাব
 const UP = String(process.env.UPSTREAM || 'https://3404d3c5dc63-raretoons.baby-beamup.club').replace(/\/$/, '');
 const SUBS = ['toonworld4all', 'raretoons'];
 const MFILE = path.join(__dirname, 'twr_bridge_mirror.json');

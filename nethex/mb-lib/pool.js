@@ -96,7 +96,7 @@ export function pick(exclude) {
 /** THE API TRANSPORT.  Pool-only: a cold bench waits <=2s once, then
  *  fails the call honestly — the server IP never fires a platform call.
  *  Outcome feedback keeps the bench self-training on live traffic. */
-const HUBP = (process.env.POOLHUB || '').replace(/\/$/, '');
+const HUBP = (process.env.POOLHUB || 'https://293c2a7d7dd6-poolhub.baby-beamup.club').replace(/\/$/, ''); // v2.10.7: ডিফল্ট=ডিপ্লয়েড-হাব
 let NX_SEED_DEAD = false; // v2.10.6: বীজ-ফাইল-একবারই-সুযোগ — মৃত-প্রমাণিত-হলে-পাবলিক-স্ক্র্যাপ-স্থায়ী-পথ
 const MB_REP = new Map(); // u→শেষ-/report (৬০০সে-থ্রটল)
 function hubReport(u, ms) { // v2.10.6 (ইউজার: 'MovieBox আমার অ্যাপে চলে, হাবে ০ কেন?'): আসল-MB-API-পার-করা-px (probe+searchVerify-পূর্ণ-প্রমাণিত) হাবের-moviebox-সাব-স্পেসে-জমা — robots-শর্তের-চেয়ে-কঠোর-সত্য-মানদণ্ড

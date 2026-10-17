@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.65';
+const VERSION = '1.15.66';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -614,7 +614,7 @@ function pooledGet(url, timeoutMs, n) {
 // are appended after the vidy cards. Any NetHex failure/timeout/slow = vidy cards alone, never an error.
 const DBG = !!process.env.VDBG; // সব-debug-লগ-এই-এক-ফ্ল্যাগে-গেটেড (VDBG=1-এ-চালু)
 // v1.15.57 PoolHub-মোড (ইউজার-নকশা: ইউনিভার্সাল-পুল-আলাদা-সার্ভিস+API): POOLHUB=http://host:port দিলে-vidy-র-প্রক্সি-চাহিদা-আগে-হাবের-/fetch-এ; হাব-মরলে/না-দিলে-আগের-স্থানীয়-পুল-পথ-অক্ষত
-const HUB = String(process.env.POOLHUB || '').replace(/\/$/, '');
+const HUB = String(process.env.POOLHUB || 'https://293c2a7d7dd6-poolhub.baby-beamup.club').replace(/\/$/, ''); // v1.15.66: ডিফল্ট=ডিপ্লয়েড-PoolHub (Badhan-নেমস্পেস) — নতুন-সিস্টেমই-মূল; POOLHUB=http://127.0.0.1:8399 দিলে-লোকাল-ডিভ
 // v1.15.62 সাব-স্পেস-API-কী (ইউজার: প্রতি-সোর্স-নিজ-কী-দিয়ে-হাব-ব্যবহার): POOLHUB_KEYS=ফাইল-পথ (JSON {স্পেস:psk}) — লোকালে poolhub/poolhub_keys.json
 let HKEYS = {}; try { HKEYS = JSON.parse(fs.readFileSync(String(process.env.POOLHUB_KEYS || path.join(__dirname, 'poolhub', 'poolhub_keys.json')), 'utf8')); } catch (e) { }
 const HKEY = n => String(HKEYS[n] || '');

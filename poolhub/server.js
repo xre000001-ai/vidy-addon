@@ -9,7 +9,7 @@
 const http = require('http'), https = require('https'), net = require('net'), tls = require('tls'), crypto = require('crypto');
 const fs = require('fs'), path = require('path');
 const { URL } = require('url');
-const VERSION = '1.3.4';
+const VERSION = '1.3.5';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const PORT = Number(process.env.PORT || 8399);
 const PX_CAP = 300, DIR = __dirname;
@@ -37,6 +37,7 @@ let KEYS = {}; try { KEYS = JSON.parse(fs.readFileSync(KEY_FILE, 'utf8')); } cat
 for (const s2 of SUBS) if (!KEYS[s2]) KEYS[s2] = 'psk-' + s2.slice(0, 2) + '-' + crypto.randomBytes(12).toString('hex');
 function saveKeys() { try { fs.writeFileSync(KEY_FILE, JSON.stringify(KEYS, null, 1)); } catch (e) { } }
 saveKeys();
+try { const EJ = JSON.parse(process.env.POOLHUB_KEYS_JSON || '{}'); let n2 = 0; for (const k of Object.keys(EJ)) if (KEYS[k]) { KEYS[k] = String(EJ[k]); n2++; } if (n2) { saveKeys(); console.log('[keys] env-সিড: ' + n2 + '-কী-প্রয়োগ'); } } catch (e) { } // v1.3.5: POOLHUB_KEYS_JSON → ডিপ্লয়ে-নির্দিষ্ট-কী-সেট (সব-ক্লায়েন্ট-এক-সেট-শেয়ার)
 function spaceByKey(k) { if (!k) return null; for (const s2 of SUBS) if (KEYS[s2] === k) return s2; return null; }
 function keyOf(req, u) { return String((req.headers && req.headers['x-poolhub-key']) || '') || (u ? String(u.searchParams.get('key') || '') : ''); }
 function isUser(k) { return String(k).indexOf('u:') === 0; }
