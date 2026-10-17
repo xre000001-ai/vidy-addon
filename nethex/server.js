@@ -10,7 +10,7 @@ import { poolStart, poolStats, checkerStats } from './mb-lib/pool.js';
 if (typeof AbortSignal !== 'undefined' && !AbortSignal.timeout) { AbortSignal.timeout = (ms) => { const c = new AbortController(); const t = setTimeout(() => c.abort(new Error('timeout')), ms); if (t.unref) t.unref(); return c.signal; }; }
 
 const PORT = Number(process.env.PORT || 7000);
-const VERSION = '2.11.8';
+const VERSION = '2.11.9';
 const CINEMETA = 'https://v3-cinemeta.strem.io';
 const PUBLIC_BASE = process.env.PUBLIC_BASE || 'https://5a16d5684c14-nethex.baby-beamup.club';
 let LOGO_BUF = null;
@@ -155,7 +155,20 @@ async function resultsFor(q) {
 // v2.11.5 (// v2.11.5 (user: "5 seconds total"): the winning-subject map (24h) — familiar titles skip both the meta and search hops
 // (matrix-// (matrix only, ~2-2.5s); a first-seen title still runs the full chain (warm slots, ~4-5s).
 const PICK = new Map();
+// v2.11.9 concurrency gate: a series tap + prewarm + subtitle side-calls once fired ~10
+// parallel resolve chains — each chewing 5-10 proxy fetches. The child's event loop and
+// pool melted down (live ring: the 14s budget TIMER itself fired 10s late at +24.3s), so
+// users saw empty/partial answers "sometimes". Max 3 concurrent chains; extras queue up
+// to 6s (their own 12s wall still applies) — bounded, self-healing, no starvation.
+let RUN_N = 0;
+const RUN_Q = [];
 async function resolve(type, imdb, season, episode) {
+  if (RUN_N >= 3) await new Promise(r => { RUN_Q.push(r); setTimeout(r, 6000).unref?.(); });
+  RUN_N++;
+  try { return await resolveInner(type, imdb, season, episode); }
+  finally { RUN_N--; if (RUN_N < 3 && RUN_Q.length) { const w = RUN_Q.shift(); w(); } }
+}
+async function resolveInner(type, imdb, season, episode) {
   const tR0 = Date.now();
   const pk = `${type}:${imdb}:${season || ''}`;
   const pickHit = PICK.get(pk);
