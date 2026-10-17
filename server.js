@@ -19,7 +19,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.70';
+const VERSION = '1.15.71';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -1183,10 +1183,14 @@ async function withSources(cardsP, srcs, cfg, t0) {
     // // the answer follows it (2-5s when fast), while slow sources get the maximum time before being cut. Separate 5.5/8.5s windows dropped —
     // // prod child/resolver latency wobble made separate windows miss the first click (MB sometimes 16 cards at 6.6s, sometimes >5.5s).
     const uniLeft = Math.max(0, Math.min(NXDEADLINE, 10800) - el); // v1.15.12: // v1.15.12: first-click limit 9.3->10.8s (user report: n=0 at the boundary; log proof tt7326322 10s -> 0)
+    // v1.15.71: family tracks (tw/rt) are bonus cards — cap their hold at 6.5s so a slow
+    // scrape (site-side 6-10s tails, live-proven) never becomes the answer's floor. Their
+    // misses are healed next tap; nx keeps the full window (first-try MB is the priority).
+    const famCap = Math.min(uniLeft, 6500);
     let errFlag = false; // v1.15.3: // v1.15.3: a source error (rebuild/network) is not a real empty — count it as partial
     const outs = await Promise.all(live.map(x => Promise.race([
       x.p.catch(() => { errFlag = true; return []; }),
-      new Promise(r => setTimeout(() => r(null), uniLeft))
+      new Promise(r => setTimeout(() => r(null), (x.key === 'tw' || x.key === 'rt') ? famCap : uniLeft))
     ])));
     let all = cards.slice();
     for (let i = 0; i < live.length; i++) {

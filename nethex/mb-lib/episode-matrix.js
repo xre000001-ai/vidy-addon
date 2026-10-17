@@ -121,7 +121,18 @@ async function getDetail(detailPath) {
 }
 
 /** Entry point. params: { id, season, episode } -> { status, body }. */
-export async function run(params) {
+export function run(params) {
+  // v2.11.7 overall budget: the primary matrix path was the last unbudgeted crawl
+  // (live ring proof: "matrix +33491ms" on a degraded pool). Bound it — the child
+  // wall (12s) answers the user first anyway; this only bounds the in-flight chain
+  // so the cache heals on a later tap instead of every tap joining a 30s+ crawl.
+  return Promise.race([
+    runInner(params),
+    new Promise((r) => setTimeout(() => r({ status: 504, body: { error: "matrix budget (14s)" } }), 14000)),
+  ]);
+}
+
+async function runInner(params) {
   const detailPath = String(params.id || params.detailPath || "").trim();
   const season = parseInt(params.season) || 0; // 0 = movie
   const episode = parseInt(params.episode) || 0;
