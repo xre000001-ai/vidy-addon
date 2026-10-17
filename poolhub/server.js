@@ -9,7 +9,7 @@
 const http = require('http'), https = require('https'), net = require('net'), tls = require('tls'), crypto = require('crypto');
 const fs = require('fs'), path = require('path');
 const { URL } = require('url');
-const VERSION = '1.3.3';
+const VERSION = '1.3.4';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const PORT = Number(process.env.PORT || 8399);
 const PX_CAP = 300, DIR = __dirname;
@@ -238,6 +238,7 @@ const server = http.createServer((req, res) => {
   const jout = (code, o) => { res.writeHead(code, { 'content-type': 'application/json', 'access-control-allow-origin': '*' }); res.end(JSON.stringify(o)); };
   const body = fn => { let b = ''; req.on('data', d => { b += d; if (b.length > 8192) req.destroy(); }); req.on('end', () => { try { fn(JSON.parse(b || '{}')); } catch (e) { jout(400, { ok: 0, err: 'json?' }); } }); };
   // ── পাবলিক/অ্যাপ-API ──
+  if (u.pathname === '/manifest.json') return jout(200, { id: 'community.poolhub', version: VERSION, name: 'PoolHub', description: 'Centralized proxy management — scan → pool(300) → 5 subspaces → 5 API keys (proxy = IP/geo-flag bypass only, never media playback)', types: [], resources: [], catalogs: [] }); // v1.3.4: beamup-lint-অ্যাডন-মুখোশ (পরিষেবা-নিজে-অ্যাডন-নয়)
   if (u.pathname === '/health') return jout(200, { ok: 1, version: VERSION, pool: POOL.length, spaces: Object.fromEntries(Object.keys(SPACES).map(k => [k, SPACES[k].set.size])), used: USED, users: Object.keys(TOKENS).length, up: Math.floor(process.uptime()) });
   if (u.pathname === '/spaces') {
     const kb = keyOf(req, u), ks = spaceByKey(kb);
