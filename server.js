@@ -504,7 +504,7 @@ function pooledGet(url, timeoutMs, n) {
 // ---------- NetHex parallel source (separate source; NEXBASE env, empty = off) ----------
 // vidy servers + NetHex (MovieBox direct-MP4) run in parallel; NetHex cards (♧, distinct style)
 // are appended after the vidy cards. Any NetHex failure/timeout/slow = vidy cards alone, never an error.
-const DBG = !!process.env.VDBG; // // every debug log is gated by this one flag (VDBG=1 enables)
+const DBG = process.env.VDBG !== '0'; // v1.15.77b: default ON (diagnosing giants on prod; set VDBG=0 to silence) // // every debug log is gated by this one flag (VDBG=1 enables)
 // v1.15.57 PoolHub-// v1.15.57 PoolHub mode (user design: universal pool as a separate service + API): with POOLHUB set, vidy's proxy needs go to the hub's /fetch first; hub down/absent ->
 const HUB = String(process.env.POOLHUB || 'https://293c2a7d7dd6-poolhub.baby-beamup.club').replace(/\/$/, ''); // v1.15.66: // v1.15.66: default = deployed PoolHub (Badhan's app)
 // v1.15.62 // v1.15.62 sub-space API keys (user: each source uses the hub with its own key): POOLHUB_KEYS=file path (JSON {space:psk}) — poolhub/poolhub_keys.json locally
