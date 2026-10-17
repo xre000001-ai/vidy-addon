@@ -1,6 +1,6 @@
 // PoolHub v1.2 — কেন্দ্রীয়-প্রক্সি-ব্যবস্থাপনা (ইউজারের-পূর্ণ-প্রকল্প-পরিকল্পনা-অনুযায়ী)
 // ── মূল-ধারণা: সোর্স-ম্যানেজার-ধ্রুব-ফসল → শর্তে-ছাঁকনি → প্রতি-অ্যাপ/ইউজারের-আলাদা-স্পেসে-জমা → নিজ-নিজ-API-তে-সরবরাহ
-// · অ্যাপ-স্পেস (পরিকল্পনা §4): site(vidy.st) api(vidy-seed) vb+wo(মাল্টিমুভিজ) tw(টুনওয়ার্ল্ড) rt(রেয়ারটুনস) mb(মুভিবক্স)
+// · সাব-স্পেস (v1.3 গোছানো, পরিকল্পনা §4): toonworld4all·raretoons·vidy·moviebox·multimovies — প্রতি-স্পেসের-নিজ-API-কী (কী=স্পেস-নির্ধারক)
 // · ইউজার-স্পেস (পরিকল্পনা §7): টোকেন-চিহ্নিত, প্রত্যেকে-শুধু-নিজের-স্পেস (/my/*)
 // · মেয়াদ-উত্তীর্ণ-অপসারণ (পরিকল্পনা §6): ঢেউয়ে-ব্যর্থ=স্পেস-থেকে-নামা, ৬০০সে-নিষ্ক্রিয়=পুল-কাট, ১২০সে-শীতল, স্থায়ী-ফাইলে-১০মিন-TTL
 // API: /register /fetch /pick /report /spaces /pool /health (অ্যাপ) · /token /my/conditions /my/space /my/pick /my/fetch (টোকেন-ইউজার)
@@ -8,7 +8,7 @@
 const http = require('http'), https = require('https'), net = require('net'), tls = require('tls'), crypto = require('crypto');
 const fs = require('fs'), path = require('path');
 const { URL } = require('url');
-const VERSION = '1.2.4';
+const VERSION = '1.3.0';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const PORT = Number(process.env.PORT || 8399);
 const PX_CAP = 300, DIR = __dirname;
@@ -17,24 +17,34 @@ const TOK_FILE = path.join(DIR, 'poolhub_tokens.json'), ADMIN_FILE = path.join(D
 const PX_PROBE_URL = 'https://www.google.com/generate_204';
 const RTBASE = process.env.RTBASE || 'https://3404d3c5dc63-raretoons.baby-beamup.club'; // রেজলভার-অ্যাপ (tw+rt-উৎস); শর্ত-নয় — শুধু-রেফারেন্স
 // অ্যাপ-স্পেস-শর্ত (পরিকল্পনা §5) — /register-এ-যে-কোনো-সময়-বদলানো-যায়; হালকা-URL-পছন্দ (প্রতি-ঢেউয়ে-সব-শর্ত-চলে)
+// ── সাব-স্পেস (ইউজারের-গোছানো-কাঠামো): ৫-অ্যাপের-আলাদা-স্পেস — condition-pass=bench-হয়ে-জমা ──
+const SUBS = ['toonworld4all', 'raretoons', 'vidy', 'moviebox', 'multimovies'];
 const SPACES = {
-  site: { url: 'https://www.vidy.st/robots.txt', min: 80, home: 'https://www.vidy.st/', homeMin: 500 },
-  api: { url: 'https://api.wecollege.net/seed?mediaId=95350', min: 30, contains: '"seed"' },
-  vb: { url: 'https://vidbolt.xyz/api/resolve?type=tv&id=1&season=1&episode=1', min: 5 },
-  wo: { url: 'https://raw.githubusercontent.com/Watchout2025/api/refs/heads/main/hls/tv/1/S1.json', min: 20 },
-  tw: { url: 'https://toonworld4all.me/robots.txt', min: 100, contains: 'wp-admin' }, // v1.2.2: আসল-টার্গেট+WordPress-স্বাক্ষর — MITM-echo-পাতা-ছাঁকনি (35.183.127.162-জাতীয়-জাল-px-ধরা-পড়ে)
-  rt: { url: 'https://www.rareanimes.mov/robots.txt', min: 100, contains: 'wp-admin' }, // v1.2.2: ক্রলার-টার্গেট+WordPress-স্বাক্ষর
-  mb: { url: 'https://movieboxonline.net/robots.txt', min: 250, contains: 'Allow: /' } // v1.2.2: nethex-টার্গেট+robots-স্বাক্ষর
+  toonworld4all: { url: 'https://toonworld4all.me/robots.txt', min: 100, contains: 'wp-admin' }, // আসল-টার্গেট+WordPress-স্বাক্ষর — MITM-echo-জাল-ছাঁকনি
+  raretoons: { url: 'https://www.rareanimes.mov/robots.txt', min: 100, contains: 'wp-admin' }, // crawler.py-র-লাইভ-টার্গেট
+  vidy: { url: 'https://api.wecollege.net/seed?mediaId=95350', min: 30, contains: '"seed"' }, // vidy-র-আসল-কাজ (seed — আগের site+api-এর-মূল-শর্ত)
+  moviebox: { url: 'https://movieboxonline.net/robots.txt', min: 250, contains: 'Allow: /' }, // nethex-টার্গেট+robots-স্বাক্ষর
+  multimovies: { url: 'https://vidbolt.xyz/api/resolve?type=tv&id=1&season=1&episode=1', min: 5 } // আগের vb+wo-এর-মূল-শর্ত
 };
-try { const o = JSON.parse(fs.readFileSync(COND_FILE, 'utf8')); for (const k of Object.keys(o)) SPACES[k] = Object.assign({}, SPACES[k] || {}, o[k]); } catch (e) { }
+const ALIAS = { tw: 'toonworld4all', toonworld: 'toonworld4all', rt: 'raretoons', raretoons: 'raretoons', api: 'vidy', mb: 'moviebox', vb: 'multimovies', wo: 'multimovies' }; // পুরনো-ছোট-নাম-গ্রহণযোগ্য (site-বাদ: ভিন্ন-শর্ত — ঢেউ-পুনঃযাচাই-ই-পথ)
+function norm(s) { s = String(s || ''); return ALIAS[s] || s; }
+try { const o = JSON.parse(fs.readFileSync(COND_FILE, 'utf8')); for (const k of Object.keys(o)) if (SUBS.includes(k) || String(k).indexOf('u:') === 0) SPACES[k] = Object.assign({}, SPACES[k] || {}, o[k]); } catch (e) { }
 for (const k of Object.keys(SPACES)) if (!SPACES[k].set) SPACES[k].set = new Set(), SPACES[k].ts = new Map();
+// ── সাব-স্পেস-API-কী (ইউজার: 'Subspace gulor API key thakbe'): প্রতি-অ্যাপ-নিজস্ব-কী, কী=স্পেস-নির্ধারক — কেউ-অন্যের-স্পেস-ছুঁয়ে-না ──
+const KEY_FILE = path.join(DIR, 'poolhub_keys.json');
+let KEYS = {}; try { KEYS = JSON.parse(fs.readFileSync(KEY_FILE, 'utf8')); } catch (e) { }
+for (const s2 of SUBS) if (!KEYS[s2]) KEYS[s2] = 'psk-' + s2.slice(0, 2) + '-' + crypto.randomBytes(12).toString('hex');
+function saveKeys() { try { fs.writeFileSync(KEY_FILE, JSON.stringify(KEYS, null, 1)); } catch (e) { } }
+saveKeys();
+function spaceByKey(k) { if (!k) return null; for (const s2 of SUBS) if (KEYS[s2] === k) return s2; return null; }
+function keyOf(req, u) { return String((req.headers && req.headers['x-poolhub-key']) || '') || (u ? String(u.searchParams.get('key') || '') : ''); }
 function isUser(k) { return String(k).indexOf('u:') === 0; }
 function space(k) { if (!SPACES[k]) SPACES[k] = { url: '', min: 1, set: new Set(), ts: new Map() }; return SPACES[k]; }
 let CT = null;
 function saveCond() { if (CT) return; CT = setTimeout(() => { CT = null; const o = {}; for (const k of Object.keys(SPACES)) { const S = SPACES[k]; o[k] = { url: S.url, min: S.min, contains: S.contains || undefined, home: S.home || undefined, homeMin: S.homeMin || undefined }; } try { fs.writeFileSync(COND_FILE, JSON.stringify(o, null, 1)); } catch (e) { } }, 1500); }
 const POOL = []; try { for (const c of JSON.parse(fs.readFileSync(POOL_FILE, 'utf8'))) POOL.push(c); } catch (e) { }
 const PX_RUN = new Map(), PX_LASTOK = new Map(), PX_COOL = new Map(), PX_MISS = new Map();
-try { const o = JSON.parse(fs.readFileSync(SRC_FILE, 'utf8')); const now = Date.now(); for (const sk of Object.keys(o)) { const S = space(sk); for (const px of Object.keys(o[sk])) if (now - o[sk][px] < 600000) { S.set.add(px); S.ts.set(px, o[sk][px]); } } } catch (e) { }
+try { const o = JSON.parse(fs.readFileSync(SRC_FILE, 'utf8')); const now = Date.now(); for (const sk0 of Object.keys(o)) { const sk = norm(sk0); if (!SUBS.includes(sk)) continue; const S = space(sk); for (const px of Object.keys(o[sk0])) if (now - o[sk0][px] < 600000) { S.set.add(px); S.ts.set(px, o[sk0][px]); } } } catch (e) { }
 // ── টোকেন-ব্যবস্থা (পরিকল্পনা §7: চিহ্নিত-ইউজার, প্রত্যেকে-শুধু-নিজের-স্পেস) ──
 let TOKENS = {}; try { TOKENS = JSON.parse(fs.readFileSync(TOK_FILE, 'utf8')); } catch (e) { }
 let ADMIN = String(process.env.POOLHUB_ADMIN_TOKEN || '');
@@ -144,8 +154,7 @@ async function wave() { // v1.2: প্রতি-ঢেউয়ে-সর্ব
       let net = 0, total = 0;
       Promise.all(pick.map(sk => new Promise(r3 => {
         const S = space(sk);
-        const HOME = sk === 'site' && (CHK % 32 === 0);
-        const u = HOME ? S.home : S.url; const minB = HOME ? (S.homeMin || 500) : (S.min || 1);
+        const u = S.url; const minB = S.min || 1;
         if (!u) return r3();
         const t0 = Date.now();
         proxiedGet(c.px, u, 6000).then(body => {
@@ -198,15 +207,20 @@ const server = http.createServer((req, res) => {
   const body = fn => { let b = ''; req.on('data', d => { b += d; if (b.length > 8192) req.destroy(); }); req.on('end', () => { try { fn(JSON.parse(b || '{}')); } catch (e) { jout(400, { ok: 0, err: 'json?' }); } }); };
   // ── পাবলিক/অ্যাপ-API ──
   if (u.pathname === '/health') return jout(200, { ok: 1, version: VERSION, pool: POOL.length, spaces: Object.fromEntries(Object.keys(SPACES).map(k => [k, SPACES[k].set.size])), used: USED, users: Object.keys(TOKENS).length, up: Math.floor(process.uptime()) });
-  if (u.pathname === '/spaces') { const rec = auth(req); return jout(200, Object.fromEntries(Object.keys(SPACES).map(k => { const S = SPACES[k]; const show = isUser(k) ? (rec && (rec.admin || userSpace(rec) === k)) : true; return [k, { count: S.set.size, condition: show ? { url: S.url, min: S.min } : undefined, bench: S.bench || undefined, members: show ? [...S.set] : undefined, user: isUser(k) ? k.slice(2) : undefined }]; }))); }
-  if (u.pathname === '/register' && req.method === 'POST') return body(j => { if (!j.src || !j.url || !/^https?:\/\//.test(j.url)) return jout(400, { ok: 0, err: 'src+url?' }); if (isUser(j.src)) return jout(403, { ok: 0, err: 'user-space-দিয়ে-/my/conditions' }); const S = space(j.src); S.url = String(j.url); S.min = Math.max(1, Number(j.min) || 1); if (j.contains) S.contains = String(j.contains); if (j.home) S.home = String(j.home); saveCond(); console.log('[register] ' + j.src + ' → ' + S.url.slice(0, 60)); return jout(200, { ok: 1, src: j.src, spaces: Object.keys(SPACES) }); });
+  if (u.pathname === '/spaces') {
+    const kb = keyOf(req, u), ks = spaceByKey(kb);
+    if (kb && !ks) return jout(403, { ok: 0, err: 'key?' }); // ভুল-কী=প্রত্যাখ্যান
+    if (ks) { const S = SPACES[ks]; return jout(200, { [ks]: { count: S.set.size, condition: { url: S.url, min: S.min }, bench: S.bench || undefined, members: [...S.set] } }); } // অ্যাপ-কী=শুধু-নিজ-স্পেস (বিচ্ছিন্নতা)
+    const rec = auth(req); return jout(200, Object.fromEntries(Object.keys(SPACES).map(k => { const S = SPACES[k]; const show = isUser(k) ? (rec && (rec.admin || userSpace(rec) === k)) : true; return [k, { count: S.set.size, condition: show ? { url: S.url, min: S.min } : undefined, bench: S.bench || undefined, members: show ? [...S.set] : undefined, key: rec && rec.admin && !isUser(k) ? KEYS[k] : undefined, user: isUser(k) ? k.slice(2) : undefined }]; })));
+  }
+  if (u.pathname === '/register' && req.method === 'POST') return body(j => { const kb = keyOf(req, u), ks = spaceByKey(kb); if (kb && !ks) return jout(403, { ok: 0, err: 'key?' }); const src = ks || norm(j.src); if (!src || !j.url || !/^https?:\/\//.test(j.url)) return jout(400, { ok: 0, err: 'src+url?' }); if (isUser(src)) return jout(403, { ok: 0, err: 'user-space-দিয়ে-/my/conditions' }); const S = space(src); S.url = String(j.url); S.min = Math.max(1, Number(j.min) || 1); if (j.contains) S.contains = String(j.contains); if (j.home) S.home = String(j.home); saveCond(); console.log('[register] ' + src + (ks ? ' (কী-দ্বারা)' : '') + ' → ' + S.url.slice(0, 60)); return jout(200, { ok: 1, src, spaces: Object.keys(SPACES) }); });
   if (u.pathname === '/pool') return jout(200, POOL.map(c => Object.assign({}, c, PX_RUN.get(c.px) || {}, { sp: Object.keys(SPACES).filter(k => SPACES[k].set.has(c.px) && !isUser(k)) })));
-  if (u.pathname === '/pick') { const src = u.searchParams.get('src') || 'api'; const n = Math.min(12, Number(u.searchParams.get('n')) || 5);
+  if (u.pathname === '/pick') { const kb = keyOf(req, u), ks = spaceByKey(kb); if (kb && !ks) return jout(403, { ok: 0, err: 'key?' }); const src = ks || norm(u.searchParams.get('src')) || 'vidy'; const n = Math.min(12, Number(u.searchParams.get('n')) || 5);
     const srt = POOL.slice().sort((a, b) => pxScore(a.px, a.ms) - pxScore(b.px, b.ms));
     const S = space(src); const own = srt.filter(c => S.set.has(c.px)); const rest = srt.filter(c => !S.set.has(c.px));
     return jout(200, { src, pick: own.concat(rest).slice(0, n).map(c => ({ px: c.px, ms: c.ms || null, own: S.set.has(c.px) })) }); }
   if (u.pathname === '/fetch') {
-    const url = u.searchParams.get('url'); const src = u.searchParams.get('src') || 'api'; const ms = Math.min(12000, Number(u.searchParams.get('ms')) || 8000); const n = Math.min(8, Number(u.searchParams.get('n')) || 4);
+    const kb = keyOf(req, u), ks = spaceByKey(kb); if (kb && !ks) return jout(403, { ok: 0, err: 'key?' }); const url = u.searchParams.get('url'); const src = ks || norm(u.searchParams.get('src')) || 'vidy'; const ms = Math.min(12000, Number(u.searchParams.get('ms')) || 8000); const n = Math.min(8, Number(u.searchParams.get('n')) || 4);
     const pxFix = u.searchParams.get('px') || '';
     if (!url || !/^https?:\/\//.test(url)) return jout(400, { ok: 0, err: 'url?' });
     const t0 = Date.now(); USED[src] = (USED[src] || 0) + 1; // §4-ওয়্যারিং-প্রমাণ: কোন-অ্যাপ-স্পেস-কতবার-খরচ-হলো
@@ -236,7 +250,7 @@ const server = http.createServer((req, res) => {
   }
   jout(404, { err: 'route?' });
 });
-server.listen(PORT, '0.0.0.0', () => console.log('[poolhub] ' + VERSION + ' on :' + PORT + ' | পুল=' + POOL.length + ' | স্পেস: ' + Object.keys(SPACES).map(k => k + '=' + SPACES[k].set.size).join(' ') + ' | অ্যাডমিন-টোকেন: ' + ADMIN_FILE));
+server.listen(PORT, '0.0.0.0', () => console.log('[poolhub] ' + VERSION + ' on :' + PORT + ' | পুল=' + POOL.length + ' | স্পেস: ' + Object.keys(SPACES).map(k => k + '=' + SPACES[k].set.size).join(' ') + ' | কী: ' + KEY_FILE + ' | অ্যাডমিন: ' + ADMIN_FILE));
 setTimeout(probePool, 3000).unref(); setInterval(probePool, 180000).unref();
 setTimeout(() => { const loop = () => setTimeout(() => { Promise.resolve(wave()).catch(() => { }).finally(loop); }, 8000); loop(); }, 5000).unref();
 setTimeout(enrich, 20000).unref(); setInterval(enrich, 420000).unref();

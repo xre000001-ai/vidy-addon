@@ -97,10 +97,14 @@ export function pick(exclude) {
  *  fails the call honestly — the server IP never fires a platform call.
  *  Outcome feedback keeps the bench self-training on live traffic. */
 const HUBP = (process.env.POOLHUB || '').replace(/\/$/, ''); // §4-ওয়্যারিং: হাব-থাকলে-mb-স্পেসে-bench-হওয়া-px-দিয়ে-আগে (vidy-spawn-ও-এটা-বহন-করে)
+let MBKEY = ''; try { // v1.15.62: সাব-স্পেস-API-কী (moviebox) — POOLHUB_KEYS=সরাসরি-JSON অথবা ফাইল-পথ (দুই-রকম-ই)
+  let kb = String(process.env.POOLHUB_KEYS || '');
+  try { MBKEY = String((JSON.parse(kb) || {}).moviebox || ''); } catch (e1) { try { MBKEY = String((JSON.parse(fs.readFileSync(kb, 'utf8')) || {}).moviebox || ''); } catch (e2) { } }
+} catch { }
 export async function apiFetch(url, options = {}) {
-  if (HUBP) { // v2.10.5: MovieBox-প্ল্যাটফর্ম-কল-নিজের-mb-স্পেস-প্রক্সি-দিয়ে-আগে; ফাঁকা-স্পেস/ব্যর্থতা→নিজের-প্রশিক্ষিত-পুল (সৎ-ফলব্যাক)
+  if (HUBP) { // v2.10.5: MovieBox-প্ল্যাটফর্ম-কল-নিজের-moviebox-স্পেস-প্রক্সি-দিয়ে-আগে (নিজ-কী-সহ); ফাঁকা-স্পেস/ব্যর্থতা→নিজের-প্রশিক্ষিত-পুল (সৎ-ফলব্যাক)
     try {
-      const hr = await fetch(HUBP + '/fetch?src=mb&ms=9000&url=' + encodeURIComponent(url), { signal: AbortSignal.timeout(11500) });
+      const hr = await fetch(HUBP + '/fetch?src=moviebox' + (MBKEY ? '&key=' + encodeURIComponent(MBKEY) : '') + '&ms=9000&url=' + encodeURIComponent(url), { signal: AbortSignal.timeout(11500) });
       const hj = await hr.json();
       if (hj && hj.ok) return new Response(String(hj.body || ''), { status: 200, headers: { 'content-type': 'application/json; charset=utf-8' } });
     } catch { }

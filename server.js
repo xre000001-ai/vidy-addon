@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.61';
+const VERSION = '1.15.62';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -111,6 +111,34 @@ try {
 } catch (e) { }
 let PXSRC_T = null;
 function pxSpaceSave() { if (PXSRC_T) return; PXSRC_T = setTimeout(() => { PXSRC_T = null; const o = {}; for (const sk of Object.keys(PX_SPACES)) { o[sk] = {}; for (const px of PX_SPACES[sk].set) o[sk][px] = PX_SPACES[sk].ts.get(px) || Date.now(); } try { fs.writeFileSync(PXSRC_FILE, JSON.stringify(o)); } catch (e) { } }, 3000); }
+// ── v1.15.62 মিরর (ইউজার: 'poolhub-e store kora benched proxy gulo nijer ekhane joma kore rakbe and use korbe') ──
+// প্রতি-৬০সে: নিজ-নিজ-API-কী-দিয়ে-হাবের-/pick → নিজের-ভাণ্ডারে (POOL)+স্থানীয়-স্পেসে-জমা → রেস/বেঞ্চ-সব-স্থানীয়-পথেই-ব্যবহার; স্ন্যাপশট vidy_px_mirror.json
+const MIRROR_FILE = path.join(__dirname, 'vidy_px_mirror.json');
+const MIRROR = {}; try { const oM = JSON.parse(fs.readFileSync(MIRROR_FILE, 'utf8')); for (const kM of Object.keys(oM)) MIRROR[kM] = oM[kM]; } catch (e) { }
+let MIRR_B = false;
+async function hubMirror() {
+  if (!HUB || MIRR_B) return; MIRR_B = true;
+  try {
+    for (const sp of ['toonworld4all', 'raretoons', 'vidy', 'moviebox', 'multimovies']) {
+      try {
+        const rM = await fetch(HUB + '/pick?src=' + sp + '&n=40' + (HKEY(sp) ? '&key=' + encodeURIComponent(HKEY(sp)) : ''), { signal: AbortSignal.timeout(6000) });
+        const jM = await rM.json(); if (!jM || !Array.isArray(jM.pick)) continue;
+        const own = jM.pick.filter(p => p.own); if (!own.length) continue;
+        MIRROR[sp] = own.map(p => ({ px: p.px, ms: p.ms || null }));
+        for (const p of own) {
+          if (!POOL.some(c => c.px === p.px) && POOL.length < 300) POOL.push({ px: p.px, ms: p.ms || 2000 }); // নিজের-ভাণ্ডারে-জমা
+          if (!PX_RUN.get(p.px)) PX_RUN.set(p.px, { ok: 1, fail: 0, ms: p.ms || 2000, last: Date.now() }); // হাব-বেঞ্চ-স্কোর-বীজ (স্থানীয়-রেস-তৎক্ষণাৎ-ব্যবহার-করতে-পারে)
+          const lsk = sp === 'vidy' ? 'api' : (sp === 'multimovies' ? 'vb' : null);
+          if (lsk && PX_SPACES[lsk]) { PX_SPACES[lsk].set.add(p.px); PX_SPACES[lsk].ts.set(p.px, Date.now()); } // স্থানীয়-স্পেসেও (api/vb-বেঞ্চ-গেট-তাৎক্ষণিক-পাস)
+        }
+        pxSpaceSave();
+      } catch (e) { }
+    }
+    try { fs.writeFileSync(MIRROR_FILE, JSON.stringify(MIRROR)); } catch (e) { }
+    if (DBG) console.error('[mirror] হাব-বেঞ্চ-নিজের-জায়গায়: ' + Object.keys(MIRROR).map(k => k + '=' + (MIRROR[k] || []).length).join(' '));
+  } finally { MIRR_B = false; }
+}
+setInterval(hubMirror, 60000).unref(); setTimeout(hubMirror, 12000).unref();
 let PXCHK = 0, pxChkBusy = false;
 async function pxCheckerWave() {
   if (pxChkBusy || !POOL.length) return;
@@ -587,24 +615,28 @@ function pooledGet(url, timeoutMs, n) {
 const DBG = !!process.env.VDBG; // সব-debug-লগ-এই-এক-ফ্ল্যাগে-গেটেড (VDBG=1-এ-চালু)
 // v1.15.57 PoolHub-মোড (ইউজার-নকশা: ইউনিভার্সাল-পুল-আলাদা-সার্ভিস+API): POOLHUB=http://host:port দিলে-vidy-র-প্রক্সি-চাহিদা-আগে-হাবের-/fetch-এ; হাব-মরলে/না-দিলে-আগের-স্থানীয়-পুল-পথ-অক্ষত
 const HUB = String(process.env.POOLHUB || '').replace(/\/$/, '');
+// v1.15.62 সাব-স্পেস-API-কী (ইউজার: প্রতি-সোর্স-নিজ-কী-দিয়ে-হাব-ব্যবহার): POOLHUB_KEYS=ফাইল-পথ (JSON {স্পেস:psk}) — লোকালে poolhub/poolhub_keys.json
+let HKEYS = {}; try { HKEYS = JSON.parse(fs.readFileSync(String(process.env.POOLHUB_KEYS || path.join(__dirname, 'poolhub', 'poolhub_keys.json')), 'utf8')); } catch (e) { }
+const HKEY = n => String(HKEYS[n] || '');
+const HALIAS = { tw: 'toonworld4all', toonworld: 'toonworld4all', rt: 'raretoons', raretoons: 'raretoons', api: 'vidy', site: 'vidy', mb: 'moviebox', vb: 'multimovies', wo: 'multimovies' };
+const HSPACE = n => HALIAS[String(n || '')] || String(n || '') || 'vidy';
 // v1.15.58 (ইউজার-নকশা): সোর্স-ঘোষিত-শর্ত — vidy-বুটে-নিজের-প্রতিটা-সোর্সের-কন্ডিশন-হাবে-নিবন্ধন-করে; হাব-তখন-সব-প্রক্সিকে-এই-শর্তে-বেঞ্চ-করে-পাস-কে-ওই-স্পেসে-জমায় (এক-প্রক্সি-বহু-সোর্সে-পার-হলে-সব-স্পেসে)
 if (HUB) {
+  // v1.15.62 (গোছানো-কাঠামো): PX_DECL=৫-সাব-স্পেস-ই — প্রতিটা-নিজ-API-কী-দিয়ে-/register (কী=স্পেস-নির্ধারক)
   const PX_DECL = {
-    site: { url: 'https://www.vidy.st/robots.txt', min: 80 },
-    api: { url: API + '/seed?mediaId=95350', min: 30, contains: '"seed"' },
-    vb: { url: 'https://vidbolt.xyz/api/resolve?type=tv&id=1&season=1&episode=1', min: 5 },
-    wo: { url: 'https://raw.githubusercontent.com/Watchout2025/api/refs/heads/main/hls/tv/1/S1.json', min: 20 },
-    // v1.15.60 (ইউজার-পরিকল্পনা §5: প্রতি-অ্যাপের-ভিন্ন-শর্ত, টার্গেট-সাইটের-বিরুদ্ধে-যাচাই): tw/rt/mb-আসল-শর্ত — স্থানধারক-bench-বাদ
-    tw: { url: 'https://toonworld4all.me/robots.txt', min: 100, contains: 'wp-admin' }, // টুনওয়ার্ল্ড৪অল-আসল-টার্গেট+WordPress-স্বাক্ষর (robots=120B)
-    rt: { url: 'https://www.rareanimes.mov/robots.txt', min: 100, contains: 'wp-admin' }, // রেয়ারটুনস-ক্রলার-টার্গেট+স্বাক্ষর (crawler.py; robots=116B)
-    mb: { url: 'https://movieboxonline.net/robots.txt', min: 250, contains: 'Allow: /' } // মুভিবক্স-চাইল্ড-টার্গেট+স্বাক্ষর (robots=313B)
+    toonworld4all: { url: 'https://toonworld4all.me/robots.txt', min: 100, contains: 'wp-admin' }, // আসল-টার্গেট+WordPress-স্বাক্ষর
+    raretoons: { url: 'https://www.rareanimes.mov/robots.txt', min: 100, contains: 'wp-admin' }, // crawler.py-লাইভ-টার্গেট+স্বাক্ষর
+    vidy: { url: API + '/seed?mediaId=95350', min: 30, contains: '"seed"' }, // vidy-র-আসল-কাজ
+    moviebox: { url: 'https://movieboxonline.net/robots.txt', min: 250, contains: 'Allow: /' }, // nethex-টার্গেট+স্বাক্ষর
+    multimovies: { url: 'https://vidbolt.xyz/api/resolve?type=tv&id=1&season=1&episode=1', min: 5 } // মাল্টিমুভিজ-CDN-শর্ত
   };
-  setTimeout(() => { for (const sk of Object.keys(PX_DECL)) fetch(HUB + '/register', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(Object.assign({ src: sk }, PX_DECL[sk])) }).catch(() => { }); }, 2500);
+  setTimeout(() => { for (const sk of Object.keys(PX_DECL)) fetch(HUB + '/register', { method: 'POST', headers: Object.assign({ 'content-type': 'application/json' }, HKEY(sk) ? { 'x-poolhub-key': HKEY(sk) } : {}), body: JSON.stringify(Object.assign({ src: sk }, PX_DECL[sk])) }).catch(() => { }); }, 2500);
 }
 async function hubText(url, ms, src, px) { // v1.15.59: px-দিলে-স্টিকি (হাব-একই-px-দিয়ে-একক-কল — seed-IP-বাঁধন-রক্ষা)
   if (!HUB) return '';
   try {
-    const r = await fetch(HUB + '/fetch?src=' + encodeURIComponent(src || 'api') + (px ? '&px=' + encodeURIComponent(px) : '') + '&ms=' + Math.min(12000, ms || 8000) + '&url=' + encodeURIComponent(url), { signal: AbortSignal.timeout(Math.min(13000, (ms || 8000) + 1500)) });
+    const sp = HSPACE(src);
+    const r = await fetch(HUB + '/fetch?src=' + encodeURIComponent(sp) + (px ? '&px=' + encodeURIComponent(px) : '') + '&ms=' + Math.min(12000, ms || 8000) + (HKEY(sp) ? '&key=' + encodeURIComponent(HKEY(sp)) : '') + '&url=' + encodeURIComponent(url), { signal: AbortSignal.timeout(Math.min(13000, (ms || 8000) + 1500)) });
     const j = await r.json().catch(() => null);
     return j && j.ok ? String(j.body || '') : '';
   } catch { return ''; }
@@ -951,10 +983,11 @@ async function twrFetch(base, tag, title, type, s, e, t3) {
     const FU = base + '/find?' + qs.toString(); let b = '';
     if (HUB) { // v1.15.61: §4-ওয়্যারিং — নিজ-অ্যাপ-স্পেসে-bench-হওয়া-px-দিয়ে-রেজলভার-কল-আগে; JSON-না-হলে-px-কে-/report-ফেল+সরাসরি-ফলব্যাক
       try {
-        const hr = await fetch(HUB + '/fetch?src=' + (tag === 'toonworld' ? 'tw' : 'rt') + '&ms=8000&url=' + encodeURIComponent(FU), { signal: AbortSignal.timeout(9500) });
+        const sp2 = HSPACE(tag); const kp = HKEY(sp2) ? '&key=' + encodeURIComponent(HKEY(sp2)) : '';
+        const hr = await fetch(HUB + '/fetch?src=' + encodeURIComponent(sp2) + kp + '&ms=8000&url=' + encodeURIComponent(FU), { signal: AbortSignal.timeout(9500) });
         const hj = await hr.json();
         if (hj && hj.ok && String(hj.body || '')[0] === '{') { b = String(hj.body); console.error('[twrHUB] ' + tag + '-স্পেস-px=' + hj.px + ' ✓'); }
-        else if (hj && hj.px) fetch(HUB + '/report', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ px: hj.px, ok: false, src: tag === 'toonworld' ? 'tw' : 'rt' }) }).catch(() => { }); // echo-জাল/বক্র-বডি → প্রমাণ-ফেল (ঢেউয়ে-স্পেস-থেকে-নামবে)
+        else if (hj && hj.px) fetch(HUB + '/report', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ px: hj.px, ok: false, src: sp2 }) }).catch(() => { }); // echo-জাল/বক্র-বডি → প্রমাণ-ফেল (ঢেউয়ে-স্পেস-থেকে-নামবে)
       } catch { }
     }
     if (!b) b = await directGet(FU, 30000);
