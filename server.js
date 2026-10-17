@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.34';
+const VERSION = '1.15.35';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -152,6 +152,26 @@ function mmFirstVar(pl, base) { // the first variant URI of a master playlist
     try { return new URL(nxt, base).href; } catch { return ''; }
   }
   return '';
+}
+function mmFirstSeg(pl, base) { // the first segment URI of a media playlist, absolutized (v1.15.33 rule: base query inherited)
+  const L = String(pl).split('\n');
+  for (const l of L) {
+    const t = l.trim(); if (!t || t.charAt(0) === '#') continue;
+    try { const a = new URL(t, base); if (!a.search) { try { a.search = new URL(base).search; } catch { } } return a.href; } catch { return ''; }
+  }
+  return '';
+}
+async function mmProbeImg(u) { // image verdict by MAGIC BYTES, not extension — one tiny ranged fetch (v1.15.35: .png-named segments on orion/rousav are REAL MPEG-TS; the v1.15.34 extension rule blocked genuine video)
+  try {
+    const r = await fetch(u, { headers: { 'User-Agent': UA, Referer: VB_REF, Range: 'bytes=0-63' }, signal: AbortSignal.timeout(6000) });
+    const b = Buffer.from(await r.arrayBuffer());
+    if (b.length >= 4 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4E && b[3] === 0x47) return true; // PNG
+    if (b.length >= 3 && b[0] === 0xFF && b[1] === 0xD8 && b[2] === 0xFF) return true; // JPEG
+    if (b.length >= 3 && b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46) return true; // GIF
+    if (b.length >= 12 && b[8] === 0x57 && b[9] === 0x45 && b[10] === 0x42 && b[11] === 0x50) return true; // WEBP
+    if (b.length >= 12 && b[4] === 0x66 && b[5] === 0x74 && b[6] === 0x79 && b[7] === 0x70) { const f = b.subarray(8, 12).toString('latin1'); return f.indexOf('avif') >= 0 || f.indexOf('heic') >= 0; } // ISOBMFF
+    return false; // MPEG-TS (0x47), MP4, anything else — real media
+  } catch { return false; }
 }
 function mmPut(map, k, v) { if (map.size > 300) map.clear(); map.set(k, { ts: Date.now(), v }); }
 function mmGet(map, k, ttl) { const e = map.get(k); return e && (Date.now() - e.ts) < ttl ? e.v : null; }
@@ -1119,8 +1139,10 @@ async function mmVidbolt(tmdbId, isSeries, s, e, ms) { // v1.15.28: the vidbolt 
         // v1.15.34 (user: Chainsaw Man never played — the card was a ~10min reel of .png tiles, ending in the upstream 'too many requests' overlay): a playlist
         // whose segments are images is a PREVIEW REEL, not video — no card from it (honest empty), verdict remembered; embedded masters get one cheap variant peek
         if (MM_TILE.has(sc0.url)) { if (draw < 2) await new Promise(r3 => setTimeout(r3, 450)); continue; }
-        if (mmIsTile(pl)) MM_TILE.add(sc0.url);
-        else if (em.indexOf('#EXTM') >= 0) { const v1 = mmFirstVar(pl, sc0.url); if (v1) { try { const vt = await mmPoolText(v1, vLeft(4500)); if (vt && mmIsTile(vt)) MM_TILE.add(sc0.url); } catch { } } }
+        let tileImg = false;
+        if (mmIsTile(pl)) { const fs0 = mmFirstSeg(pl, sc0.url); tileImg = fs0 ? await mmProbeImg(fs0) : true; } // extension gate, then one magic-byte peek
+        else if (em.indexOf('#EXTM') >= 0) { const v1 = mmFirstVar(pl, sc0.url); if (v1) { try { const vt = await mmPoolText(v1, vLeft(4500)); if (vt && mmIsTile(vt)) { const fs1 = mmFirstSeg(vt, v1); tileImg = fs1 ? await mmProbeImg(fs1) : true; } } catch { } } }
+        if (tileImg) MM_TILE.add(sc0.url);
         if (MM_TILE.has(sc0.url)) { if (draw < 2) await new Promise(r3 => setTimeout(r3, 450)); continue; }
           if (woHasAudioGrp(pl)) { // v1.15.30: one mini-master card per quality, resolution pinned + audio intact
             const lines0 = pl.split('\n'); let pcount = 0;
@@ -1182,8 +1204,8 @@ async function mmStreams(tmdbId, title, type, s, e, origin) { // v1.15.28: Multi
     for (let i = 0; i < lists.length; i++) {
       const pl = lists[i];
       if (!pl || pl.indexOf('#EXTM') < 0) continue;
-      if (mmIsTile(pl)) continue; // v1.15.34: a thumbnail reel is not a stream
       let base = servers[i]; try { base = new URL(servers[i]).href.replace(/[^/]*$/, ''); } catch { }
+      if (mmIsTile(pl)) { const fs2 = mmFirstSeg(pl, base); if (!fs2 || await mmProbeImg(fs2)) continue; } // v1.15.35: image verdict by magic bytes — .png-named TS is real video
       const atag = woAudioTag(pl);
       const lines = pl.split('\n');
       if (woHasAudioGrp(pl)) { // v1.15.30: per-quality mini cards — manual resolution with audio intact (was one auto-shifting master)
