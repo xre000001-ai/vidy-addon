@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.60';
+const VERSION = '1.15.61';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -947,7 +947,17 @@ async function twrFetch(base, tag, title, type, s, e, t3) {
   const qs = new URLSearchParams({ source: tag, title: String(title || '').replace(/[\u2018\u2019\u02BC]/g, "'"), _: String(Date.now()) }); // v1.15.11: ইউনিকোড-অ্যাপস্ট্রফি→ASCII (রেজলভার-ক্যাশ-কী-একতা)
   if (type === 'series') { qs.set('season', String(s || 1)); qs.set('episode', String(e || 1)); }
   try {
-    if (DBG) console.error('[twrURL] ' + base + '/find?' + qs.toString()); const b = await directGet(base + '/find?' + qs.toString(), 30000);
+    if (DBG) console.error('[twrURL] ' + base + '/find?' + qs.toString());
+    const FU = base + '/find?' + qs.toString(); let b = '';
+    if (HUB) { // v1.15.61: §4-ওয়্যারিং — নিজ-অ্যাপ-স্পেসে-bench-হওয়া-px-দিয়ে-রেজলভার-কল-আগে; JSON-না-হলে-px-কে-/report-ফেল+সরাসরি-ফলব্যাক
+      try {
+        const hr = await fetch(HUB + '/fetch?src=' + (tag === 'toonworld' ? 'tw' : 'rt') + '&ms=8000&url=' + encodeURIComponent(FU), { signal: AbortSignal.timeout(9500) });
+        const hj = await hr.json();
+        if (hj && hj.ok && String(hj.body || '')[0] === '{') { b = String(hj.body); console.error('[twrHUB] ' + tag + '-স্পেস-px=' + hj.px + ' ✓'); }
+        else if (hj && hj.px) fetch(HUB + '/report', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ px: hj.px, ok: false, src: tag === 'toonworld' ? 'tw' : 'rt' }) }).catch(() => { }); // echo-জাল/বক্র-বডি → প্রমাণ-ফেল (ঢেউয়ে-স্পেস-থেকে-নামবে)
+      } catch { }
+    }
+    if (!b) b = await directGet(FU, 30000);
     const j = JSON.parse(b);
     // v1.12.3: twr-কার্ড-ও-ইউনিফর্ম-ভিডি-ফরম্যাটে (⧉ Title / ⧠ SsEe • EpTitle / ⨞ Server ⌧ Audio) — resolution-শুধু-name-ব্যাজে, সবসময়-1080 (Auto/360-লেবেল-নয়)
     const raws = ((j && j.results) || []).filter(x => x && typeof x.url === 'string' && /^https?:/.test(x.url));

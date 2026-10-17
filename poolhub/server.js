@@ -8,7 +8,7 @@
 const http = require('http'), https = require('https'), net = require('net'), tls = require('tls'), crypto = require('crypto');
 const fs = require('fs'), path = require('path');
 const { URL } = require('url');
-const VERSION = '1.2.3';
+const VERSION = '1.2.4';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const PORT = Number(process.env.PORT || 8399);
 const PX_CAP = 300, DIR = __dirname;
@@ -128,7 +128,7 @@ function racePool(url, n, timeoutMs, src) { // অ্যাপ-পথ: নিজ
 function probePool() { if (!POOL.length) return; const snap = POOL.slice(); let dn = 0;
   for (const c of snap) { const t0 = Date.now(); proxiedGet(c.px, PX_PROBE_URL, 4000).then(() => { pxRec(c.px, true, Date.now() - t0); c.ms = Date.now() - t0; if (++dn === snap.length) prune(snap); }).catch(() => { pxRec(c.px, false, 0); if (++dn === snap.length) prune(snap); }); } }
 function prune(snap) { const good = snap.filter(c => { const h = PX_RUN.get(c.px); return !h || h.ok > 0 || h.fail < 3; }); const alive = good.length >= 3 ? good : snap; POOL.length = 0; for (const c of alive) POOL.push(c); savePool(); }
-let CHK = 0, busy = false;
+let CHK = 0, busy = false; const USED = Object.create(null); // §4: src→খরচ-গণক (/fetch-কে-কোন-অ্যাপ-স্পেস-কতবার-ব্যবহার-করলো)
 async function wave() { // v1.2: প্রতি-ঢেউয়ে-সর্বোচ্চ-৪-স্পেস (ঘূর্ণন) × ৩০-প্রক্সি — স্পেস-বাড়লেও-ঢেউ-স্থির; প্রতি-স্পেস-নিয়মিত-কভার
   if (busy || !POOL.length) return; busy = true;
   try {
@@ -138,6 +138,7 @@ async function wave() { // v1.2: প্রতি-ঢেউয়ে-সর্ব
     CHK++;
     const SKS = Object.keys(SPACES);
     const pick = []; for (let i = 0; i < Math.min(4, SKS.length); i++) pick.push(SKS[(CHK * 4 + i) % SKS.length]); // ঘূর্ণন-৪-স্পেস
+    for (const sk of pick) { const S2 = space(sk); S2.bench = { at: tnow, tried: 0, pass: 0 }; } // §4-দৃশ্যমানতা: প্রতি-ঢেউয়ে-প্রতি-স্পেস-bench-পরিসংখ্যান
     let cok = 0, cnet = 0;
     await Promise.all(wl.map(c => new Promise(r2 => {
       let net = 0, total = 0;
@@ -150,6 +151,7 @@ async function wave() { // v1.2: প্রতি-ঢেউয়ে-সর্ব
         proxiedGet(c.px, u, 6000).then(body => {
           const ok = !!body && body.length > minB && (!S.contains || body.indexOf(S.contains) >= 0);
           pxRec(c.px, ok, Date.now() - t0, sk);
+          if (S.bench) { S.bench.tried++; if (ok) S.bench.pass++; }
           if (ok) { S.set.add(c.px); S.ts.set(c.px, Date.now()); PX_MISS.delete(c.px); PX_COOL.delete(c.px); cok++; }
           else { S.set.delete(c.px); const m = (PX_MISS.get(c.px) || 0) + 1; if (m >= 2) PX_MISS.set(c.px, 0); else PX_MISS.set(c.px, m); }
           total++; r3();
@@ -195,8 +197,8 @@ const server = http.createServer((req, res) => {
   const jout = (code, o) => { res.writeHead(code, { 'content-type': 'application/json', 'access-control-allow-origin': '*' }); res.end(JSON.stringify(o)); };
   const body = fn => { let b = ''; req.on('data', d => { b += d; if (b.length > 8192) req.destroy(); }); req.on('end', () => { try { fn(JSON.parse(b || '{}')); } catch (e) { jout(400, { ok: 0, err: 'json?' }); } }); };
   // ── পাবলিক/অ্যাপ-API ──
-  if (u.pathname === '/health') return jout(200, { ok: 1, version: VERSION, pool: POOL.length, spaces: Object.fromEntries(Object.keys(SPACES).map(k => [k, SPACES[k].set.size])), users: Object.keys(TOKENS).length, up: Math.floor(process.uptime()) });
-  if (u.pathname === '/spaces') { const rec = auth(req); return jout(200, Object.fromEntries(Object.keys(SPACES).map(k => { const S = SPACES[k]; const show = isUser(k) ? (rec && (rec.admin || userSpace(rec) === k)) : true; return [k, { count: S.set.size, condition: show ? { url: S.url, min: S.min } : undefined, members: show ? [...S.set] : undefined, user: isUser(k) ? k.slice(2) : undefined }]; }))); }
+  if (u.pathname === '/health') return jout(200, { ok: 1, version: VERSION, pool: POOL.length, spaces: Object.fromEntries(Object.keys(SPACES).map(k => [k, SPACES[k].set.size])), used: USED, users: Object.keys(TOKENS).length, up: Math.floor(process.uptime()) });
+  if (u.pathname === '/spaces') { const rec = auth(req); return jout(200, Object.fromEntries(Object.keys(SPACES).map(k => { const S = SPACES[k]; const show = isUser(k) ? (rec && (rec.admin || userSpace(rec) === k)) : true; return [k, { count: S.set.size, condition: show ? { url: S.url, min: S.min } : undefined, bench: S.bench || undefined, members: show ? [...S.set] : undefined, user: isUser(k) ? k.slice(2) : undefined }]; }))); }
   if (u.pathname === '/register' && req.method === 'POST') return body(j => { if (!j.src || !j.url || !/^https?:\/\//.test(j.url)) return jout(400, { ok: 0, err: 'src+url?' }); if (isUser(j.src)) return jout(403, { ok: 0, err: 'user-space-দিয়ে-/my/conditions' }); const S = space(j.src); S.url = String(j.url); S.min = Math.max(1, Number(j.min) || 1); if (j.contains) S.contains = String(j.contains); if (j.home) S.home = String(j.home); saveCond(); console.log('[register] ' + j.src + ' → ' + S.url.slice(0, 60)); return jout(200, { ok: 1, src: j.src, spaces: Object.keys(SPACES) }); });
   if (u.pathname === '/pool') return jout(200, POOL.map(c => Object.assign({}, c, PX_RUN.get(c.px) || {}, { sp: Object.keys(SPACES).filter(k => SPACES[k].set.has(c.px) && !isUser(k)) })));
   if (u.pathname === '/pick') { const src = u.searchParams.get('src') || 'api'; const n = Math.min(12, Number(u.searchParams.get('n')) || 5);
@@ -207,7 +209,8 @@ const server = http.createServer((req, res) => {
     const url = u.searchParams.get('url'); const src = u.searchParams.get('src') || 'api'; const ms = Math.min(12000, Number(u.searchParams.get('ms')) || 8000); const n = Math.min(8, Number(u.searchParams.get('n')) || 4);
     const pxFix = u.searchParams.get('px') || '';
     if (!url || !/^https?:\/\//.test(url)) return jout(400, { ok: 0, err: 'url?' });
-    const t0 = Date.now();
+    const t0 = Date.now(); USED[src] = (USED[src] || 0) + 1; // §4-ওয়্যারিং-প্রমাণ: কোন-অ্যাপ-স্পেস-কতবার-খরচ-হলো
+    if (!space(src).set.size) return jout(200, { ok: 0, err: 'space-empty', src, el: Date.now() - t0 }); // v1.2.4: ফাঁকা-স্পেস=সৎ-দ্রুত-ফেল — কলার-নিজ-ফলব্যাকে-যায় (৯সে-অপেক্ষা-নয়); §2.3-সেমান্টিক: ফেচ=নিজ-স্পেস-থেকেই
     if (pxFix && POOL.some(c => c.px === pxFix)) { const tP = Date.now();
       return proxiedGet(pxFix, url, ms).then(bd => { pxRec(pxFix, true, Date.now() - tP, src); return jout(200, { ok: 1, body: String(bd || '').slice(0, 2097152), px: pxFix, ms: Date.now() - tP, el: Date.now() - t0 }); })
         .catch(e => { pxRec(pxFix, false, 0, src); return jout(200, { ok: 0, err: String(e && e.message || e).slice(0, 60), px: pxFix, el: Date.now() - t0 }); }); }

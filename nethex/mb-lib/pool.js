@@ -96,7 +96,15 @@ export function pick(exclude) {
 /** THE API TRANSPORT.  Pool-only: a cold bench waits <=2s once, then
  *  fails the call honestly — the server IP never fires a platform call.
  *  Outcome feedback keeps the bench self-training on live traffic. */
+const HUBP = (process.env.POOLHUB || '').replace(/\/$/, ''); // §4-ওয়্যারিং: হাব-থাকলে-mb-স্পেসে-bench-হওয়া-px-দিয়ে-আগে (vidy-spawn-ও-এটা-বহন-করে)
 export async function apiFetch(url, options = {}) {
+  if (HUBP) { // v2.10.5: MovieBox-প্ল্যাটফর্ম-কল-নিজের-mb-স্পেস-প্রক্সি-দিয়ে-আগে; ফাঁকা-স্পেস/ব্যর্থতা→নিজের-প্রশিক্ষিত-পুল (সৎ-ফলব্যাক)
+    try {
+      const hr = await fetch(HUBP + '/fetch?src=mb&ms=9000&url=' + encodeURIComponent(url), { signal: AbortSignal.timeout(11500) });
+      const hj = await hr.json();
+      if (hj && hj.ok) return new Response(String(hj.body || ''), { status: 200, headers: { 'content-type': 'application/json; charset=utf-8' } });
+    } catch { }
+  }
   let px = pick();
   if (!px) {
     for (let i = 0; i < 8 && !px; i++) {
@@ -274,7 +282,8 @@ async function searchVerify(u) {
 }
 
 export async function poolOnce(force = false) {
-  if (force) POOL.__passes = 1;                     // boot/fresh-wave
+  // v2.10.5-ফিক্স (স্টর্ম): আগে-force-ঢুকলেই __passes=1-রিসেট-হত → থিন-বেঞ্চ-চেইন (POOL<24) কখনো-শেষ-হত-না → ১০০% CPU-স্পিন (dead-seed-বুটে-প্রমাণিত)।
+  // রিসেট-বাদ: __passes=undefined→1→2→3-চেইন-সীমিত; boot-এ-নতুন-POOL-অ্যারে=নতুন-গণক-স্বয়ংক্রিয়।
   if (!force && Date.now() - TS < 90000) return;   // r-20261016a: ১.৫-মিনিট-পুনঃযাচাই (ইউজার-নির্দেশ — fastest-alive bench সতেজ)
   if (FETCHING) return;
   FETCHING = true;
@@ -335,7 +344,7 @@ export async function poolOnce(force = false) {
     if (POOL.length < 24 && POOL.__passes < 3) {
       POOL.__passes = (POOL.__passes || 0) + 1;
       FETCHING = false;
-      TS = 0;
+      TS = Date.now(); // v2.10.5-ফিক্স: TS=0-রাখলে-৯০সে-গার্ড-সবসময়-ভেদ-করত (stale-seed-এ-প্রতি-ঢেউয়ে-রিফিল-ঝড়=১০০% CPU-স্পিন) — এখন-গার্ড-মান্য
       return poolOnce(true);
     }
   } catch (e) {
