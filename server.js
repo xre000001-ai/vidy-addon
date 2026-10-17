@@ -19,7 +19,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.86';
+const VERSION = '1.15.88';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -32,7 +32,13 @@ const CINEMETA = 'https://v3-cinemeta.strem.io';
 const SERVERS = ['miami', 'atlanta', 'seattle', 'boise', 'phoenix', 'dallas', 'austin', 'delhi', 'munich', 'cancun', 'vegas', 'oakland', 'orlando', 'paris', 'reno', 'tampa']; // full server family — 7 veterans + 9 discovered from the official player bundle (live-probed)
 const GIANT = ['miami', 'boise', 'atlanta']; // giant primaries — carry ~32 sources across a 12-title sample (new servers top out at ~13, measured 10-11 Oct 2026)
 let POOL = [];
-// v1.15.67 (user: 'no local scanning — fetch from PoolHub'): local pool files fully removed; POOL is hub-fed only (hubMirror below)
+// v1.15.87 (.27-parity cold boot, user: "thanda call e .27 ke harate parchi na"): the hub-fed
+// stock is persisted to disk — still NO local scanning (the hub stays the only source); this is
+// the hub's own stock cached so a restart seeds in ~1s instead of a hub round-trip.
+const POOL_FILE = path.join(__dirname, 'vidy_proxy_pool.json');
+try { for (const c of JSON.parse(fs.readFileSync(POOL_FILE, 'utf8'))) if (c && c.px) POOL.push({ px: c.px, ms: Number(c.ms) || 2000 }); } catch (e) { }
+let _PSAVE = null;
+function savePoolLocal() { if (_PSAVE) return; _PSAVE = setTimeout(() => { _PSAVE = null; try { fs.writeFileSync(POOL_FILE, JSON.stringify(POOL.slice(0, 900))); } catch (e) { } }, 5000); _PSAVE.unref(); }
 // v1.15.0 runtime proxy health: boot-time ms values are never trusted again — wins/failures/EMA latency are remembered and raced by score
 const PX_RUN = new Map(); // px → { ok, fail, ms, last }
 const PX_LASTOK = new Map(); // v1.15.16 (// v1.15.16 (resolver standard): px -> timestamp of last ANY proof (checker/probe)
@@ -111,6 +117,7 @@ async function hubMirror() {
         }
       } catch (e) { }
     }
+    if (POOL.length) savePoolLocal(); // v1.15.87: persist hub-fed stock — restart-warm cold boots
     console.log('[hub-feed] reserve=' + (POOL.length >= 900 ? 'FULL' : 'filling') + ' |  pool=' + POOL.length + ' | spaces: site=' + PX_SITE.size + ' api=' + PX_API.size + ' vb=' + PX_VB.size + ' wo=' + PX_WO.size); // v1.15.80: pre-stocked reserve visible
   } finally { MIRR_B = false; }
 }
@@ -503,16 +510,16 @@ function getSeed(tmdbId, force) {
     // playback always on the user's own IP. Empty/all-dead pool -> direct as last resort (never breaks)
     try {
       let wbody = ''; let wpx = '';
-      if (HUB) { // v1.15.59: // v1.15.59: hub draw — the px that fetched the seed is returned (later source calls use the same px — seed IP binding; proof: 'decrypt fa…' on a different px)
-        try {
-          // v1.15.86 (.27-parity cold fix): the seed must land in <=4s — ms=9000 pushed it to 7-9s
-          // on cold calls, then the 11.9s deadline ate every server scan (0 cards @ 11.9s)
-          const r = await fetch(HUB + '/fetch?src=api&ms=4000&url=' + encodeURIComponent(url), { signal: AbortSignal.timeout(5500) });
-          const j2 = await r.json().catch(() => null);
-          if (j2 && j2.ok) { wbody = String(j2.body || ''); wpx = 'hub:' + String(j2.px || ''); }
-        } catch { }
-      }
-      if (!wbody) { const w = await racePool(url, 5, 6000, 'api'); wbody = w.body; wpx = w.px; } // v1.15.86: 9->6s local-race seed cap // v1.15.56: vidy-seed-// v1.15.56: vidy-seed space
+      // v1.15.88 (.27-parity, measured): seed = hub-draw and local-race CONCURRENTLY — first valid
+      // result wins (local speed when our stock is hot, the hub's stronger px otherwise); the
+      // winner's px stays sticky for the source scans. A local-only seed won the sprint but its px
+      // choked on the heavy /sources payloads (all 3 giants hedge-dead @6.5s) — both paths must run.
+      const seedCands = [];
+      if (HUB) seedCands.push(fetch(HUB + '/fetch?src=api&ms=4000&url=' + encodeURIComponent(url), { signal: AbortSignal.timeout(5500) }).then(r => r.json().catch(() => null)).then(j2 => (j2 && j2.ok && j2.body) ? { body: String(j2.body), px: 'hub:' + String(j2.px || '') } : null).catch(() => null));
+      if (POOL.length >= 10) seedCands.push(racePool(url, 5, 4500, 'api').then(w => (w && w.body) ? { body: w.body, px: w.px } : null).catch(() => null));
+      const seedWin = await new Promise(res => { let left = seedCands.length; if (!left) return res(null); seedCands.forEach(p => p.then(v => { if (v && !res._w) { res._w = 1; res(v); } else if ((!v || res._w) && --left === 0 && !res._w) res(null); }, () => { if (--left === 0 && !res._w) res(null); })); });
+      if (seedWin) { wbody = seedWin.body; wpx = seedWin.px; }
+      if (!wbody && POOL.length) { try { const w = await racePool(url, 5, 6000, 'api'); wbody = w.body; wpx = w.px; } catch { } } // v1.15.56: vidy-seed-// v1.15.56: vidy-seed space
       const j = JSON.parse(wbody);
       if (!j.seed) throw new Error('seed-empty-proxy');
       seedCache = { key: tmdbId, seed: j.seed, via: 'proxy', px: wpx, ts: Date.now() };
@@ -1378,8 +1385,8 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: // titl
         // concurrent exit connections; the small servers then ALL hedge-die (prod log proof). Smalls: one
         // clean 9s leg. Giants keep the hedge (their payloads are the heavy ones).
         const ct = GIANT.indexOf(srv) >= 0
-          ? await hedge2(() => pathGet(u, sc.via, sc.px, 6000), () => pathGet(u, sc.via, sc.px, 6000), 2500, 6500)
-          : await pathGet(u, sc.via, sc.px, 6000);
+          ? await hedge2(() => pathGet(u, sc.via, sc.px, 7000), () => pathGet(u, sc.via, sc.px, 7000), 2500, 8000)
+          : await pathGet(u, sc.via, sc.px, 6500);
         const j = JSON.parse(vidyDecrypt(ct, sc.seed, tmdbId));
         if (DBG) console.error('[t1g] ' + srv + ' fetch=' + (Date.now() - tS) + 'ms n=' + (j.sources || []).length + ' | jkeys=' + Object.keys(j).join(',') + ' | s0=' + JSON.stringify((j.sources || [])[0] || {}).slice(0, 220) + (j.audios ? ' | audios=' + JSON.stringify(j.audios).slice(0, 200) : '') + (j.audio ? ' | audio=' + JSON.stringify(j.audio).slice(0, 120) : ''));
         if (DBG && j.playlist) console.error('[t1g] ' + srv + ' PLAYLIST=' + JSON.stringify(j.playlist).slice(0, 500));
@@ -1443,7 +1450,7 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: // titl
         if (DBG) console.error('[t1g] ' + srv + ' BUDGET-CUT');
         pend.delete(srv); // v1.14.2: // v1.14.2: settled — keep early-harvest math correct
         fire({ srv, err: new Error('srv-budget') });
-      }, GIANT.indexOf(srv) >= 0 ? (viaProxy ? 6500 : 5500) : (viaProxy ? 5500 : 3800)); // v1.15.86: exact 1.15.27 budgets (6.5/5.5 giants, 5.5/3.8 rest) — the 9.5/7s walls only waited past the deadline // v1.15.76 (user: 1.15.27 was the stable era): back to 8.5/7s — first-try completeness beats the speed experiment — vidout needs a snappier wall
+      }, GIANT.indexOf(srv) >= 0 ? (viaProxy ? 8000 : 6000) : (viaProxy ? 6500 : 5000)); // v1.15.88: scans now start <=4s (seed race), so 8/6.5 giants + 6.5/5 rest fit the 11.9s deadline — 6.5/5.5 cut the giant payloads (hedge-dead), 9.5/7 only waited past it // v1.15.76 (user: 1.15.27 was the stable era): back to 8.5/7s — first-try completeness beats the speed experiment — vidout needs a snappier wall
       return Promise.race([
         one(srv).then(r => { done = true; clearTimeout(tmo); pend.delete(srv); if (r.ok) okWave++; return r; }) // timer cleared on win — no dangling timeouts
           .catch(e => { done = true; clearTimeout(tmo); pend.delete(srv); return { srv, err: e || new Error('one-reject') }; }), // v1.15.76: a reject used to kill the WHOLE vidy wave (live: 'cardsP died: srv-budget', ok=0/16)
