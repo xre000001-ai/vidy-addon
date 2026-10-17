@@ -414,3 +414,7 @@ vidy.st-ফেল + Google-204-জয়ী ──→ স্পেয়ার (
 ### 🚀 PoolHub-বিমআপ-ডিপ্লয় (v1.3.4 — ইউজারের-Badhan-Sarkar-টোকেন-নির্দেশ)
 
 **PoolHub এখন আলাদা-অ্যাডন**: নিজস্ব-রিপো **badhansarkar556-cmyk/poolhub** (GitHub, ইউজারের-ক্লাসিক-টোকেন-দিয়ে) + **লাইভ: https://5a16d5684c14-poolhub.baby-beamup.club** (beamup; লিন্ট-পাস-করতে-`/manifest.json`-অ্যাডন-মুখোশ-যোগ-হয়েছে v1.3.4)। ডিপ্লয়-প্রবাহ: `git push gh` (Badhan-রিপো) + `git push astra` (beamup-SSH)। নোট: ডিপ্লয়েড-ইনস্ট্যান্স-নিজের-খালি-পুল-থেকে-নিজের-কী-জেনারেট-করবে (ভিন্ন-কী-লোকাল-থেকে) — অ্যাডমিন-টোকেন-পুনরুদ্ধার-প্রবাহ-পরে-যোগ-যোগ্য। লোকাল-হাব-ও-v1.3.4।
+
+### ✅ Beamup-ডিপ্লয়-চূড়ান্ত: Badhan Sarkar-নেমস্পেসে লাইভ (ইউজারের-নির্দেশ-পূর্ণ)
+
+**সঠিক-পথ (beamup-docs-প্রমাণিত)**: GitHub-কী-যোগ (টোকেন-API) → `sync-github-keys <username>` (CLI-র-bootstrap-কল; সার্ভার-GitHub-থেকে-কী-টানে) → নতুন-নেমস্পেস **293c2a7d7dd6** (hash badhansarkar556-cmyk) → `git push badhan` → **লাইভ: https://293c2a7d7dd6-poolhub.baby-beamup.club** (v1.3.4, পুল-বাড়ছে, ৫-স্পেস-bench-শুরু)। আগের-আকস্মিক-ডিপ্লয় (5a16d5684c14=astra-কী) এখনো-চলছে — বন্ধ-করতে-হলে-beamup-ড্যাশবোর্ড। deploy-remote: `dokku@beamup-badhan:293c2a7d7dd6-poolhub`।
