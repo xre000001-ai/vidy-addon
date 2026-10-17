@@ -19,7 +19,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.74';
+const VERSION = '1.15.75';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -370,19 +370,23 @@ function catalogMeta(type, q, cfg, gn, skip) {
 }
 
 // ---------- tt → TMDB numeric (keyless) ----------
-function tmdbSearchPick(name, year, type) { // keyless-search → // keyless search -> year-match preferred, else top-1
+function tmdbSearchPick(name, year, type) { // keyless-search → // keyless search -> year-match preferred; a pick MUST title-match — a lying proxy/mirror body once won via blind list[0] and poisoned the 24h memo ("Scream 7" served for Se7en)
+  const q = String(name || '').toLowerCase().replace(/[^a-z0-9]/g, '').replace(/7/g, 'v'); // se7en->seven leet-guard
+  const tOk = c => { c = String(c || '').toLowerCase().replace(/[^a-z0-9]/g, '').replace(/7/g, 'v');
+    return !q || !c || c === q || c.indexOf(q) >= 0 || q.indexOf(c) >= 0; };
   return tmdbGet('/search/' + (type === 'series' ? 'tv' : 'movie') + '?query=' + encodeURIComponent(name), 12000).then(b3 => {
     const list = (JSON.parse(b3).results || []);
     let pick = null;
-    for (const x of list) { if (year && String(x.release_date || x.first_air_date || '').slice(0, 4) === year.slice(0, 4)) { pick = x; break; } }
-    if (!pick) pick = list[0];
-    if (pick && pick.id) return { id: pick.id, name: pick.name || pick.title || name };
+    for (const x of list) { if (tOk(x.title || x.name) && year && String(x.release_date || x.first_air_date || '').slice(0, 4) === String(year).slice(0, 4)) { pick = x; break; } }
+    if (!pick) for (const x of list) { if (tOk(x.title || x.name)) { pick = x; break; } }
+    if (!pick) throw new Error('search-no-title-match'); // never guess across titles — fall to the next ladder step instead
+    if (pick.id) return { id: pick.id, name: pick.name || pick.title || name };
     throw new Error('search-empty');
   });
 }
 function findTmdbInfo(imdb, type) {
   const key = 'find:' + imdb + ':' + type;
-  const hit = memoGet(key, 86400000);
+  const hit = memoGet(key, 3600000); // v1.15.75: 24h->1h — a poisoned pick (lying proxy body) now self-heals hourly instead of living all day
   if (hit) return Promise.resolve(hit);
   // v1.15.8: find-empty-// v1.15.8: find-empty memo removed
   const cinemetaMeta = ms => pooledGet(CINEMETA + '/meta/' + type + '/' + encodeURIComponent(imdb) + '.json', ms).then(b2 => (JSON.parse(b2).meta || {})); // // free-public — Stremio's own IMDb CDN, head of the IMDb-first chain
