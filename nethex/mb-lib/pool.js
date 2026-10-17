@@ -6,7 +6,7 @@ let undiciFetch = (...a) => fetch(...a), ProxyAgent = null; // v1.15.60: undici-
 try { ({ fetch: undiciFetch, ProxyAgent } = await import('undici')); } catch { } // থাকলে-আসল-undici (beamup-এ-স্বাভাবিক)
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import { SITE, UA } from './upstream.js';
+import { API, SITE, UA } from './upstream.js';
 
 const BENCH_MAX = 128;             // v2.10.4 (ইউজার): ক্যাপ-ডাবল ৬৪→১২৮             // r-20261016m (ইউজার: 'ম্যাক্স-পর্যন্ত'): বেঞ্চ-ক্যাপ ৩২→৬৪ — ঝড়ে-অর্ধেক-মরলেও-৩২-থাকে
 const SAMPLE = 400;               // candidates probed per pass (২০০→৪০০)
@@ -28,7 +28,8 @@ function agentFor(u) {
 
 function inflight(u) { return INFLIGHT.get(u) || 0; }
 
-const LASTOK = new Map();         // r-20261016k (রেজলভার-মানদণ্ড): url → শেষ-প্রমাণ-কখন (চেকার-ঢেউ বা লাইভ-ট্রাফিক)
+const LASTOK = new Map();
+const ADDED = new Map();          // v2.11.3: url → যোগ-হওয়ার-সময় (অনুগ্রহ-জানালা; মিথ্যা-প্রমাণ-নয়)         // r-20261016k (রেজলভার-মানদণ্ড): url → শেষ-প্রমাণ-কখন (চেকার-ঢেউ বা লাইভ-ট্রাফিক)
 function noteGood(u, ms) {
   const s = STATS.get(u) || { ok: 0, fail: 0, lat: null };
   s.ok += 1;
@@ -84,34 +85,38 @@ let MBKEY = ''; try { // v1.15.62: সাব-স্পেস-API-কী (moviebo
   let kb = String(process.env.POOLHUB_KEYS || '');
   try { MBKEY = String((JSON.parse(kb) || {}).moviebox || ''); } catch (e1) { try { MBKEY = String((JSON.parse(fs.readFileSync(kb, 'utf8')) || {}).moviebox || ''); } catch (e2) { } }
 } catch { }
+let HUB_FAILS = 0, HUB_SKIP_UNTIL = 0; // v2.11.4 সার্কিট-ব্রেকার: হাব-স্পেস-বাসি-জানালায়-রিলে-৬০সে-বাইপাস
 export async function apiFetch(url, options = {}) {
-  if (HUBP) { // v2.10.5: MovieBox-প্ল্যাটফর্ম-কল-নিজের-moviebox-স্পেস-প্রক্সি-দিয়ে-আগে (নিজ-কী-সহ); ফাঁকা-স্পেস/ব্যর্থতা→নিজের-প্রশিক্ষিত-পুল (সৎ-ফলব্যাক)
-    try {
-      const hr = await fetch(HUBP + '/fetch?src=moviebox' + (MBKEY ? '&key=' + encodeURIComponent(MBKEY) : '') + '&ms=9000&url=' + encodeURIComponent(url), { signal: AbortSignal.timeout(11500) });
-      const hj = await hr.json();
-      if (hj && hj.ok) return new Response(String(hj.body || ''), { status: 200, headers: { 'content-type': 'application/json; charset=utf-8' } });
-    } catch { }
-  }
+  // v2.11.4 (ইউজার: 'প্রথম-চেষ্টাতেই আসবে, স্লটে সবসময় প্রক্সি'): নিজ-স্লট-আগে — রোস্টার-তো-হাব-/pick-থেকেই-আসে
+  // (r136-স্থাপত্য ✓); হাব-রিলে-শুধু-নিজ-স্লট-শেষ-হলে (হাব-স্পেস-বাসি-হলে-৪.৫সে-কর-গ্রহণযোগ্য-ব্যাকআপ-পথে)
+  if (poolHealthy() === 0) await coldGate(); // স্লট-প্রমাণহীন-প্রক্সিতে-যাবে-না — গেট=সক্রিয়-বেঞ্চ
   let px = pick();
-  if (!px && POOL.length === 0) poolOnce(true).catch(() => {}); // v2.11.0: শূন্য-দোকানে-তাৎক্ষণিক-হাব-ফিড-কিক
+  if (!px && POOL.length === 0) poolOnce(true).catch(() => {}); // শূন্য-দোকানে-তাৎক্ষণিক-হাব-ফিড-কিক
   if (!px) {
-    for (let i = 0; i < 8 && !px; i++) {
-      await new Promise(r => setTimeout(r, 250));
-      px = pick();
+    for (let i = 0; i < 6 && !px; i++) { await new Promise(r => setTimeout(r, 250)); px = pick(); }
+  }
+  if (px) {
+    const t0 = Date.now();
+    INFLIGHT.set(px, inflight(px) + 1);
+    const p = undiciFetch(url, { ...options, dispatcher: agentFor(px) });
+    p.then(r => {
+      if (r.status === 403 || r.status === 406) noteFail(px, 'block');
+      else if (r.ok) { noteGood(px, Date.now() - t0); hubReport(px, Date.now() - t0); } // লাইভ-জয় → হাব-প্রমাণ
+    }, () => { if (!options.signal?.aborted) noteFail(px, 'dead'); }).catch(() => {})
+      .finally(() => INFLIGHT.set(px, Math.max(0, inflight(px) - 1)));
+    return p;
+  }
+  if (HUBP && Date.now() >= HUB_SKIP_UNTIL) { // নিজ-স্লট-শেষ → হাব-রিলে (৪.৫সে-বাজেট, n=8, ২-ব্যর্থতায়-৬০সে-বাইপাস)
+    try {
+      const hr = await fetch(HUBP + '/fetch?src=moviebox' + (MBKEY ? '&key=' + encodeURIComponent(MBKEY) : '') + '&ms=4500&n=8&url=' + encodeURIComponent(url), { signal: AbortSignal.timeout(6000) });
+      const hj = await hr.json();
+      if (hj && hj.ok) { HUB_FAILS = 0; return new Response(String(hj.body || ''), { status: 200, headers: { 'content-type': 'application/json; charset=utf-8' } }); }
+      throw new Error('hub-empty');
+    } catch {
+      if (++HUB_FAILS >= 2) { HUB_SKIP_UNTIL = Date.now() + 60000; HUB_FAILS = 0; console.log('[হাব-বাইপাস] ৬০সে — নিজ-স্লট-ই-মুখ্য'); }
     }
   }
-  if (!px) throw new Error('pool-cold');
-  const t0 = Date.now();
-  INFLIGHT.set(px, inflight(px) + 1);
-  const p = undiciFetch(url, { ...options, dispatcher: agentFor(px) });
-  p.then(r => {
-    if (r.status === 403 || r.status === 406) noteFail(px, 'block');
-    else if (r.ok) { noteGood(px, Date.now() - t0); hubReport(px, Date.now() - t0); } // v2.11.1: লাইভ-জয় → হাব-প্রমাণ
-  }, () => {
-    if (!options.signal?.aborted) noteFail(px, 'dead');  // caller abort != dead exit
-  }).catch(() => {})
-    .finally(() => INFLIGHT.set(px, Math.max(0, inflight(px) - 1)));
-  return p;
+  throw new Error('pool-cold'); // সৎ-ব্যর্থতা: server-IP-প্ল্যাটফর্ম-কল-কখনো-নয়
 }
 
 /** Retry transport across DIFFERENT exits.  Returns the first
@@ -259,10 +264,10 @@ export async function poolOnce(force = false) {
     const own = j.pick.filter(p => p.own), rest = j.pick.filter(p => !p.own);
     const now2 = Date.now();
     // keep = বেঞ্চ-বহিষ্কৃত-নয় + ৬০০সে-র-মধ্যে-লাইভ-প্রমাণ-আছে (জানা-ভালো-সদস্য-হারানো-নয়)
-    const keep = POOL.filter(u => {
+    const keep = POOL.filter(u => { // v2.11.3: সত্য-প্রমাণ (৬০০সে) অথবা নতুন-সদস্যের ৯০০সে-প্রমাণ-জানালা
       const b = BAD.get(u);
       if (b && b > now2) return false;
-      return now2 - (LASTOK.get(u) || 0) < 600000;
+      return now2 - (LASTOK.get(u) || 0) < 600000 || now2 - (ADDED.get(u) || now2) < 900000;
     });
     const next = [];
     const add = (p, lat) => {
@@ -270,7 +275,8 @@ export async function poolOnce(force = false) {
       if (next.includes(u) || next.length >= BENCH_MAX) return;
       next.push(u);
       if (!STATS.get(u)) STATS.set(u, { ok: 1, fail: 0, lat: Number(p.ms) || lat });
-      if (!LASTOK.has(u)) LASTOK.set(u, Date.now());
+      // v2.11.3 সততা: নতুন-সদস্যকে-মিথ্যা LASTOK-বীজ-নয় (অপ্রমাণিত=অপ্রমাণিত) — অনুগ্রহ-সময় ADDED-এ
+      if (!ADDED.has(u)) ADDED.set(u, Date.now());
     };
     own.forEach(p => add(p, 800));     // প্রমাণিত — দ্রুত-বীজ
     keep.forEach(u => { if (!next.includes(u) && next.length < BENCH_MAX) next.push(u); });
@@ -286,9 +292,68 @@ export async function poolOnce(force = false) {
 // ৬০০সে-অনুত্তপ → বেঞ্চ-কাটা (DEAD_AFTER-প্যারিটি); পাতলা-হলে ৯০সে-গার্ড-মান্য poolOnce-রিফিল (স্ট্রিমিং-ঢোকা)
 export function checkerStats() { return { waves: FEEDS }; } // v2.11.0: waves=হাব-ফিড-চক্র-গণক (পুরনো-স্ক্যান-ঢেউ-নেই)
 
+// ---- v2.11.3 (ইউজার: 'প্রথম-চেষ্টাতেই আসবে, স্লটে সবসময় প্রক্সি') ----
+// প্রথম-ট্যাপ-কখনো-প্রমাণ-আবিষ্কারক-হবে-না: ঠান্ডা-জানালায় প্ল্যাটফর্ম-কল আগে
+// সক্রিয়-বেঞ্চ দিয়ে রোস্টার-প্রমাণ করায় (সমান্তরাল, ~২-৪সে), তারপর স্লট-প্রতিটি
+// প্রমাণিত-প্রক্সি পায়। hub-পথ গেটের বাইরে (হাব জীবিত-হলে প্রথম-ট্যাপ তাতেই জেতে)।
+export function poolHealthy() { // সত্য-প্রমাণিত+জীবিত-সদস্য-গণনা
+  const now = Date.now();
+  return POOL.filter(u => !(BAD.get(u) > now) && now - (LASTOK.get(u) || 0) < 600000).length;
+}
+
+let BENCHING = false;
+export async function benchWave(n = 14, ms = 2800) { // সমান্তরাল-প্রমাণ: search-suggest ২০০+JSON = প্রমাণ (apiFetch-বাইপাস — রিকার্শন-নেই)
+  if (BENCHING || !ProxyAgent || !POOL.length) return 0;
+  BENCHING = true;
+  try {
+  const now = Date.now();
+  const cands = POOL.filter(u => !(BAD.get(u) > now) && (now - (LASTOK.get(u) || 0) > 300000)).slice(0, n);
+  let good = 0;
+  if (cands.length) {
+    const tok = (() => { const t = String(Math.floor(Date.now() / 1000)); return t + ',' + crypto.createHash('md5').update(t.split('').reverse().join('')).digest('hex'); })();
+    await Promise.all(cands.map(u => new Promise(res => { // v2.11.4: সত্য-মানদণ্ড = mintToken-এর-আসল-POST; x-user-টোকেন=পূর্ণ-প্রমাণ (play-যোগ্যতা)
+      const t0 = Date.now();
+      undiciFetch(`${API}/wefeed-h5api-bff/subject/search-suggest`, {
+        method: 'POST',
+        headers: { 'user-agent': UA, 'x-client-token': tok, 'content-type': 'application/json' },
+        body: JSON.stringify({ keyword: 'a', perPage: 10 }),
+        dispatcher: agentFor(u), signal: AbortSignal.timeout(ms),
+      }).then(r => {
+        if (r.status === 403 || r.status === 406) { noteFail(u, 'block'); return; }
+        if (r.ok && r.headers.get('x-user')) { noteGood(u, Date.now() - t0); hubReport(u, Date.now() - t0); good++; }
+        else noteFail(u, r.ok ? 'dead' : 'fail');
+      }, () => noteFail(u, 'dead')).finally(res);
+    })));
+    if (good) console.log(`[বেঞ্চ] প্রমাণিত +${good}/${cands.length} (সুস্থ=${poolHealthy()})`);
+  }
+  return good;
+  } finally { BENCHING = false; }
+}
+
+let GATE = null;
+async function coldGate(waitMs = 5000, need = 3) { // সিঙ্গেল-ফ্লাইট: প্রথম-ঠান্ডা-কল প্রমাণের-অপেক্ষায়; পরের-কল ভাগ করে
+  if (!ProxyAgent || !POOL.length) return; // undici-নেই/দোকান-খালি: গেট-অপেক্ষা-বৃথা — সৎ-ব্যর্থতায়-যাও
+  if (poolHealthy() >= need) return;
+  if (!GATE) {
+    GATE = (async () => {
+      const t0 = Date.now();
+      let kicked = false;
+      while (Date.now() - t0 < waitMs && poolHealthy() < need) {
+        if (!kicked) { kicked = true; benchWave().catch(() => { }); }
+        await new Promise(r => setTimeout(r, 300));
+      }
+      if (poolHealthy() < need) await benchWave(6, 2500).catch(() => { }); // শেষ-চেষ্টা
+    })().finally(() => { setTimeout(() => { GATE = null; }, 1500); });
+  }
+  await GATE;
+}
+
 export function poolStart() {
-  poolOnce(true); // v2.11.0: বুটেই-হাব-ফিড
-  setInterval(() => { poolOnce(true).catch(() => {}); }, 60000).unref(); // প্রতি-৬০সে-হাব-পিক-রিফিল
+  poolOnce(true) // v2.11.0: বুটেই-হাব-ফিড → ফিড-বসার-সাথে-সাথে-সক্রিয়-বেঞ্চ (প্রথম-ট্যাপ-প্রস্তুত)
+    .then(() => setTimeout(() => benchWave(16).catch(() => { }), 1200)).catch(() => { });
+  setInterval(() => { // প্রতি-৬০সে-রিফিল; চিকন-রোস্টারে-বেঞ্চ-ছাড়া-থাকে-না
+    poolOnce(true).then(() => { if (poolHealthy() < 8) return benchWave(16).catch(() => { }); }).catch(() => { });
+  }, 60000).unref();
 }
 
 export function poolStats() {

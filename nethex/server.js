@@ -10,7 +10,7 @@ import { poolStart, poolStats, checkerStats } from './mb-lib/pool.js';
 if (typeof AbortSignal !== 'undefined' && !AbortSignal.timeout) { AbortSignal.timeout = (ms) => { const c = new AbortController(); const t = setTimeout(() => c.abort(new Error('timeout')), ms); if (t.unref) t.unref(); return c.signal; }; }
 
 const PORT = Number(process.env.PORT || 7000);
-const VERSION = '2.11.2';
+const VERSION = '2.11.4';
 const CINEMETA = 'https://v3-cinemeta.strem.io';
 const PUBLIC_BASE = process.env.PUBLIC_BASE || 'https://5a16d5684c14-nethex.baby-beamup.club';
 let LOGO_BUF = null;
@@ -449,12 +449,10 @@ const server = http.createServer(async (req, res) => {
 poolStart();   // v2.6.0: pool ALWAYS on for API calls (user directive)
 // v2.11.1c: উষ্ণকরণ — পুল-ফিড-ভরার-পরে (১২সে+২৫সে): playToken-মিন্ট + jwt-ক্যালিব্রেশন-সার্চ
 // (আগে-setImmediate-বুটে-হত → পুল-খালি → নীরব-ব্যর্থ → ১ম-ট্যাপে-সব-ক্যালিব্রেশন-লেগ)
-for (const WARM_AT of [12000, 25000]) {
+for (const WARM_AT of [4000, 12000]) { // v2.11.4: আগে-ওয়ার্ম (বুট-বেঞ্চ ~৩.৫সে-তে-প্রমাণ-করে — playToken-৪সে-তে-মিন্ট)
   setTimeout(() => {
     import('./mb-lib/search.js').then(m => Promise.all([m.playToken(), m.search({ q: 'a', limit: 1, page: 1 })]).catch(() => { })).catch(() => { });
   }, WARM_AT).unref();
 }
-// v2.3.2: warm the anonymous JWT through a pool exit at boot so the
-// first real tap never pays the mint (2 extra hops)
-setImmediate(() => { search({ q: 'a', limit: 1, page: 1 }).catch(() => {}); });
+// v2.11.3: v2.3.2-বুট-সার্চ-ওয়ার্ম-বাদ (পুল-ফিডের-আগে-চলত → নীরব-ব্যর্থ; ১২সে/২৫সে-ওয়ার্ম-ই-যথেষ্ট)
 server.listen(PORT, '0.0.0.0', () => console.log(`MovieBox (NETHEX) v${VERSION} on :${PORT}`));
