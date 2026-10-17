@@ -44,8 +44,8 @@ async function variantStreams(subjectId, detailPath, season, episode) {
     // hedged rotating exits (parallel search across proxies).
     // v2.11.1 (রোগ-নির্ণয় r134): play-এ-প্রতি-IP-রেট-লিমিট (~১/২-৩-মিনিট) — বেশি-ভিন্ন-exit-ঘোরানো-ই-কোটা-বাড়ানো
     const [res, res2] = await Promise.all([
-      fetchJsonRotating(playUrl, H, { attempts: 5, ms: 4200, hedgeMs: 600, emptyCheck: (d) => !((d?.data?.streams || []).length) }),
-      fetchJsonRotating(dlUrl, H, { attempts: 3, ms: 3600, hedgeMs: 600, emptyCheck: (d) => !((d?.data?.downloads || []).length) }),
+      fetchJsonRotating(playUrl, H, { attempts: 4, ms: 3800, hedgeMs: 450, emptyCheck: (d) => !((d?.data?.streams || []).length) }), // v2.11.2: দ্রুত-হেজ
+      fetchJsonRotating(dlUrl, H, { attempts: 3, ms: 3200, hedgeMs: 450, emptyCheck: (d) => !((d?.data?.downloads || []).length) }),
     ]);
     streams = res.ok ? res.data?.data?.streams || [] : [];
     if (streams.length === 0) {

@@ -456,3 +456,7 @@ NXDEADLINE 22→35s (+COLDX/HARD 15s) — ২৩.৪সে-ম্যাট্র
 নিরীক্ষা-ভিত্তিক-অপসারণ: ৩-অনাথ-মডিউল (mb-lib/{details,vercel,trending}.js — ০-ইমপোর্টার), মৃত-_training, **express-অনাথ-নির্ভরতা** (কোডে-কোথাও-ইমপোর্ট-নেই — deps এখন শুধু undici), root-লেগ্যাসি vidy_proxy_pool.json। .gitignore-পুনর্লিখন (রানটাইম-স্টেট: server_scores/mm_hashes/px_* সব-প্যাটার্ন; nxtest*); vidy_server_scores.json+vidy_mm_hashes.json আনট্র্যাকড (রানটাইম-ক্যাশ — git-এ-থাকা-উচিত-না)। package.json: version 1.11.14→**1.15.68** (স্টেল-ছিল!), private:true, type:commonjs; nethex/package.json=2.11.1-সিঙ্ক। twr_bridge **v1.1.1**: ইংরেজি-হেডার+consts-first+নামিত-হেল্পার (লজিক-অক্ষত)। pool.js keep-ফিল্টার-লজিক-স্পষ্টীকরণ (অগ্রাধিকার-দ্ব্যর্থতা-বাদ)। **যাচাই**: ট্যাপ tw+rt=১৯-কার্ড, MB-সক্রিয় (৩-১৪-কার্ড, রাউন্ডভেদে-ভিন্ন-exit-ভাষা-মিশ্রণ — সৎ), হাব-পুল **১০৮** (flywheel: moviebox-used ২২৮০!)।
 
 (r137-শেষ): ডিপ্লয় f1dc134 ✓ — প্যারিটি-যাচাই-সবুজ।
+
+### ⚡ আক্রমণাত্মক-স্কেল (r138): hub v1.3.7 + nethex v2.11.2
+
+ইউজার: "PoolHub আরও aggressive করো — CPU/RAM প্রচুর; MovieBox max 7-8s হওয়া উচিত।" হাব: ঢেউ ৩০→৮০-px (পুল-৩০০ ~৪-ঢেউয়ে-সোজা), এনরিচ ৭মিন→৯০সে+৬০০-নমুনা+২০০-ব্যাচ, /pick-ক্যাপ ১২→৪০। চাইল্ড: play-হেজ ৬০০→৪৫০ms/attempts টিউন। ডিপ্লয়: poolhub→badhan(293c) 7713b40 ✓, vidy→xre(3404d) ✓।
