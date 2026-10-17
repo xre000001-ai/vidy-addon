@@ -19,7 +19,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.85';
+const VERSION = '1.15.86';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -505,12 +505,14 @@ function getSeed(tmdbId, force) {
       let wbody = ''; let wpx = '';
       if (HUB) { // v1.15.59: // v1.15.59: hub draw — the px that fetched the seed is returned (later source calls use the same px — seed IP binding; proof: 'decrypt fa…' on a different px)
         try {
-          const r = await fetch(HUB + '/fetch?src=api&ms=9000&url=' + encodeURIComponent(url), { signal: AbortSignal.timeout(10500) });
+          // v1.15.86 (.27-parity cold fix): the seed must land in <=4s — ms=9000 pushed it to 7-9s
+          // on cold calls, then the 11.9s deadline ate every server scan (0 cards @ 11.9s)
+          const r = await fetch(HUB + '/fetch?src=api&ms=4000&url=' + encodeURIComponent(url), { signal: AbortSignal.timeout(5500) });
           const j2 = await r.json().catch(() => null);
           if (j2 && j2.ok) { wbody = String(j2.body || ''); wpx = 'hub:' + String(j2.px || ''); }
         } catch { }
       }
-      if (!wbody) { const w = await racePool(url, 5, 9000, 'api'); wbody = w.body; wpx = w.px; } // v1.15.56: vidy-seed-// v1.15.56: vidy-seed space
+      if (!wbody) { const w = await racePool(url, 5, 6000, 'api'); wbody = w.body; wpx = w.px; } // v1.15.86: 9->6s local-race seed cap // v1.15.56: vidy-seed-// v1.15.56: vidy-seed space
       const j = JSON.parse(wbody);
       if (!j.seed) throw new Error('seed-empty-proxy');
       seedCache = { key: tmdbId, seed: j.seed, via: 'proxy', px: wpx, ts: Date.now() };
@@ -569,7 +571,8 @@ async function hubText(url, ms, src, px) { // v1.15.59: px-// v1.15.59: with px,
   try {
     const sp = HSPACE(src);
     // v1.15.79: hub-race hold 12->9s — dead races release their exits faster, the space stops self-congesting
-    const r = await fetch(HUB + '/fetch?src=' + encodeURIComponent(sp) + (px ? '&px=' + encodeURIComponent(px) : '') + '&ms=' + Math.min(9000, ms || 8000) + (HKEY(sp) ? '&key=' + encodeURIComponent(HKEY(sp)) : '') + '&url=' + encodeURIComponent(url), { signal: AbortSignal.timeout(Math.min(13000, (ms || 8000) + 1500)) });
+    // v1.15.86: hub leg capped at 5s (was 9) — source scans keep their own budget room
+    const r = await fetch(HUB + '/fetch?src=' + encodeURIComponent(sp) + (px ? '&px=' + encodeURIComponent(px) : '') + '&ms=' + Math.min(5000, ms || 4500) + (HKEY(sp) ? '&key=' + encodeURIComponent(HKEY(sp)) : '') + '&url=' + encodeURIComponent(url), { signal: AbortSignal.timeout(Math.min(6500, (ms || 4500) + 1500)) });
     const j = await r.json().catch(() => null);
     return j && j.ok ? String(j.body || '') : '';
   } catch { return ''; }
@@ -1375,8 +1378,8 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: // titl
         // concurrent exit connections; the small servers then ALL hedge-die (prod log proof). Smalls: one
         // clean 9s leg. Giants keep the hedge (their payloads are the heavy ones).
         const ct = GIANT.indexOf(srv) >= 0
-          ? await hedge2(() => pathGet(u, sc.via, sc.px, 9000), () => pathGet(u, sc.via, sc.px, 9000), 2500, 10500)
-          : await pathGet(u, sc.via, sc.px, 9000);
+          ? await hedge2(() => pathGet(u, sc.via, sc.px, 6000), () => pathGet(u, sc.via, sc.px, 6000), 2500, 6500)
+          : await pathGet(u, sc.via, sc.px, 6000);
         const j = JSON.parse(vidyDecrypt(ct, sc.seed, tmdbId));
         if (DBG) console.error('[t1g] ' + srv + ' fetch=' + (Date.now() - tS) + 'ms n=' + (j.sources || []).length + ' | jkeys=' + Object.keys(j).join(',') + ' | s0=' + JSON.stringify((j.sources || [])[0] || {}).slice(0, 220) + (j.audios ? ' | audios=' + JSON.stringify(j.audios).slice(0, 200) : '') + (j.audio ? ' | audio=' + JSON.stringify(j.audio).slice(0, 120) : ''));
         if (DBG && j.playlist) console.error('[t1g] ' + srv + ' PLAYLIST=' + JSON.stringify(j.playlist).slice(0, 500));
@@ -1440,7 +1443,7 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: // titl
         if (DBG) console.error('[t1g] ' + srv + ' BUDGET-CUT');
         pend.delete(srv); // v1.14.2: // v1.14.2: settled — keep early-harvest math correct
         fire({ srv, err: new Error('srv-budget') });
-      }, GIANT.indexOf(srv) >= 0 ? (viaProxy ? 9500 : 8000) : (viaProxy ? 7000 : 5500)); // v1.15.76 (user: 1.15.27 was the stable era): back to 8.5/7s — first-try completeness beats the speed experiment — vidout needs a snappier wall
+      }, GIANT.indexOf(srv) >= 0 ? (viaProxy ? 6500 : 5500) : (viaProxy ? 5500 : 3800)); // v1.15.86: exact 1.15.27 budgets (6.5/5.5 giants, 5.5/3.8 rest) — the 9.5/7s walls only waited past the deadline // v1.15.76 (user: 1.15.27 was the stable era): back to 8.5/7s — first-try completeness beats the speed experiment — vidout needs a snappier wall
       return Promise.race([
         one(srv).then(r => { done = true; clearTimeout(tmo); pend.delete(srv); if (r.ok) okWave++; return r; }) // timer cleared on win — no dangling timeouts
           .catch(e => { done = true; clearTimeout(tmo); pend.delete(srv); return { srv, err: e || new Error('one-reject') }; }), // v1.15.76: a reject used to kill the WHOLE vidy wave (live: 'cardsP died: srv-budget', ok=0/16)
