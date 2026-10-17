@@ -10,7 +10,7 @@ import { poolStart, poolStats, checkerStats } from './mb-lib/pool.js';
 if (typeof AbortSignal !== 'undefined' && !AbortSignal.timeout) { AbortSignal.timeout = (ms) => { const c = new AbortController(); const t = setTimeout(() => c.abort(new Error('timeout')), ms); if (t.unref) t.unref(); return c.signal; }; }
 
 const PORT = Number(process.env.PORT || 7000);
-const VERSION = '2.11.7';
+const VERSION = '2.11.8';
 const CINEMETA = 'https://v3-cinemeta.strem.io';
 const PUBLIC_BASE = process.env.PUBLIC_BASE || 'https://5a16d5684c14-nethex.baby-beamup.club';
 let LOGO_BUF = null;
@@ -253,16 +253,22 @@ async function resolve(type, imdb, season, episode) {
     const cands = Date.now() - tR0 < 15000 ? chooseList(results, m.name, year, type, 4).filter(x => x.detailPath !== item.detailPath).slice(0, 2) : []; // v2.11.6 budget gate: langs:0 healing ladder only inside 15s — a broken chain once crawled 31-33s (live ring proof)
     if (cands.length) {
       let rWin = null, winDp = '';
-      await new Promise((res) => {
-        let left = cands.length;
-        cands.forEach((c2) => {
-          if (process.env.NMDEBUG) console.error('[nx] matrix empty on', item.detailPath, '- racing candidate', c2.detailPath);
-          runMatrix({ id: c2.detailPath, season, episode })
-            .then(r2 => { if (!rWin && r2.status === 200 && (r2.body?.languages || []).length) { rWin = r2; winDp = c2.detailPath; } })
-            .catch(() => {})
-            .finally(() => { if (--left === 0) res(); });
-        });
-      });
+      await Promise.race([
+        new Promise((res) => {
+          let left = cands.length;
+          cands.forEach((c2) => {
+            if (process.env.NMDEBUG) console.error('[nx] matrix empty on', item.detailPath, '- racing candidate', c2.detailPath);
+            runMatrix({ id: c2.detailPath, season, episode })
+              .then(r2 => { if (!rWin && r2.status === 200 && (r2.body?.languages || []).length) { rWin = r2; winDp = c2.detailPath; } })
+              .catch(() => {})
+              .finally(() => { if (--left === 0) res(); });
+          });
+        }),
+        // v2.11.8: ladder deadline — candidates run in parallel but the all-settled wait once
+        // stretched the whole chain to ~21.7s in the background (live ring). 7s cap: no winner
+        // by then = this episode truly has no links; the 45s bg re-resolve still retries.
+        new Promise(res => setTimeout(res, 7000)),
+      ]);
       if (rWin) { r = rWin; usedDp = winDp || usedDp; } // v2.11.5: // v2.11.5: the race-winning candidate goes into the map
     }
   }

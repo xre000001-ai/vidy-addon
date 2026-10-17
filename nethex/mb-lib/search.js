@@ -445,6 +445,7 @@ function extractSubjectsFromNuxt(nuxt) {
 }
 
 /** Entry point. params: { q, limit, page } -> { status, body }. */
+const SCACHE = new Map(); // v2.11.8: title -> last good search result (60s) — a series tap fires one resolve PER EPISODE plus subtitle side-calls; each used to re-run the full 3.5-10s search for the same title (live ring proof: 12 searches for 9 episodes). Only non-empty results are pinned (a churn miss must retry).
 export async function run(params) {
   const q = String(params.q || "").trim();
   const limit = Math.min(parseInt(params.limit) || 20, 60);
@@ -453,6 +454,19 @@ export async function run(params) {
   if (!q) {
     return { status: 400, body: { error: "Missing q parameter. Example: /api/search?q=one+piece" } };
   }
+
+  const ck = q.toLowerCase() + "|" + limit + "|" + page;
+  const hit = SCACHE.get(ck);
+  if (hit && Date.now() - hit.at < 60000) return hit.r;
+  const r = await runSearch(params, q, limit, page);
+  if (r && r.status === 200 && (r.body?.results || []).length) {
+    if (SCACHE.size > 200) SCACHE.delete(SCACHE.keys().next().value);
+    SCACHE.set(ck, { r, at: Date.now() });
+  }
+  return r;
+}
+
+async function runSearch(params, q, limit, page) {
 
   // Primary: movieboxonline.net BFF search (rich index + suggestions).
   const [searchRes, sugg] = await Promise.all([bffSearch(q, page, limit), suggest(q)]);
