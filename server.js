@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.28';
+const VERSION = '1.15.29';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -165,14 +165,23 @@ async function mmCheckerWave() { // pxCheckerWave's twin — bench = vidbolt rea
       });
     })));
     const t2 = Date.now();
-    for (let i = MM_POOL.length - 1; i >= 0 && MM_POOL.length > 20; i--) if (t2 - (MM_LASTOK.get(MM_POOL[i].px) || t2) > 600000) { const g = MM_POOL.splice(i, 1)[0]; MM_RUN.delete(g.px); MM_LASTOK.delete(g.px); MM_COOL.delete(g.px); MM_SITE.delete(g.px); MM_MISS.delete(g.px); }
-    mmSave();
+    let cutN = 0;
+    for (let i = MM_POOL.length - 1; i >= 0 && MM_POOL.length > 20; i--) if (t2 - (MM_LASTOK.get(MM_POOL[i].px) || t2) > 600000) { const g = MM_POOL.splice(i, 1)[0]; cutN++; MM_RUN.delete(g.px); MM_LASTOK.delete(g.px); MM_COOL.delete(g.px); MM_SITE.delete(g.px); MM_MISS.delete(g.px); }
+    if (cutN) mmSave(); // v1.15.29 revise: write only when members were cut (no idle disk churn)
     if (DBG) console.error('[mmchk] pool=' + MM_POOL.length + ' bench=' + MM_POOL.filter(c => MM_SITE.has(c.px)).length);
   } finally { mmChkBusy = false; }
 }
 function mmCheckerStart() { const loop = () => { setTimeout(() => { Promise.resolve(mmCheckerWave()).catch(() => { }).finally(loop); }, 8000); }; loop(); }
+function mmScore(px, bootMs) { // v1.15.29 revise: the MM pool's OWN score (mmScore over MM_RUN — vidy's pxScore/PX_RUN untouched; full pool isolation)
+  const h = MM_RUN.get(px);
+  if (!h) return bootMs || 9999;
+  let sc = h.ms || bootMs || 9999;
+  if (h.fail && !h.ok) sc += 8000;
+  sc += h.fail * 400 - Math.min(h.ok, 8) * 120;
+  return sc;
+}
 function mmRacePool(url, n, timeoutMs) { // racePool's twin over the multimovies pool (bench gate = vidbolt-reachable)
-  const srt = MM_POOL.slice().sort((a, b) => pxScore(a.px, a.ms) - pxScore(b.px, b.ms));
+  const srt = MM_POOL.slice().sort((a, b) => mmScore(a.px, a.ms) - mmScore(b.px, b.ms));
   const alive = srt.filter(c => { const h = MM_RUN.get(c.px); return !h || h.ok > 0 || h.fail < 3; });
   const good = alive.filter(c => MM_SITE.has(c.px));
   const use = good.length >= 3 ? good : (alive.length >= 3 ? alive : srt);
