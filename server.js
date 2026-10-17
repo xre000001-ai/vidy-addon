@@ -1310,7 +1310,14 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: // titl
     const sc0 = await getSeed(tmdbId, false).catch(() => null);
     const viaProxy = !!(sc0 && sc0.via === 'proxy');
     const ckFor = srv => ['srvc', VERSION, tmdbId, type, s || '', e || '', srv].join('|');
-    const allow = srvOrder().filter(srv => !cfg || !Array.isArray(cfg.srv) || !cfg.srv.length || cfg.srv.indexOf(srv) >= 0); // cfg-// cfg server subset
+    // v1.15.79 (prod-log proof: wave-1 after boot wins all giants at 1.8-3.5s, then ok
+    // collapses 4->1/16 as vidy.st throttles the hub's repeatedly-reused top exits):
+    // fan-out is trimmed — giants always + at most 6 recently-proven servers (cfg.srv still
+    // wins). Cold boot = giants only; later waves add proven names back. Halves the
+    // per-wave vidy.st pressure that was getting the exits flagged.
+    const cfgSrv = (cfg && Array.isArray(cfg.srv) && cfg.srv.length) ? cfg.srv : null;
+    const proven = srvOrder().filter(s => (SRV_SCORE[s] || 0) > 0 && GIANT.indexOf(s) < 0).slice(0, 6);
+    const allow = srvOrder().filter(s => cfgSrv ? cfgSrv.indexOf(s) >= 0 : (GIANT.indexOf(s) >= 0 || proven.indexOf(s) >= 0));
     const one = async srv => {
       const ck = ['srvc', VERSION, tmdbId, type, s || '', e || '', srv].join('|');
       // v1.15.8 (// v1.15.8 (user): SRV_CACHE/SRV_NEG removed — a live scan per tap; new/missed streams get caught on the very next click
