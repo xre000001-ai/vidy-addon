@@ -8,7 +8,7 @@
 const http = require('http'), https = require('https'), net = require('net'), tls = require('tls'), crypto = require('crypto');
 const fs = require('fs'), path = require('path');
 const { URL } = require('url');
-const VERSION = '1.3.0';
+const VERSION = '1.3.1';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const PORT = Number(process.env.PORT || 8399);
 const PX_CAP = 300, DIR = __dirname;
@@ -23,7 +23,7 @@ const SPACES = {
   toonworld4all: { url: 'https://toonworld4all.me/robots.txt', min: 100, contains: 'wp-admin' }, // আসল-টার্গেট+WordPress-স্বাক্ষর — MITM-echo-জাল-ছাঁকনি
   raretoons: { url: 'https://www.rareanimes.mov/robots.txt', min: 100, contains: 'wp-admin' }, // crawler.py-র-লাইভ-টার্গেট
   vidy: { url: 'https://api.wecollege.net/seed?mediaId=95350', min: 30, contains: '"seed"' }, // vidy-র-আসল-কাজ (seed — আগের site+api-এর-মূল-শর্ত)
-  moviebox: { url: 'https://movieboxonline.net/robots.txt', min: 250, contains: 'Allow: /' }, // nethex-টার্গেট+robots-স্বাক্ষর
+  moviebox: { url: '', min: 1 }, // v1.3.1: শর্ত=আসল-MB-API-পাস (nethex-এর searchVerify) — /report-দ্বারা-জমা (robots-শর্ত-ফ্রি-px-ব্লকে-মিথ্যা-০-দেখাত)
   multimovies: { url: 'https://vidbolt.xyz/api/resolve?type=tv&id=1&season=1&episode=1', min: 5 } // আগের vb+wo-এর-মূল-শর্ত
 };
 const ALIAS = { tw: 'toonworld4all', toonworld: 'toonworld4all', rt: 'raretoons', raretoons: 'raretoons', api: 'vidy', mb: 'moviebox', vb: 'multimovies', wo: 'multimovies' }; // পুরনো-ছোট-নাম-গ্রহণযোগ্য (site-বাদ: ভিন্ন-শর্ত — ঢেউ-পুনঃযাচাই-ই-পথ)

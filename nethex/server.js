@@ -8,7 +8,7 @@ import { apiFetch } from './mb-lib/http.js';
 import { poolStart, poolStats, checkerStats } from './mb-lib/pool.js';
 
 const PORT = Number(process.env.PORT || 7000);
-const VERSION = '2.10.4';
+const VERSION = '2.10.6';
 const CINEMETA = 'https://v3-cinemeta.strem.io';
 const PUBLIC_BASE = process.env.PUBLIC_BASE || 'https://5a16d5684c14-nethex.baby-beamup.club';
 let LOGO_BUF = null;

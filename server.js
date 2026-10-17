@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.63';
+const VERSION = '1.15.64';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -627,7 +627,7 @@ if (HUB) {
     toonworld4all: { url: 'https://toonworld4all.me/robots.txt', min: 100, contains: 'wp-admin' }, // আসল-টার্গেট+WordPress-স্বাক্ষর
     raretoons: { url: 'https://www.rareanimes.mov/robots.txt', min: 100, contains: 'wp-admin' }, // crawler.py-লাইভ-টার্গেট+স্বাক্ষর
     vidy: { url: API + '/seed?mediaId=95350', min: 30, contains: '"seed"' }, // vidy-র-আসল-কাজ
-    moviebox: { url: 'https://movieboxonline.net/robots.txt', min: 250, contains: 'Allow: /' }, // nethex-টার্গেট+স্বাক্ষর
+    moviebox: { url: '', min: 1 }, // v1.15.64: শর্ত=nethex-এর-আসল-MB-API-যাচাই (/report-ফিড) — হাবে-robots-বেঞ্চ-নয়
     multimovies: { url: 'https://vidbolt.xyz/api/resolve?type=tv&id=1&season=1&episode=1', min: 5 } // মাল্টিমুভিজ-CDN-শর্ত
   };
   setTimeout(() => { for (const sk of Object.keys(PX_DECL)) fetch(HUB + '/register', { method: 'POST', headers: Object.assign({ 'content-type': 'application/json' }, HKEY(sk) ? { 'x-poolhub-key': HKEY(sk) } : {}), body: JSON.stringify(Object.assign({ src: sk }, PX_DECL[sk])) }).catch(() => { }); }, 2500);

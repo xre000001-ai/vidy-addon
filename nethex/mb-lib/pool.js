@@ -96,7 +96,13 @@ export function pick(exclude) {
 /** THE API TRANSPORT.  Pool-only: a cold bench waits <=2s once, then
  *  fails the call honestly — the server IP never fires a platform call.
  *  Outcome feedback keeps the bench self-training on live traffic. */
-const HUBP = (process.env.POOLHUB || '').replace(/\/$/, ''); // §4-ওয়্যারিং: হাব-থাকলে-mb-স্পেসে-bench-হওয়া-px-দিয়ে-আগে (vidy-spawn-ও-এটা-বহন-করে)
+const HUBP = (process.env.POOLHUB || '').replace(/\/$/, '');
+let NX_SEED_DEAD = false; // v2.10.6: বীজ-ফাইল-একবারই-সুযোগ — মৃত-প্রমাণিত-হলে-পাবলিক-স্ক্র্যাপ-স্থায়ী-পথ
+const MB_REP = new Map(); // u→শেষ-/report (৬০০সে-থ্রটল)
+function hubReport(u, ms) { // v2.10.6 (ইউজার: 'MovieBox আমার অ্যাপে চলে, হাবে ০ কেন?'): আসল-MB-API-পার-করা-px (probe+searchVerify-পূর্ণ-প্রমাণিত) হাবের-moviebox-সাব-স্পেসে-জমা — robots-শর্তের-চেয়ে-কঠোর-সত্য-মানদণ্ড
+  if (!HUBP) return; const nw = Date.now(); if (nw - (MB_REP.get(u) || 0) < 600000) return; MB_REP.set(u, nw);
+  fetch(HUBP + '/report', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ px: String(u).replace(/^https?:\/\//, ''), ok: true, ms: Math.round(ms), src: 'moviebox' }) }).catch(() => { });
+} // §4-ওয়্যারিং: হাব-থাকলে-mb-স্পেসে-bench-হওয়া-px-দিয়ে-আগে (vidy-spawn-ও-এটা-বহন-করে)
 let MBKEY = ''; try { // v1.15.62: সাব-স্পেস-API-কী (moviebox) — POOLHUB_KEYS=সরাসরি-JSON অথবা ফাইল-পথ (দুই-রকম-ই)
   let kb = String(process.env.POOLHUB_KEYS || '');
   try { MBKEY = String((JSON.parse(kb) || {}).moviebox || ''); } catch (e1) { try { MBKEY = String((JSON.parse(fs.readFileSync(kb, 'utf8')) || {}).moviebox || ''); } catch (e2) { } }
@@ -294,7 +300,7 @@ export async function poolOnce(force = false) {
   TS = Date.now();
   let seeded = null;   // NX_POOL_FILE: start from a pre-trained pool file [{px:"host:port",ms}] instead of a public scrape
   try {
-    if (process.env.NX_POOL_FILE) {
+    if (process.env.NX_POOL_FILE && !NX_SEED_DEAD) {
       const arr = JSON.parse(fs.readFileSync(process.env.NX_POOL_FILE, 'utf8'));
       seeded = arr.map(x => ({ u: 'http://' + (x.px || String(x)), ms: Number(x.ms) || 1000 }));
       console.log(`[pool] NX_POOL_FILE: ${seeded.length} trained exits loaded`);
@@ -344,6 +350,13 @@ export async function poolOnce(force = false) {
       if (!POOL.includes(u)) BAD.set(u, Date.now() + 90000); // এক-পাস-বাদ (৯০সে) — পরের-পাসেই-পুনঃযাচাই
     }
     console.log(`[pool] bench=${POOL.length} healthy=${poolStats().healthy}`);
+    if (!POOL.length && seeded) { // v2.10.6 (মূল-ফিক্স): বীজ-সম্পূর্ণ-মৃত → একবার-পাবলিক-স্ক্র্যাপ-ফলব্যাক (আগে-কখনো-হত-না → শূন্য-পুল-ডেডলক → MovieBox-০)
+      NX_SEED_DEAD = true; // মডিউল-স্তরের-পতাকা — নইলে-পরের-কলে-আবার-একই-মৃত-বীজ-পড়ে=অসীম-রিকার্শন (প্রমাণিত-স্পিন)
+      seeded = null;
+      console.log('[pool] বীজ-মৃত → পাবলিক-স্ক্র্যাপ-ফলব্যাক');
+      FETCHING = false; TS = Date.now();
+      return poolOnce(true);
+    }
     // thin bench right after boot -> more passes immediately (up to 3)
     if (POOL.length < 24 && POOL.__passes < 3) {
       POOL.__passes = (POOL.__passes || 0) + 1;
@@ -363,7 +376,11 @@ export async function poolOnce(force = false) {
 // ৬০০সে-অনুত্তপ → বেঞ্চ-কাটা (DEAD_AFTER-প্যারিটি); পাতলা-হলে ৯০সে-গার্ড-মান্য poolOnce-রিফিল (স্ট্রিমিং-ঢোকা)
 let CHK = 0, chkBusy = false; // chkBusy: ঢেউ-সর্বোচ্চ ~১৩সে (probe ৬সে+verify ৭সে) > ১২সে-ব্যবধান — ওভারল্যাপে-একই-১২-পুনঃপ্রোব-নিষিদ্ধ (রেজলভারের-সিকোয়েন্সিয়াল-লুপ-প্যারিটি)
 async function checkerWave() {
-  if (chkBusy || FETCHING || !POOL.length) return;
+  if (chkBusy || FETCHING) return;
+  if (!POOL.length) { // v2.10.6: শূন্য-পুল=রিফিল-ট্রিগার (আগে-খালি-ফেরত=ডেডলক — নিচের-রিফিল-লাইন-কখনো-পৌঁছাত-না)
+    if (Date.now() - TS > 90000) poolOnce().catch(() => { });
+    return;
+  }
   chkBusy = true;
   try {
   const now = Date.now();
@@ -378,7 +395,7 @@ async function checkerWave() {
     const p0 = await probe(u);
     if (!p0) { noteFail(u, 'dead'); cdead++; return; }        // প্রোব-ই-মরা → প্রমাণ-নেই
     if (!(await searchVerify(u))) { noteFail(u, 'block'); cblind++; return; } // জীবিত-কিন্তু-MB-অন্ধ → ৫মিন-বহিষ্কার (কঠোর-অক্ষত)
-    noteGood(u, p0[0]); cok++;                                // পূর্ণ-প্রমাণিত → LASTOK-তাজা
+    noteGood(u, p0[0]); hubReport(u, p0[0]); cok++;                                // পূর্ণ-প্রমাণিত → LASTOK-তাজা + হাবের-moviebox-সাব-স্পেসে-সত্য-প্রমাণ
   }));
   const t2 = Date.now();
   let cut = 0;
