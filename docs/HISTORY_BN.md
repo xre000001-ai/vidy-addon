@@ -450,3 +450,7 @@ vidy.st-ফেল + Google-204-জয়ী ──→ স্পেয়ার (
 ### 🏁 MovieBox-চূড়ান্ত-বিজয় (r136-শেষ): ডিপ্লয়েড-প্রমাণ
 
 NXDEADLINE 22→35s (+COLDX/HARD 15s) — ২৩.৪সে-ম্যাট্রিক্স-আর-কাটা-পড়ে-না; nethex-উষ্ণকরণ-পুল-ভরার-পরে (১২s/২৫s: playToken+jwt)। **ডিপ্লয়েড-যাচাই (v1.15.68)**: pool=29, nxpool=18; ঠান্ডা-১ম-ট্যাপ-মিস (১১.৬s) → **উষ্ণ-ট্যাপ: ২৮-কার্ড, MovieBox=১৪, ৭.১s** (bcdnxw.hakunaymatata.com-CDN)। নিয়ম: অ্যাডন-বুটের-প্রথম-~৩০সে-পরে-থেকে-MB-প্রতি-ট্যাপে। semver-শিক্ষা: "1.15.67c"-লিন্টার-অগ্রাহ্য — পরিষ্কার-বাম্প-ই।
+
+### 🧹 পরিচ্ছন্ন-রিভিশন (r137): junk-cleanup + professional pass
+
+নিরীক্ষা-ভিত্তিক-অপসারণ: ৩-অনাথ-মডিউল (mb-lib/{details,vercel,trending}.js — ০-ইমপোর্টার), মৃত-_training, **express-অনাথ-নির্ভরতা** (কোডে-কোথাও-ইমপোর্ট-নেই — deps এখন শুধু undici), root-লেগ্যাসি vidy_proxy_pool.json। .gitignore-পুনর্লিখন (রানটাইম-স্টেট: server_scores/mm_hashes/px_* সব-প্যাটার্ন; nxtest*); vidy_server_scores.json+vidy_mm_hashes.json আনট্র্যাকড (রানটাইম-ক্যাশ — git-এ-থাকা-উচিত-না)। package.json: version 1.11.14→**1.15.68** (স্টেল-ছিল!), private:true, type:commonjs; nethex/package.json=2.11.1-সিঙ্ক। twr_bridge **v1.1.1**: ইংরেজি-হেডার+consts-first+নামিত-হেল্পার (লজিক-অক্ষত)। pool.js keep-ফিল্টার-লজিক-স্পষ্টীকরণ (অগ্রাধিকার-দ্ব্যর্থতা-বাদ)। **যাচাই**: ট্যাপ tw+rt=১৯-কার্ড, MB-সক্রিয় (৩-১৪-কার্ড, রাউন্ডভেদে-ভিন্ন-exit-ভাষা-মিশ্রণ — সৎ), হাব-পুল **১০৮** (flywheel: moviebox-used ২২৮০!)।

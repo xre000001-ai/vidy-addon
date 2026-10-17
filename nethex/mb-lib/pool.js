@@ -258,7 +258,12 @@ export async function poolOnce(force = false) {
     // বাকি-হাব-পিক = ব্যাকআপ (EWMA-বীজ-ধীর → pick()-এ-পিছনে); পুরনো-সদস্য-যাদের-সাম্প্রতিক-লাইভ-প্রমাণ (৬০০সে) — রেখে-দেওয়া
     const own = j.pick.filter(p => p.own), rest = j.pick.filter(p => !p.own);
     const now2 = Date.now();
-    const keep = POOL.filter(u => !BAD.get(u) || BAD.get(u) <= now2 ? (now2 - (LASTOK.get(u) || 0) < 600000) : false);
+    // keep = বেঞ্চ-বহিষ্কৃত-নয় + ৬০০সে-র-মধ্যে-লাইভ-প্রমাণ-আছে (জানা-ভালো-সদস্য-হারানো-নয়)
+    const keep = POOL.filter(u => {
+      const b = BAD.get(u);
+      if (b && b > now2) return false;
+      return now2 - (LASTOK.get(u) || 0) < 600000;
+    });
     const next = [];
     const add = (p, lat) => {
       const u = 'http://' + p.px;

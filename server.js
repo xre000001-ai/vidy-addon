@@ -114,7 +114,6 @@ async function hubMirror() {
 }
 setInterval(hubMirror, 60000).unref(); setTimeout(hubMirror, 12000).unref();
 // v1.15.67 (ইউজার): ফসল-স্ক্যান(enrich) সম্পূর্ণ-বাদ — TheSpeedX/monosans/proxyscrape/proxifly-কোথাও-স্পর্শ-নেই; প্রক্সি-একমাত্র-PoolHub-থেকে
-let _training = false;
 
 // ---------- মেমো + ডিডুপ ----------
 const memo = new Map(); // key → {ts, v}
