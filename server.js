@@ -19,7 +19,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.84';
+const VERSION = '1.15.85';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -125,19 +125,33 @@ function giveBack() {
 }
 setTimeout(giveBack, 15000).unref(); setInterval(giveBack, 300000).unref();
 
-// v1.15.81 reserve warmer: stocked proxies are proven against the api space in the background —
-// the reserve is not just full, it is WARM; cold stock rotates into the working space before any tap needs it.
-let WARM_I = 0;
+// v1.15.85 (user: "5 ta provider e toh bench korbe proxy and use korbe" — per-source bench restored,
+// the 1.15.27 model): the warmer proves stocked proxies against ALL 4 local spaces (site/api/vb/wo),
+// not api only. Bench membership = that source's own proof — a proxy races for the sources it
+// actually works for, and every tap re-proves the winner (pxRec promote/demote per space).
 setInterval(() => {
-  const cands = POOL.filter(c => !PX_API.has(c.px) && !((PX_COOL.get(c.px) || 0) > Date.now()));
-  if (!cands.length) return;
-  for (let i = 0; i < 24 && i < cands.length; i++) { // v1.15.84: warmer x3 (8->24)
-    const c = cands[(WARM_I + i) % cands.length];
-    const tP = Date.now();
-    proxiedGet(c.px, PX_API_URL, 4500).then(() => pxRec(c.px, true, Date.now() - tP, 'api')).catch(() => pxRec(c.px, false, 0, 'api'));
+  const tnow = Date.now();
+  const parts = [];
+  for (const k of ['site', 'api', 'vb', 'wo']) {
+    const SP = PX_SPACES[k];
+    const cands = POOL.filter(c => !SP.set.has(c.px) && !((PX_COOL.get(c.px) || 0) > tnow));
+    if (!cands.length) continue;
+    const take = Math.min(12, cands.length);
+    const at = (SP.wi || 0) % cands.length;
+    for (let i = 0; i < take; i++) {
+      const c = cands[(at + i) % cands.length];
+      const tP = Date.now();
+      const u = SP.url;
+      const minB = SP.min || 1;
+      proxiedGet(c.px, u, 4500).then(b => {
+        const ok = !!b && String(b).length >= minB;
+        pxRec(c.px, ok, ok ? Date.now() - tP : 0, k);
+      }).catch(() => pxRec(c.px, false, 0, k));
+    }
+    SP.wi = (at + take) % cands.length;
+    parts.push(k + '+' + take);
   }
-  WARM_I = (WARM_I + 24) % cands.length;
-  if (DBG) console.error('[warm] proving stock: ' + Math.min(24, cands.length) + ' | unproven left=' + cands.length);
+  if (parts.length) console.error('[warm] per-source bench: ' + parts.join(' '));
 }, 30000).unref(); // v1.15.80: pre-stocked reserve — faster cadence (40s, first at 8s): proxies are pulled and stocked AHEAD of need, never at call time
 // v1.15.67 (// v1.15.67 (user): harvest scanning (enrich) fully removed — TheSpeedX/monosans/proxyscrape/proxifly never touched; proxies come from PoolHub only
 
@@ -1337,13 +1351,13 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: // titl
     const viaProxy = !!(sc0 && sc0.via === 'proxy');
     const ckFor = srv => ['srvc', VERSION, tmdbId, type, s || '', e || '', srv].join('|');
     // v1.15.79 (prod-log proof: wave-1 after boot wins all giants at 1.8-3.5s, then ok
-    // collapses 4->1/16 as vidy.st throttles the hub's repeatedly-reused top exits):
-    // fan-out is trimmed — giants always + at most 6 recently-proven servers (cfg.srv still
-    // wins). Cold boot = giants only; later waves add proven names back. Halves the
-    // per-wave vidy.st pressure that was getting the exits flagged.
+    // collapses 4->1/16 as vidy.st throttled the hub's repeatedly-reused top exits):
+    // 1.15.79-84 kept the fan at giants+6; 1.15.85 (user: 30-stream capacity back) widens
+    // it to giants+9 score-gated. History kept here because the throttle risk is real —
+    // the cap is the rollback knob if giants start flaking again.
     const cfgSrv = (cfg && Array.isArray(cfg.srv) && cfg.srv.length) ? cfg.srv : null;
-    const proven = srvOrder().filter(s => (SRV_SCORE[s] || 0) > 0 && GIANT.indexOf(s) < 0).slice(0, 6);
-    const allow = srvOrder().filter(s => cfgSrv ? cfgSrv.indexOf(s) >= 0 : (GIANT.indexOf(s) >= 0 || proven.indexOf(s) >= 0));
+    const wide = srvOrder().filter(s => (SRV_SCORE[s] || 0) >= 0 && GIANT.indexOf(s) < 0).slice(0, 9);
+    const allow = srvOrder().filter(s => cfgSrv ? cfgSrv.indexOf(s) >= 0 : (GIANT.indexOf(s) >= 0 || wide.indexOf(s) >= 0));
     const one = async srv => {
       const ck = ['srvc', VERSION, tmdbId, type, s || '', e || '', srv].join('|');
       // v1.15.8 (// v1.15.8 (user): SRV_CACHE/SRV_NEG removed — a live scan per tap; new/missed streams get caught on the very next click
