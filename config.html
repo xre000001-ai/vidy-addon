@@ -236,6 +236,12 @@ h1 .g{color:var(--acc)}
       </div>
       <div class="sw nx on" id="swM"></div>
     </div>
+
+    <div class="fzone">
+      <div class="flab">Resolution <em>&middot; multimovies-only filter</em></div>
+      <div class="chips" id="mmrChips"></div>
+      <div class="fhint" style="margin-top:9px">Pick a cap — only Multimovies cards at or under it stay. "All" shows everything.</div>
+    </div>
   </div>
 
   <div class="seclab">Preview</div>
@@ -271,7 +277,7 @@ h1 .g{color:var(--acc)}
   var SRVS=[["miami","Miami","Primary · always-on workhorse"],["boise","Boise","Primary · up to 4K"],["atlanta","Atlanta","Primary · official subtitles"],["phoenix","Phoenix","Extra · 1080p mirror"],["dallas","Dallas","Extra · Auto-HLS feed"],["austin","Austin","Extra · audio variants (Hindi/English)"],["seattle","Seattle","Backup · Auto-HLS feed"],["delhi","Delhi","Extra · multi-audio (Hindi/English)"],["munich","Munich","Extra · 1080p (EU)"],["paris","Paris","Extra · always-on single feed"],["orlando","Orlando","Extra · 1080p feed"],["reno","Reno","Extra · Auto-HLS feed"],["oakland","Oakland","Extra · Auto-HLS feed"],["vegas","Vegas","Extra · Vidara feed"],["cancun","Cancun","Extra · Vimeos feed"],["tampa","Tampa","Extra · Auto-HLS feed"]];
   var LANGS=[["original","Original"],["english","English"],["hindi","Hindi"],["spanish","Spanish"],["russian","Russian"],["japanese","Japanese"],["tamil","Tamil"],["portuguese","Portuguese (BR)"],["french","French"],["german","German"],["korean","Korean"],["arabic","Arabic"]];
 
-  var st={ v:1, q:[], sub:1, srv:SRVS.map(function(x){return x[0];}), nx:1, nxq:[], nxl:[], rt:1, rtl:[], tw:1, twq:[], mm:1 };
+  var st={ v:1, q:[], sub:1, srv:SRVS.map(function(x){return x[0];}), nx:1, nxq:[], nxl:[], rt:1, rtl:[], tw:1, twq:[], mm:1, mmr:0 };
 
   function b64u(o){return btoa(unescape(encodeURIComponent(JSON.stringify(o)))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');}
   function base(){return location.origin;}
@@ -293,6 +299,7 @@ h1 .g{color:var(--acc)}
     else if(st.rtl.length)c.rtl=st.rtl.slice();
     if(st.tw===0)c.tw=0;
     if(st.mm===0)c.mm=0;
+    else if(st.mmr)c.mmr=st.mmr;
     else if(st.twq.length)c.twq=st.twq.slice();
     var u=base()+(Object.keys(c).length?'/cfg/'+b64u(c):'')+'/manifest.json';
     document.getElementById('url').value=u;
@@ -457,6 +464,19 @@ h1 .g{color:var(--acc)}
     cardM.classList.toggle('off',!st.mm);
     rebuild();
   };
+
+  /* multimovies resolution filter (single pick) */
+  var MMR=[[0,'All'],[1080,'1080p'],[720,'720p'],[480,'480p']];
+  var mmrEl=document.getElementById('mmrChips');
+  function drawMMR(){
+    mmrEl.innerHTML='';
+    MMR.forEach(function(l){
+      var c=document.createElement('div');c.className='chip'+(st.mmr===l[0]?' on':'')+(l[0]===0?' all':'');c.textContent=l[1];
+      c.onclick=function(){st.mmr=l[0];drawMMR();rebuild();};
+      mmrEl.appendChild(c);
+    });
+  }
+  drawMMR();
 
   /* source master switches */
   var swV=document.getElementById('swV'), cardV=document.getElementById('cardV');
