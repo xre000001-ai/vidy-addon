@@ -19,7 +19,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.73';
+const VERSION = '1.15.74';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -1193,6 +1193,7 @@ async function withSources(cardsP, srcs, cfg, t0) {
       new Promise(r => setTimeout(() => r(null), (x.key === 'tw' || x.key === 'rt') ? famCap : uniLeft))
     ])));
     let all = cards.slice();
+    if (DBG) console.error('[srcdbg] outs: ' + live.map((x, i) => x.key + '=' + (outs[i] ? outs[i].length : 'null')).join(' ')); // v1.15.74 merge proof
     for (let i = 0; i < live.length; i++) {
       const v = outs[i];
       if (!v || !v.length) continue;
@@ -1754,8 +1755,12 @@ const server = http.createServer((req, res) => {
       const nxP = nxOn ? nxFor('movie', m[1], 0, 0) : null;
       const infoP = vOn ? findTmdbInfo(m[1], 'movie') : null; // v1.12: // v1.12: one call feeds all sources
       const nmP = suggName(m[1]); // v1.12.6: rt/tw-// v1.12.6: rt/tw fast name
-      const twP = (TWBASE && !(cfg && cfg.tw === 0)) ? nmP.then(nm => nm ? twrStreams(TWBASE, 'toonworld', nm, 'movie', 0, 0) : []).catch(() => []) : null; // v1.15.15: infoP-// v1.15.15: infoP gate dropped — TW/RT stay alive even on v=0 configs (before: vidy source off = TW/RT silently dead — the 'MovieBox only' root cause)
-      const rtP = (RTBASE && !(cfg && cfg.rt === 0)) ? nmP.then(nm => nm ? twrStreams(RTBASE, 'raretoons', nm, 'movie', 0, 0) : []).catch(() => []) : null;
+      // v1.15.74: tw/rt must not die with the IMDb-CDN lookup — a silent '' here used to
+      // vanish BOTH family sources ("toonworld4all raretoons astese na"). Fallback ladder:
+      // IMDb-suggestion -> TMDB-find/Cinemeta title (memoized 24h, independent of v).
+      const nmAll = nmP.then(nm => nm || findTmdbInfo(m[1], 'movie').then(v => (v && v.name) || '').catch(() => ''));
+      const twP = (TWBASE && !(cfg && cfg.tw === 0)) ? nmAll.then(nm => nm ? twrStreams(TWBASE, 'toonworld', nm, 'movie', 0, 0) : []).catch(() => []) : null; // v1.15.15: infoP-// v1.15.15: infoP gate dropped — TW/RT stay alive even on v=0 configs (before: vidy source off = TW/RT silently dead — the 'MovieBox only' root cause)
+      const rtP = (RTBASE && !(cfg && cfg.rt === 0)) ? nmAll.then(nm => nm ? twrStreams(RTBASE, 'raretoons', nm, 'movie', 0, 0) : []).catch(() => []) : null;
       const woOn = !!WOBASE && !(cfg && cfg.wo === 0); // v1.15.39
       const woIdP = woOn ? ((vOn && infoP) ? infoP.then(v => (v && v.id > 0) ? v.id : 0) : findTmdb(m[1], 'movie').catch(() => 0)) : null; // infoP-// share the id from infoP (no second call)
       const woP = woOn ? woIdP.then(id => id ? nmP.then(nm => woStreams(id, nm || '', 'movie', 0, 0, cfg, originOf(req))) : []).catch(() => []) : null;
@@ -1770,8 +1775,9 @@ const server = http.createServer((req, res) => {
       const nxP = nxOn ? nxFor('series', m[1], Number(m[2]), Number(m[3])) : null;
       const infoP = vOn ? findTmdbInfo(m[1], 'series') : null;
       const nmP = suggName(m[1]); // v1.12.6: rt/tw-// v1.12.6: rt/tw fast name
-      const twP = (TWBASE && !(cfg && cfg.tw === 0)) ? nmP.then(nm => nm ? twrStreams(TWBASE, 'toonworld', nm, 'series', Number(m[2]), Number(m[3])) : []).catch(() => []) : null; // v1.15.15: infoP-// v1.15.15: infoP gate dropped — TW/RT alive even at v=0 (nmP = IMDb suggestion, v-independent)
-      const rtP = (RTBASE && !(cfg && cfg.rt === 0)) ? nmP.then(nm => nm ? twrStreams(RTBASE, 'raretoons', nm, 'series', Number(m[2]), Number(m[3])) : []).catch(() => []) : null;
+      const nmAll = nmP.then(nm => nm || findTmdbInfo(m[1], 'series').then(v => (v && v.name) || '').catch(() => '')); // v1.15.74: tw/rt survive an IMDb-CDN miss (TMDB/Cinemeta fallback)
+      const twP = (TWBASE && !(cfg && cfg.tw === 0)) ? nmAll.then(nm => nm ? twrStreams(TWBASE, 'toonworld', nm, 'series', Number(m[2]), Number(m[3])) : []).catch(() => []) : null; // v1.15.15: infoP-// v1.15.15: infoP gate dropped — TW/RT alive even at v=0 (nmP = IMDb suggestion, v-independent)
+      const rtP = (RTBASE && !(cfg && cfg.rt === 0)) ? nmAll.then(nm => nm ? twrStreams(RTBASE, 'raretoons', nm, 'series', Number(m[2]), Number(m[3])) : []).catch(() => []) : null;
       const woOn = !!WOBASE && !(cfg && cfg.wo === 0); // v1.15.39
       const woIdP = woOn ? ((vOn && infoP) ? infoP.then(v => (v && v.id > 0) ? v.id : 0) : findTmdb(m[1], 'series').catch(() => 0)) : null;
       const woP2 = woOn ? woIdP.then(id => id ? nmP.then(nm => woStreams(id, nm || '', 'series', Number(m[2]), Number(m[3]), cfg, originOf(req))) : []).catch(() => []) : null;
