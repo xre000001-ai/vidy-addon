@@ -10,7 +10,7 @@ import { poolStart, poolStats, checkerStats } from './mb-lib/pool.js';
 if (typeof AbortSignal !== 'undefined' && !AbortSignal.timeout) { AbortSignal.timeout = (ms) => { const c = new AbortController(); const t = setTimeout(() => c.abort(new Error('timeout')), ms); if (t.unref) t.unref(); return c.signal; }; }
 
 const PORT = Number(process.env.PORT || 7000);
-const VERSION = '2.11.5';
+const VERSION = '2.11.6';
 const CINEMETA = 'https://v3-cinemeta.strem.io';
 const PUBLIC_BASE = process.env.PUBLIC_BASE || 'https://5a16d5684c14-nethex.baby-beamup.club';
 let LOGO_BUF = null;
@@ -40,6 +40,7 @@ function cacheSet(key, streams, ttl = CACHE_TTL) {
 }
 
 const BG = new Set();   // v2.9.4: keys with a bg re-resolve in flight
+const INF = new Map();  // v2.11.6: single-flight — Stremio fires ~9 duplicate stream taps when slow (live ring proof); they must share ONE cold resolve, not multiply the proxy burn
 const metaCache = new Map();   // v2.9.1: type:id -> { at, m } (30min)
 const RING = [];               // v2.10.2: // v2.10.2: the last 50 resolve steps (eyes inside stdio-ignore)
 function ring(l) { RING.push((Date.now() % 1000000) + ' ' + l); if (RING.length > 50) RING.shift(); }
@@ -203,7 +204,9 @@ async function resolve(type, imdb, season, episode) {
   let item = choose(results, m.name, year, type);
   // v2.9.5: if the catalog view serves no fuzzy match (geo churn), re-search
   // fresh (cache bypass) before giving up — one honest retry, still pool-only
-  if (matchQ(item) < 2) {
+  // v2.11.6 budget gate: the retry ladder must never stack — a broken chain
+  // once crawled 31-33s (live ring proof). Each extra stage only starts inside budget.
+  if (matchQ(item) < 2 && Date.now() - tR0 < 9000) {
     const sr2 = await search({ q: base, limit: 30, page: 1 }).catch(() => null);
     const r2 = sr2?.body?.results || [];
     if (r2.length) {
@@ -219,7 +222,7 @@ async function resolve(type, imdb, season, episode) {
   // empties.  IMDb's suggestion CDN gives the display title for the id;
   // one extra search with it before giving up.
   let altOK = false;
-  if (matchQ(item) < 2) {
+  if (matchQ(item) < 2 && Date.now() - tR0 < 11000) { // v2.11.6 budget gate: no IMDb-suggestion detour past 11s
     try {
       const ir = await directFetch('https://v2.sg.media-imdb.com/suggestion/' + (String(imdb)[2] || 't') + '/' + imdb + '.json', { signal: AbortSignal.timeout(8000) });
       const jd = await ir.json();
@@ -240,13 +243,14 @@ async function resolve(type, imdb, season, episode) {
   if (!item?.detailPath || (matchQ(item) < 2 && !altOK)) { ring(`giveup q:${matchQ(item)} alt:${altOK ? 1 : 0} +${Date.now() - tR0}ms`); return []; }   // honest empty, never junk cards
   let usedDp = item.detailPath; // v2.11.5: // v2.11.5: which subject finally won (for the map)
   let r = await runMatrix({ id: item.detailPath, season, episode });
+  ring(`matrix +${Date.now() - tR0}ms`); // v2.11.6: split proof — search-end vs matrix-end, so the tail is attributable on live
   if (process.env.NMDEBUG) console.error('[nx] +' + (Date.now() - tR0) + 'ms matrix status:', r.status, r.status === 200 ? `langs:${(r.body.languages || []).length} subs:${(r.body.subtitles || []).length}` : '');
   // v1.11-local: a chosen subject that answers langs:0 (exists but carries no links
   // for this episode) is not a real empty — walk the next-ranked catalog subjects
   if (r.status === 200 && !(r.body?.languages || []).length) {
     // v2.9.9 PARALLEL LADDER: geo-churn // v2.9.9 PARALLEL LADDER: geo-churn eats one subject at a time — sequential walking paid a full round trip per step
     // // (E1 lost 3-4s here). Candidates now race together; the first result carrying links wins.
-    const cands = chooseList(results, m.name, year, type, 4).filter(x => x.detailPath !== item.detailPath).slice(0, 2);
+    const cands = Date.now() - tR0 < 15000 ? chooseList(results, m.name, year, type, 4).filter(x => x.detailPath !== item.detailPath).slice(0, 2) : []; // v2.11.6 budget gate: langs:0 healing ladder only inside 15s — a broken chain once crawled 31-33s (live ring proof)
     if (cands.length) {
       let rWin = null, winDp = '';
       await new Promise((res) => {
@@ -411,40 +415,47 @@ const server = http.createServer(async (req, res) => {
         // v2.9.4 WALL: answer within 11.5s (CF cuts ~12s).  A cold
         // resolve keeps running and fills the cache — tap-2 is instant.
         const box = {};
-        const p = resolve(m[1], imdb, season, episode)
-          .then(x => {
-            box.s = x;
-            // v2.4.1: empties live 60s and ONE background re-resolve
-            // fires at 45s — a churn-window miss heals by itself; a
-            // positive shelf lives 90min (sign urls ~2h).
-            // v2.6.0: a THIN bench (boot/churn window) must never write
-            // a negative cache — the next tap re-resolves on fresh exits
-            if (x.length) cacheSet(key, x, 90 * 60 * 1000); // v2.10.3: // v2.10.3: positive-only caching — an empty cache would turn an MB site wave into a 60s memo of broken (r57 principle)
-            // v2.9.2 BINGE PREWARM: a successful series tap quietly resolves
-            // the NEXT 3 episodes into the cache — the next tap is a cache hit
-            // (1.2s-class) instead of a cold chain.  Pool untouched.
-            if (x.length && m[1] === 'series') {
-              setTimeout(() => {
-                for (let e = episode + 1; e <= episode + 3; e++) {
-                  resolve('series', imdb, season, e)
-                    .then(y => { if (y.length) cacheSet(`${m[1]}:${imdb}:${season}:${e}`, y, 90 * 60 * 1000); })
+        // v2.11.6 single-flight: concurrent duplicates of the same key join the one
+        // in-flight chain (side effects — cache write, binge prewarm — run exactly once)
+        const p = (INF.get(key) || (() => {
+          const np = resolve(m[1], imdb, season, episode)
+            .then(x => {
+              box.s = x;
+              // v2.4.1: empties live 60s and ONE background re-resolve
+              // fires at 45s — a churn-window miss heals by itself; a
+              // positive shelf lives 90min (sign urls ~2h).
+              // v2.6.0: a THIN bench (boot/churn window) must never write
+              // a negative cache — the next tap re-resolves on fresh exits
+              if (x.length) cacheSet(key, x, 90 * 60 * 1000); // v2.10.3: // v2.10.3: positive-only caching — an empty cache would turn an MB site wave into a 60s memo of broken (r57 principle)
+              // v2.9.2 BINGE PREWARM: a successful series tap quietly resolves
+              // the NEXT 3 episodes into the cache — the next tap is a cache hit
+              // (1.2s-class) instead of a cold chain.  Pool untouched.
+              if (x.length && m[1] === 'series') {
+                setTimeout(() => {
+                  for (let e = episode + 1; e <= episode + 3; e++) {
+                    resolve('series', imdb, season, e)
+                      .then(y => { if (y.length) cacheSet(`${m[1]}:${imdb}:${season}:${e}`, y, 90 * 60 * 1000); })
+                      .catch(() => {});
+                  }
+                }, 1500).unref?.();
+              }
+              if (!x.length) {
+                setTimeout(() => {
+                  resolve(m[1], imdb, season, episode)
+                    .then(y => { if (y.length) cacheSet(key, y); })
                     .catch(() => {});
-                }
-              }, 1500).unref?.();
-            }
-            if (!x.length) {
-              setTimeout(() => {
-                resolve(m[1], imdb, season, episode)
-                  .then(y => { if (y.length) cacheSet(key, y); })
-                  .catch(() => {});
-              }, 45000).unref?.();
-            }
-            return x;
-          })
-          .catch(() => []);
+                }, 45000).unref?.();
+              }
+              return x;
+            })
+            .catch(() => []);
+          INF.set(key, np);
+          np.finally(() => { if (INF.get(key) === np) INF.delete(key); }).catch(() => {});
+          return np;
+        })());
         streams = await Promise.race([
           p,
-          new Promise(r => setTimeout(() => r(null), 30000)),
+          new Promise(r => setTimeout(() => r(null), 12000)), // v2.11.6: 30->12s — back to the documented wall (CF cuts ~12s anyway); the resolve keeps running and fills the cache for tap-2
         ]);
         if (streams === null) {
           p.catch(() => {});

@@ -19,7 +19,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.69';
+const VERSION = '1.15.70';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -1392,7 +1392,9 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: // titl
       const el2 = Date.now() - t0;
       // // tier 1: sweeping success (>=6 ok) -> cut pending from 2.2s on
       // // tier 2: nearly all settled (<=2 pending) + >=1 ok + 3.9s -> cut the last stragglers (usually the slow giant that ends err/empty anyway)
-      if (pend.size && el2 >= 2200 && (okWave >= 6 || (okWave >= 1 && el2 >= 3900 && allow.length - pend.size >= allow.length - 2))) {
+      // // v1.15.70 tier-3 (user: "why is it still slow"): any-won wave must not hold the tap
+      // // past 5.3s — pending servers (incl. slow giants) cut here and finish into SRV_CACHE in the background.
+      if (pend.size && el2 >= 2200 && (okWave >= 6 || (okWave >= 1 && el2 >= 3900 && allow.length - pend.size >= allow.length - 2) || (okWave >= 1 && el2 >= 5300))) {
         if (DBG) console.error('[t1g] TIGHTEN ok=' + okWave + ' cut=' + pend.size + ' at ' + el2 + 'ms');
         for (const [srv2, f2] of Array.from(pend)) { pend.delete(srv2); f2({ srv: srv2, late: true }); }
       }
