@@ -1907,9 +1907,9 @@ function waitNxBench(maxMs) { // v1.15.13: NXBENCH===0 → হার্ড-[]-�
 }
 setInterval(() => { nxBenchHealth(); }, 15000).unref();
 (async () => {
-  if (!NEXBASE) NEXBASE = await startEmbeddedNx();
-  nxBenchHealth(); // v1.15.13: বুটেই-জানি (৬০সে-অপেক্ষা-নয়)
+  // v1.15.67b (beamup-লিন্ট-ফিক্স): listen-সবার-আগে — nethex-চাইল্ড-অপেক্ষা-HTTP-ব্লক-করবে-না (manifest/স্বাস্থ্য-তাৎক্ষণিক; চাইল্ড-পেছনে-যোগ-হয়)
   server.listen(PORT, '0.0.0.0', () => console.log('[vidy] ' + VERSION + ' on :' + PORT + ' | pool=' + POOL.length + (NEXBASE ? ' | moviebox embedded' : '')));
+  (async () => { if (!NEXBASE) NEXBASE = await startEmbeddedNx(); nxBenchHealth(); })().catch(e => console.error('[nx-embed] বিলম্বিত-ব্যর্থ: ' + (e && e.message || e)));
   server.on('error', e => { const pre = !server.listening; console.error('[listen] পোর্ট-' + PORT + ' ব্যর্থ: ' + (e && e.code || '') + (e && e.code === 'EADDRINUSE' && pre ? ' — একই-পোর্টে-অন্য-vidy-চলছে; ওটা-বন্ধ-করো (pkill -f "node server.js") বা PORT=অন্য-দাও' : ' — ' + String(e && e.message).slice(0, 100))); if (pre) process.exit(1); }); // v1.15.40: শুধু-listen-আগের-ত্রুটিতে-প্রস্থান — চলন্ত-অবস্থায়-লগ-ই, মৃত্যু-নয়
   // v1.15.18 (r68b ইউজার-অনুমোদিত): রেপ্লিকা-জাগ্রত নিজ-পিং — প্রতি-৪মিনিটে নিজের-পাবলিক-URL-এ /_health
   // (স্কেল-টু-জিরো/নিষ্ক্রিয়তা-ঘুম-বন্ধ; রাউটার-সর্বদা-গরম) + warmBases (রেজলভার/শিশুর-সকেট-DNS+TLS-হাত গরম — ঠান্ডা-১ম-ট্যাপের-মূল-কারণ)
