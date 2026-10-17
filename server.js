@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.27';
+const VERSION = '1.15.28';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -124,6 +124,72 @@ function pxCheckerStart() {
   const loop = () => { setTimeout(() => { Promise.resolve(pxCheckerWave()).catch(() => {}).finally(loop); }, 8000); }; // v1.15.19: ব্যবধান ১২সে→৮সে (পুল-৪৩ → সম্পূর্ণ-চক্র ~২৫সে)
   loop();
 }
+
+// ---------- v1.15.28 (user: ".27 e multimovies add koro — own proxy pool like vidy, config page soho") ----------
+// Multimovies' OWN pool, the vidy-pool model exactly: the same harvest feeds both, but this
+// pool's bench criterion is vidbolt.xyz reachability (the multimovies CDN condition). Fully
+// parallel maps + own file — nothing here touches the vidy pool.
+const MM_CAP = 154, MM_FILE = path.join(__dirname, 'vidy_mm_pool.json');
+let MM_POOL = []; try { for (const c of JSON.parse(fs.readFileSync(MM_FILE, 'utf8'))) if (c && c.px) MM_POOL.push({ px: c.px, ms: Number(c.ms) || 2000 }); } catch (e) { }
+const MM_RUN = new Map(), MM_LASTOK = new Map(), MM_COOL = new Map(), MM_SITE = new Set(), MM_MISS = new Map();
+const VB_REF = 'https://vidbolt.xyz/';
+const WOBASE = String(process.env.WOBASE || 'https://raw.githubusercontent.com/Watchout2025/api/refs/heads/main'); // multimovies stream index (movies: hls/movie/{tmdb}, tv: hls/tv/{tmdb}/S{n}.json)
+const WO_REF = 'https://vidout.pages.dev/'; // this exact Referer opens the multimovies CDN (404 without it)
+const WO_LANGS = { eng: 'English', en: 'English', hin: 'Hindi', hi: 'Hindi', ara: 'Arabic', fra: 'French', spa: 'Spanish', por: 'Portuguese', rus: 'Russian', zho: 'Chinese', ben: 'Bengali', tam: 'Tamil', tel: 'Telugu' };
+let mmChkBusy = false;
+function mmSave() { try { fs.writeFileSync(MM_FILE, JSON.stringify(MM_POOL)); } catch (e) { } }
+function pxRecMM(px, good, ms) {
+  const h = MM_RUN.get(px) || { ok: 0, fail: 0, ms: 9999 };
+  if (good) { h.ok++; h.ms = Math.min(h.ms, Math.max(120, ms | 0 || 9999)); MM_LASTOK.set(px, Date.now()); }
+  else h.fail++;
+  MM_RUN.set(px, h);
+}
+async function mmCheckerWave() { // pxCheckerWave's twin — bench = vidbolt reachable + alive
+  if (mmChkBusy || !MM_POOL.length) return; mmChkBusy = true;
+  try {
+    const tnow = Date.now();
+    const wave = MM_POOL.filter(c => (MM_COOL.get(c.px) || 0) <= tnow).sort((a, b) => (MM_LASTOK.get(a.px) || 0) - (MM_LASTOK.get(b.px) || 0)).slice(0, 42);
+    if (!wave.length) return;
+    await Promise.all(wave.map(c => new Promise(r2 => {
+      const t0 = Date.now();
+      proxiedGet(c.px, VB_REF, 6000).then(body => {
+        const ok = !!body && String(body).length >= 200;
+        pxRecMM(c.px, ok, Date.now() - t0);
+        if (ok) { MM_SITE.add(c.px); MM_MISS.delete(c.px); MM_COOL.delete(c.px); }
+        else { const m = (MM_MISS.get(c.px) || 0) + 1; if (m >= 2) { MM_SITE.delete(c.px); MM_MISS.set(c.px, 0); } else MM_MISS.set(c.px, m); }
+        r2();
+      }).catch(() => { // vidbolt-blind -> alive = spare, dead = cooled
+        const t1 = Date.now();
+        MM_SITE.delete(c.px); MM_MISS.delete(c.px);
+        proxiedGet(c.px, PX_PROBE_URL, 4000).then(() => { pxRecMM(c.px, true, Date.now() - t1); r2(); }).catch(() => { pxRecMM(c.px, false, 0); MM_COOL.set(c.px, Date.now() + 120000); r2(); });
+      });
+    })));
+    const t2 = Date.now();
+    for (let i = MM_POOL.length - 1; i >= 0 && MM_POOL.length > 20; i--) if (t2 - (MM_LASTOK.get(MM_POOL[i].px) || t2) > 600000) { const g = MM_POOL.splice(i, 1)[0]; MM_RUN.delete(g.px); MM_LASTOK.delete(g.px); MM_COOL.delete(g.px); MM_SITE.delete(g.px); MM_MISS.delete(g.px); }
+    mmSave();
+    if (DBG) console.error('[mmchk] pool=' + MM_POOL.length + ' bench=' + MM_POOL.filter(c => MM_SITE.has(c.px)).length);
+  } finally { mmChkBusy = false; }
+}
+function mmCheckerStart() { const loop = () => { setTimeout(() => { Promise.resolve(mmCheckerWave()).catch(() => { }).finally(loop); }, 8000); }; loop(); }
+function mmRacePool(url, n, timeoutMs) { // racePool's twin over the multimovies pool (bench gate = vidbolt-reachable)
+  const srt = MM_POOL.slice().sort((a, b) => pxScore(a.px, a.ms) - pxScore(b.px, b.ms));
+  const alive = srt.filter(c => { const h = MM_RUN.get(c.px); return !h || h.ok > 0 || h.fail < 3; });
+  const good = alive.filter(c => MM_SITE.has(c.px));
+  const use = good.length >= 3 ? good : (alive.length >= 3 ? alive : srt);
+  const n2 = Math.min(use.length, Math.max(n, 3));
+  const cands = [];
+  for (let i = 0; i < n2 && use.length; i++) { const c = use[Math.floor(i * use.length / n2)]; if (c && !cands.some(x => x.px === c.px)) cands.push(c); }
+  if (!cands.length) return Promise.reject(new Error('mm-pool-empty'));
+  return new Promise((resolve, reject) => {
+    let done = false; const to = setTimeout(() => { if (!done) { done = true; reject(new Error('mm-race-timeout')); } }, timeoutMs);
+    let fails = 0;
+    for (const c of cands) {
+      const tP = Date.now();
+      proxiedGet(c.px, url, timeoutMs).then(body => { pxRecMM(c.px, true, Date.now() - tP); if (done) return; done = true; clearTimeout(to); resolve({ body, px: c.px }); })
+        .catch(() => { pxRecMM(c.px, false, 0); if (++fails === cands.length && !done) { done = true; clearTimeout(to); reject(new Error('mm-pool-exhausted')); } });
+    }
+  });
+}
 // v1.15.4 পুল-ট্রেইনার (enrich): পাবলিক-তালিকা → নমুনা-১২০ → সমান্তরাল-২০৪-যাচাই → দ্রুততম(<১.৮সে)-যোগ;
 // মূল-১৭-অক্ষত-প্রথমে, ক্যাপ-৭৭, জেতা-প্রক্সি-ফাইলেও-লেখা (রিস্টার্টে-উষ্ণ); PX_ENRICH=0 দিলে-বন্ধ
 const PX_BASE_N = 17, PX_CAP = 154, POOL_FILE = path.join(__dirname, 'vidy_proxy_pool.json'); // v1.15.27 (ইউজার): ক্যাপ-ডাবল ৭৭→১৫৪
@@ -156,6 +222,8 @@ async function enrichPool() {
     for (const c of rest) { if (next.length >= PX_CAP) break; if (!seen.has(c.px)) { seen.add(c.px); next.push(c); } }
     POOL.length = 0; for (const c of next) POOL.push(c);
     if (n) { try { fs.writeFileSync(POOL_FILE, JSON.stringify(POOL)); } catch (e) {} }
+    // v1.15.28: the same harvest feeds the multimovies pool — its own bench then decides vidbolt-capable members
+    if (good.length) { const mseen = new Set(MM_POOL.map(c => c.px)); for (const g of good) { if (MM_POOL.length >= MM_CAP) break; if (!mseen.has(g.px)) { mseen.add(g.px); MM_POOL.push({ px: g.px, ms: g.ms }); } } mmSave(); }
     if (DBG) console.error('[pool] enrich: +' + n + ' (মোট ' + POOL.length + ', প্রার্থী ' + cands.length + ')');
   } catch (e) { if (DBG) console.error('[pool] enrich-ERR ' + String(e && e.message).slice(0, 80)); } finally { _training = false; }
 }
@@ -915,6 +983,144 @@ async function twrFetch(base, tag, title, type, s, e, t3) {
 }
 
 // ---------- বহু-সোর্স-মার্জ (withNx-এর-সাধারণ-রূপ — একই-অনুগ্রহ-বাজেট, সব-সোর্স-একসাথে-রেস) ----------
+function woFetch(url, ms) { // v1.15.28: multimovies CDN fetch — the WO_REF Referer is the key
+  return fetch(url, { headers: { 'User-Agent': UA, Referer: WO_REF, Accept: '*/*' }, signal: AbortSignal.timeout(ms || 7000) });
+}
+function mmPoolText(url, ms) { // v1.15.28: direct first; the multimovies OWN pool only for rescue (vidy-pool model — never shares vidy's race)
+  const T = ms || 7000;
+  return fetch(url, { headers: { 'User-Agent': UA, Referer: VB_REF }, signal: AbortSignal.timeout(Math.ceil(T * 0.55)) }).then(x => x.ok ? x.text() : '').catch(() => '').then(t => {
+    if (t) return t;
+    return mmRacePool(url, 4, Math.ceil(T * 0.4)).then(r => String(r.body || '')).catch(() => '');
+  });
+}
+function woAudioTag(pl) { // truthful audio claim — EXT-X-MEDIA:TYPE=AUDIO declaration in the master playlist
+  if (!pl) return '';
+  const langs = [...String(pl).matchAll(/#EXT-X-MEDIA:TYPE=AUDIO[^\n]*/g)].map(m => {
+    const l = (String(m[0]).match(/LANGUAGE="([^"]+)"/i) || [])[1] || (String(m[0]).match(/NAME="([^"]+)"/i) || [])[1] || '';
+    return String(l).trim();
+  }).filter(l => l && !/^(audio|def|main|default)$/i.test(l));
+  const uniq = [...new Set(langs)];
+  if (uniq.length >= 2) return uniq.length + ' Audio (' + uniq.slice(0, 3).join('+') + ')';
+  if (uniq.length === 1) return uniq[0];
+  return '';
+}
+function woHasAudioGrp(pl) { return /#EXT-X-MEDIA:TYPE=AUDIO/i.test(String(pl || '')); }
+async function woSubs(tmdb, type, s, e, ms) { // sub/tv/{id}/{s}/{e}/subtitles.json | sub/movie/{id}/subtitles.json
+  try {
+    const u = type === 'series' ? (WOBASE + '/sub/tv/' + tmdb + '/' + (parseInt(s, 10) || 1) + '/' + (parseInt(e, 10) || 1) + '/subtitles.json') : (WOBASE + '/sub/movie/' + tmdb + '/subtitles.json');
+    const r = await woFetch(u, Math.min(5000, ms || 5000));
+    if (!r.ok) return [];
+    const d = await r.json().catch(() => null);
+    const subs = (d && d.subtitles) || {};
+    return Object.keys(subs).slice(0, 8).map(k => ({ url: String(subs[k]), lang: WO_LANGS[String(k).toLowerCase()] || String(k).toUpperCase() })).filter(x => /^https?:/.test(x.url));
+  } catch { return []; }
+}
+async function mmVidbolt(tmdbId, isSeries, s, e, ms) { // v1.15.28: the vidbolt resolve chain — mp4 direct cards + hls-bridge variants (audio-group masters stay whole)
+  const vT0 = Date.now(); const vLeft = cap => Math.max(350, Math.min(cap, (ms || 6500) - (Date.now() - vT0)));
+  try {
+    const q = isSeries ? ('type=tv&id=' + tmdbId + '&season=' + (parseInt(s, 10) || 1) + '&episode=' + (parseInt(e, 10) || 1)) : ('type=movie&id=' + tmdbId);
+    const out = []; const oseen = new Set();
+    const push = (h, url, ref, mp4, lang, aud) => { if (url && !oseen.has(url)) { oseen.add(url); out.push({ h: h | 0, url: url, ref: ref, mp4: mp4 ? 1 : 0, lang: lang || '', aud: aud || '' }); } };
+    for (let draw = 0; draw < 3; draw++) { // a dead draw (0 results) retries after 450ms — different servers serve the rotation
+      let j = null;
+      const jtxt = await mmPoolText('https://vidbolt.xyz/api/resolve?' + q, vLeft(6500));
+      try { j = jtxt ? JSON.parse(jtxt) : null; } catch { }
+      const srcs = (j && j.stream && Array.isArray(j.stream.sources) ? j.stream.sources : []).slice(0, 8);
+      if (!srcs.length) { if (draw < 2) await new Promise(r3 => setTimeout(r3, 450)); continue; }
+      await Promise.all(srcs.map(async sc => {
+        const uu = sc && sc.url;
+        if (!uu || !/^https?:/.test(uu)) return;
+        const hq = parseInt(String(sc.quality || ''), 10) || 0;
+        const lang = String(sc.language || '').trim();
+        if (String(sc.kind || '').toLowerCase() === 'mp4' || /\.mp4($|\?)/i.test(uu)) { // direct MP4 — a light GET proves it, body cancelled at once
+          try { const hd = await fetch(uu, { headers: { 'User-Agent': UA, Referer: VB_REF }, method: 'GET', signal: AbortSignal.timeout(vLeft(4500)) }); if (hd.ok) { try { if (hd.body) hd.body.cancel(); } catch { } push(hq, uu, VB_REF, 1, lang); } } catch { }
+          return;
+        }
+        try {
+          const pl = await mmPoolText(uu, vLeft(5500)); // hls bridge — direct first, the MM pool for rescue
+          if (!pl || pl.indexOf('#EXTM') < 0) return;
+          const atag = woAudioTag(pl);
+          if (woHasAudioGrp(pl)) { push(0, uu, VB_REF, 0, lang, atag); return; } // audio-group master — the master itself carries the audio
+          let base = uu; try { base = new URL(uu).href.replace(/[^/]*$/, ''); } catch { }
+          const lines = pl.split('\n'); let found = 0;
+          for (let jj = 0; jj < lines.length - 1; jj++) {
+            if (lines[jj].indexOf('#EXT-X-STREAM-INF') < 0) continue;
+            const rm = lines[jj].match(/RESOLUTION=(\d+)x(\d+)/i);
+            const uri = String(lines[jj + 1] || '').trim();
+            if (!uri || uri.charAt(0) === '#') continue;
+            let abs = uri; try { abs = new URL(uri, base).href; } catch { }
+            push(rm ? parseInt(rm[2], 10) || 0 : 0, abs, VB_REF, 0, lang, atag);
+            if (++found >= 6) break;
+          }
+          if (!found) push(0, uu, VB_REF, 0, lang, atag);
+        } catch { }
+      }));
+      break; // a productive draw is enough
+    }
+    return out;
+  } catch { return []; }
+}
+async function mmStreams(tmdbId, title, type, s, e) { // v1.15.28: Multimovies source — vidout index + vidbolt resolve, plain absolute URLs
+  if (!tmdbId) return [];
+  const t3 = Date.now(); const WOB = 9000; const left = () => Math.max(300, WOB - (Date.now() - t3));
+  try {
+    const isSeries = type === 'series';
+    const u = isSeries ? (WOBASE + '/hls/tv/' + tmdbId + '/S' + (parseInt(s, 10) || 1) + '.json') : (WOBASE + '/hls/movie/' + tmdbId);
+    const vbP = mmVidbolt(tmdbId, isSeries, s, e, left()).catch(() => []); // parallel — index present or not
+    const idxRes = await woFetch(u, left()).catch(() => null);
+    const idxTxt = idxRes && idxRes.ok ? await idxRes.text().catch(() => '') : '';
+    let servers = [];
+    if (idxTxt) {
+      if (isSeries) { const d = (() => { try { return JSON.parse(idxTxt); } catch { return null; } })(); const ep = String(parseInt(e, 10) || 1); if (d && typeof d[ep] === 'string') servers = [d[ep]]; } // the exact episode only
+      else { const txt = idxTxt.trim(); if (txt && /^https?:/.test(txt)) servers = [txt.split('\n')[0].trim()]; }
+    }
+    servers = servers.slice(0, 6);
+    const lists = servers.length ? await Promise.all(servers.map(su => woFetch(su, Math.min(6500, left())).then(x => x.ok ? x.text() : '').catch(() => ''))) : [];
+    const seen = new Set(); const raws = [];
+    for (let i = 0; i < lists.length; i++) {
+      const pl = lists[i];
+      if (!pl || pl.indexOf('#EXTM') < 0) continue;
+      let base = servers[i]; try { base = new URL(servers[i]).href.replace(/[^/]*$/, ''); } catch { }
+      const atag = woAudioTag(pl);
+      const lines = pl.split('\n');
+      if (woHasAudioGrp(pl)) { if (!seen.has(servers[i])) { seen.add(servers[i]); raws.push({ h: 0, url: servers[i], aud: atag }); } continue; }
+      let found = 0;
+      for (let j = 0; j < lines.length - 1; j++) {
+        if (lines[j].indexOf('#EXT-X-STREAM-INF') < 0) continue;
+        const rm = lines[j].match(/RESOLUTION=(\d+)x(\d+)/i);
+        const uri = String(lines[j + 1] || '').trim();
+        if (!uri || uri.charAt(0) === '#') continue;
+        let abs = uri; try { abs = new URL(uri, base).href; } catch { }
+        const h = rm ? parseInt(rm[2], 10) || 0 : 0;
+        if (!seen.has(abs)) { seen.add(abs); raws.push({ h, url: abs, aud: atag }); found++; }
+        if (found >= 6) break;
+      }
+      if (!found && /#EXTINF/.test(pl) && !seen.has(servers[i])) { seen.add(servers[i]); raws.push({ h: 0, url: servers[i], aud: atag }); } // master-level fallback
+    }
+    try { const vbl = await vbP; for (const v of (vbl || [])) if (v && v.url && !seen.has(v.url)) { seen.add(v.url); raws.push(v); } } catch { } // vidbolt results merge in parallel too
+    if (DBG) console.error('[mm] ' + tmdbId + '/' + (isSeries ? 'S' + (s || 1) + 'E' + (e || 1) : 'movie') + ' servers=' + servers.length + ' variants=' + raws.length + ' @' + (Date.now() - t3) + 'ms');
+    const vars = raws.slice().sort((a, b) => b.h - a.h).slice(0, 12);
+    if (!vars.length) return [];
+    const subs = await woSubs(tmdbId, type, s, e, left()).catch(() => []);
+    const T = String(title || 'Multimovies');
+    const epLine = isSeries ? ('\u29e0 S' + (parseInt(s, 10) || 1) + 'E' + (parseInt(e, 10) || 1)) : '\u29e0 Movie';
+    return vars.map(x => {
+      const q2 = x.h ? String(x.h) : (x.mp4 ? 'MP4' : 'HLS');
+      const aud = [x.aud, x.lang].filter(Boolean).join(' \u00b7 ');
+      const txt = '\u29c9 ' + T + '\n' + epLine + '\n\u229e Multimovies \u00b7 ' + (x.mp4 ? 'MM-MP4' : 'MM-HLS') + (aud ? ' \u2317 ' + aud : '') + (subs.length ? ' \u2022 \ud83c\udfac' : '');
+      return {
+        name: '\u25a5 ' + q2 + ' \u25a5',
+        title: txt,
+        description: txt,
+        quality: q2,
+        url: x.url,
+        behaviorHints: { notWebReady: false, isBingeable: true, filename: x.mp4 ? 'multimovies.mp4' : 'multimovies.m3u8', proxyHeaders: { request: { Referer: x.ref || WO_REF, 'User-Agent': UA } } },
+        bingeGroup: 'mm|' + T.toLowerCase() + '::',
+        ...(subs.length ? { subtitles: subs.map(y => ({ url: y.url, lang: y.lang })) } : {})
+      };
+    });
+  } catch (e2) { if (DBG) console.error('[mm] ERR ' + String(e2 && e2.message).slice(0, 70) + ' @' + (Date.now() - t3) + 'ms'); return []; }
+}
 async function withSources(cardsP, srcs, cfg, t0) {
   const cards = await cardsP.catch(e => { if (DBG) console.error('[srcdbg] cardsP died: ' + String(e && e.message || e).slice(0, 90)); return []; });
   const live = (srcs || []).filter(x => x && x.p && !(cfg && cfg[x.key] === 0));
@@ -1431,8 +1637,9 @@ const server = http.createServer((req, res) => {
       const nxP = nxOn ? nxFor('movie', String(m[1]), 0, 0) : null;
       const twP = (TWBASE && !(cfg && cfg.tw === 0)) ? tp.then(n => twrStreams(TWBASE, 'toonworld', n, 'movie', 0, 0)).catch(() => []) : null; // v1.12: টাইটেল-প্রমিস-থেকেই-সমান্তরালে-ছোটা
       const rtP = (RTBASE && !(cfg && cfg.rt === 0)) ? tp.then(n => twrStreams(RTBASE, 'raretoons', n, 'movie', 0, 0)).catch(() => []) : null;
+      const mmP = !(cfg && cfg.mm === 0) ? mmStreams(Number(m[1]), '', 'movie', 0, 0).catch(() => []) : null; // v1.15.28: Multimovies (cfg.mm toggle)
       kickSubs('tmdb' + m[1], 'movie', null, null, cfg);
-      return withDeadline(withSources(vOn ? getSources(Number(m[1]), 'movie', null, null, '', cfg, tp) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }], cfg, t0), 11900 /* v1.15.26 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
+      return withDeadline(withSources(vOn ? getSources(Number(m[1]), 'movie', null, null, '', cfg, tp) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }], cfg, t0), 11900 /* v1.15.26 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
         cards => { sendStreams(res, req.url, p, Date.now() - t0, cards, RVA); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }
@@ -1443,10 +1650,11 @@ const server = http.createServer((req, res) => {
       const nxP = nxOn ? nxFor('series', String(m[1]), Number(m[2] || 1), Number(m[3] || 1)) : null;
       const twP = (TWBASE && !(cfg && cfg.tw === 0)) ? tp.then(n => twrStreams(TWBASE, 'toonworld', n, 'series', Number(m[2] || 1), Number(m[3] || 1))).catch(() => []) : null;
       const rtP = (RTBASE && !(cfg && cfg.rt === 0)) ? tp.then(n => twrStreams(RTBASE, 'raretoons', n, 'series', Number(m[2] || 1), Number(m[3] || 1))).catch(() => []) : null;
+      const mmP = !(cfg && cfg.mm === 0) ? mmStreams(Number(m[1]), '', 'series', Number(m[2] || 1), Number(m[3] || 1)).catch(() => []) : null; // v1.15.28: Multimovies (cfg.mm toggle)
       if (nxOn) nxPrewarm('series', String(m[1]), Number(m[2] || 1), Number(m[3] || 1));
       twRtPrewarm(tp, 'series', Number(m[2] || 1), Number(m[3] || 1));
       kickSubs('tmdb' + m[1], 'series', Number(m[2] || 1), Number(m[3] || 1), cfg);
-      return withDeadline(withSources(vOn ? getSources(Number(m[1]), 'tv', Number(m[2] || 1), Number(m[3] || 1), '', cfg, tp) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }], cfg, t0), 11900 /* v1.15.26 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
+      return withDeadline(withSources(vOn ? getSources(Number(m[1]), 'tv', Number(m[2] || 1), Number(m[3] || 1), '', cfg, tp) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }], cfg, t0), 11900 /* v1.15.26 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
         cards => { sendStreams(res, req.url, p, Date.now() - t0, cards, RVA); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }
@@ -1458,8 +1666,9 @@ const server = http.createServer((req, res) => {
       const nmP = suggName(m[1]); // v1.12.6: rt/tw-দ্রুত-নাম
       const twP = (TWBASE && !(cfg && cfg.tw === 0)) ? nmP.then(nm => nm ? twrStreams(TWBASE, 'toonworld', nm, 'movie', 0, 0) : []).catch(() => []) : null; // v1.15.15: infoP-গেট-বাদ — v=0-কনফিগেও TW/RT-জীবন্ত (আগে vidy-সোর্স-বন্ধ=TW/RT-ও-নীরবে-মৃত — 'শুধু-MovieBox'-মূল-কারণ)
       const rtP = (RTBASE && !(cfg && cfg.rt === 0)) ? nmP.then(nm => nm ? twrStreams(RTBASE, 'raretoons', nm, 'movie', 0, 0) : []).catch(() => []) : null;
+      const mmP = !(cfg && cfg.mm === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? mmStreams(info.id, info.name || '', 'movie', 0, 0).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.28: Multimovies (cfg.mm toggle)
       kickSubs(m[1], 'movie', null, null, cfg);
-      return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'movie', null, null, info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }], cfg, t0), 11900 /* v1.15.26 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
+      return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'movie', null, null, info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }], cfg, t0), 11900 /* v1.15.26 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
         cards => { sendStreams(res, req.url, p, Date.now() - t0, cards, RVA); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }
@@ -1471,10 +1680,11 @@ const server = http.createServer((req, res) => {
       const nmP = suggName(m[1]); // v1.12.6: rt/tw-দ্রুত-নাম
       const twP = (TWBASE && !(cfg && cfg.tw === 0)) ? nmP.then(nm => nm ? twrStreams(TWBASE, 'toonworld', nm, 'series', Number(m[2]), Number(m[3])) : []).catch(() => []) : null; // v1.15.15: infoP-গেট-বাদ — v=0-তেও TW/RT-জীবন্ত (nmP=IMDb-suggestion, v-নিরপেক্ষ)
       const rtP = (RTBASE && !(cfg && cfg.rt === 0)) ? nmP.then(nm => nm ? twrStreams(RTBASE, 'raretoons', nm, 'series', Number(m[2]), Number(m[3])) : []).catch(() => []) : null;
+      const mmP = !(cfg && cfg.mm === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? mmStreams(info.id, info.name || '', 'series', Number(m[2]), Number(m[3])).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.28: Multimovies (cfg.mm toggle)
       if (nxOn) nxPrewarm('series', m[1], Number(m[2]), Number(m[3]));
       twRtPrewarm(nmP, 'series', Number(m[2]), Number(m[3]));
       kickSubs(m[1], 'series', Number(m[2]), Number(m[3]), cfg);
-      return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'tv', Number(m[2]), Number(m[3]), info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }], cfg, t0), 11900 /* v1.15.26 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
+      return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'tv', Number(m[2]), Number(m[3]), info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }], cfg, t0), 11900 /* v1.15.26 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
         cards => { sendStreams(res, req.url, p, Date.now() - t0, cards, RVA); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }
@@ -1486,10 +1696,11 @@ const server = http.createServer((req, res) => {
       const nmP = suggName(m[1]); // v1.12.6: rt/tw-দ্রুত-নাম
       const twP = (TWBASE && !(cfg && cfg.tw === 0)) ? nmP.then(nm => nm ? twrStreams(TWBASE, 'toonworld', nm, 'series', 1, 1) : []).catch(() => []) : null;
       const rtP = (RTBASE && !(cfg && cfg.rt === 0)) ? nmP.then(nm => nm ? twrStreams(RTBASE, 'raretoons', nm, 'series', 1, 1) : []).catch(() => []) : null;
+      const mmP = !(cfg && cfg.mm === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? mmStreams(info.id, info.name || '', 'series', 1, 1).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.28: Multimovies (cfg.mm toggle)
       if (nxOn) nxPrewarm('series', m[1], 1, 1);
       twRtPrewarm(nmP, 'series', 1, 1);
       kickSubs(m[1], 'series', 1, 1, cfg);
-      return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'tv', 1, 1, info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }], cfg, t0), 11900 /* v1.15.26 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
+      return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'tv', 1, 1, info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }], cfg, t0), 11900 /* v1.15.26 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
         cards => { sendStreams(res, req.url, p + ' [no-s:e]', Date.now() - t0, cards, RVA); },
         e => { logReq(p + ' [no-s:e]', Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }
@@ -1618,7 +1829,8 @@ setInterval(() => { nxBenchHealth(); }, 15000).unref();
   nxBenchHealth(); // v1.15.13: বুটেই-জানি (৬০সে-অপেক্ষা-নয়)
   server.listen(PORT, '0.0.0.0', () => console.log('[vidy] ' + VERSION + ' on :' + PORT + ' | pool=' + POOL.length + (NEXBASE ? ' | moviebox embedded' : '')));
   setTimeout(probePool, 3000).unref(); // v1.15.0 বুট-প্রোব
-  setTimeout(pxCheckerStart, 5000).unref(); // v1.15.19: বুটের-৫সে-পরেই-ঢেউ-শুরু
+  setTimeout(pxCheckerStart, 5000).unref();
+  setTimeout(mmCheckerStart, 6000).unref(); // v1.15.28: the multimovies pool's own bench waves // v1.15.19: বুটের-৫সে-পরেই-ঢেউ-শুরু
   // v1.15.18 (r68b ইউজার-অনুমোদিত): রেপ্লিকা-জাগ্রত নিজ-পিং — প্রতি-৪মিনিটে নিজের-পাবলিক-URL-এ /_health
   // (স্কেল-টু-জিরো/নিষ্ক্রিয়তা-ঘুম-বন্ধ; রাউটার-সর্বদা-গরম) + warmBases (রেজলভার/শিশুর-সকেট-DNS+TLS-হাত গরম — ঠান্ডা-১ম-ট্যাপের-মূল-কারণ)
   const SELF_URL = String(process.env.SELFPING_URL || 'https://3404d3c5dc63-vidy.baby-beamup.club/_health');

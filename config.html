@@ -227,6 +227,17 @@ h1 .g{color:var(--acc)}
     </div>
   </div>
 
+  <div class="card src-card nx" id="cardM">
+    <div class="src-hd">
+      <div class="tile nx" style="background:#0b2318;color:#7fe0b0;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:20px;letter-spacing:1px">MM</div>
+      <div class="s-body">
+        <div class="s-name">Multimovies <span class="badge n">MM-HLS &middot; multi-audio</span></div>
+        <div class="s-sub">Own proxy pool (vidbolt-benched) &middot; vidout index + vidbolt resolve &middot; subtitles</div>
+      </div>
+      <div class="sw nx on" id="swM"></div>
+    </div>
+  </div>
+
   <div class="seclab">Preview</div>
   <p class="sub" style="margin-bottom:4px">How stream cards will look in your app — both sources, one anatomy:</p>
   <div class="card">
@@ -235,6 +246,7 @@ h1 .g{color:var(--acc)}
       <div class="pcard nxc" id="pvN"><div class="dot n"></div><div class="pbody"><div class="hd n" id="pvNh"></div><div class="t" id="pvNt"></div></div><div class="q n" id="pvNq"></div></div>
       <div class="pcard nxc" id="pvR"><div class="dot n"></div><div class="pbody"><div class="hd n" id="pvRh"></div><div class="t" id="pvRt"></div></div><div class="q n" id="pvRq"></div></div>
       <div class="pcard nxc" id="pvT"><div class="dot n"></div><div class="pbody"><div class="hd n" id="pvTh"></div><div class="t" id="pvTt"></div></div><div class="q n" id="pvTq"></div></div>
+      <div class="pcard nxc" id="pvM"><div class="dot n"></div><div class="pbody"><div class="hd n" id="pvMh"></div><div class="t" id="pvMt"></div></div><div class="q n" id="pvMq"></div></div>
     </div>
   </div>
 
@@ -259,7 +271,7 @@ h1 .g{color:var(--acc)}
   var SRVS=[["miami","Miami","Primary · always-on workhorse"],["boise","Boise","Primary · up to 4K"],["atlanta","Atlanta","Primary · official subtitles"],["phoenix","Phoenix","Extra · 1080p mirror"],["dallas","Dallas","Extra · Auto-HLS feed"],["austin","Austin","Extra · audio variants (Hindi/English)"],["seattle","Seattle","Backup · Auto-HLS feed"],["delhi","Delhi","Extra · multi-audio (Hindi/English)"],["munich","Munich","Extra · 1080p (EU)"],["paris","Paris","Extra · always-on single feed"],["orlando","Orlando","Extra · 1080p feed"],["reno","Reno","Extra · Auto-HLS feed"],["oakland","Oakland","Extra · Auto-HLS feed"],["vegas","Vegas","Extra · Vidara feed"],["cancun","Cancun","Extra · Vimeos feed"],["tampa","Tampa","Extra · Auto-HLS feed"]];
   var LANGS=[["original","Original"],["english","English"],["hindi","Hindi"],["spanish","Spanish"],["russian","Russian"],["japanese","Japanese"],["tamil","Tamil"],["portuguese","Portuguese (BR)"],["french","French"],["german","German"],["korean","Korean"],["arabic","Arabic"]];
 
-  var st={ v:1, q:[], sub:1, srv:SRVS.map(function(x){return x[0];}), nx:1, nxq:[], nxl:[], rt:1, rtl:[], tw:1, twq:[] };
+  var st={ v:1, q:[], sub:1, srv:SRVS.map(function(x){return x[0];}), nx:1, nxq:[], nxl:[], rt:1, rtl:[], tw:1, twq:[], mm:1 };
 
   function b64u(o){return btoa(unescape(encodeURIComponent(JSON.stringify(o)))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');}
   function base(){return location.origin;}
@@ -280,6 +292,7 @@ h1 .g{color:var(--acc)}
     if(st.rt===0)c.rt=0;
     else if(st.rtl.length)c.rtl=st.rtl.slice();
     if(st.tw===0)c.tw=0;
+    if(st.mm===0)c.mm=0;
     else if(st.twq.length)c.twq=st.twq.slice();
     var u=base()+(Object.keys(c).length?'/cfg/'+b64u(c):'')+'/manifest.json';
     document.getElementById('url').value=u;
@@ -310,6 +323,9 @@ h1 .g{color:var(--acc)}
     document.getElementById('pvT').style.display=st.tw?'':'none';
     document.getElementById('pvTh').textContent='\u25a5 1080 \u25a5';
     document.getElementById('pvTt').textContent='\u29c9 Scarlet | 2025 |\n\u29e0 Movie\n\u229e ToonWorld \u2317 Multi Audio';
+    document.getElementById('pvM').style.display=st.mm?'':'none';
+    document.getElementById('pvMh').textContent='\u25a5 1080 \u25a5';
+    document.getElementById('pvMt').textContent='\u29c9 Scarlet | 2025 |\n\u29e0 Movie\n\u229e Multimovies \u00b7 MM-HLS \u2317 Bengali';
     document.getElementById('pvTq').textContent=st.twq.length?st.twq.slice().sort(function(a,b){return b-a;}).join(', '):'All';
   }
 
@@ -430,6 +446,15 @@ h1 .g{color:var(--acc)}
     st.rt=st.rt?0:1;
     swR.classList.toggle('on',!!st.rt);
     cardR.classList.toggle('off',!st.rt);
+    rebuild();
+  };
+
+  /* multimovies master switch */
+  var swM=document.getElementById('swM'), cardM=document.getElementById('cardM');
+  swM.onclick=function(){
+    st.mm=st.mm?0:1;
+    swM.classList.toggle('on',!!st.mm);
+    cardM.classList.toggle('off',!st.mm);
     rebuild();
   };
 
