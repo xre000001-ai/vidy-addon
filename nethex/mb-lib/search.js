@@ -154,6 +154,13 @@ async function ensureJwt() {
   return jwtState.token;
 }
 
+/** v2.11.1 (রোগ-নির্ণয় r134): MovieBox এখন /subject/play-এও Bearer-JWT চায়
+ *  (টোকেন-ছাড়া = hasResource:false, খালি-streams — লাইভ-প্রমাণিত)। matrix/links/subtitles
+ *  এই-এক-গেট থেকে টোকেন নেয়। */
+export async function bearerToken() {
+  try { return (await ensureJwt()) || jwtState.token || ''; } catch { return jwtState.token || ''; }
+}
+
 const MAX_BFF_PAGES = 10; // safety cap for the page walk
 
 async function searchPage(keyword, page) {

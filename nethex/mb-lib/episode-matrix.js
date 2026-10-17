@@ -22,6 +22,7 @@
 
 import { API, SITE, commonHeaders } from "./upstream.js";
 import { fetchJsonRotating } from "./pool.js";
+import { bearerToken } from "./search.js"; // v2.11.1: play-এ-টোকেন-বাধ্যতামূলক (হাব-অর্ডার-নয় — MovieBox-নতুন-গেট)
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -34,15 +35,17 @@ async function variantStreams(subjectId, detailPath, season, episode) {
   const referer = `${SITE}/play/${detailPath}`;
   const playUrl = `${API}/wefeed-h5api-bff/subject/play?subjectId=${subjectId}&se=${season}&ep=${episode}&detailPath=${encodeURIComponent(detailPath)}`;
   const dlUrl = `${SITE}/wefeed-h5api-bff/subject/download?subjectId=${subjectId}&se=${season}&ep=${episode}&detailPath=${encodeURIComponent(detailPath)}`;
-  const H = commonHeaders(referer);
+  const bt = await bearerToken();
+  const H = bt ? { ...commonHeaders(referer), Authorization: `Bearer ${bt}` } : commonHeaders(referer);
   let streams = [];
   for (let round = 0; round < 2; round++) {
     // v2.6.0 PARALLEL: play+download race TOGETHER (was sequential —
     // empty-play variants paid an extra full round-trip); both ride
     // hedged rotating exits (parallel search across proxies).
+    // v2.11.1 (রোগ-নির্ণয় r134): play-এ-প্রতি-IP-রেট-লিমিট (~১/২-৩-মিনিট) — বেশি-ভিন্ন-exit-ঘোরানো-ই-কোটা-বাড়ানো
     const [res, res2] = await Promise.all([
-      fetchJsonRotating(playUrl, H, { attempts: 2, ms: 3000, hedgeMs: 650 }),
-      fetchJsonRotating(dlUrl, H, { attempts: 2, ms: 3000, hedgeMs: 650 }),
+      fetchJsonRotating(playUrl, H, { attempts: 5, ms: 4200, hedgeMs: 600 }),
+      fetchJsonRotating(dlUrl, H, { attempts: 3, ms: 3600, hedgeMs: 600 }),
     ]);
     streams = res.ok ? res.data?.data?.streams || [] : [];
     if (streams.length === 0) {
@@ -58,9 +61,10 @@ async function variantStreams(subjectId, detailPath, season, episode) {
 async function variantCaptions(subjectId, detailPath, season, episode, videoId) {
   if (!videoId) return [];
   const referer = `${SITE}/play/${detailPath}`;
+  const bt2 = await bearerToken();
   const res = await fetchJsonRotating(
     `${API}/wefeed-h5api-bff/subject/caption?format=MP4&id=${videoId}&subjectId=${subjectId}&detailPath=${encodeURIComponent(detailPath)}`,
-    commonHeaders(referer), { attempts: 2, ms: 3000, hedgeMs: 600 }
+    bt2 ? { ...commonHeaders(referer), Authorization: `Bearer ${bt2}` } : commonHeaders(referer), { attempts: 2, ms: 3000, hedgeMs: 600 }
   );
   if (!res.ok) return [];
   return (res.data?.data?.captions || [])

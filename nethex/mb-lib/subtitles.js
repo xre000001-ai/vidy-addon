@@ -9,6 +9,7 @@
 // from any HTTP client without special headers.
 
 import { API, SITE, commonHeaders, fetchJson } from "./upstream.js";
+import { bearerToken } from "./search.js"; // v2.11.1: play-টোকেন-গেট
 
 /** Entry point. params: { id, season, episode } -> { status, body }. */
 export async function run(params) {
@@ -45,9 +46,10 @@ export async function run(params) {
   let videoId = "";
   let streamSource = "";
 
+  const btS = await bearerToken();
   const playResp = await fetchJson(
     `${API}/wefeed-h5api-bff/subject/play?subjectId=${subjectId}&se=${season}&ep=${episode}&detailPath=${encodeURIComponent(detailPath)}`,
-    commonHeaders(playReferer)
+    btS ? { ...commonHeaders(playReferer), Authorization: `Bearer ${btS}` } : commonHeaders(playReferer)
   );
   const playStreams = playResp.data?.data?.streams || [];
   if (playStreams.length > 0) {

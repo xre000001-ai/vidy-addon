@@ -106,7 +106,7 @@ export async function apiFetch(url, options = {}) {
   const p = undiciFetch(url, { ...options, dispatcher: agentFor(px) });
   p.then(r => {
     if (r.status === 403 || r.status === 406) noteFail(px, 'block');
-    else if (r.ok) noteGood(px, Date.now() - t0);
+    else if (r.ok) { noteGood(px, Date.now() - t0); hubReport(px, Date.now() - t0); } // v2.11.1: লাইভ-জয় → হাব-প্রমাণ
   }, () => {
     if (!options.signal?.aborted) noteFail(px, 'dead');  // caller abort != dead exit
   }).catch(() => {})
@@ -183,6 +183,7 @@ export async function fetchJsonRotating(url, headers, opts = {}) {
             for (const [k, v] of STICKY) if (now - v.at > 45000) STICKY.delete(k);
           }
           STICKY.set(key, { exit: px, at: Date.now() });   // train the route
+          hubReport(px, Date.now() - t0); // v2.11.1: লাইভ-জয় → হাবের-moviebox-স্পেসে-প্রমাণ (own-চক্র-বাঁচায় — ঢেউ-নেই-বলে-এটাই-এখন-একমাত্র-খাবার)
           for (const o of aborts) { try { o.abort(); } catch {} }
           const win = { ok: true, status: resp.status, data, via: px };
           settle(win);
@@ -208,6 +209,20 @@ export async function fetchJsonRotating(url, headers, opts = {}) {
   const kickNext = () => { if (!settled2 && started < attempts) attempt().catch(() => {}); };
   const out = new Promise((res) => { resolveOut = res; });
   const pr = (async () => {
+    // v2.11.1 (রোগ-নির্ণয় r134): হাব-প্রথম — হাবের /fetch তার moviebox-স্পেস (/report-প্রমাণিত)-দিয়ে-রেস-করে;
+    // সফল-হলে-নিজের-exit-ঘোরানোই-লাগে-না।
+    // v2.11.1b সংশোধন: হাব-/fetch GET-only — Authorization-বহন-করতে-পারে-না; play/download/caption
+    // (MovieBox-এখন-টোকেন-চায় — টোকেনহীন=ok-কিন্তু-খালি!) হাব-দিয়ে-গেলে-বিষ-খালি-উত্তর-ফেরে → ওগুলো-শুধু-নিজের-exit-এ (টোকেন-সহ)
+    if (HUBP && !/\/subject\/(play|download|caption)/.test(url)) {
+      try {
+        const hr = await fetch(HUBP + '/fetch?src=moviebox' + (MBKEY ? '&key=' + encodeURIComponent(MBKEY) : '') + '&ms=9000&url=' + encodeURIComponent(url), { signal: AbortSignal.timeout(11500) });
+        const hj = await hr.json();
+        if (hj && hj.ok) {
+          let hd = null; try { hd = JSON.parse(hj.body); } catch { }
+          if (hd !== null) { const w = { ok: true, status: 200, data: hd, via: 'hub' }; settle(w); return w; }
+        }
+      } catch { }
+    }
     attempt().catch(() => {});
     const hedge = setInterval(() => {
       if (settled2 || started >= attempts) { clearInterval(hedge); return; }
@@ -235,15 +250,25 @@ export async function poolOnce(force = false) {
     const r = await fetch(HUBP + '/pick?src=moviebox&n=40&cb=' + Date.now() + (MBKEY ? '&key=' + encodeURIComponent(MBKEY) : ''), { signal: AbortSignal.timeout(8000) }); // cb=nginx-ক্যাশ-ভেদ
     const j = await r.json();
     if (!j || !Array.isArray(j.pick)) return;
-    for (const p of j.pick) {
+    // v2.11.1 (রোগ-নির্ণয় r134): own=true = হাবের-moviebox-স্পেসের /report-প্রমাণিত-সদস্য — এরাই-প্রথম;
+    // বাকি-হাব-পিক = ব্যাকআপ (EWMA-বীজ-ধীর → pick()-এ-পিছনে); পুরনো-সদস্য-যাদের-সাম্প্রতিক-লাইভ-প্রমাণ (৬০০সে) — রেখে-দেওয়া
+    const own = j.pick.filter(p => p.own), rest = j.pick.filter(p => !p.own);
+    const now2 = Date.now();
+    const keep = POOL.filter(u => !BAD.get(u) || BAD.get(u) <= now2 ? (now2 - (LASTOK.get(u) || 0) < 600000) : false);
+    const next = [];
+    const add = (p, lat) => {
       const u = 'http://' + p.px;
-      if (POOL.includes(u) || POOL.length >= BENCH_MAX) continue;
-      POOL.push(u);
-      if (!STATS.get(u)) STATS.set(u, { ok: 1, fail: 0, lat: Number(p.ms) || 1200 }); // হাব-বেঞ্চ-ms-বীজ
+      if (next.includes(u) || next.length >= BENCH_MAX) return;
+      next.push(u);
+      if (!STATS.get(u)) STATS.set(u, { ok: 1, fail: 0, lat: Number(p.ms) || lat });
       if (!LASTOK.has(u)) LASTOK.set(u, Date.now());
-    }
+    };
+    own.forEach(p => add(p, 800));     // প্রমাণিত — দ্রুত-বীজ
+    keep.forEach(u => { if (!next.includes(u) && next.length < BENCH_MAX) next.push(u); });
+    rest.forEach(p => add(p, 2600));   // ব্যাকআপ — ধীর-বীজ (লাইভে-প্রমাণ-করলে-ওঠবে)
+    POOL.length = 0; POOL.push(...next);
     FEEDS++;
-    console.log(`[হাব-ফিড] moviebox bench=${POOL.length} (হাব-পিক=${j.pick.length})`);
+    console.log(`[হাব-ফিড] moviebox bench=${POOL.length} (own=${own.length} রাখা=${keep.length} ব্যাকআপ=${rest.length})`);
   } catch (e) { } finally { FETCHING = false; }
 }
 
