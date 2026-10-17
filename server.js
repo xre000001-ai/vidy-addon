@@ -19,7 +19,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.75';
+const VERSION = '1.15.76';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -1387,9 +1387,10 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: // titl
         if (DBG) console.error('[t1g] ' + srv + ' BUDGET-CUT');
         pend.delete(srv); // v1.14.2: // v1.14.2: settled — keep early-harvest math correct
         fire({ srv, err: new Error('srv-budget') });
-      }, GIANT.indexOf(srv) >= 0 ? (viaProxy ? 6500 : 5500) : (viaProxy ? 5500 : 3800)); // v1.15.24 (// v1.15.24 (user: "all cards in 6-7s"): proxy-path budget 8.5/7 -> 6.5/5.5s — vidout needs a snappier wall
+      }, GIANT.indexOf(srv) >= 0 ? (viaProxy ? 8500 : 7000) : (viaProxy ? 7000 : 5500)); // v1.15.76 (user: 1.15.27 was the stable era): back to 8.5/7s — first-try completeness beats the speed experiment — vidout needs a snappier wall
       return Promise.race([
-        one(srv).then(r => { done = true; clearTimeout(tmo); pend.delete(srv); if (r.ok) okWave++; return r; }), // timer cleared on win — no dangling timeouts
+        one(srv).then(r => { done = true; clearTimeout(tmo); pend.delete(srv); if (r.ok) okWave++; return r; }) // timer cleared on win — no dangling timeouts
+          .catch(e => { done = true; clearTimeout(tmo); pend.delete(srv); return { srv, err: e || new Error('one-reject') }; }), // v1.15.76: a reject used to kill the WHOLE vidy wave (live: 'cardsP died: srv-budget', ok=0/16)
         new Promise(r => { fire = r; pend.set(srv, v => { done = true; clearTimeout(tmo); fire(v); }); }) // v1.14.2: tighten-// v1.14.2: a tighten cut also clears the timer
       ]);
     };
@@ -1403,7 +1404,7 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: // titl
       // // tier 2: nearly all settled (<=2 pending) + >=1 ok + 3.9s -> cut the last stragglers (usually the slow giant that ends err/empty anyway)
       // // v1.15.70 tier-3 (user: "why is it still slow"): any-won wave must not hold the tap
       // // past 5.3s — pending servers (incl. slow giants) cut here and finish into SRV_CACHE in the background.
-      if (pend.size && el2 >= 2200 && (okWave >= 6 || (okWave >= 1 && el2 >= 3900 && allow.length - pend.size >= allow.length - 2) || (okWave >= 1 && el2 >= 5300))) {
+      if (pend.size && el2 >= 2200 && (okWave >= 6 || (okWave >= 1 && el2 >= 3900 && allow.length - pend.size >= allow.length - 2) || (okWave >= 1 && el2 >= 7200))) {
         if (DBG) console.error('[t1g] TIGHTEN ok=' + okWave + ' cut=' + pend.size + ' at ' + el2 + 'ms');
         for (const [srv2, f2] of Array.from(pend)) { pend.delete(srv2); f2({ srv: srv2, late: true }); }
       }
