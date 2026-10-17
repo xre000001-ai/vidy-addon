@@ -528,7 +528,8 @@ async function hubText(url, ms, src, px) { // v1.15.59: px-// v1.15.59: with px,
   if (!HUB) return '';
   try {
     const sp = HSPACE(src);
-    const r = await fetch(HUB + '/fetch?src=' + encodeURIComponent(sp) + (px ? '&px=' + encodeURIComponent(px) : '') + '&ms=' + Math.min(9000, ms || 8000) // v1.15.79: 12->9s hold — dead races release exits faster, the space stops self-congesting + (HKEY(sp) ? '&key=' + encodeURIComponent(HKEY(sp)) : '') + '&url=' + encodeURIComponent(url), { signal: AbortSignal.timeout(Math.min(13000, (ms || 8000) + 1500)) });
+    // v1.15.79: hub-race hold 12->9s — dead races release their exits faster, the space stops self-congesting
+    const r = await fetch(HUB + '/fetch?src=' + encodeURIComponent(sp) + (px ? '&px=' + encodeURIComponent(px) : '') + '&ms=' + Math.min(9000, ms || 8000) + (HKEY(sp) ? '&key=' + encodeURIComponent(HKEY(sp)) : '') + '&url=' + encodeURIComponent(url), { signal: AbortSignal.timeout(Math.min(13000, (ms || 8000) + 1500)) });
     const j = await r.json().catch(() => null);
     return j && j.ok ? String(j.body || '') : '';
   } catch { return ''; }
