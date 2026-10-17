@@ -16,7 +16,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 
-const VERSION = '1.1.1';
+const VERSION = '1.2.0';
 const PORT = Number(process.env.PORT || 8290);
 const HUB = String(process.env.POOLHUB || 'https://293c2a7d7dd6-poolhub.baby-beamup.club').replace(/\/$/, '');
 const UPSTREAM = String(process.env.UPSTREAM || 'https://3404d3c5dc63-raretoons.baby-beamup.club').replace(/\/$/, '');
@@ -41,6 +41,29 @@ function viaHub(space, url) {
     .catch(() => null);
 }
 
+/** v1.2.0: the upstream is OUR OWN beamup app — reachable in ~0.5-1s plain.
+ *  Raced alongside the hub: uncached /find answers take 3-6.5s upstream-side,
+ *  and hub exits often blew the 9s race window -> sources randomly vanished
+ *  ("কিছু টাইটেলে tw/rt আসে না"). First non-null wins; the hub stays in the
+ *  race as the resilient path, the direct call is plain fetch of our own
+ *  service (no proxy picking, no scanning — r136 rule intact). */
+function viaDirect(url) {
+  return fetch(url, { signal: AbortSignal.timeout(11000), headers: { 'user-agent': 'twr-bridge/1.2' } })
+    .then((r) => r.text())
+    .then((t) => (t && t[0] === '{' ? t : null))
+    .catch(() => null);
+}
+
+function raceHubDirect(space, url) {
+  return new Promise((res) => {
+    let hubV = null, dirV = null, done = false;
+    const fin = () => { if (!done) { const v = dirV || hubV; if (v) { done = true; res(v); } } };
+    viaHub(space, url).then((v) => { hubV = v; fin(); });
+    viaDirect(url).then((v) => { dirV = v; fin(); });
+    setTimeout(() => { if (!done) { done = true; res(hubV || dirV); } }, 11500);
+  });
+}
+
 const server = http.createServer(async (req, res) => {
   const u = new URL(req.url, 'http://x');
   const json = (code, obj) => { res.writeHead(code, { 'content-type': 'application/json', 'access-control-allow-origin': '*' }); res.end(JSON.stringify(obj)); };
@@ -54,7 +77,7 @@ const server = http.createServer(async (req, res) => {
   const t0 = Date.now();
   USED[space] = (USED[space] || 0) + 1;
 
-  const body = await viaHub(space, upstreamUrl(u));
+  const body = await raceHubDirect(space, upstreamUrl(u)); // v1.2.0: hub+direct raced — first answer wins
   if (body) {
     console.log(`[bridge] ${space} hub ✓ ${Date.now() - t0}ms`);
     return json(200, JSON.parse(body));
