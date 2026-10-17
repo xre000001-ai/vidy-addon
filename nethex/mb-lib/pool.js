@@ -252,11 +252,11 @@ let FEEDS = 0;
 export async function poolOnce(force = false) {
   // v2.11.0 (// v2.11.0 (user): public scrapes / NX_POOL_FILE seeds / probe-verification all dropped — the only source is the PoolHub moviebox sub-space
   if (!HUBP) return;
-  if (!force && Date.now() - TS < 45000) return; // v2.11.11: 60->45s — pre-stocking ahead of need
+  if (!force && Date.now() - TS < 45000) return; // v2.11.12 (user: 100 er moto proxy bench kore rakhe): pick n=60->100; 45s cadence — pre-stocking ahead of need
   if (FETCHING) return;
   FETCHING = true; TS = Date.now();
   try {
-    const r = await fetch(HUBP + '/pick?src=moviebox&n=60&cb=' + Date.now() + (MBKEY ? '&key=' + encodeURIComponent(MBKEY) : ''), { signal: AbortSignal.timeout(8000) }); // cb=nginx-// cb busts the nginx cache
+    const r = await fetch(HUBP + '/pick?src=moviebox&n=100&cb=' + Date.now() + (MBKEY ? '&key=' + encodeURIComponent(MBKEY) : ''), { signal: AbortSignal.timeout(8000) }); // cb=nginx-// cb busts the nginx cache
     const j = await r.json();
     if (!j || !Array.isArray(j.pick)) return;
     // v2.11.1 (// v2.11.1 (r134 diagnosis): own=true = /report-proven members of the hub moviebox space — they go first;

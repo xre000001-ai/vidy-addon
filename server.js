@@ -19,7 +19,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.82';
+const VERSION = '1.15.83';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -101,7 +101,7 @@ async function hubMirror() {
       try {
         // v1.15.80: adaptive depth — when the live reserve dips below target, pull deeper
         const deep = (sp === 'vidy' && PX_API.size < 120) || (sp === 'multimovies' && PX_VB.size < 100);
-        const rM = await fetch(HUB + '/pick?src=' + sp + '&n=' + (deep ? 60 : 40) + '&cb=' + Date.now() + (HKEY(sp) ? '&key=' + encodeURIComponent(HKEY(sp)) : ''), { signal: AbortSignal.timeout(6000) }); // v1.15.67: cb=nginx-// v1.15.67: cb busts the 2h nginx cache (prevents a stale pick cache)
+        const rM = await fetch(HUB + '/pick?src=' + sp + '&n=' + (deep ? 100 : 60) + '&cb=' + Date.now() + (HKEY(sp) ? '&key=' + encodeURIComponent(HKEY(sp)) : ''), { signal: AbortSignal.timeout(6000) }); // v1.15.67: cb=nginx-// v1.15.67: cb busts the 2h nginx cache (prevents a stale pick cache)
         const jM = await rM.json(); if (!jM || !Array.isArray(jM.pick)) continue;
         for (const p of jM.pick) { // v1.15.67: own-// v1.15.67: own-filter dropped — every px the hub gives is hub-benched (hub sorts its own spaces first)
           if (!POOL.some(c => c.px === p.px) && POOL.length < 300) POOL.push({ px: p.px, ms: p.ms || 2000 }); // // store locally
