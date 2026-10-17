@@ -8,7 +8,7 @@
 const http = require('http'), https = require('https'), net = require('net'), tls = require('tls'), crypto = require('crypto');
 const fs = require('fs'), path = require('path');
 const { URL } = require('url');
-const VERSION = '1.3.1';
+const VERSION = '1.3.2';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const PORT = Number(process.env.PORT || 8399);
 const PX_CAP = 300, DIR = __dirname;
@@ -23,7 +23,7 @@ const SPACES = {
   toonworld4all: { url: 'https://toonworld4all.me/robots.txt', min: 100, contains: 'wp-admin' }, // আসল-টার্গেট+WordPress-স্বাক্ষর — MITM-echo-জাল-ছাঁকনি
   raretoons: { url: 'https://www.rareanimes.mov/robots.txt', min: 100, contains: 'wp-admin' }, // crawler.py-র-লাইভ-টার্গেট
   vidy: { url: 'https://api.wecollege.net/seed?mediaId=95350', min: 30, contains: '"seed"' }, // vidy-র-আসল-কাজ (seed — আগের site+api-এর-মূল-শর্ত)
-  moviebox: { url: '', min: 1 }, // v1.3.1: শর্ত=আসল-MB-API-পাস (nethex-এর searchVerify) — /report-দ্বারা-জমা (robots-শর্ত-ফ্রি-px-ব্লকে-মিথ্যা-০-দেখাত)
+  moviebox: { url: '', tokencheck: true, min: 1 }, // v1.3.2 (ইউজার-প্রমাণ: টোকেন-সংগ্রহ-ই-আসল-শর্ত, ৮৩%-পাস): ঢেউয়ে-স্বাক্ষরিত-POST→x-user-JWT-টোকেন-সংগ্রহ — vidy-র-searchVerify-এর-হুবহু-দরজা
   multimovies: { url: 'https://vidbolt.xyz/api/resolve?type=tv&id=1&season=1&episode=1', min: 5 } // আগের vb+wo-এর-মূল-শর্ত
 };
 const ALIAS = { tw: 'toonworld4all', toonworld: 'toonworld4all', rt: 'raretoons', raretoons: 'raretoons', api: 'vidy', mb: 'moviebox', vb: 'multimovies', wo: 'multimovies' }; // পুরনো-ছোট-নাম-গ্রহণযোগ্য (site-বাদ: ভিন্ন-শর্ত — ঢেউ-পুনঃযাচাই-ই-পথ)
@@ -41,7 +41,7 @@ function keyOf(req, u) { return String((req.headers && req.headers['x-poolhub-ke
 function isUser(k) { return String(k).indexOf('u:') === 0; }
 function space(k) { if (!SPACES[k]) SPACES[k] = { url: '', min: 1, set: new Set(), ts: new Map() }; return SPACES[k]; }
 let CT = null;
-function saveCond() { if (CT) return; CT = setTimeout(() => { CT = null; const o = {}; for (const k of Object.keys(SPACES)) { const S = SPACES[k]; o[k] = { url: S.url, min: S.min, contains: S.contains || undefined, home: S.home || undefined, homeMin: S.homeMin || undefined }; } try { fs.writeFileSync(COND_FILE, JSON.stringify(o, null, 1)); } catch (e) { } }, 1500); }
+function saveCond() { if (CT) return; CT = setTimeout(() => { CT = null; const o = {}; for (const k of Object.keys(SPACES)) { const S = SPACES[k]; o[k] = { url: S.url, min: S.min, contains: S.contains || undefined, home: S.home || undefined, homeMin: S.homeMin || undefined, tokencheck: S.tokencheck || undefined }; } try { fs.writeFileSync(COND_FILE, JSON.stringify(o, null, 1)); } catch (e) { } }, 1500); }
 const POOL = []; try { for (const c of JSON.parse(fs.readFileSync(POOL_FILE, 'utf8'))) POOL.push(c); } catch (e) { }
 const PX_RUN = new Map(), PX_LASTOK = new Map(), PX_COOL = new Map(), PX_MISS = new Map();
 try { const o = JSON.parse(fs.readFileSync(SRC_FILE, 'utf8')); const now = Date.now(); for (const sk0 of Object.keys(o)) { const sk = norm(sk0); if (!SUBS.includes(sk)) continue; const S = space(sk); for (const px of Object.keys(o[sk0])) if (now - o[sk0][px] < 600000) { S.set.add(px); S.ts.set(px, o[sk0][px]); } } } catch (e) { }
@@ -66,6 +66,32 @@ function pxScore(px, boot) { const h = PX_RUN.get(px); if (!h) return boot || 99
 let ST = null;
 function saveSrc() { if (ST) return; ST = setTimeout(() => { ST = null; const o = {}; for (const sk of Object.keys(SPACES)) { o[sk] = {}; for (const px of SPACES[sk].set) o[sk][px] = SPACES[sk].ts.get(px) || Date.now(); } try { fs.writeFileSync(SRC_FILE, JSON.stringify(o)); } catch (e) { } }, 3000); }
 function savePool() { try { fs.writeFileSync(POOL_FILE, JSON.stringify(POOL)); } catch (e) { } }
+function mbToken(px) { // v1.3.2: স্বাক্ষরিত-POST search-suggest → x-user-হেডারে-JWT — টোকেন-পেলে-ms, না-পেলে null (ইউজার: 'moviebox proxy use kore token collect')
+  return new Promise(resolve => {
+    let pxs = String(px); const ci = pxs.indexOf(':');
+    const ts = String(Math.floor(Date.now() / 1000));
+    const ct = ts + ',' + crypto.createHash('md5').update(ts.split('').reverse().join('')).digest('hex');
+    const body = JSON.stringify({ keyword: 'a', perPage: 1 });
+    const sock = net.connect({ host: pxs.slice(0, ci), port: Number(pxs.slice(ci + 1)) || 8080 });
+    const to = setTimeout(() => { try { sock.destroy(); } catch (e) { } resolve(null); }, 6000);
+    const bail = () => { clearTimeout(to); try { sock.destroy(); } catch (e2) { } resolve(null); };
+    sock.once('error', bail);
+    sock.once('connect', () => sock.write('CONNECT movieboxonline.net:443 HTTP/1.1\r\nHost: movieboxonline.net:443\r\n\r\n'));
+    let buf = Buffer.alloc(0);
+    const onData = d => {
+      buf = Buffer.concat([buf, d]); const i = buf.indexOf('\r\n\r\n'); if (i < 0) return;
+      sock.removeListener('data', onData);
+      if (!/^HTTP\/1\.[01] 200/.test(buf.slice(0, i).toString('latin1'))) return bail();
+      const tl = tls.connect({ socket: sock, servername: 'movieboxonline.net', rejectUnauthorized: false }, () => {
+        tl.write('POST /wefeed-h5api-bff/subject/search-suggest HTTP/1.1\r\nHost: movieboxonline.net\r\nUser-Agent: ' + UA + '\r\nAccept: application/json\r\nContent-Type: application/json\r\nX-Client-Token: ' + ct + '\r\nX-Request-Lang: en\r\nContent-Length: ' + Buffer.byteLength(body) + '\r\nConnection: close\r\n\r\n' + body);
+        let ht = '';
+        tl.on('data', d2 => { if (ht.indexOf('\r\n\r\n') >= 0) return; ht += d2.toString('latin1'); const j = ht.indexOf('\r\n\r\n'); if (j < 0) return; const head = ht.slice(0, j); const code = parseInt((head.split('\r\n')[0] || '').split(' ')[1] || '0', 10); let xu = ''; for (const ln of head.split('\r\n').slice(1)) { if (ln.toLowerCase().indexOf('x-user:') === 0) xu = ln.slice(7).trim(); } let tok = ''; try { tok = JSON.parse(xu || '{}').token || ''; } catch (e3) { } clearTimeout(to); try { tl.destroy(); } catch (e4) { } resolve(code === 200 && tok ? 1 : null); });
+        tl.once('error', bail);
+      }); tl.once('error', bail);
+    };
+    sock.on('data', onData);
+  });
+}
 function dechunk(b) { let o = [], i = 0; while (i < b.length) { const j = b.indexOf('\r\n', i); if (j < 0) break; const s = parseInt(b.slice(i, j).toString('latin1').split(';')[0], 16); if (!s) break; o.push(b.slice(j + 2, j + 2 + s)); i = j + 2 + s + 2; } return Buffer.concat(o); }
 function proxiedGet(px, url, timeoutMs, maxBytes) {
   return new Promise((resolve, reject) => {
@@ -154,6 +180,11 @@ async function wave() { // v1.2: প্রতি-ঢেউয়ে-সর্ব
       let net = 0, total = 0;
       Promise.all(pick.map(sk => new Promise(r3 => {
         const S = space(sk);
+        if (S.tokencheck) { // v1.3.2: টোকেন-সংগ্রহ-বেঞ্চ (robots-নয়)
+          const t0 = Date.now();
+          mbToken(c.px).then(okms => { const ok2 = !!okms; pxRec(c.px, ok2, ok2 ? Date.now() - t0 : 0, sk); if (S.bench) { S.bench.tried++; if (ok2) S.bench.pass++; } if (ok2) { S.set.add(c.px); S.ts.set(c.px, Date.now()); PX_MISS.delete(c.px); PX_COOL.delete(c.px); cok++; } else { S.set.delete(c.px); } total++; r3(); }).catch(() => { net++; total++; S.set.delete(c.px); r3(); });
+          return;
+        }
         const u = S.url; const minB = S.min || 1;
         if (!u) return r3();
         const t0 = Date.now();
@@ -213,7 +244,7 @@ const server = http.createServer((req, res) => {
     if (ks) { const S = SPACES[ks]; return jout(200, { [ks]: { count: S.set.size, condition: { url: S.url, min: S.min }, bench: S.bench || undefined, members: [...S.set] } }); } // অ্যাপ-কী=শুধু-নিজ-স্পেস (বিচ্ছিন্নতা)
     const rec = auth(req); return jout(200, Object.fromEntries(Object.keys(SPACES).map(k => { const S = SPACES[k]; const show = isUser(k) ? (rec && (rec.admin || userSpace(rec) === k)) : true; return [k, { count: S.set.size, condition: show ? { url: S.url, min: S.min } : undefined, bench: S.bench || undefined, members: show ? [...S.set] : undefined, key: rec && rec.admin && !isUser(k) ? KEYS[k] : undefined, user: isUser(k) ? k.slice(2) : undefined }]; })));
   }
-  if (u.pathname === '/register' && req.method === 'POST') return body(j => { const kb = keyOf(req, u), ks = spaceByKey(kb); if (kb && !ks) return jout(403, { ok: 0, err: 'key?' }); const src = ks || norm(j.src); if (!src || !j.url || !/^https?:\/\//.test(j.url)) return jout(400, { ok: 0, err: 'src+url?' }); if (isUser(src)) return jout(403, { ok: 0, err: 'user-space-দিয়ে-/my/conditions' }); const S = space(src); S.url = String(j.url); S.min = Math.max(1, Number(j.min) || 1); if (j.contains) S.contains = String(j.contains); if (j.home) S.home = String(j.home); saveCond(); console.log('[register] ' + src + (ks ? ' (কী-দ্বারা)' : '') + ' → ' + S.url.slice(0, 60)); return jout(200, { ok: 1, src, spaces: Object.keys(SPACES) }); });
+  if (u.pathname === '/register' && req.method === 'POST') return body(j => { const kb = keyOf(req, u), ks = spaceByKey(kb); if (kb && !ks) return jout(403, { ok: 0, err: 'key?' }); const src = ks || norm(j.src); if (!src || (!j.url && !j.tokencheck) || (j.url && !/^https?:\/\//.test(j.url))) return jout(400, { ok: 0, err: 'src+url?' }); if (isUser(src)) return jout(403, { ok: 0, err: 'user-space-দিয়ে-/my/conditions' }); const S = space(src); S.url = j.url ? String(j.url) : ''; S.min = Math.max(1, Number(j.min) || 1); if (j.contains) S.contains = String(j.contains); if (j.home) S.home = String(j.home); S.tokencheck = j.tokencheck ? true : undefined; if (S.url && S.tokencheck) S.tokencheck = undefined; saveCond(); console.log('[register] ' + src + (ks ? ' (কী-দ্বারা)' : '') + ' → ' + S.url.slice(0, 60)); return jout(200, { ok: 1, src, spaces: Object.keys(SPACES) }); });
   if (u.pathname === '/pool') return jout(200, POOL.map(c => Object.assign({}, c, PX_RUN.get(c.px) || {}, { sp: Object.keys(SPACES).filter(k => SPACES[k].set.has(c.px) && !isUser(k)) })));
   if (u.pathname === '/pick') { const kb = keyOf(req, u), ks = spaceByKey(kb); if (kb && !ks) return jout(403, { ok: 0, err: 'key?' }); const src = ks || norm(u.searchParams.get('src')) || 'vidy'; const n = Math.min(12, Number(u.searchParams.get('n')) || 5);
     const srt = POOL.slice().sort((a, b) => pxScore(a.px, a.ms) - pxScore(b.px, b.ms));
