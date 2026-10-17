@@ -6,6 +6,8 @@ let directFetch = (...a) => fetch(...a);            // v1.15.60: প্রথম
 try { ({ fetch: directFetch } = await import('undici')); } catch { } // undici-থাকলে-সেটাই (beamup-এ-ইনস্টল-হয়); না-থাকলে-ও-চলে (Cinemeta-মাত্র)
 import { apiFetch } from './mb-lib/http.js';
 import { poolStart, poolStats, checkerStats } from './mb-lib/pool.js';
+// v2.11.0b (ডিপ্লয়ার-বিমা): পুরনো-Node (<17.3)-তে AbortSignal.timeout-নেই → হালকা-পলিফিল (নইলে-হাব-ফিড/কল-প্রতিটা-throw)
+if (typeof AbortSignal !== 'undefined' && !AbortSignal.timeout) { AbortSignal.timeout = (ms) => { const c = new AbortController(); const t = setTimeout(() => c.abort(new Error('timeout')), ms); if (t.unref) t.unref(); return c.signal; }; }
 
 const PORT = Number(process.env.PORT || 7000);
 const VERSION = '2.11.0';
