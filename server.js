@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.31';
+const VERSION = '1.15.32';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -1091,7 +1091,9 @@ async function mmVidbolt(tmdbId, isSeries, s, e, ms) { // v1.15.28: the vidbolt 
       }));
       if (hlsS.length) {
         let pl = '';
-        try { pl = await mmPoolText(hlsS[0].url, vLeft(5500)) || ''; } catch { } // hls bridge — direct first, the MM pool for rescue; ONE fetch proves the whole draw
+        const em = String(hlsS[0].master || ''); // v1.15.32 (orion-type servers): the resolve answer already carries the master text — zero extra hits on the shared key; the mini endpoint still caches/rebuilds
+        if (em.indexOf('#EXTM') >= 0) pl = em;
+        else { try { pl = await mmPoolText(hlsS[0].url, vLeft(5500)) || ''; } catch { } } // hls bridge — direct first, the MM pool for rescue; ONE fetch proves the whole draw
         if (pl && pl.indexOf('#EXTM') >= 0) {
           const sc0 = hlsS[0];
           const hq0 = parseInt(String(sc0.quality || ''), 10) || 0;
@@ -1105,8 +1107,7 @@ async function mmVidbolt(tmdbId, isSeries, s, e, ms) { // v1.15.28: the vidbolt 
               const hh = r2 ? parseInt(r2[2], 10) || 0 : 0;
               const kk = 'm' + hh;
               if (oseen.has(kk)) continue;
-              oseen.add(kk);
-              push(hh || hq0, sc0.url, VB_REF, 0, lang0, atag, 1, kk);
+              push(hh || hq0, sc0.url, VB_REF, 0, lang0, atag, 1, kk); // v1.15.32 fix: push itself dedups+adds — the old pre-add made push's guard silently drop the card
               pcount++;
             }
             if (!pcount) push(hq0, sc0.url, VB_REF, 0, lang0, atag, 1, 'mx');
