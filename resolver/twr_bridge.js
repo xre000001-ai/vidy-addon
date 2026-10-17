@@ -8,7 +8,7 @@ const VERSION = '1.1.0';
 const PORT = Number(process.env.PORT || 8290);
 const HUB = String(process.env.POOLHUB || 'https://293c2a7d7dd6-poolhub.baby-beamup.club').replace(/\/$/, ''); // ডিফল্ট=ডিপ্লয়েড-হাব (Badhan)
 const SUBS = ['toonworld4all', 'raretoons'];
-let KEYS = {}; try { KEYS = JSON.parse(fs.readFileSync(String(process.env.POOLHUB_KEYS || path.join(__dirname, 'poolhub_keys.json')), 'utf8')); } catch (e) { }
+let KEYS = {}; try { KEYS = JSON.parse(fs.readFileSync(String(process.env.POOLHUB_KEYS || path.join(__dirname, '..', 'config', 'poolhub_keys.json')), 'utf8')); } catch (e) { }
 let USED = { toonworld4all: 0, raretoons: 0 };
 function viaHub(src, url) {
   return new Promise(res => {

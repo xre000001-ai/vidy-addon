@@ -1,3 +1,12 @@
+// ============================================================
+// vidy — Stremio addon (v1.15.67) · multi-source streams
+//   Sources: vidy (own) · MovieBox (embedded nethex child) ·
+//   toonworld4all + raretoons (via resolver/ bridge) · multimovies
+//   Proxies: NOT scanned locally — pulled from PoolHub sub-spaces
+//   (hub /pick every 60s; hub = 293c2a7d7dd6-poolhub.baby-beamup.club)
+//   Playback: always direct from CDN — never proxied.
+// Full history (Bengali): docs/HISTORY_BN.md · Architecture: docs/ARCHITECTURE.md
+// ============================================================
 // Vidy addon — stream-only Stremio/Nuvio addon (vidy.st sources)
 // স্থাপত্য: token/seed ফেচে 429-হলে trained-proxy hedge-race; স্ট্রিম-বাইট ইউজার সরাসরি CDN থেকে
 // Nuvio/Node-নিরাপদ: AbortSignal নেই — সব টাইমআউট Promise.race/setTimeout-ভিত্তিক
@@ -496,7 +505,7 @@ const DBG = !!process.env.VDBG; // সব-debug-লগ-এই-এক-ফ্ল�
 // v1.15.57 PoolHub-মোড (ইউজার-নকশা: ইউনিভার্সাল-পুল-আলাদা-সার্ভিস+API): POOLHUB=http://host:port দিলে-vidy-র-প্রক্সি-চাহিদা-আগে-হাবের-/fetch-এ; হাব-মরলে/না-দিলে-আগের-স্থানীয়-পুল-পথ-অক্ষত
 const HUB = String(process.env.POOLHUB || 'https://293c2a7d7dd6-poolhub.baby-beamup.club').replace(/\/$/, ''); // v1.15.66: ডিফল্ট=ডিপ্লয়েড-PoolHub (Badhan-নেমস্পেস) — নতুন-সিস্টেমই-মূল; POOLHUB=http://127.0.0.1:8399 দিলে-লোকাল-ডিভ
 // v1.15.62 সাব-স্পেস-API-কী (ইউজার: প্রতি-সোর্স-নিজ-কী-দিয়ে-হাব-ব্যবহার): POOLHUB_KEYS=ফাইল-পথ (JSON {স্পেস:psk}) — লোকালে poolhub/poolhub_keys.json
-let HKEYS = {}; try { HKEYS = JSON.parse(fs.readFileSync(String(process.env.POOLHUB_KEYS || path.join(__dirname, 'poolhub', 'poolhub_keys.json')), 'utf8')); } catch (e) { }
+let HKEYS = {}; try { HKEYS = JSON.parse(fs.readFileSync(String(process.env.POOLHUB_KEYS || path.join(__dirname, 'config', 'poolhub_keys.json')), 'utf8')); } catch (e) { }
 const HKEY = n => String(HKEYS[n] || '');
 const HALIAS = { tw: 'toonworld4all', toonworld: 'toonworld4all', rt: 'raretoons', raretoons: 'raretoons', api: 'vidy', site: 'vidy', mb: 'moviebox', vb: 'multimovies', wo: 'multimovies' };
 const HSPACE = n => HALIAS[String(n || '')] || String(n || '') || 'vidy';

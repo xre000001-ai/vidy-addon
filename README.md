@@ -1,109 +1,88 @@
-# Vidy addon — stream-only
+# vidy — Stremio Addon
 
-> **সংস্করণ-নোট (২০২৬-১০-১৫):** AW-পরীক্ষা-ধারা (1.15.28–.35) বাদ-দিয়ে স্থিতিশীল **1.15.27**-লাইনে-ফেরা হয়েছে; তার-ওপরে ৩-দফা-যত্নের-সংশোধন:
-> **1.15.36 (R1)** uncaughtException-রক্ষা + /_health-এ `up`/`ucex` · **1.15.37 (R2)** ক্লায়েন্ট-abort-socket-শূন্য-লেজ + বিপর্যয়-জাল headersSent-সচেতন · **1.15.38 (R3)** EADDRINUSE-স্পষ্ট-নির্দেশ।
-> সোর্স: Vidy(16-সার্ভার) + MovieBox + RareToons + ToonWorld4All — স্ট্রিম-ফলে-ক্যাশ-নয়, সৎ-শূন্য।
+Multi-source streaming addon for Stremio. One install, four source families, honest results.
 
-Stremio / Nuvio compatible **stream-only** add-on sourcing from **vidy.st**.
-Users stream directly from the CDN — the add-on only resolves tokens and links.
+> **Version 1.15.67** · Live: `https://3404d3c5dc63-vidy.baby-beamup.club/manifest.json`
 
-## Features
+## Sources
 
-- **16 servers scanned in parallel** — Miami · Boise · Atlanta (giant primaries, ~32 sources on a 12-title sample, listed first, longest budget); veterans Phoenix (1080p mirror), Dallas (Auto-HLS), Austin (audio variants), Seattle (backup Auto); nine extras discovered from the official player bundle: Delhi (Hindi & English audio), Munich, Paris (most consistent single feed), Orlando, Reno, Oakland, Vegas, Cancun, Tampa
-- **Every card shows its server**: `◫ 1080 · Atlanta ◫`
-- Up to **4K** · subtitle tracks attached per-card (English-SDH etc. on official prints)
-- **Original-audio aware**: subtitle-rich (official) variants win ties; dub prints (0 subs) lose
-- Configurable pack via `/cfg/<base64url>/manifest.json`: resolution whitelist (`q:[1080,480]`), subtitles toggle (`sub:0`), server subset (`srv:["atlanta"]`) — legacy numeric `q:480` still means "max 480"
-- Query alternative: `?q=720,360&sub=0&srv=miami,atlanta`
-- Health ops: `/_health`, `/_pool`, `/_log`, `/_servers` (live server scores)
-- tt-id and tmdb-native id both supported (`idPrefixes: ["tt","tmdb"]`)
+| Family | What it provides | Where it runs |
+|---|---|---|
+| **vidy** | Movies & series from vidy servers (16 server family, direct MP4/HLS) | this process |
+| **MovieBox** | Asian/global catalog, direct MP4 + soft subtitles | embedded child (`nethex/`) |
+| **toonworld4all · raretoons** | Cartoon/anime resolvers | `resolver/` bridge service |
+| **multimovies** | MM-HLS fallback streams | via resolver bridge |
 
-## Reliability
-
-- Playability probe on the first source URL before returning cards (dead assets fail over)
-- All-servers-fail triggers one bounded retry with a fresh seed; per-server hard budgets keep responses inside gateway limits
-- Full results cache 3h; partial results (a giant missing) only 60s and self-heal
-- Negative id-cache only on confirmed-empty lookups (30 min), never on network errors
-- Keep-alive sockets swept every 60 s; stale-socket resets auto-retry once
-
-## RareToons source (v1.12.1)
-
-Third parallel source fed by the local multi-resolver (`RTBASE` env, e.g. `RTBASE=http://127.0.0.1:8619 node server.js`; empty = off):
-
-- Every stream route merges `source=raretoons` cards: pixeldrain direct-MKV mirrors + auto-HLS shield (new episodes appear automatically)
-- Universal card anatomy — `◈ Auto ◈` / `✧ Title ⏎ ⧠ SxE • ep title • size ⏎ ⊞ RareToons ⌗ audio` — same as Vidy & MovieBox
-- **Own filter** (config page, independent of the Vidy-side `q`): master switch (`rt`) + audio-language chips (`rtl`: Hindi/Tamil/Telugu/Malayalam; nothing picked = every dub stays)
-- Cards follow `/hls/` relay URLs from the resolver; `bingeGroup: rt|title::`
-- Official transparent logo served at `/rt_logo.png` (collected from rareanimes.mov, background keyed out)
-
-## Endpoints
-
-| Route | Purpose |
-|---|---|
-| `/config` · `/configure` · `/` | Configuration page |
-| `/manifest.json` | Add-on manifest (stream-only) |
-| `/stream/:type/:id.json` | Streams (`tt…` or `tmdb…`, series accept `:s:e`) |
-| `/_health` `/_pool` `/_log` `/_servers` | Operations |
-| `/catalog/...` | Legacy no-op kept for older installs |
-
-## Development
+## Architecture (one rule: nobody scans, everybody uses PoolHub)
 
 ```
-node server.js selftest      # byte-exact decrypt fixture check
-PORT=7000 node server.js     # run locally
+                        ┌──────────────────────────────┐
+                        │   PoolHub (the only pool)    │
+                        │  5 sub-spaces, benched proxy │
+                        │  293c2a7d7dd6-poolhub…       │
+                        └──────┬───────────┬───────────┘
+              /pick every 60s  │           │  /fetch per call (+ /report wins)
+                ┌──────────────┘           └───────────────┐
+        ┌───────┴────────┐                        ┌────────┴─────────┐
+        │ vidy (this)    │                        │ resolver bridge  │
+        │ + moviebox     │                        │ tw+rt /find →    │
+        │   child        │                        │ hub /fetch       │
+        └───────┬────────┘                        └────────┬─────────┘
+                │                                          │
+        ┌───────┴──────────────────────────────────────────┴────────┐
+        │              Stremio plays DIRECT from CDN                │
+        └───────────────────────────────────────────────────────────┘
 ```
 
-Deploy: `git push beamup HEAD:main --force` (baby-beamup). GitHub remote: `gh`.
+- **No component scans for proxies.** Every proxy is benched by PoolHub and handed out through sub-space `/pick`.
+- **MovieBox play/download/caption calls carry a minted Bearer JWT** (MovieBox gate, verified 2026-10); these token calls ride the pool exits directly (the hub transport is GET-only and cannot forward headers). Token-less GETs (detail) may ride the hub's `/fetch`.
+- **Every live success is reported back** (`/report`) so the hub's `moviebox` sub-space stays built from real-traffic proof.
+- **Playback is never proxied.** Only API/IP-flag calls ride the pool; video bytes go straight from the CDN to the player.
 
-
-Stremio / Nuvio compatible **stream-only** add-on sourcing from **vidy.st**.
-Users stream directly from the CDN — the add-on only resolves tokens and links.
-
-## Features
-
-- **16 servers scanned in parallel** — Miami · Boise · Atlanta (giant primaries, ~32 sources on a 12-title sample, listed first, longest budget); veterans Phoenix (1080p mirror), Dallas (Auto-HLS), Austin (audio variants), Seattle (backup Auto); nine extras discovered from the official player bundle: Delhi (Hindi & English audio), Munich, Paris (most consistent single feed), Orlando, Reno, Oakland, Vegas, Cancun, Tampa
-- **Every card shows its server**: `◫ 1080 · Atlanta ◫`
-- Up to **4K** · subtitle tracks attached per-card (English-SDH etc. on official prints)
-- **Original-audio aware**: subtitle-rich (official) variants win ties; dub prints (0 subs) lose
-- Configurable pack via `/cfg/<base64url>/manifest.json`: resolution whitelist (`q:[1080,480]`), subtitles toggle (`sub:0`), server subset (`srv:["atlanta"]`) — legacy numeric `q:480` still means "max 480"
-- Query alternative: `?q=720,360&sub=0&srv=miami,atlanta`
-- Health ops: `/_health`, `/_pool`, `/_log`, `/_servers` (live server scores)
-- tt-id and tmdb-native id both supported (`idPrefixes: ["tt","tmdb"]`)
-
-## Reliability
-
-- Playability probe on the first source URL before returning cards (dead assets fail over)
-- All-servers-fail triggers one bounded retry with a fresh seed; per-server hard budgets keep responses inside gateway limits
-- Full results cache 3h; partial results (a giant missing) only 60s and self-heal
-- Negative id-cache only on confirmed-empty lookups (30 min), never on network errors
-- Keep-alive sockets swept every 60 s; stale-socket resets auto-retry once
-
-## RareToons source (v1.12.1)
-
-Third parallel source fed by the local multi-resolver (`RTBASE` env, e.g. `RTBASE=http://127.0.0.1:8619 node server.js`; empty = off):
-
-- Every stream route merges `source=raretoons` cards: pixeldrain direct-MKV mirrors + auto-HLS shield (new episodes appear automatically)
-- Universal card anatomy — `◈ Auto ◈` / `✧ Title ⏎ ⧠ SxE • ep title • size ⏎ ⊞ RareToons ⌗ audio` — same as Vidy & MovieBox
-- **Own filter** (config page, independent of the Vidy-side `q`): master switch (`rt`) + audio-language chips (`rtl`: Hindi/Tamil/Telugu/Malayalam; nothing picked = every dub stays)
-- Cards follow `/hls/` relay URLs from the resolver; `bingeGroup: rt|title::`
-- Official transparent logo served at `/rt_logo.png` (collected from rareanimes.mov, background keyed out)
-
-## Endpoints
-
-| Route | Purpose |
-|---|---|
-| `/config` · `/configure` · `/` | Configuration page |
-| `/manifest.json` | Add-on manifest (stream-only) |
-| `/stream/:type/:id.json` | Streams (`tt…` or `tmdb…`, series accept `:s:e`) |
-| `/_health` `/_pool` `/_log` `/_servers` | Operations |
-| `/catalog/...` | Legacy no-op kept for older installs |
-
-## Development
+## Folder layout
 
 ```
-node server.js selftest      # byte-exact decrypt fixture check
-PORT=7000 node server.js     # run locally
+vidy-addon/
+├── server.js               # vidy addon entry (beamup start: node server.js)
+├── config.html             # addon configuration page
+├── config/
+│   └── poolhub_keys.json   # PoolHub sub-space API keys
+├── resolver/
+│   └── twr_bridge.js       # toonworld4all + raretoons resolver bridge (hub-only)
+├── nethex/                 # MovieBox child addon (community.nethex)
+│   ├── server.js
+│   └── mb-lib/             # search · episode-matrix · links · subtitles · pool
+├── docs/
+│   ├── ARCHITECTURE.md     # how the pieces talk
+│   ├── DEPLOY.md           # deployment runbook (beamup)
+│   └── HISTORY_BN.md       # full change history (Bengali)
+├── test.js                 # npm test
+└── assets/                 # logos
 ```
 
-Deploy: `git push beamup HEAD:main --force` (baby-beamup). GitHub remote: `gh`.
-// রিডিপ্লয়-মার্কার 1792145825
+## Run locally
+
+```bash
+# resolver bridge (port 8290)
+PORT=8290 POOLHUB_KEYS=./config/poolhub_keys.json node resolver/twr_bridge.js
+
+# vidy + embedded MovieBox child (port 8128, child = +137)
+PORT=8128 TWRT_BRIDGE=1 TWBASE=http://127.0.0.1:8290 RTBASE=http://127.0.0.1:8290 node server.js
+```
+
+## Health & debug
+
+| Endpoint | On | Shows |
+|---|---|---|
+| `/_health` | vidy | version, pool, apibench, nx (child), nxpool |
+| `/_pool` | vidy | current proxy roster + per-exit stats |
+| `/debug/ring` | child (:8265) | last resolve steps (search → matrix → cards) |
+| `/health` | bridge (:8290) | hub target, keys, usage counters |
+
+## Deploy
+
+See `docs/DEPLOY.md` (beamup runbook — note: this app deploys to the **main** branch).
+
+## License
+
+Private project. Source history in `docs/HISTORY_BN.md`.
