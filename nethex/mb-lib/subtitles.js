@@ -9,7 +9,6 @@
 // from any HTTP client without special headers.
 
 import { API, SITE, commonHeaders, fetchJson } from "./upstream.js";
-import { playToken } from "./search.js"; // v2.11.1: the play token gate
 
 /** Entry point. params: { id, season, episode } -> { status, body }. */
 export async function run(params) {
@@ -46,10 +45,9 @@ export async function run(params) {
   let videoId = "";
   let streamSource = "";
 
-  const btS = await playToken();
   const playResp = await fetchJson(
     `${API}/wefeed-h5api-bff/subject/play?subjectId=${subjectId}&se=${season}&ep=${episode}&detailPath=${encodeURIComponent(detailPath)}`,
-    btS ? { ...commonHeaders(playReferer), Authorization: `Bearer ${btS}` } : commonHeaders(playReferer)
+    commonHeaders(playReferer)
   );
   const playStreams = playResp.data?.data?.streams || [];
   if (playStreams.length > 0) {

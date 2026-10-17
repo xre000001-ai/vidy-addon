@@ -2,15 +2,12 @@ import http from 'node:http';
 import fs from 'node:fs';
 import { run as search } from './mb-lib/search.js';
 import { run as runMatrix } from './mb-lib/episode-matrix.js';
-let directFetch = (...a) => fetch(...a);            // v1.15.60: // v1.15.60: Node's own fetch first (dependency-free boot)
-try { ({ fetch: directFetch } = await import('undici')); } catch { } // undici-// undici when present (installed on beamup); without it only Cinemeta-class calls run
+import { fetch as directFetch } from 'undici';   // Cinemeta only
 import { apiFetch } from './mb-lib/http.js';
 import { poolStart, poolStats, checkerStats } from './mb-lib/pool.js';
-// v2.11.0b (// v2.11.0b (deployer insurance): AbortSignal.timeout is missing on old Node (<17.3) -> a light polyfill (else every hub-feed/call throws)
-if (typeof AbortSignal !== 'undefined' && !AbortSignal.timeout) { AbortSignal.timeout = (ms) => { const c = new AbortController(); const t = setTimeout(() => c.abort(new Error('timeout')), ms); if (t.unref) t.unref(); return c.signal; }; }
 
 const PORT = Number(process.env.PORT || 7000);
-const VERSION = '2.11.12';
+const VERSION = '2.10.4';
 const CINEMETA = 'https://v3-cinemeta.strem.io';
 const PUBLIC_BASE = process.env.PUBLIC_BASE || 'https://5a16d5684c14-nethex.baby-beamup.club';
 let LOGO_BUF = null;
@@ -40,9 +37,8 @@ function cacheSet(key, streams, ttl = CACHE_TTL) {
 }
 
 const BG = new Set();   // v2.9.4: keys with a bg re-resolve in flight
-const INF = new Map();  // v2.11.6: single-flight — Stremio fires ~9 duplicate stream taps when slow (live ring proof); they must share ONE cold resolve, not multiply the proxy burn
 const metaCache = new Map();   // v2.9.1: type:id -> { at, m } (30min)
-const RING = [];               // v2.10.2: // v2.10.2: the last 50 resolve steps (eyes inside stdio-ignore)
+const RING = [];               // v2.10.2: শেষ-৫০-রিজলভ-ধাপ (stdio:'ignore'-এর-ভেতরে-চোখ)
 function ring(l) { RING.push((Date.now() % 1000000) + ' ' + l); if (RING.length > 50) RING.shift(); }
 async function meta(type, id) {
   const __t0 = Date.now();
@@ -152,33 +148,8 @@ async function resultsFor(q) {
   else if (r.length) srqCache.set(k, { at: Date.now(), ttl, r });
   return r;
 }
-// v2.11.5 (// v2.11.5 (user: "5 seconds total"): the winning-subject map (24h) — familiar titles skip both the meta and search hops
-// (matrix-// (matrix only, ~2-2.5s); a first-seen title still runs the full chain (warm slots, ~4-5s).
-const PICK = new Map();
-// v2.11.9 concurrency gate: a series tap + prewarm + subtitle side-calls once fired ~10
-// parallel resolve chains — each chewing 5-10 proxy fetches. The child's event loop and
-// pool melted down (live ring: the 14s budget TIMER itself fired 10s late at +24.3s), so
-// users saw empty/partial answers "sometimes". Max 3 concurrent chains; extras queue up
-// to 6s (their own 12s wall still applies) — bounded, self-healing, no starvation.
-let RUN_N = 0;
-const RUN_Q = [];
 async function resolve(type, imdb, season, episode) {
-  if (RUN_N >= 3) await new Promise(r => { RUN_Q.push(r); setTimeout(r, 6000).unref?.(); });
-  RUN_N++;
-  try { return await resolveInner(type, imdb, season, episode); }
-  finally { RUN_N--; if (RUN_N < 3 && RUN_Q.length) { const w = RUN_Q.shift(); w(); } }
-}
-async function resolveInner(type, imdb, season, episode) {
   const tR0 = Date.now();
-  const pk = `${type}:${imdb}:${season || ''}`;
-  const pickHit = PICK.get(pk);
-  if (pickHit && Date.now() - pickHit.at < 86400000) {
-    const r0 = await runMatrix({ id: pickHit.dp, season, episode }).catch(() => null);
-    if (r0 && r0.status === 200 && (r0.body?.languages || []).length) {
-      ring(`pick-cache langs:${(r0.body?.languages || []).length} +${Date.now() - tR0}ms`);
-      return toCards(r0, type, season, episode, pickHit.year || '');
-    }
-  }
   const m = await meta(type, imdb); if (process.env.NMDEBUG) console.error('[nx] meta +' + (Date.now() - tR0) + 'ms', m?.name || '(none)'); if (!m?.name) return [];
   const year = String(m.releaseInfo || '').slice(0, 4);
   const base = String(m.name).trim();
@@ -217,9 +188,7 @@ async function resolveInner(type, imdb, season, episode) {
   let item = choose(results, m.name, year, type);
   // v2.9.5: if the catalog view serves no fuzzy match (geo churn), re-search
   // fresh (cache bypass) before giving up — one honest retry, still pool-only
-  // v2.11.6 budget gate: the retry ladder must never stack — a broken chain
-  // once crawled 31-33s (live ring proof). Each extra stage only starts inside budget.
-  if (matchQ(item) < 2 && Date.now() - tR0 < 9000) {
+  if (matchQ(item) < 2) {
     const sr2 = await search({ q: base, limit: 30, page: 1 }).catch(() => null);
     const r2 = sr2?.body?.results || [];
     if (r2.length) {
@@ -235,7 +204,7 @@ async function resolveInner(type, imdb, season, episode) {
   // empties.  IMDb's suggestion CDN gives the display title for the id;
   // one extra search with it before giving up.
   let altOK = false;
-  if (matchQ(item) < 2 && Date.now() - tR0 < 11000) { // v2.11.6 budget gate: no IMDb-suggestion detour past 11s
+  if (matchQ(item) < 2) {
     try {
       const ir = await directFetch('https://v2.sg.media-imdb.com/suggestion/' + (String(imdb)[2] || 't') + '/' + imdb + '.json', { signal: AbortSignal.timeout(8000) });
       const jd = await ir.json();
@@ -254,48 +223,30 @@ async function resolveInner(type, imdb, season, episode) {
     } catch { }
   }
   if (!item?.detailPath || (matchQ(item) < 2 && !altOK)) { ring(`giveup q:${matchQ(item)} alt:${altOK ? 1 : 0} +${Date.now() - tR0}ms`); return []; }   // honest empty, never junk cards
-  let usedDp = item.detailPath; // v2.11.5: // v2.11.5: which subject finally won (for the map)
   let r = await runMatrix({ id: item.detailPath, season, episode });
-  ring(`matrix +${Date.now() - tR0}ms`); // v2.11.6: split proof — search-end vs matrix-end, so the tail is attributable on live
   if (process.env.NMDEBUG) console.error('[nx] +' + (Date.now() - tR0) + 'ms matrix status:', r.status, r.status === 200 ? `langs:${(r.body.languages || []).length} subs:${(r.body.subtitles || []).length}` : '');
   // v1.11-local: a chosen subject that answers langs:0 (exists but carries no links
   // for this episode) is not a real empty — walk the next-ranked catalog subjects
   if (r.status === 200 && !(r.body?.languages || []).length) {
-    // v2.9.9 PARALLEL LADDER: geo-churn // v2.9.9 PARALLEL LADDER: geo-churn eats one subject at a time — sequential walking paid a full round trip per step
-    // // (E1 lost 3-4s here). Candidates now race together; the first result carrying links wins.
-    const cands = Date.now() - tR0 < 15000 ? chooseList(results, m.name, year, type, 4).filter(x => x.detailPath !== item.detailPath).slice(0, 2) : []; // v2.11.6 budget gate: langs:0 healing ladder only inside 15s — a broken chain once crawled 31-33s (live ring proof)
+    // v2.9.9 PARALLEL LADDER: geo-churn একবারে-এক-সাবজেক্ট-খেয়ে-ফেলে — পরপর-হাঁটায়-প্রতি-ধাপে-পূর্ণ-রাউন্ড-ট্রিপ
+    // লাগত (E1 এখানেই ৩-৪সে হারাত)। প্রার্থীরা-এখন-একসাথে-ছোটে; লিংক-বহনকারী-প্রথম-ফল-জেতে।
+    const cands = chooseList(results, m.name, year, type, 4).filter(x => x.detailPath !== item.detailPath).slice(0, 2);
     if (cands.length) {
-      let rWin = null, winDp = '';
-      await Promise.race([
-        new Promise((res) => {
-          let left = cands.length;
-          cands.forEach((c2) => {
-            if (process.env.NMDEBUG) console.error('[nx] matrix empty on', item.detailPath, '- racing candidate', c2.detailPath);
-            runMatrix({ id: c2.detailPath, season, episode })
-              .then(r2 => { if (!rWin && r2.status === 200 && (r2.body?.languages || []).length) { rWin = r2; winDp = c2.detailPath; } })
-              .catch(() => {})
-              .finally(() => { if (--left === 0) res(); });
-          });
-        }),
-        // v2.11.8: ladder deadline — candidates run in parallel but the all-settled wait once
-        // stretched the whole chain to ~21.7s in the background (live ring). 7s cap: no winner
-        // by then = this episode truly has no links; the 45s bg re-resolve still retries.
-        new Promise(res => setTimeout(res, 7000)),
-      ]);
-      if (rWin) { r = rWin; usedDp = winDp || usedDp; } // v2.11.5: // v2.11.5: the race-winning candidate goes into the map
+      let rWin = null;
+      await new Promise((res) => {
+        let left = cands.length;
+        cands.forEach((c2) => {
+          if (process.env.NMDEBUG) console.error('[nx] matrix empty on', item.detailPath, '- racing candidate', c2.detailPath);
+          runMatrix({ id: c2.detailPath, season, episode })
+            .then(r2 => { if (!rWin && r2.status === 200 && (r2.body?.languages || []).length) rWin = r2; })
+            .catch(() => {})
+            .finally(() => { if (--left === 0) res(); });
+        });
+      });
+      if (rWin) r = rWin;
     }
   }
   if (r.status !== 200) { ring(`matrix status:${r.status} +${Date.now() - tR0}ms`); return []; }
-  const b = r.body;
-  if ((b.languages || []).length) { // v2.11.5: // v2.11.5: feed the winning-subject map (24h; the next tap = matrix only)
-    if (PICK.size >= 400) PICK.delete(PICK.keys().next().value);
-    PICK.set(pk, { dp: usedDp, at: Date.now(), year });
-  }
-  if (process.env.NMDEBUG) console.error('[nx] +' + (Date.now() - tR0) + 'ms langs:', (b.languages || []).length, '| qualities:', (b.languages || []).reduce((a2, l2) => a2 + (l2.qualities || []).length, 0), '| title:', b.title);
-  ring(`langs:${(b.languages || []).length} +${Date.now() - tR0}ms`);
-  return toCards(r, type, season, episode, year);
-}
-function toCards(r, type, season, episode, year) { // v2.11.5: // v2.11.5: assembly helper (shared by resolve and the pick cache)
   const b = r.body;
   const streams = [];
   for (const lang of (b.languages || [])) {
@@ -304,6 +255,8 @@ function toCards(r, type, season, episode, year) { // v2.11.5: // v2.11.5: assem
       streams.push(glassCard(b, lang, x, type, season, episode, year, b.subtitles));
     }
   }
+  if (process.env.NMDEBUG) console.error('[nx] +' + (Date.now() - tR0) + 'ms langs:', (b.languages || []).length, '| qualities:', streams.length, '| title:', b.title);
+  ring(`langs:${(b.languages || []).length} qualities:${streams.length} +${Date.now() - tR0}ms`);
   streams.sort((a, z) => (z._reso || 0) - (a._reso || 0));
   // old MovieBox glass: exact-title cards first, variant/spinoff rows sink,
   // readable cap 16 (audios always stay)
@@ -311,6 +264,7 @@ function toCards(r, type, season, episode, year) { // v2.11.5: // v2.11.5: assem
   const nmOf = st => { const m2 = String(st.name || '').match(/✹ (.*)$/); return n(m2 ? m2[1] : st.title || ''); };
   const exact = streams.filter(st => { const nm = nmOf(st); return !nm || nm === t || t.startsWith(nm) || nm.startsWith(t); });
   const rest = streams.filter(st => !exact.includes(st));
+  if (process.env.NMDEBUG) console.error('[nx] done +' + (Date.now() - tR0) + 'ms cards=' + (exact.length + rest.length));
   return [...exact, ...rest].slice(0, 16);
 }
 // ---- v2.9.3 card format: the OLD MovieBox glass spec --------------------
@@ -390,8 +344,8 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=86400', 'Access-Control-Allow-Origin': '*' });
       return res.end(LOGO_BUF);
     }
-    if (u.pathname === '/health') return send(res, 200, { ok: true, version: VERSION, mode: 'direct-mp4', pool: poolStats().healthy, waves: checkerStats().waves, size: poolStats().size }); // waves=// v2.10.2 step-proof counters
-    if (u.pathname === '/debug/ring') return send(res, 200, RING.slice(-50)); // v2.10.2 // v2.10.2 resolve-step proof
+    if (u.pathname === '/health') return send(res, 200, { ok: true, version: VERSION, mode: 'direct-mp4', pool: poolStats().healthy, waves: checkerStats().waves, size: poolStats().size }); // waves=মোট-স্ক্যান-ঢেউ (সব-মান-এক্সপোর্টেড-হেল্পার-থেকে)
+    if (u.pathname === '/debug/ring') return send(res, 200, RING.slice(-50)); // v2.10.2 রিজলভ-ধাপ-প্রমাণ
     if (u.pathname === '/debug/pool') {
       if (u.searchParams.get('k') !== 'nethex-dbg-7f3a') return send(res, 404, { error: 'not found' });
       return send(res, 200, poolStats());
@@ -434,47 +388,40 @@ const server = http.createServer(async (req, res) => {
         // v2.9.4 WALL: answer within 11.5s (CF cuts ~12s).  A cold
         // resolve keeps running and fills the cache — tap-2 is instant.
         const box = {};
-        // v2.11.6 single-flight: concurrent duplicates of the same key join the one
-        // in-flight chain (side effects — cache write, binge prewarm — run exactly once)
-        const p = (INF.get(key) || (() => {
-          const np = resolve(m[1], imdb, season, episode)
-            .then(x => {
-              box.s = x;
-              // v2.4.1: empties live 60s and ONE background re-resolve
-              // fires at 45s — a churn-window miss heals by itself; a
-              // positive shelf lives 90min (sign urls ~2h).
-              // v2.6.0: a THIN bench (boot/churn window) must never write
-              // a negative cache — the next tap re-resolves on fresh exits
-              if (x.length) cacheSet(key, x, 10 * 60 * 1000); // v2.11.10: 90min->10min (user: no long caches) — positive only: // v2.10.3: positive-only caching — an empty cache would turn an MB site wave into a 60s memo of broken (r57 principle)
-              // v2.9.2 BINGE PREWARM: a successful series tap quietly resolves
-              // the NEXT 3 episodes into the cache — the next tap is a cache hit
-              // (1.2s-class) instead of a cold chain.  Pool untouched.
-              if (x.length && m[1] === 'series') {
-                setTimeout(() => {
-                  for (let e = episode + 1; e <= episode + 3; e++) {
-                    resolve('series', imdb, season, e)
-                      .then(y => { if (y.length) cacheSet(`${m[1]}:${imdb}:${season}:${e}`, y, 10 * 60 * 1000); }) // v2.11.10
-                      .catch(() => {});
-                  }
-                }, 1500).unref?.();
-              }
-              if (!x.length) {
-                setTimeout(() => {
-                  resolve(m[1], imdb, season, episode)
-                    .then(y => { if (y.length) cacheSet(key, y); })
+        const p = resolve(m[1], imdb, season, episode)
+          .then(x => {
+            box.s = x;
+            // v2.4.1: empties live 60s and ONE background re-resolve
+            // fires at 45s — a churn-window miss heals by itself; a
+            // positive shelf lives 90min (sign urls ~2h).
+            // v2.6.0: a THIN bench (boot/churn window) must never write
+            // a negative cache — the next tap re-resolves on fresh exits
+            if (x.length) cacheSet(key, x, 90 * 60 * 1000); // v2.10.3: শুধু-ধনাত্মক-ক্যাশ — খালি-ক্যাশ-লিখলে-MB-সাইট-ঢেউ-ভাঙা-৬০সে-মেমো-হয়ে-যেত (r57-নীতি)
+            // v2.9.2 BINGE PREWARM: a successful series tap quietly resolves
+            // the NEXT 3 episodes into the cache — the next tap is a cache hit
+            // (1.2s-class) instead of a cold chain.  Pool untouched.
+            if (x.length && m[1] === 'series') {
+              setTimeout(() => {
+                for (let e = episode + 1; e <= episode + 3; e++) {
+                  resolve('series', imdb, season, e)
+                    .then(y => { if (y.length) cacheSet(`${m[1]}:${imdb}:${season}:${e}`, y, 90 * 60 * 1000); })
                     .catch(() => {});
-                }, 45000).unref?.();
-              }
-              return x;
-            })
-            .catch(() => []);
-          INF.set(key, np);
-          np.finally(() => { if (INF.get(key) === np) INF.delete(key); }).catch(() => {});
-          return np;
-        })());
+                }
+              }, 1500).unref?.();
+            }
+            if (!x.length) {
+              setTimeout(() => {
+                resolve(m[1], imdb, season, episode)
+                  .then(y => { if (y.length) cacheSet(key, y); })
+                  .catch(() => {});
+              }, 45000).unref?.();
+            }
+            return x;
+          })
+          .catch(() => []);
         streams = await Promise.race([
           p,
-          new Promise(r => setTimeout(() => r(null), 12000)), // v2.11.6: 30->12s — back to the documented wall (CF cuts ~12s anyway); the resolve keeps running and fills the cache for tap-2
+          new Promise(r => setTimeout(() => r(null), 30000)),
         ]);
         if (streams === null) {
           p.catch(() => {});
@@ -497,15 +444,7 @@ const server = http.createServer(async (req, res) => {
   } catch (e) { console.error(e); return send(res, 200, { streams: [] }); }
 });
 poolStart();   // v2.6.0: pool ALWAYS on for API calls (user directive)
-// v2.11.1c: // v2.11.1c: warm-up — after the pool feed lands (12s + 25s): playToken mint + a jwt-calibration search
-// (// (a setImmediate at boot used to run before the pool filled -> silent failure -> the whole calibration cost landed on the first tap)
-setInterval(() => { // v2.11.5: playToken-// v2.11.5: playToken always <45s fresh — the matrix never pays the mint (~2s)
-  import('./mb-lib/search.js').then(m => m.playToken()).catch(() => { });
-}, 45000).unref();
-for (const WARM_AT of [4000, 12000]) { // v2.11.4: // v2.11.4: warm earlier (the boot bench proves ~3.5s — playToken mints at 4s)
-  setTimeout(() => {
-    import('./mb-lib/search.js').then(m => Promise.all([m.playToken(), m.search({ q: 'a', limit: 1, page: 1 })]).catch(() => { })).catch(() => { });
-  }, WARM_AT).unref();
-}
-// v2.11.3: v2.3.2-// v2.11.3: the v2.3.2 boot-search warm dropped (it ran before the pool feed -> silent failure; the 12s/25s warms suffice)
+// v2.3.2: warm the anonymous JWT through a pool exit at boot so the
+// first real tap never pays the mint (2 extra hops)
+setImmediate(() => { search({ q: 'a', limit: 1, page: 1 }).catch(() => {}); });
 server.listen(PORT, '0.0.0.0', () => console.log(`MovieBox (NETHEX) v${VERSION} on :${PORT}`));

@@ -1,6 +1,6 @@
 {
   "name": "vidy-addon",
-  "version": "1.15.89",
+  "version": "1.11.14",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -10,8 +10,7 @@
     "node": ">=18"
   },
   "dependencies": {
-    "undici": "^6.19.0"
-  },
-  "private": true,
-  "type": "commonjs"
+    "express": "^4.21.2",
+    "undici": "^6.21.0"
+  }
 }

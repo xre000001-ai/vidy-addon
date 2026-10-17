@@ -1,18 +1,2 @@
-# dependencies
-node_modules/
-
-# runtime state (regenerated on boot/traffic — never ship)
-vidy_server_scores.json
-vidy_mm_hashes.json
-vidy_proxy_pool.json
-vidy_px_mirror.json
-vidy_px_sources.json
-vidy_px_site.json
-twr_bridge_mirror.json
-nxtest*.mjs
-*.log
-
-# legacy assets
 phoenix_logo.png
-poolhub/vidy_px_pool.json
-poolhub/vidy_px_sources.json
+node_modules/

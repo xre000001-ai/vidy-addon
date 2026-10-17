@@ -22,7 +22,6 @@
 
 import { API, SITE, commonHeaders } from "./upstream.js";
 import { fetchJsonRotating } from "./pool.js";
-import { playToken } from "./search.js"; // v2.11.1: the token is mandatory on play (not a hub order — a new MovieBox gate)
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -35,17 +34,15 @@ async function variantStreams(subjectId, detailPath, season, episode) {
   const referer = `${SITE}/play/${detailPath}`;
   const playUrl = `${API}/wefeed-h5api-bff/subject/play?subjectId=${subjectId}&se=${season}&ep=${episode}&detailPath=${encodeURIComponent(detailPath)}`;
   const dlUrl = `${SITE}/wefeed-h5api-bff/subject/download?subjectId=${subjectId}&se=${season}&ep=${episode}&detailPath=${encodeURIComponent(detailPath)}`;
-  const bt = await playToken();
-  const H = bt ? { ...commonHeaders(referer), Authorization: `Bearer ${bt}` } : commonHeaders(referer);
+  const H = commonHeaders(referer);
   let streams = [];
   for (let round = 0; round < 2; round++) {
     // v2.6.0 PARALLEL: play+download race TOGETHER (was sequential —
     // empty-play variants paid an extra full round-trip); both ride
     // hedged rotating exits (parallel search across proxies).
-    // v2.11.1 (// v2.11.1 (r134 diagnosis): play has a per-IP rate limit (~1 per 2-3 min) — rotating many distinct exits grows the quota
     const [res, res2] = await Promise.all([
-      fetchJsonRotating(playUrl, H, { attempts: 3, ms: 2200, hedgeMs: 0, emptyCheck: (d) => !((d?.data?.streams || []).length) }), // v2.11.5: two exits race together (hedge 0) — first content wins in ~1-2.2s
-      fetchJsonRotating(dlUrl, H, { attempts: 2, ms: 2000, hedgeMs: 0, emptyCheck: (d) => !((d?.data?.downloads || []).length) }),
+      fetchJsonRotating(playUrl, H, { attempts: 2, ms: 3000, hedgeMs: 650 }),
+      fetchJsonRotating(dlUrl, H, { attempts: 2, ms: 3000, hedgeMs: 650 }),
     ]);
     streams = res.ok ? res.data?.data?.streams || [] : [];
     if (streams.length === 0) {
@@ -61,10 +58,9 @@ async function variantStreams(subjectId, detailPath, season, episode) {
 async function variantCaptions(subjectId, detailPath, season, episode, videoId) {
   if (!videoId) return [];
   const referer = `${SITE}/play/${detailPath}`;
-  const bt2 = await playToken();
   const res = await fetchJsonRotating(
     `${API}/wefeed-h5api-bff/subject/caption?format=MP4&id=${videoId}&subjectId=${subjectId}&detailPath=${encodeURIComponent(detailPath)}`,
-    bt2 ? { ...commonHeaders(referer), Authorization: `Bearer ${bt2}` } : commonHeaders(referer), { attempts: 2, ms: 3000, hedgeMs: 600 }
+    commonHeaders(referer), { attempts: 2, ms: 3000, hedgeMs: 600 }
   );
   if (!res.ok) return [];
   return (res.data?.data?.captions || [])
@@ -121,18 +117,7 @@ async function getDetail(detailPath) {
 }
 
 /** Entry point. params: { id, season, episode } -> { status, body }. */
-export function run(params) {
-  // v2.11.7 overall budget: the primary matrix path was the last unbudgeted crawl
-  // (live ring proof: "matrix +33491ms" on a degraded pool). Bound it — the child
-  // wall (12s) answers the user first anyway; this only bounds the in-flight chain
-  // so the cache heals on a later tap instead of every tap joining a 30s+ crawl.
-  return Promise.race([
-    runInner(params),
-    new Promise((r) => setTimeout(() => r({ status: 504, body: { error: "matrix budget (14s)" } }), 14000)),
-  ]);
-}
-
-async function runInner(params) {
+export async function run(params) {
   const detailPath = String(params.id || params.detailPath || "").trim();
   const season = parseInt(params.season) || 0; // 0 = movie
   const episode = parseInt(params.episode) || 0;
