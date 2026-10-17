@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.32';
+const VERSION = '1.15.33';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -151,16 +151,17 @@ function mmMiniOpen(k) { // recover params from the key — any instance, any ti
 }
 function mmMiniBuild(masterUrl, wantH, raw) { // all qualities stay (switchable in the player menu), the wanted one first
   const L = String(raw).split('\n'); const tags = []; const vars = [];
+  let baseQ = ''; try { baseQ = new URL(masterUrl).search; } catch { } // v1.15.33 (user: the ~10min stop): keyed index URL — a relative URI MUST inherit the api_key; a bare tiles.m3u8 403s the moment the buffer runs dry
+  const absU = uu => { try { const a = new URL(uu, masterUrl); if (!a.search && baseQ) a.search = baseQ; return a.href; } catch { return uu; } };
   for (let i = 0; i < L.length; i++) {
     let ln = L[i];
-    if (ln.charAt(0) === '#' && /EXT-X-(MEDIA|KEY|MAP|I-FRAME-STREAM-INF|SESSION)/.test(ln)) { tags.push(ln.replace(/URI="([^"]*)"/g, (mm, uu) => { try { return 'URI="' + new URL(uu, masterUrl).href + '"'; } catch { return mm; } })); continue; }
+    if (ln.charAt(0) === '#' && /EXT-X-(MEDIA|KEY|MAP|I-FRAME-STREAM-INF|SESSION)/.test(ln)) { tags.push(ln.replace(/URI="([^"]*)"/g, (mm, uu) => 'URI="' + absU(uu) + '"')); continue; }
     if (/^#EXT-X-STREAM-INF/.test(ln)) {
       const nxt = L[i + 1] && L[i + 1].charAt(0) !== '#' ? L[i + 1].trim() : '';
       if (!nxt) continue;
       const r2 = (ln.match(/RESOLUTION=(\d+)x(\d+)/i) || [])[2];
       const hh = r2 ? parseInt(r2, 10) || 0 : 0;
-      let abs2 = nxt; try { abs2 = new URL(nxt, masterUrl).href; } catch { }
-      vars.push({ ln: ln, uri: abs2, h: hh, w: hh === wantH ? 0 : 1 });
+      vars.push({ ln: ln, uri: absU(nxt), h: hh, w: hh === wantH ? 0 : 1 });
       i++;
       continue;
     }
@@ -1709,25 +1710,25 @@ const server = http.createServer((req, res) => {
       const ent = mmMiniOpen(mmR[1]); // the key knows everything — no memory needed; a real key never dies
       if (!ent) { res.writeHead(404, { 'content-type': 'text/plain' }); return res.end('gone'); }
       try {
-        if (ent.vbq) { // vidbolt signatures rotate fast — sticky resolve (60s memory — no hammering resolve on every player master pull)
-          const cm2 = mmGet(MM_VC, ent.vbq, 60000);
-          if (cm2) ent.m = cm2;
-          else {
-            try {
-              const rj2 = await mmPoolText('https://vidbolt.xyz/api/resolve?' + ent.vbq, 6000);
-              const jj2 = rj2 ? JSON.parse(rj2) : null;
-              const fh = jj2 && jj2.stream && jj2.stream.sources && jj2.stream.sources.find(x2 => x2 && x2.kind === 'hls' && /^https?:/.test(x2.url || ''));
-              if (fh) { ent.m = fh.url; mmPut(MM_VC, ent.vbq, ent.m); }
-            } catch { }
-          }
-        }
+        // v1.15.33 (user: Chainsaw Man stopped ~10min): the key's own master is tried first and
+        // STAYS for the whole playback — the timer re-resolve used to switch servers mid-play;
+        // the vbq re-resolve now runs only as a rescue when the key's master is truly dead.
         let raw = mmGet(MM_MC, ent.m, 60000); // 60s master cache — on a hit there is no upstream travel at all
-        if (!raw) {
-          const rr = await fetch(ent.m, { headers: { 'User-Agent': UA, Referer: ent.ref }, signal: AbortSignal.timeout(8000) });
-          raw = rr.ok ? await rr.text() : '';
-          if (raw.indexOf('#EXTM') < 0) { res.writeHead(502, { 'content-type': 'text/plain' }); return res.end('upstream'); }
-          mmPut(MM_MC, ent.m, raw);
+        if (!raw || raw.indexOf('#EXTM') < 0) {
+          raw = '';
+          try { const rr = await fetch(ent.m, { headers: { 'User-Agent': UA, Referer: ent.ref }, signal: AbortSignal.timeout(8000) }); raw = rr.ok ? await rr.text() : ''; } catch { }
         }
+        if ((!raw || raw.indexOf('#EXTM') < 0) && ent.vbq) { // rescue: the key's master died — one fresh draw
+          try {
+            const rj2 = await mmPoolText('https://vidbolt.xyz/api/resolve?' + ent.vbq, 6000);
+            const jj2 = rj2 ? JSON.parse(rj2) : null;
+            const fh = jj2 && jj2.stream && jj2.stream.sources && jj2.stream.sources.find(x2 => x2 && x2.kind === 'hls' && /^https?:/.test(x2.url || ''));
+            if (fh) { ent.m = fh.url; mmPut(MM_VC, ent.vbq, ent.m); raw = ''; }
+          } catch { }
+          if (!raw) { raw = mmGet(MM_MC, ent.m, 60000) || ''; if (!raw || raw.indexOf('#EXTM') < 0) { try { const rr2 = await fetch(ent.m, { headers: { 'User-Agent': UA, Referer: ent.ref }, signal: AbortSignal.timeout(8000) }); raw = rr2.ok ? await rr2.text() : ''; } catch { } } }
+        }
+        if (!raw || raw.indexOf('#EXTM') < 0) { res.writeHead(502, { 'content-type': 'text/plain' }); return res.end('upstream'); }
+        mmPut(MM_MC, ent.m, raw);
         const mini = mmMiniBuild(ent.m, ent.h, raw) || raw; // fall back to the full absolute master when no variants
         res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl', 'access-control-allow-origin': '*', 'cache-control': 'no-store' });
         return res.end(mini);
