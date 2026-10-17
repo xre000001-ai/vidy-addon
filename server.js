@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.30';
+const VERSION = '1.15.31';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -1070,49 +1070,69 @@ async function mmVidbolt(tmdbId, isSeries, s, e, ms) { // v1.15.28: the vidbolt 
       const jtxt = await mmPoolText('https://vidbolt.xyz/api/resolve?' + q, vLeft(6500));
       try { j = jtxt ? JSON.parse(jtxt) : null; } catch { }
       const srcs = (j && j.stream && Array.isArray(j.stream.sources) ? j.stream.sources : []).slice(0, 8);
-      if (!srcs.length) { if (draw < 2) await new Promise(r3 => setTimeout(r3, 450)); continue; }
-      await Promise.all(srcs.map(async sc => {
-        const uu = sc && sc.url;
-        if (!uu || !/^https?:/.test(uu)) return;
+      if (!srcs.length) { // v1.15.31: rotation gap — a remembered master (sticky resolve memory) still emits one card; playback proves it
+        const cm = mmGet(MM_VC, q, 1800000);
+        if (cm) { push(0, cm, VB_REF, 0, '', '', 1, 'mem'); break; }
+        if (draw < 2) await new Promise(r3 => setTimeout(r3, 450)); continue;
+      }
+      // v1.15.31 (user: "too many requests in a short period of time" mid-playback): the hls
+      // bridges are Cloudflare workers that rate-limit per IP, and the scan used to pull EVERY
+      // source's playlist through them (~6-18 worker hits per tap) on top of playback. Now ONE
+      // worker fetch proves the draw (first hls source); the rest become mini cards straight
+      // from the resolve labels — the player's mini-master pull rebuilds per-quality anyway.
+      // MP4 cards (proxy.vidbolt.xyz — a different host, not the worker) unchanged.
+      const hlsS = [], mp4S = [];
+      for (const sc of srcs) { if (!sc || !sc.url || !/^https?:/.test(sc.url)) continue; const isM = String(sc.kind || '').toLowerCase() === 'mp4' || /\.mp4($|\?)/i.test(sc.url); (isM ? mp4S : hlsS).push(sc); }
+      await Promise.all(mp4S.map(async sc => {
+        const uu = sc.url;
         const hq = parseInt(String(sc.quality || ''), 10) || 0;
         const lang = String(sc.language || '').trim();
-        if (String(sc.kind || '').toLowerCase() === 'mp4' || /\.mp4($|\?)/i.test(uu)) { // direct MP4 — a light GET proves it, body cancelled at once
-          try { const hd = await fetch(uu, { headers: { 'User-Agent': UA, Referer: VB_REF }, method: 'GET', signal: AbortSignal.timeout(vLeft(4500)) }); if (hd.ok) { try { if (hd.body) hd.body.cancel(); } catch { } push(hq, uu, VB_REF, 1, lang); } } catch { }
-          return;
-        }
-        try {
-          const pl = await mmPoolText(uu, vLeft(5500)); // hls bridge — direct first, the MM pool for rescue
-          if (!pl || pl.indexOf('#EXTM') < 0) return;
-          const atag = woAudioTag(pl);
-          if (woHasAudioGrp(pl)) { // v1.15.30 (user: multi-audio quality changed automatically — manual options back): one mini-master card per quality, resolution pinned + audio intact
-          const lines0 = pl.split('\n'); let pcount = 0;
-          for (let jj = 0; jj < lines0.length - 1 && pcount < 4; jj++) {
-            if (lines0[jj].indexOf('#EXT-X-STREAM-INF') < 0) continue;
-            const r2 = lines0[jj].match(/RESOLUTION=(\d+)x(\d+)/i);
-            const hh = r2 ? parseInt(r2[2], 10) || 0 : 0;
-            const kk = 'm' + hh;
-            if (oseen.has(kk)) continue;
-            oseen.add(kk);
-            push(hh || hq, uu, VB_REF, 0, lang, atag, 1, kk);
-            pcount++;
-          }
-          if (!pcount) push(hq, uu, VB_REF, 0, lang, atag, 1, 'mx');
-          return;
-        }
-          let base = uu; try { base = new URL(uu).href.replace(/[^/]*$/, ''); } catch { }
-          const lines = pl.split('\n'); let found = 0;
-          for (let jj = 0; jj < lines.length - 1; jj++) {
-            if (lines[jj].indexOf('#EXT-X-STREAM-INF') < 0) continue;
-            const rm = lines[jj].match(/RESOLUTION=(\d+)x(\d+)/i);
-            const uri = String(lines[jj + 1] || '').trim();
-            if (!uri || uri.charAt(0) === '#') continue;
-            let abs = uri; try { abs = new URL(uri, base).href; } catch { }
-            push(rm ? parseInt(rm[2], 10) || 0 : 0, abs, VB_REF, 0, lang, atag);
-            if (++found >= 6) break;
-          }
-          if (!found) push(0, uu, VB_REF, 0, lang, atag);
-        } catch { }
+        try { const hd = await fetch(uu, { headers: { 'User-Agent': UA, Referer: VB_REF }, method: 'GET', signal: AbortSignal.timeout(vLeft(4500)) }); if (hd.ok) { try { if (hd.body) hd.body.cancel(); } catch { } push(hq, uu, VB_REF, 1, lang); } } catch { }
       }));
+      if (hlsS.length) {
+        let pl = '';
+        try { pl = await mmPoolText(hlsS[0].url, vLeft(5500)) || ''; } catch { } // hls bridge — direct first, the MM pool for rescue; ONE fetch proves the whole draw
+        if (pl && pl.indexOf('#EXTM') >= 0) {
+          const sc0 = hlsS[0];
+          const hq0 = parseInt(String(sc0.quality || ''), 10) || 0;
+          const lang0 = String(sc0.language || '').trim();
+          const atag = woAudioTag(pl);
+          if (woHasAudioGrp(pl)) { // v1.15.30: one mini-master card per quality, resolution pinned + audio intact
+            const lines0 = pl.split('\n'); let pcount = 0;
+            for (let jj = 0; jj < lines0.length - 1 && pcount < 4; jj++) {
+              if (lines0[jj].indexOf('#EXT-X-STREAM-INF') < 0) continue;
+              const r2 = lines0[jj].match(/RESOLUTION=(\d+)x(\d+)/i);
+              const hh = r2 ? parseInt(r2[2], 10) || 0 : 0;
+              const kk = 'm' + hh;
+              if (oseen.has(kk)) continue;
+              oseen.add(kk);
+              push(hh || hq0, sc0.url, VB_REF, 0, lang0, atag, 1, kk);
+              pcount++;
+            }
+            if (!pcount) push(hq0, sc0.url, VB_REF, 0, lang0, atag, 1, 'mx');
+          } else {
+            let base = sc0.url; try { base = new URL(sc0.url).href.replace(/[^/]*$/, ''); } catch { }
+            const lines = pl.split('\n'); let found = 0;
+            for (let jj = 0; jj < lines.length - 1; jj++) {
+              if (lines[jj].indexOf('#EXT-X-STREAM-INF') < 0) continue;
+              const rm = lines[jj].match(/RESOLUTION=(\d+)x(\d+)/i);
+              const uri = String(lines[jj + 1] || '').trim();
+              if (!uri || uri.charAt(0) === '#') continue;
+              let abs = uri; try { abs = new URL(uri, base).href; } catch { }
+              push(rm ? parseInt(rm[2], 10) || 0 : 0, abs, VB_REF, 0, lang0, atag);
+              if (++found >= 6) break;
+            }
+            if (!found) push(0, sc0.url, VB_REF, 0, lang0, atag);
+          }
+          mmPut(MM_VC, q, sc0.url); // seed the sticky memory — a later rotation gap can still serve a card
+          for (let i2 = 1; i2 < hlsS.length; i2++) { // labels only — no worker fetch per source
+            const sc2 = hlsS[i2];
+            const hq2 = parseInt(String(sc2.quality || ''), 10) || 0;
+            const lang2 = String(sc2.language || '').trim();
+            push(hq2, sc2.url, VB_REF, 0, lang2, '', 1, 'm' + i2 + 'h' + hq2);
+          }
+        }
+      }
       break; // a productive draw is enough
     }
     return out;
@@ -1169,7 +1189,7 @@ async function mmStreams(tmdbId, title, type, s, e, origin) { // v1.15.28: Multi
       }
       if (!found && /#EXTINF/.test(pl) && !seen.has(servers[i])) { seen.add(servers[i]); raws.push({ h: 0, url: servers[i], aud: atag }); } // master-level fallback
     }
-    try { const vbl = await vbP; for (const v of (vbl || [])) if (v && v.url && !seen.has(v.url)) { seen.add(v.url); raws.push(v); } } catch { } // vidbolt results merge in parallel too
+    try { const vbl = await vbP; for (const v of (vbl || [])) { if (!v || !v.url) continue; const vk2 = v.url + '|' + (v.h | 0) + (v.mini ? 'm' : ''); if (seen.has(vk2)) continue; seen.add(vk2); raws.push(v); } } catch { } // vidbolt merge — dedup per url+height so per-quality minis all survive
     if (DBG) console.error('[mm] ' + tmdbId + '/' + (isSeries ? 'S' + (s || 1) + 'E' + (e || 1) : 'movie') + ' servers=' + servers.length + ' variants=' + raws.length + ' @' + (Date.now() - t3) + 'ms');
     const vars = raws.slice().sort((a, b) => b.h - a.h).slice(0, 12);
     if (!vars.length) return [];
