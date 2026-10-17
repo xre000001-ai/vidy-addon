@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.37';
+const VERSION = '1.15.38';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -176,7 +176,7 @@ function mmPickVar(pl, base, wantH) { // the wanted variant's URI (resolution ma
     const r2 = (L[i].match(/RESOLUTION=(\d+)x(\d+)/i) || [])[2];
     const hh = r2 ? parseInt(r2, 10) || 0 : 0;
     const w2 = hh === wantH ? 0 : 1;
-    if (w2 < bestW) { bestW = w2; try { const a2 = new URL(nxt, base); if (!a2.search) { try { a2.search = new URL(base).search; } catch { } } best = a2.href; } catch { best = nxt; } if (bestW === 0) break; } // v1.15.33 rule here too: the key rides along
+    if (w2 < bestW) { bestW = w2; try { const a2 = new URL(nxt, base); if (!a2.search || /api_key=(&|$)/.test(a2.search)) { try { a2.search = new URL(base).search; } catch { } } best = a2.href; } catch { best = nxt; } if (bestW === 0) break; } // v1.15.38: the key rides along — an EMPTY-value api_key counts as missing (rousav's live index emits bare '?api_key=')
     i++;
   }
   return best;
@@ -198,6 +198,25 @@ function mmVarInline(varUrl, vraw) { // a variant playlist with EVERY segment UR
     try { const a = new URL(t, varUrl); if (!a.search && bq) a.search = bq; out.push(a.href); } catch { out.push(t); }
   }
   return out.join('\n');
+}
+function mmLooksReel(tx) { // short total + ENDLIST = a stub listing (the reel's constant shape; a real title's full VOD runs >>15min, live has no ENDLIST)
+  if (!tx || tx.indexOf('#EXTM') < 0 || !/ENDLIST/.test(tx)) return false;
+  const d4 = String(tx).split('\n').reduce((a4, l4) => { const m4 = l4.match(/^#EXTINF:([\d.]+)/); return m4 ? a4 + parseFloat(m4[1]) : a4; }, 0);
+  return d4 > 0 && d4 < 900;
+}
+async function mmReelCheck(v1, vLeft) { // 'reel' = only stub listings came back, 'real' = any full listing, 'unknown' = misses — never blocks on misses.
+  // Own budget + DIRECT fetches only: this verdict rides on the leftover draw crumbs, the pool leg would eat them
+  const rc0 = Date.now(); let stubs = 0, hits = 0, efirst = '';
+  for (let q5 = 0; q5 < 3; q5++) {
+    let vt = ''; try { const rr5 = await fetch(v1, { headers: { 'User-Agent': UA, Referer: VB_REF }, signal: AbortSignal.timeout(2500) }); vt = rr5.ok ? await rr5.text() : ''; if (!rr5.ok && !efirst) efirst = 'HTTP' + rr5.status; } catch (e6) { if (!efirst) efirst = (e6 && e6.message || 'err'); }
+    if (!vt || vt.indexOf('#EXTM') < 0) { if (DBG) console.error('[reelchk] non-m3u8 body: ' + JSON.stringify(vt.slice(0, 60)) + ' len=' + vt.length); continue; }
+    hits++;
+    if (!mmLooksReel(vt)) { if (DBG) console.error('[reelchk] FULL el=' + (Date.now() - rc0) + 'ms'); return 'real'; } // the node lottery served the full movie — decisive
+    stubs++; // rousav's reel: png-NAMED segments that ARE real TS — magic bytes can't judge here; the SHORT+ENDLIST listing is the fingerprint
+  }
+  const vout = stubs >= 3 ? 'reel' : 'unknown';
+  if (DBG) console.error('[reelchk] v1=' + String(v1).slice(0, 70) + ' pulls=' + hits + ' stubs=' + stubs + ' verdict=' + vout + ' err=' + efirst + ' el=' + (Date.now() - rc0) + 'ms');
+  return vout;
 }
 function mmRousav(u) { // the vidbolt-orion host — direct-link + reel rules apply only here (user directive)
   try { return /(^|\.)rousav\.tech$/i.test(new URL(u).hostname); } catch { return false; }
@@ -1150,7 +1169,7 @@ async function mmVidbolt(tmdbId, isSeries, s, e, ms) { // v1.15.28: the vidbolt 
       const srcs = (j && j.stream && Array.isArray(j.stream.sources) ? j.stream.sources : []).slice(0, 8);
       if (!srcs.length) { // v1.15.31: rotation gap — a remembered master (sticky resolve memory) still emits one card; playback proves it
         const cm = mmGet(MM_VC, q, 1800000);
-        if (cm && !MM_TILE.has(cm)) { push(0, cm, VB_REF, 0, '', '', mmRousav(cm) ? 0 : 1, 'mem'); break; }
+        if (cm && !MM_TILE.has(cm)) { push(0, cm, VB_REF, 0, '', '', 0, 'mem'); break; } // v1.15.38: DIRECT
         if (draw < 2) await new Promise(r3 => setTimeout(r3, 450)); continue;
       }
       // v1.15.31 (user: "too many requests in a short period of time" mid-playback): the hls
@@ -1161,6 +1180,12 @@ async function mmVidbolt(tmdbId, isSeries, s, e, ms) { // v1.15.28: the vidbolt 
       // MP4 cards (proxy.vidbolt.xyz — a different host, not the worker) unchanged.
       const hlsS = [], mp4S = [];
       for (const sc of srcs) { if (!sc || !sc.url || !/^https?:/.test(sc.url)) continue; const isM = String(sc.kind || '').toLowerCase() === 'mp4' || /\.mp4($|\?)/i.test(sc.url); (isM ? mp4S : hlsS).push(sc); }
+      const h0 = hlsS[0];
+      if (h0 && /api_key=(&|$)/.test(h0.url)) { // v1.15.38: a resolve fetched through a flagged IP comes back soft-blocked with an EMPTY api_key — a keyless rousav master is dead weight; discard the draw
+        if (DBG) console.error('[vbd] empty-key resolve, draw ' + draw + ' discarded');
+        if (draw < 2) await new Promise(r3 => setTimeout(r3, 450));
+        continue;
+      }
       await Promise.all(mp4S.map(async sc => {
         const uu = sc.url;
         const hq = parseInt(String(sc.quality || ''), 10) || 0;
@@ -1179,33 +1204,33 @@ async function mmVidbolt(tmdbId, isSeries, s, e, ms) { // v1.15.28: the vidbolt 
           const atag = woAudioTag(pl);
         // v1.15.34 (user: Chainsaw Man never played — the card was a ~10min reel of .png tiles, ending in the upstream 'too many requests' overlay): a playlist
         // whose segments are images is a PREVIEW REEL, not video — no card from it (honest empty), verdict remembered; embedded masters get one cheap variant peek
-        if (MM_TILE.has(sc0.url)) { if (draw < 2) await new Promise(r3 => setTimeout(r3, 450)); continue; }
-        // v1.15.37 (user: 'ei reel gulo asbei na' — the 1218925 probe proved the stub IS a ~10min preview reel: 60 segments, ENDLIST, files past #59 absent on every rendition): rousav
-        // sources get a listing check — image tiles blocked by magic bytes, real TS with a SHORT ENDLIST listing = preview reel, never carded; the verdict needs two stub listings in a row
+        // v1.15.37+38 (user: 'ei reel gulo asbei na'): rousav reel judgment — image tiles by magic bytes; otherwise up to 3 raced listing pulls: ANY full listing = real
+        // (forgives an earlier reel verdict — a real title must never stay buried on stub luck), two+ stubs = the preview reel, never carded
+        if (MM_TILE.has(sc0.url)) {
+          const vA = em.indexOf('#EXTM') >= 0 ? mmPickVar(pl, sc0.url, hq0) : '';
+          if (!vA || (await mmReelCheck(vA, vLeft)) !== 'real') { if (draw < 2) await new Promise(r3 => setTimeout(r3, 450)); continue; }
+          MM_TILE.delete(sc0.url); // forgiven — the full listing surfaced
+        }
         let tileImg = false;
         if (mmIsTile(pl)) { const fs0 = mmFirstSeg(pl, sc0.url); tileImg = fs0 ? await mmProbeImg(fs0) : true; } // extension gate, then one magic-byte peek
-        if (!tileImg && mmRousav(sc0.url)) {
+        if (!tileImg && !MM_TILE.has(sc0.url) && mmRousav(sc0.url)) {
           const v1 = mmPickVar(pl, sc0.url, hq0);
-          const looksReel = tx => { if (!tx || tx.indexOf('#EXTM') < 0 || !/ENDLIST/.test(tx)) return false; const d4 = tx.split('\n').reduce((a4, l4) => { const m4 = l4.match(/^#EXTINF:([\d.]+)/); return m4 ? a4 + parseFloat(m4[1]) : a4; }, 0); return d4 > 0 && d4 < 900; };
-          if (v1) { try { const vt = await mmPoolText(v1, vLeft(5000)) || '';
-            if (mmIsTile(vt)) { const fs1 = mmFirstSeg(vt, v1); if (!fs1 || await mmProbeImg(fs1)) tileImg = true; }
-            if (!tileImg && looksReel(vt) && looksReel(await mmPoolText(v1, vLeft(5000)) || '')) tileImg = true; // two stubs in a row — a real title's cut listing can win one coin flip, not two
-          } catch { } }
+          if (DBG) console.error('[vbd3] base-tail=…' + String(sc0.url).slice(-30) + ' | v1-tail=…' + String(v1).slice(-30));
+          if (v1) { const vd = await mmReelCheck(v1, vLeft); if (vd === 'reel') tileImg = true; }
         }
         if (tileImg) MM_TILE.add(sc0.url);
         if (MM_TILE.has(sc0.url)) { if (draw < 2) await new Promise(r3 => setTimeout(r3, 450)); continue; }
           if (woHasAudioGrp(pl)) { // v1.15.30: one mini-master card per quality, resolution pinned + audio intact
+            // v1.15.38 (user: 'tumi to beamup server die pathacchi — live er moto play hoi, audio nai'): NO card may hop through us, ever — the ORIGINAL master
+            // goes to the player whole: every quality AND every audio track switches natively in the player; the old per-quality mini pins broke live-style windows
             const lines0 = pl.split('\n'); let pcount = 0;
-            for (let jj = 0; jj < lines0.length - 1 && pcount < 4; jj++) {
+            for (let jj = 0; jj < lines0.length - 1; jj++) {
               if (lines0[jj].indexOf('#EXT-X-STREAM-INF') < 0) continue;
-              const r2 = lines0[jj].match(/RESOLUTION=(\d+)x(\d+)/i);
-              const hh = r2 ? parseInt(r2[2], 10) || 0 : 0;
-              const kk = 'm' + hh;
-              if (oseen.has(kk)) continue;
-              push(hh || hq0, sc0.url, VB_REF, 0, lang0, atag, mmRousav(sc0.url) ? 0 : 1, kk); // v1.15.37: rousav DIRECT — the card url IS the keyed rousav master, no /mm/ relay, no token (user directive); other servers keep the mini-master
+              push(hq0, sc0.url, VB_REF, 0, lang0, atag, 0, 'm0');
               pcount++;
+              break;
             }
-            if (!pcount) push(hq0, sc0.url, VB_REF, 0, lang0, atag, mmRousav(sc0.url) ? 0 : 1, 'mx');
+            if (!pcount) push(hq0, sc0.url, VB_REF, 0, lang0, atag, 0, 'mx');
           } else {
             let base = sc0.url; try { base = new URL(sc0.url).href.replace(/[^/]*$/, ''); } catch { }
             const lines = pl.split('\n'); let found = 0;
@@ -1225,7 +1250,7 @@ async function mmVidbolt(tmdbId, isSeries, s, e, ms) { // v1.15.28: the vidbolt 
             const sc2 = hlsS[i2];
             const hq2 = parseInt(String(sc2.quality || ''), 10) || 0;
             const lang2 = String(sc2.language || '').trim();
-            push(hq2, sc2.url, VB_REF, 0, lang2, '', 1, 'm' + i2 + 'h' + hq2);
+            push(hq2, sc2.url, VB_REF, 0, lang2, '', 0, 'm' + i2 + 'h' + hq2); // v1.15.38: DIRECT
           }
         }
       }
@@ -1267,10 +1292,10 @@ async function mmStreams(tmdbId, title, type, s, e, origin) { // v1.15.28: Multi
           const kk = 'm' + i + 'h' + hh;
           if (seen.has(kk)) continue;
           seen.add(kk);
-          raws.push({ h: hh, url: servers[i], aud: atag, mini: 1 });
+          raws.push({ h: hh, url: servers[i], aud: atag, mini: 0 }); // v1.15.38: DIRECT
           pcount++;
         }
-        if (!pcount && !seen.has(servers[i])) { seen.add(servers[i]); raws.push({ h: 0, url: servers[i], aud: atag, mini: 1 }); }
+        if (!pcount && !seen.has(servers[i])) { seen.add(servers[i]); raws.push({ h: 0, url: servers[i], aud: atag, mini: 0 }); } // v1.15.38: DIRECT
         continue;
       }
       let found = 0;
