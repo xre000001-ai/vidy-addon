@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.62';
+const VERSION = '1.15.63';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -981,7 +981,7 @@ async function twrFetch(base, tag, title, type, s, e, t3) {
   try {
     if (DBG) console.error('[twrURL] ' + base + '/find?' + qs.toString());
     const FU = base + '/find?' + qs.toString(); let b = '';
-    if (HUB) { // v1.15.61: §4-ওয়্যারিং — নিজ-অ্যাপ-স্পেসে-bench-হওয়া-px-দিয়ে-রেজলভার-কল-আগে; JSON-না-হলে-px-কে-/report-ফেল+সরাসরি-ফলব্যাক
+    if (HUB && !process.env.TWRT_BRIDGE) { // v1.15.63: TWRT_BRIDGE=থাকলে-এ-শাখা-বন্ধ — রেজলভার-ব্রিজ-নিজেই-tw/rt-সাব-স্পেস-খরচ-করে (ইউজারের-চূড়ান্ত-ম্যাপ: vidy=vidy/moviebox/multimovies, রেজলভার=toonworld4all/raretoons)
       try {
         const sp2 = HSPACE(tag); const kp = HKEY(sp2) ? '&key=' + encodeURIComponent(HKEY(sp2)) : '';
         const hr = await fetch(HUB + '/fetch?src=' + encodeURIComponent(sp2) + kp + '&ms=8000&url=' + encodeURIComponent(FU), { signal: AbortSignal.timeout(9500) });
