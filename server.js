@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.29';
+const VERSION = '1.15.30';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -136,6 +136,41 @@ const VB_REF = 'https://vidbolt.xyz/';
 const WOBASE = String(process.env.WOBASE || 'https://raw.githubusercontent.com/Watchout2025/api/refs/heads/main'); // multimovies stream index (movies: hls/movie/{tmdb}, tv: hls/tv/{tmdb}/S{n}.json)
 const WO_REF = 'https://vidout.pages.dev/'; // this exact Referer opens the multimovies CDN (404 without it)
 const WO_LANGS = { eng: 'English', en: 'English', hin: 'Hindi', hi: 'Hindi', ara: 'Arabic', fra: 'French', spa: 'Spanish', por: 'Portuguese', rus: 'Russian', zho: 'Chinese', ben: 'Bengali', tam: 'Tamil', tel: 'Telugu' };
+const MM_VC = new Map(); const MM_MC = new Map(); // v1.15.30: vbq->resolved master (60s sticky — no resolve hammering) and master->raw text (60s)
+function mmPut(map, k, v) { if (map.size > 300) map.clear(); map.set(k, { ts: Date.now(), v }); }
+function mmGet(map, k, ttl) { const e = map.get(k); return e && (Date.now() - e.ts) < ttl ? e.v : null; }
+function mmMiniKey(m, ref, h, vbq) { // stateless — the key carries everything (master|ref|height|vbq); works on any instance after any restart
+  return Buffer.from(m + '|' + (ref || WO_REF) + '|' + (h | 0) + '|' + (vbq || '')).toString('base64url');
+}
+function mmMiniOpen(k) { // recover params from the key — any instance, any time
+  try {
+    const pp = Buffer.from(k, 'base64url').toString('utf8').split('|');
+    if (pp.length < 3 || !/^https?:\/\//.test(pp[0])) return null;
+    return { m: pp[0], ref: pp[1] || WO_REF, h: parseInt(pp[2], 10) || 0, vbq: pp[3] || '' };
+  } catch { return null; }
+}
+function mmMiniBuild(masterUrl, wantH, raw) { // all qualities stay (switchable in the player menu), the wanted one first
+  const L = String(raw).split('\n'); const tags = []; const vars = [];
+  for (let i = 0; i < L.length; i++) {
+    let ln = L[i];
+    if (ln.charAt(0) === '#' && /EXT-X-(MEDIA|KEY|MAP|I-FRAME-STREAM-INF|SESSION)/.test(ln)) { tags.push(ln.replace(/URI="([^"]*)"/g, (mm, uu) => { try { return 'URI="' + new URL(uu, masterUrl).href + '"'; } catch { return mm; } })); continue; }
+    if (/^#EXT-X-STREAM-INF/.test(ln)) {
+      const nxt = L[i + 1] && L[i + 1].charAt(0) !== '#' ? L[i + 1].trim() : '';
+      if (!nxt) continue;
+      const r2 = (ln.match(/RESOLUTION=(\d+)x(\d+)/i) || [])[2];
+      const hh = r2 ? parseInt(r2, 10) || 0 : 0;
+      let abs2 = nxt; try { abs2 = new URL(nxt, masterUrl).href; } catch { }
+      vars.push({ ln: ln, uri: abs2, h: hh, w: hh === wantH ? 0 : 1 });
+      i++;
+      continue;
+    }
+  }
+  vars.sort((a, b) => a.w - b.w || b.h - a.h); // wanted quality first, then high to low
+  const seenK = new Set(); const out = tags.slice();
+  for (const v of vars.slice(0, 6)) { if (seenK.has(v.uri)) continue; seenK.add(v.uri); out.push(v.ln, v.uri); }
+  if (!vars.length) return null; // no variants -> caller falls back to raw
+  return out.join('\n');
+}
 let mmChkBusy = false;
 function mmSave() { try { fs.writeFileSync(MM_FILE, JSON.stringify(MM_POOL)); } catch (e) { } }
 function pxRecMM(px, good, ms) {
@@ -1029,7 +1064,7 @@ async function mmVidbolt(tmdbId, isSeries, s, e, ms) { // v1.15.28: the vidbolt 
   try {
     const q = isSeries ? ('type=tv&id=' + tmdbId + '&season=' + (parseInt(s, 10) || 1) + '&episode=' + (parseInt(e, 10) || 1)) : ('type=movie&id=' + tmdbId);
     const out = []; const oseen = new Set();
-    const push = (h, url, ref, mp4, lang, aud) => { if (url && !oseen.has(url)) { oseen.add(url); out.push({ h: h | 0, url: url, ref: ref, mp4: mp4 ? 1 : 0, lang: lang || '', aud: aud || '' }); } };
+    const push = (h, url, ref, mp4, lang, aud, mini, k) => { const kk = k || url; if (url && kk && !oseen.has(kk)) { oseen.add(kk); out.push({ h: h | 0, url: url, ref: ref, mp4: mp4 ? 1 : 0, lang: lang || '', aud: aud || '', mini: mini ? 1 : 0, vbq: mini ? q : '' }); } };
     for (let draw = 0; draw < 3; draw++) { // a dead draw (0 results) retries after 450ms — different servers serve the rotation
       let j = null;
       const jtxt = await mmPoolText('https://vidbolt.xyz/api/resolve?' + q, vLeft(6500));
@@ -1049,7 +1084,21 @@ async function mmVidbolt(tmdbId, isSeries, s, e, ms) { // v1.15.28: the vidbolt 
           const pl = await mmPoolText(uu, vLeft(5500)); // hls bridge — direct first, the MM pool for rescue
           if (!pl || pl.indexOf('#EXTM') < 0) return;
           const atag = woAudioTag(pl);
-          if (woHasAudioGrp(pl)) { push(0, uu, VB_REF, 0, lang, atag); return; } // audio-group master — the master itself carries the audio
+          if (woHasAudioGrp(pl)) { // v1.15.30 (user: multi-audio quality changed automatically — manual options back): one mini-master card per quality, resolution pinned + audio intact
+          const lines0 = pl.split('\n'); let pcount = 0;
+          for (let jj = 0; jj < lines0.length - 1 && pcount < 4; jj++) {
+            if (lines0[jj].indexOf('#EXT-X-STREAM-INF') < 0) continue;
+            const r2 = lines0[jj].match(/RESOLUTION=(\d+)x(\d+)/i);
+            const hh = r2 ? parseInt(r2[2], 10) || 0 : 0;
+            const kk = 'm' + hh;
+            if (oseen.has(kk)) continue;
+            oseen.add(kk);
+            push(hh || hq, uu, VB_REF, 0, lang, atag, 1, kk);
+            pcount++;
+          }
+          if (!pcount) push(hq, uu, VB_REF, 0, lang, atag, 1, 'mx');
+          return;
+        }
           let base = uu; try { base = new URL(uu).href.replace(/[^/]*$/, ''); } catch { }
           const lines = pl.split('\n'); let found = 0;
           for (let jj = 0; jj < lines.length - 1; jj++) {
@@ -1069,7 +1118,7 @@ async function mmVidbolt(tmdbId, isSeries, s, e, ms) { // v1.15.28: the vidbolt 
     return out;
   } catch { return []; }
 }
-async function mmStreams(tmdbId, title, type, s, e) { // v1.15.28: Multimovies source — vidout index + vidbolt resolve, plain absolute URLs
+async function mmStreams(tmdbId, title, type, s, e, origin) { // v1.15.28: Multimovies source — vidout index + vidbolt resolve; origin: for the mini-master URLs (v1.15.30)
   if (!tmdbId) return [];
   const t3 = Date.now(); const WOB = 9000; const left = () => Math.max(300, WOB - (Date.now() - t3));
   try {
@@ -1092,7 +1141,21 @@ async function mmStreams(tmdbId, title, type, s, e) { // v1.15.28: Multimovies s
       let base = servers[i]; try { base = new URL(servers[i]).href.replace(/[^/]*$/, ''); } catch { }
       const atag = woAudioTag(pl);
       const lines = pl.split('\n');
-      if (woHasAudioGrp(pl)) { if (!seen.has(servers[i])) { seen.add(servers[i]); raws.push({ h: 0, url: servers[i], aud: atag }); } continue; }
+      if (woHasAudioGrp(pl)) { // v1.15.30: per-quality mini cards — manual resolution with audio intact (was one auto-shifting master)
+        let pcount = 0;
+        for (let j2 = 0; j2 < lines.length - 1 && pcount < 4; j2++) {
+          if (lines[j2].indexOf('#EXT-X-STREAM-INF') < 0) continue;
+          const r3 = lines[j2].match(/RESOLUTION=(\d+)x(\d+)/i);
+          const hh = r3 ? parseInt(r3[2], 10) || 0 : 0;
+          const kk = 'm' + i + 'h' + hh;
+          if (seen.has(kk)) continue;
+          seen.add(kk);
+          raws.push({ h: hh, url: servers[i], aud: atag, mini: 1 });
+          pcount++;
+        }
+        if (!pcount && !seen.has(servers[i])) { seen.add(servers[i]); raws.push({ h: 0, url: servers[i], aud: atag, mini: 1 }); }
+        continue;
+      }
       let found = 0;
       for (let j = 0; j < lines.length - 1; j++) {
         if (lines[j].indexOf('#EXT-X-STREAM-INF') < 0) continue;
@@ -1122,7 +1185,7 @@ async function mmStreams(tmdbId, title, type, s, e) { // v1.15.28: Multimovies s
         title: txt,
         description: txt,
         quality: q2,
-        url: x.url,
+        url: x.mini ? (origin ? origin + '/mm/' + mmMiniKey(x.url, x.ref || WO_REF, x.h, x.vbq) + '/mini.m3u8' : x.url) : x.url, // v1.15.30: mini-master — resolution pinned, audio intact, qualities switchable
         behaviorHints: { notWebReady: false, isBingeable: true, filename: x.mp4 ? 'multimovies.mp4' : 'multimovies.m3u8', proxyHeaders: { request: { Referer: x.ref || WO_REF, 'User-Agent': UA } } },
         bingeGroup: 'mm|' + T.toLowerCase() + '::',
         ...(subs.length ? { subtitles: subs.map(y => ({ url: y.url, lang: y.lang })) } : {})
@@ -1620,6 +1683,35 @@ const server = http.createServer((req, res) => {
     if (p === '/_nxring') { if (!NEXBASE) return sendJson(res, 200, { off: 1 }); directGet(NEXBASE + '/debug/ring', 4000).then(b => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(b); }).catch(() => { res.writeHead(200, { 'content-type': 'application/json' }); res.end('{"err":1}'); }); return; } // v2.10.2 চাইল্ড-রিজলভ-ধাপ-প্রমাণ
     if (p === '/_log') return sendJson(res, 200, reqLog.slice(-40).reverse());
     if (p === '/_servers') return sendJson(res, 200, { order: srvOrder(), scores: SRV_SCORE }); // কনফিগ-পেজের-লাইভ-হেলথ
+    const mmR = p.match(/^\/mm\/([A-Za-z0-9_-]{8,2400})\/mini\.m3u8$/); // v1.15.30: signed bridge master keys run ~1400 chars
+    if (mmR) return (async () => { // mini-master — resolution pinned + audio intact; fresh fetch per request (not the stream-result cache)
+      const ent = mmMiniOpen(mmR[1]); // the key knows everything — no memory needed; a real key never dies
+      if (!ent) { res.writeHead(404, { 'content-type': 'text/plain' }); return res.end('gone'); }
+      try {
+        if (ent.vbq) { // vidbolt signatures rotate fast — sticky resolve (60s memory — no hammering resolve on every player master pull)
+          const cm2 = mmGet(MM_VC, ent.vbq, 60000);
+          if (cm2) ent.m = cm2;
+          else {
+            try {
+              const rj2 = await mmPoolText('https://vidbolt.xyz/api/resolve?' + ent.vbq, 6000);
+              const jj2 = rj2 ? JSON.parse(rj2) : null;
+              const fh = jj2 && jj2.stream && jj2.stream.sources && jj2.stream.sources.find(x2 => x2 && x2.kind === 'hls' && /^https?:/.test(x2.url || ''));
+              if (fh) { ent.m = fh.url; mmPut(MM_VC, ent.vbq, ent.m); }
+            } catch { }
+          }
+        }
+        let raw = mmGet(MM_MC, ent.m, 60000); // 60s master cache — on a hit there is no upstream travel at all
+        if (!raw) {
+          const rr = await fetch(ent.m, { headers: { 'User-Agent': UA, Referer: ent.ref }, signal: AbortSignal.timeout(8000) });
+          raw = rr.ok ? await rr.text() : '';
+          if (raw.indexOf('#EXTM') < 0) { res.writeHead(502, { 'content-type': 'text/plain' }); return res.end('upstream'); }
+          mmPut(MM_MC, ent.m, raw);
+        }
+        const mini = mmMiniBuild(ent.m, ent.h, raw) || raw; // fall back to the full absolute master when no variants
+        res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl', 'access-control-allow-origin': '*', 'cache-control': 'no-store' });
+        return res.end(mini);
+      } catch { res.writeHead(502, { 'content-type': 'text/plain' }); return res.end('upstream-err'); }
+    })();
     let m;
     // সব-পথ-লগ (৪০৪-ও-দৃশ্যমান-হোক):
     logReq(p, 0, -1, 'route-in', RVA);
@@ -1646,7 +1738,7 @@ const server = http.createServer((req, res) => {
       const nxP = nxOn ? nxFor('movie', String(m[1]), 0, 0) : null;
       const twP = (TWBASE && !(cfg && cfg.tw === 0)) ? tp.then(n => twrStreams(TWBASE, 'toonworld', n, 'movie', 0, 0)).catch(() => []) : null; // v1.12: টাইটেল-প্রমিস-থেকেই-সমান্তরালে-ছোটা
       const rtP = (RTBASE && !(cfg && cfg.rt === 0)) ? tp.then(n => twrStreams(RTBASE, 'raretoons', n, 'movie', 0, 0)).catch(() => []) : null;
-      const mmP = !(cfg && cfg.mm === 0) ? mmStreams(Number(m[1]), '', 'movie', 0, 0).catch(() => []) : null; // v1.15.28: Multimovies (cfg.mm toggle)
+      const mmP = !(cfg && cfg.mm === 0) ? mmStreams(Number(m[1]), '', 'movie', 0, 0, originOf(req)).catch(() => []) : null; // v1.15.28: Multimovies (cfg.mm toggle)
       kickSubs('tmdb' + m[1], 'movie', null, null, cfg);
       return withDeadline(withSources(vOn ? getSources(Number(m[1]), 'movie', null, null, '', cfg, tp) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }], cfg, t0), 11900 /* v1.15.26 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
         cards => { sendStreams(res, req.url, p, Date.now() - t0, cards, RVA); },
@@ -1659,7 +1751,7 @@ const server = http.createServer((req, res) => {
       const nxP = nxOn ? nxFor('series', String(m[1]), Number(m[2] || 1), Number(m[3] || 1)) : null;
       const twP = (TWBASE && !(cfg && cfg.tw === 0)) ? tp.then(n => twrStreams(TWBASE, 'toonworld', n, 'series', Number(m[2] || 1), Number(m[3] || 1))).catch(() => []) : null;
       const rtP = (RTBASE && !(cfg && cfg.rt === 0)) ? tp.then(n => twrStreams(RTBASE, 'raretoons', n, 'series', Number(m[2] || 1), Number(m[3] || 1))).catch(() => []) : null;
-      const mmP = !(cfg && cfg.mm === 0) ? mmStreams(Number(m[1]), '', 'series', Number(m[2] || 1), Number(m[3] || 1)).catch(() => []) : null; // v1.15.28: Multimovies (cfg.mm toggle)
+      const mmP = !(cfg && cfg.mm === 0) ? mmStreams(Number(m[1]), '', 'series', Number(m[2] || 1), Number(m[3] || 1), originOf(req)).catch(() => []) : null; // v1.15.28: Multimovies (cfg.mm toggle)
       if (nxOn) nxPrewarm('series', String(m[1]), Number(m[2] || 1), Number(m[3] || 1));
       twRtPrewarm(tp, 'series', Number(m[2] || 1), Number(m[3] || 1));
       kickSubs('tmdb' + m[1], 'series', Number(m[2] || 1), Number(m[3] || 1), cfg);
@@ -1675,7 +1767,7 @@ const server = http.createServer((req, res) => {
       const nmP = suggName(m[1]); // v1.12.6: rt/tw-দ্রুত-নাম
       const twP = (TWBASE && !(cfg && cfg.tw === 0)) ? nmP.then(nm => nm ? twrStreams(TWBASE, 'toonworld', nm, 'movie', 0, 0) : []).catch(() => []) : null; // v1.15.15: infoP-গেট-বাদ — v=0-কনফিগেও TW/RT-জীবন্ত (আগে vidy-সোর্স-বন্ধ=TW/RT-ও-নীরবে-মৃত — 'শুধু-MovieBox'-মূল-কারণ)
       const rtP = (RTBASE && !(cfg && cfg.rt === 0)) ? nmP.then(nm => nm ? twrStreams(RTBASE, 'raretoons', nm, 'movie', 0, 0) : []).catch(() => []) : null;
-      const mmP = !(cfg && cfg.mm === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? mmStreams(info.id, info.name || '', 'movie', 0, 0).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.28: Multimovies (cfg.mm toggle)
+      const mmP = !(cfg && cfg.mm === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? mmStreams(info.id, info.name || '', 'movie', 0, 0, originOf(req)).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.28: Multimovies (cfg.mm toggle)
       kickSubs(m[1], 'movie', null, null, cfg);
       return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'movie', null, null, info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }], cfg, t0), 11900 /* v1.15.26 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
         cards => { sendStreams(res, req.url, p, Date.now() - t0, cards, RVA); },
@@ -1689,7 +1781,7 @@ const server = http.createServer((req, res) => {
       const nmP = suggName(m[1]); // v1.12.6: rt/tw-দ্রুত-নাম
       const twP = (TWBASE && !(cfg && cfg.tw === 0)) ? nmP.then(nm => nm ? twrStreams(TWBASE, 'toonworld', nm, 'series', Number(m[2]), Number(m[3])) : []).catch(() => []) : null; // v1.15.15: infoP-গেট-বাদ — v=0-তেও TW/RT-জীবন্ত (nmP=IMDb-suggestion, v-নিরপেক্ষ)
       const rtP = (RTBASE && !(cfg && cfg.rt === 0)) ? nmP.then(nm => nm ? twrStreams(RTBASE, 'raretoons', nm, 'series', Number(m[2]), Number(m[3])) : []).catch(() => []) : null;
-      const mmP = !(cfg && cfg.mm === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? mmStreams(info.id, info.name || '', 'series', Number(m[2]), Number(m[3])).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.28: Multimovies (cfg.mm toggle)
+      const mmP = !(cfg && cfg.mm === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? mmStreams(info.id, info.name || '', 'series', Number(m[2]), Number(m[3]), originOf(req)).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.28: Multimovies (cfg.mm toggle)
       if (nxOn) nxPrewarm('series', m[1], Number(m[2]), Number(m[3]));
       twRtPrewarm(nmP, 'series', Number(m[2]), Number(m[3]));
       kickSubs(m[1], 'series', Number(m[2]), Number(m[3]), cfg);
@@ -1705,7 +1797,7 @@ const server = http.createServer((req, res) => {
       const nmP = suggName(m[1]); // v1.12.6: rt/tw-দ্রুত-নাম
       const twP = (TWBASE && !(cfg && cfg.tw === 0)) ? nmP.then(nm => nm ? twrStreams(TWBASE, 'toonworld', nm, 'series', 1, 1) : []).catch(() => []) : null;
       const rtP = (RTBASE && !(cfg && cfg.rt === 0)) ? nmP.then(nm => nm ? twrStreams(RTBASE, 'raretoons', nm, 'series', 1, 1) : []).catch(() => []) : null;
-      const mmP = !(cfg && cfg.mm === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? mmStreams(info.id, info.name || '', 'series', 1, 1).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.28: Multimovies (cfg.mm toggle)
+      const mmP = !(cfg && cfg.mm === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? mmStreams(info.id, info.name || '', 'series', 1, 1, originOf(req)).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.28: Multimovies (cfg.mm toggle)
       if (nxOn) nxPrewarm('series', m[1], 1, 1);
       twRtPrewarm(nmP, 'series', 1, 1);
       kickSubs(m[1], 'series', 1, 1, cfg);
