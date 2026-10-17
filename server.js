@@ -19,7 +19,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.88';
+const VERSION = '1.15.89';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -510,16 +510,18 @@ function getSeed(tmdbId, force) {
     // playback always on the user's own IP. Empty/all-dead pool -> direct as last resort (never breaks)
     try {
       let wbody = ''; let wpx = '';
-      // v1.15.88 (.27-parity, measured): seed = hub-draw and local-race CONCURRENTLY — first valid
-      // result wins (local speed when our stock is hot, the hub's stronger px otherwise); the
-      // winner's px stays sticky for the source scans. A local-only seed won the sprint but its px
-      // choked on the heavy /sources payloads (all 3 giants hedge-dead @6.5s) — both paths must run.
-      const seedCands = [];
-      if (HUB) seedCands.push(fetch(HUB + '/fetch?src=api&ms=4000&url=' + encodeURIComponent(url), { signal: AbortSignal.timeout(5500) }).then(r => r.json().catch(() => null)).then(j2 => (j2 && j2.ok && j2.body) ? { body: String(j2.body), px: 'hub:' + String(j2.px || '') } : null).catch(() => null));
-      if (POOL.length >= 10) seedCands.push(racePool(url, 5, 4500, 'api').then(w => (w && w.body) ? { body: w.body, px: w.px } : null).catch(() => null));
-      const seedWin = await new Promise(res => { let left = seedCands.length; if (!left) return res(null); seedCands.forEach(p => p.then(v => { if (v && !res._w) { res._w = 1; res(v); } else if ((!v || res._w) && --left === 0 && !res._w) res(null); }, () => { if (--left === 0 && !res._w) res(null); })); });
-      if (seedWin) { wbody = seedWin.body; wpx = seedWin.px; }
-      if (!wbody && POOL.length) { try { const w = await racePool(url, 5, 6000, 'api'); wbody = w.body; wpx = w.px; } catch { } } // v1.15.56: vidy-seed-// v1.15.56: vidy-seed space
+      // v1.15.89 (prod-measured 1.15.88): the seed px is STICKY for the /sources scans (decrypt is
+      // px-bound), and only the hub's px can carry the heavy giant payloads — a locally-won seed
+      // made every giant hedge-dead (giants=0 on prod). So the hub draw goes FIRST (5s cap), the
+      // local stock races only when the hub misses. Still bounded: seed lands <=5s.
+      if (HUB) {
+        try {
+          const r = await fetch(HUB + '/fetch?src=api&ms=5000&url=' + encodeURIComponent(url), { signal: AbortSignal.timeout(6500) });
+          const j2 = await r.json().catch(() => null);
+          if (j2 && j2.ok) { wbody = String(j2.body || ''); wpx = 'hub:' + String(j2.px || ''); }
+        } catch { }
+      }
+      if (!wbody && POOL.length >= 10) { try { const w = await racePool(url, 5, 6000, 'api'); wbody = w.body; wpx = w.px; } catch { } } // v1.15.56: vidy-seed-// v1.15.56: vidy-seed space
       const j = JSON.parse(wbody);
       if (!j.seed) throw new Error('seed-empty-proxy');
       seedCache = { key: tmdbId, seed: j.seed, via: 'proxy', px: wpx, ts: Date.now() };
