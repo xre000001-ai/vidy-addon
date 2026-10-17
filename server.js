@@ -1822,7 +1822,7 @@ function ensureNxChild(nxPort) { // v1.15.8: ৯০সে-অন্তর-7137-�
       if (Date.now() - lastSpawn < 180000) return;
       lastSpawn = Date.now();
       if (DBG) console.error('[nx-embed] ensure: চাইল্ড-নেই — পুনঃস্পন');
-      try { require('child_process').spawn(process.execPath, [path.join(__dirname, 'nethex', 'server.js')], { env: Object.assign({}, process.env, { PORT: String(nxPort), NX_POOL_FILE: path.join(__dirname, 'vidy_proxy_pool.json') }), stdio: 'ignore' }); } catch (e) {}
+      try { require('child_process').spawn(process.execPath, [path.join(__dirname, 'nethex', 'server.js')], { env: Object.assign({}, process.env, { PORT: String(nxPort) }), stdio: 'ignore' }); } catch (e) {}
     });
     rq.on('timeout', () => { rq.destroy(); });
   }, 90000);
@@ -1834,7 +1834,7 @@ function startEmbeddedNx() {
       if (!fs.existsSync(path.join(__dirname, 'nethex', 'server.js'))) return resolve('');
       const nxPort = Number(process.env.PORT || 7000) + 137;
       const child = require('child_process').spawn(process.execPath, [path.join(__dirname, 'nethex', 'server.js')], {
-        env: Object.assign({}, process.env, { PORT: String(nxPort), NX_POOL_FILE: path.join(__dirname, 'vidy_proxy_pool.json') }),
+        env: Object.assign({}, process.env, { PORT: String(nxPort) }),
         stdio: 'ignore',
       });
       ensureNxChild(nxPort); // v1.15.8: বুট থেকেই-প্রহরী — চাইল্ড-বুটেই-ব্যর্থ-হলেও-৯০সে-অন্তর-যাচাই→পুনঃস্পন (আগে-স্থায়ী-off-হয়ে-যেত)
@@ -1846,7 +1846,7 @@ function startEmbeddedNx() {
         setTimeout(() => {
           try {
             const c3 = require('child_process').spawn(process.execPath, [path.join(__dirname, 'nethex', 'server.js')], {
-              env: Object.assign({}, process.env, { PORT: String(nxPort), NX_POOL_FILE: path.join(__dirname, 'vidy_proxy_pool.json') }),
+              env: Object.assign({}, process.env, { PORT: String(nxPort) }),
               stdio: 'ignore',
             });
             c3.on('exit', () => { // v1.15.7 রাউন্ড-৮: respawn-চাইল্ড-মরলেও-আগে-যাচাই — 7137-তে-কেউ-সেবা-দিলে-'off'-বলা-মিথ্যা
