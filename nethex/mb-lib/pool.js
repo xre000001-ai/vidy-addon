@@ -8,9 +8,9 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import { API, SITE, UA } from './upstream.js';
 
-const BENCH_MAX = 128;             // v2.10.4 (// v2.10.4 (user): cap doubled 64->128 — half the storm can die and 64 still stand
+const BENCH_MAX = 384;             // v2.11.13 (user: store caps x3): 128->384             // v2.10.4 (// v2.10.4 (user): cap doubled 64->128 — half the storm can die and 64 still stand
 const SAMPLE = 400;               // candidates probed per pass (// candidates probed per pass (200->400)
-const BOOT_TARGET = 96;           // v2.10.4 (// v2.10.4 (user): boot target doubled 48->96
+const BOOT_TARGET = 288;          // v2.11.13 (user: store caps x3): 96->288           // v2.10.4 (// v2.10.4 (user): boot target doubled 48->96
 const POOL = [];                  // the ready bench, fastest first
 const BAD = new Map();            // url -> benched-until (ms epoch)
 const STATS = new Map();          // url -> {ok, fail, lat}
@@ -256,7 +256,7 @@ export async function poolOnce(force = false) {
   if (FETCHING) return;
   FETCHING = true; TS = Date.now();
   try {
-    const r = await fetch(HUBP + '/pick?src=moviebox&n=100&cb=' + Date.now() + (MBKEY ? '&key=' + encodeURIComponent(MBKEY) : ''), { signal: AbortSignal.timeout(8000) }); // cb=nginx-// cb busts the nginx cache
+    const r = await fetch(HUBP + '/pick?src=moviebox&n=200&cb=' + Date.now() + (MBKEY ? '&key=' + encodeURIComponent(MBKEY) : ''), { signal: AbortSignal.timeout(8000) }); // cb=nginx-// cb busts the nginx cache
     const j = await r.json();
     if (!j || !Array.isArray(j.pick)) return;
     // v2.11.1 (// v2.11.1 (r134 diagnosis): own=true = /report-proven members of the hub moviebox space — they go first;
