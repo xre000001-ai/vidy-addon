@@ -19,7 +19,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.80';
+const VERSION = '1.15.81';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -114,7 +114,22 @@ async function hubMirror() {
     console.log('[hub-feed] reserve=' + (POOL.length >= 300 ? 'FULL' : 'filling') + ' |  pool=' + POOL.length + ' | spaces: site=' + PX_SITE.size + ' api=' + PX_API.size + ' vb=' + PX_VB.size + ' wo=' + PX_WO.size); // v1.15.80: pre-stocked reserve visible
   } finally { MIRR_B = false; }
 }
-setInterval(hubMirror, 40000).unref(); setTimeout(hubMirror, 8000).unref(); // v1.15.80: pre-stocked reserve — faster cadence (40s, first at 8s): proxies are pulled and stocked AHEAD of need, never at call time
+setInterval(hubMirror, 40000).unref(); setTimeout(hubMirror, 8000).unref();
+
+// v1.15.81 reserve warmer: stocked proxies are proven against the api space in the background —
+// the reserve is not just full, it is WARM; cold stock rotates into the working space before any tap needs it.
+let WARM_I = 0;
+setInterval(() => {
+  const cands = POOL.filter(c => !PX_API.has(c.px) && !((PX_COOL.get(c.px) || 0) > Date.now()));
+  if (!cands.length) return;
+  for (let i = 0; i < 8 && i < cands.length; i++) {
+    const c = cands[(WARM_I + i) % cands.length];
+    const tP = Date.now();
+    proxiedGet(c.px, PX_API_URL, 4500).then(() => pxRec(c.px, true, Date.now() - tP, 'api')).catch(() => pxRec(c.px, false, 0, 'api'));
+  }
+  WARM_I = (WARM_I + 8) % cands.length;
+  if (DBG) console.error('[warm] proving stock: ' + Math.min(8, cands.length) + ' | unproven left=' + cands.length);
+}, 30000).unref(); // v1.15.80: pre-stocked reserve — faster cadence (40s, first at 8s): proxies are pulled and stocked AHEAD of need, never at call time
 // v1.15.67 (// v1.15.67 (user): harvest scanning (enrich) fully removed — TheSpeedX/monosans/proxyscrape/proxifly never touched; proxies come from PoolHub only
 
 // ---------- memo + dedupe ----------
@@ -299,10 +314,10 @@ function racePool(url, n, timeoutMs, srcKey) { // v1.15.56: srcKey = // v1.15.56
     const c = use[Math.floor(i * use.length / n2)];
     if (c && !cands.some(x => x.px === c.px)) cands.push(c);
   }
-  if (!cands.length) return Promise.reject(new Error('pool-empty'));
+  if (!cands.length) { hubMirror().catch(() => { }); return Promise.reject(new Error('pool-empty')); } // v1.15.81: event-driven refill — the stock tops itself up the moment a call finds it thin
   return new Promise((resolve, reject) => {
     let done = false;
-    const to = setTimeout(() => { if (!done) { done = true; reject(new Error('race-timeout')); } }, timeoutMs);
+    const to = setTimeout(() => { if (!done) { done = true; hubMirror().catch(() => { }); reject(new Error('race-timeout')); } }, timeoutMs); // v1.15.81: refill on timeout too
     let fails = 0;
     for (const c of cands) {
       const tP = Date.now();
@@ -1432,6 +1447,7 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: // titl
       : new Promise(r2 => setTimeout(r2, 600 + (gi++) * 300)).then(() => budget(s))))); // v1.15.78: smalls spread 600ms..4.2s — the hub never sees more than ~3 new races at once
     clearInterval(stopTighten); pend.clear();
     if (DBG) console.error('[t1g] ALL-SERVERS el=' + (Date.now() - t0) + 'ms ok=' + rs.filter(r => r.ok).length + '/' + rs.length);
+    if (!rs.some(r => r.ok)) hubMirror().catch(() => { }); // v1.15.81: a zero-win wave is a reserve problem — refill now
     if (!rs.some(r => r.ok) && Date.now() - t0 < 3400) { // gate 3.4s (// gate 3.4s (tuned to the new budget): on a fast all-fail the retry still finishes inside the 9.8s limit
       await new Promise(r2 => setTimeout(r2, 800)); force = true;
       rs = rs.concat(await Promise.all(allow.map(srv => budget(srv)))); // v1.15.10: // v1.15.10: the full recovery wave is back (the v1.15.9 filter was breaking cold-window card recovery — restored per user report)

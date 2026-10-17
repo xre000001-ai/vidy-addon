@@ -357,7 +357,7 @@ export function poolStart() {
   // v2.11.5 (// v2.11.5 (user: "5 seconds total"): keep-hot — the old fast-era magic (8s waves, median 2.44s,
   // // fastest 152ms) in hub-roster form: re-prove the 8 oldest slots every 120s -> no slot ever
   // // crosses the 300s staleness -> the gate never blocks, every step rides a warm slot (~0.3-1.2s).
-  setInterval(() => { benchWave(12, 2500).catch(() => { }); }, 90000).unref(); // v2.11.11: keep-hot 8/120s -> 12/90s
+  setInterval(() => { benchWave(16, 2500).catch(() => { }); }, 60000).unref(); // v2.11.12: keep-hot 12/90s -> 16/60s — the bench never cools
 }
 
 export function poolStats() {
