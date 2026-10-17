@@ -19,7 +19,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.77';
+const VERSION = '1.15.78';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -1323,7 +1323,12 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: // titl
         const u = API + '/' + srv + '/sources?' + new URLSearchParams(q).toString();
         // v1.11.2 FETCH-HEDGE: // v1.11.2 FETCH-HEDGE: for a stuck upstream answer (phoenix 4.9s, dallas/tampa 7.5s+) one more identical call after +2.5s;
         // // the first success wins, the loser is discarded. Each server still yields one scan result.
-        const ct = await hedge2(() => pathGet(u, sc.via, sc.px, 12000), () => pathGet(u, sc.via, sc.px, 12000), 2500, 12500);
+        // v1.15.78: hedge second leg ONLY for giants — 13 servers x 2 legs x hub's own 4-exit race = ~100
+        // concurrent exit connections; the small servers then ALL hedge-die (prod log proof). Smalls: one
+        // clean 9s leg. Giants keep the hedge (their payloads are the heavy ones).
+        const ct = GIANT.indexOf(srv) >= 0
+          ? await hedge2(() => pathGet(u, sc.via, sc.px, 12000), () => pathGet(u, sc.via, sc.px, 12000), 2500, 12500)
+          : await pathGet(u, sc.via, sc.px, 9000);
         const j = JSON.parse(vidyDecrypt(ct, sc.seed, tmdbId));
         if (DBG) console.error('[t1g] ' + srv + ' fetch=' + (Date.now() - tS) + 'ms n=' + (j.sources || []).length + ' | jkeys=' + Object.keys(j).join(',') + ' | s0=' + JSON.stringify((j.sources || [])[0] || {}).slice(0, 220) + (j.audios ? ' | audios=' + JSON.stringify(j.audios).slice(0, 200) : '') + (j.audio ? ' | audio=' + JSON.stringify(j.audio).slice(0, 120) : ''));
         if (DBG && j.playlist) console.error('[t1g] ' + srv + ' PLAYLIST=' + JSON.stringify(j.playlist).slice(0, 500));
@@ -1412,7 +1417,9 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: // titl
     // v1.15.77 (user: only Atlanta was coming; Miami/Boise are the giants): fire the giants
     // first and stagger the rest by 400ms — 16 concurrent hub races were thrashing the api
     // space and the giants (3-8s fetches) lost the window; first-in gets the freshest exits.
-    let rs = await Promise.all(allow.map(s => (GIANT.indexOf(s) >= 0 ? budget(s) : new Promise(r2 => setTimeout(r2, 400)).then(() => budget(s)))));
+    let gi = 0;
+    let rs = await Promise.all(allow.map(s => (GIANT.indexOf(s) >= 0 ? budget(s)
+      : new Promise(r2 => setTimeout(r2, 600 + (gi++) * 300)).then(() => budget(s))))); // v1.15.78: smalls spread 600ms..4.2s — the hub never sees more than ~3 new races at once
     clearInterval(stopTighten); pend.clear();
     if (DBG) console.error('[t1g] ALL-SERVERS el=' + (Date.now() - t0) + 'ms ok=' + rs.filter(r => r.ok).length + '/' + rs.length);
     if (!rs.some(r => r.ok) && Date.now() - t0 < 3400) { // gate 3.4s (// gate 3.4s (tuned to the new budget): on a fast all-fail the retry still finishes inside the 9.8s limit
