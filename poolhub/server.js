@@ -3,12 +3,13 @@
 // · সাব-স্পেস (v1.3 গোছানো, পরিকল্পনা §4): toonworld4all·raretoons·vidy·moviebox·multimovies — প্রতি-স্পেসের-নিজ-API-কী (কী=স্পেস-নির্ধারক)
 // · ইউজার-স্পেস (পরিকল্পনা §7): টোকেন-চিহ্নিত, প্রত্যেকে-শুধু-নিজের-স্পেস (/my/*)
 // · মেয়াদ-উত্তীর্ণ-অপসারণ (পরিকল্পনা §6): ঢেউয়ে-ব্যর্থ=স্পেস-থেকে-নামা, ৬০০সে-নিষ্ক্রিয়=পুল-কাট, ১২০সে-শীতল, স্থায়ী-ফাইলে-১০মিন-TTL
+// · প্রক্সি-নীতি (ইউজার, v1.3.3): প্রক্সি=শুধু-IP/জিও-ফ্ল্যাগ-বাইপাস (টোকেন/API/robots/ছোট-ম্যানিফেস্ট-টেক্সট) — মিডিয়া-প্লেব্যাক-কখনো-প্রক্সি-দিয়ে-নয়; প্লেয়ার-সরাসরি-CDN-থেকে-স্ট্রিম-করে। কাঠামোগত-রক্ষা: /fetch-বডি-ক্যাপ=২৫৬KB (মিডিয়া-বাইট-অসম্ভব)
 // API: /register /fetch /pick /report /spaces /pool /health (অ্যাপ) · /token /my/conditions /my/space /my/pick /my/fetch (টোকেন-ইউজার)
 'use strict';
 const http = require('http'), https = require('https'), net = require('net'), tls = require('tls'), crypto = require('crypto');
 const fs = require('fs'), path = require('path');
 const { URL } = require('url');
-const VERSION = '1.3.2';
+const VERSION = '1.3.3';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const PORT = Number(process.env.PORT || 8399);
 const PX_CAP = 300, DIR = __dirname;
@@ -108,7 +109,7 @@ function proxiedGet(px, url, timeoutMs, maxBytes) {
       const tl = tls.connect({ socket: sock, servername: u.hostname, rejectUnauthorized: false }, () => {
         tl.write('GET ' + (u.pathname + u.search) + ' HTTP/1.1\r\nHost: ' + u.hostname + '\r\nUser-Agent: ' + UA + '\r\nAccept: */*\r\nConnection: close\r\n\r\n');
         const chunks = [buf.slice(i + 4)]; let n = 0, ht = '', hd = false;
-        tl.on('data', d2 => { if (!hd) { ht += d2.toString('latin1'); const j = ht.indexOf('\r\n\r\n'); if (j < 0) return; hd = true; chunks.push(Buffer.from(ht.slice(j + 4), 'latin1')); ht = ht.slice(0, j); n = chunks[1].length; return; } n += d2.length; chunks.push(d2); if (n > (maxBytes || 3145728)) tl.destroy(); });
+        tl.on('data', d2 => { if (!hd) { ht += d2.toString('latin1'); const j = ht.indexOf('\r\n\r\n'); if (j < 0) return; hd = true; chunks.push(Buffer.from(ht.slice(j + 4), 'latin1')); ht = ht.slice(0, j); n = chunks[1].length; return; } n += d2.length; chunks.push(d2); if (n > (maxBytes || 262144)) tl.destroy(); }); // v1.3.3 প্রক্সি-নীতি: ২৫৬KB-ক্যাপ — টোকেন/API/ম্যানিফেস্ট-টেক্সট-যথেষ্ট; মিডিয়া-বাইট-কাঠামোগতভাবে-অসম্ভব
         tl.on('close', () => { clearTimeout(to); const raw = Buffer.concat(chunks); const body = (/chunked/i.test(ht) ? dechunk(raw) : raw).toString('utf8'); const code = parseInt((ht.split('\r\n')[0] || '').split(' ')[1] || '0', 10); if (code === 429) return bail(Object.assign(new Error('rate_limited'), { code: 429 })); if (code !== 200 && code !== 204) return bail(new Error('http_' + code)); resolve(body); });
         tl.once('error', bail);
       }); tl.once('error', bail);
