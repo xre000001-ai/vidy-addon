@@ -535,10 +535,10 @@ let UCEX = 0; // v1.15.36: ধরা-না-পড়া-এক্সেপশ�
 process.on('uncaughtException', e => { UCEX++; try { if (DBG) console.error('[ucex#' + UCEX + '] ' + String((e && (e.stack || e.message)) || e).slice(0, 200)); } catch {} }); // v1.15.36: স্ট্রে-সিঙ্ক্রোনাস-বিপর্যয়েও-পরিষেবা-মরবে-না (Node-ডিফল্ট=ক্র্যাশ) — লগ+গণনা, স্টেট-অক্ষত-ধরে-চলতে-থাকে
 // v1.11.8: NEXBASE-বাইরে-থেকে-দেওয়া-যায়; না-দিলে-ভেন্ডর-করা-MovieBox(nethex)-চাইল্ড-নিজেই-বুট-হয় (এক-অ্যাপ-ডিপ্লয়)
 let NEXBASE = (process.env.NEXBASE || '').replace(/\/$/, '');
-const NXDEADLINE = Math.max(Number(process.env.NXDEADLINE || 0), 22000); // absolute cap (stale-env-ও-নিচে-টানবে-না)
+const NXDEADLINE = Math.max(Number(process.env.NXDEADLINE || 0), 35000); // v1.15.68: 22→35s (ঠান্ডা-চাইল্ড-সার্চ~10s+matrix~15-23s — 22s-এ-MB-কার্ড-কাটা-পড়ত; উষ্ণ-অবস্থায়-আগেই-জেতে-বলে-সাধারণ-ট্যাপ-ধীর-হয়-না)
 const NXEXTRA = Math.max(Number(process.env.NXEXTRA || 0), 12000); // v1.15.25 (ইউজার: "আগে শেষ হলে আগেই রেজাল্ট, না হলে ১২সে পর্যন্ত"): NetHex-এর-জন্য-১২সে-পর্যন্ত-ধরে-রাখো — রেডি-হলে-রেস-আগেই-জেতে, instant-অক্ষত
-const NXCOLDX = Math.max(Number(process.env.NXCOLDX || 0), 12000); // v1.15.25: ১২সে-ইউজার-সীমা (কার্ড-থাকলেও-না-শেষ-হলে-১২সে-পর্যন্ত-ধরো; শেষ-হলে-আগেই)
-const NXHARD = Math.max(Number(process.env.NXHARD || 0), 12000); // v1.15.25 (ইউজার-নির্দেশ): ফাঁকা-কার্ডে-পূর্ণ-১২সে-বরাদ্দ — স্ট্রিম-উত্তর-সর্বোচ্চ-১২সে (আগে-শেষ=আগে-ফল)
+const NXCOLDX = Math.max(Number(process.env.NXCOLDX || 0), 15000); // v1.15.68: 12→15s
+const NXHARD = Math.max(Number(process.env.NXHARD || 0), 15000); // v1.15.68: 12→15s
 const NXCACHE = new Map(); // nx:imdb:s:e -> {ts, v} — NetHex links are signed/fresh + it caches 30min itself
 async function nxStreams(imdb, type, s, e) {
   if (!NEXBASE || !imdb) return [];

@@ -447,8 +447,13 @@ const server = http.createServer(async (req, res) => {
   } catch (e) { console.error(e); return send(res, 200, { streams: [] }); }
 });
 poolStart();   // v2.6.0: pool ALWAYS on for API calls (user directive)
-// v2.11.1c: বুটেই-playToken-প্রি-মিন্ট (ঠান্ডা-১ম-ট্যাপে-মিন্ট-লেগ-বাদ)
-setImmediate(() => { import('./mb-lib/search.js').then(m => m.playToken()).catch(() => { }); });
+// v2.11.1c: উষ্ণকরণ — পুল-ফিড-ভরার-পরে (১২সে+২৫সে): playToken-মিন্ট + jwt-ক্যালিব্রেশন-সার্চ
+// (আগে-setImmediate-বুটে-হত → পুল-খালি → নীরব-ব্যর্থ → ১ম-ট্যাপে-সব-ক্যালিব্রেশন-লেগ)
+for (const WARM_AT of [12000, 25000]) {
+  setTimeout(() => {
+    import('./mb-lib/search.js').then(m => Promise.all([m.playToken(), m.search({ q: 'a', limit: 1, page: 1 })]).catch(() => { })).catch(() => { });
+  }, WARM_AT).unref();
+}
 // v2.3.2: warm the anonymous JWT through a pool exit at boot so the
 // first real tap never pays the mint (2 extra hops)
 setImmediate(() => { search({ q: 'a', limit: 1, page: 1 }).catch(() => {}); });
