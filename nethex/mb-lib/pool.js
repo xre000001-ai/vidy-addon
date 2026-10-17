@@ -349,11 +349,15 @@ async function coldGate(waitMs = 5000, need = 3) { // সিঙ্গেল-ফ�
 }
 
 export function poolStart() {
-  poolOnce(true) // v2.11.0: বুটেই-হাব-ফিড → ফিড-বসার-সাথে-সাথে-সক্রিয়-বেঞ্চ (প্রথম-ট্যাপ-প্রস্তুত)
-    .then(() => setTimeout(() => benchWave(16).catch(() => { }), 1200)).catch(() => { });
+  poolOnce(true) // v2.11.0: বুটেই-হাব-ফিড → ফিড-বসার-সাথে-সাথে-সক্রিয়-বেঞ্চ (পোলিং-কিক — স্থির-বিলম্ব-নয়)
+    .then(() => { const kick = () => { if (POOL.length) return benchWave(16).catch(() => { }); setTimeout(kick, 200); }; kick(); }).catch(() => { });
   setInterval(() => { // প্রতি-৬০সে-রিফিল; চিকন-রোস্টারে-বেঞ্চ-ছাড়া-থাকে-না
     poolOnce(true).then(() => { if (poolHealthy() < 8) return benchWave(16).catch(() => { }); }).catch(() => { });
   }, 60000).unref();
+  // v2.11.5 (ইউজার: 'সব মিলিয়ে ৫ সেকেন্ড'): keep-hot — পুরনো-দ্রুত-যুগের-জাদু (প্রতি-৮সে-ঢেউ, মধ্য ২.৪৪সে,
+  // দ্রুততম ১৫২ms) হাব-রোস্টার-সংস্করণ: প্রতি-১২০সে-প্রবীণতম-৮-স্লট-পুনঃপ্রমাণ → কোনো-স্লট-কখনো
+  // ৩০০সে-বার্ধক্য-ছুঁয়ে-ঠান্ডা-হয়-না → গেট-কখনো-ব্লক-করে-না, প্রতিটি-ধাপ-উষ্ণ-স্লটে (~০.৩-১.২সে)।
+  setInterval(() => { benchWave(8, 2500).catch(() => { }); }, 120000).unref();
 }
 
 export function poolStats() {

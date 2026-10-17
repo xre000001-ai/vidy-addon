@@ -10,7 +10,7 @@ import { poolStart, poolStats, checkerStats } from './mb-lib/pool.js';
 if (typeof AbortSignal !== 'undefined' && !AbortSignal.timeout) { AbortSignal.timeout = (ms) => { const c = new AbortController(); const t = setTimeout(() => c.abort(new Error('timeout')), ms); if (t.unref) t.unref(); return c.signal; }; }
 
 const PORT = Number(process.env.PORT || 7000);
-const VERSION = '2.11.4';
+const VERSION = '2.11.5';
 const CINEMETA = 'https://v3-cinemeta.strem.io';
 const PUBLIC_BASE = process.env.PUBLIC_BASE || 'https://5a16d5684c14-nethex.baby-beamup.club';
 let LOGO_BUF = null;
@@ -151,8 +151,20 @@ async function resultsFor(q) {
   else if (r.length) srqCache.set(k, { at: Date.now(), ttl, r });
   return r;
 }
+// v2.11.5 (ইউজার: 'সব মিলিয়ে ৫ সেকেন্ড'): জয়ী-বিষয়-মানচিত্র (২৪ঘণ্টা) — চেনা-টাইটেল meta+search-হপ-দুটো-ই-বাদ
+// (matrix-মাত্র ~২-২.৫সে); প্রথম-দেখা-টাইটেল-আগের-মতো-পূর্ণ-চেইন (উষ্ণ-স্লটে ~৪-৫সে)।
+const PICK = new Map();
 async function resolve(type, imdb, season, episode) {
   const tR0 = Date.now();
+  const pk = `${type}:${imdb}:${season || ''}`;
+  const pickHit = PICK.get(pk);
+  if (pickHit && Date.now() - pickHit.at < 86400000) {
+    const r0 = await runMatrix({ id: pickHit.dp, season, episode }).catch(() => null);
+    if (r0 && r0.status === 200 && (r0.body?.languages || []).length) {
+      ring(`pick-cache langs:${(r0.body?.languages || []).length} +${Date.now() - tR0}ms`);
+      return toCards(r0, type, season, episode, pickHit.year || '');
+    }
+  }
   const m = await meta(type, imdb); if (process.env.NMDEBUG) console.error('[nx] meta +' + (Date.now() - tR0) + 'ms', m?.name || '(none)'); if (!m?.name) return [];
   const year = String(m.releaseInfo || '').slice(0, 4);
   const base = String(m.name).trim();
@@ -226,6 +238,7 @@ async function resolve(type, imdb, season, episode) {
     } catch { }
   }
   if (!item?.detailPath || (matchQ(item) < 2 && !altOK)) { ring(`giveup q:${matchQ(item)} alt:${altOK ? 1 : 0} +${Date.now() - tR0}ms`); return []; }   // honest empty, never junk cards
+  let usedDp = item.detailPath; // v2.11.5: চূড়ান্ত-জয়ী-কোন-বিষয় (মানচিত্রে-ভরার-জন্য)
   let r = await runMatrix({ id: item.detailPath, season, episode });
   if (process.env.NMDEBUG) console.error('[nx] +' + (Date.now() - tR0) + 'ms matrix status:', r.status, r.status === 200 ? `langs:${(r.body.languages || []).length} subs:${(r.body.subtitles || []).length}` : '');
   // v1.11-local: a chosen subject that answers langs:0 (exists but carries no links
@@ -235,21 +248,31 @@ async function resolve(type, imdb, season, episode) {
     // লাগত (E1 এখানেই ৩-৪সে হারাত)। প্রার্থীরা-এখন-একসাথে-ছোটে; লিংক-বহনকারী-প্রথম-ফল-জেতে।
     const cands = chooseList(results, m.name, year, type, 4).filter(x => x.detailPath !== item.detailPath).slice(0, 2);
     if (cands.length) {
-      let rWin = null;
+      let rWin = null, winDp = '';
       await new Promise((res) => {
         let left = cands.length;
         cands.forEach((c2) => {
           if (process.env.NMDEBUG) console.error('[nx] matrix empty on', item.detailPath, '- racing candidate', c2.detailPath);
           runMatrix({ id: c2.detailPath, season, episode })
-            .then(r2 => { if (!rWin && r2.status === 200 && (r2.body?.languages || []).length) rWin = r2; })
+            .then(r2 => { if (!rWin && r2.status === 200 && (r2.body?.languages || []).length) { rWin = r2; winDp = c2.detailPath; } })
             .catch(() => {})
             .finally(() => { if (--left === 0) res(); });
         });
       });
-      if (rWin) r = rWin;
+      if (rWin) { r = rWin; usedDp = winDp || usedDp; } // v2.11.5: রেসে-জেতা-প্রার্থী-ই-মানচিত্রে
     }
   }
   if (r.status !== 200) { ring(`matrix status:${r.status} +${Date.now() - tR0}ms`); return []; }
+  const b = r.body;
+  if ((b.languages || []).length) { // v2.11.5: জয়ী-বিষয়-মানচিত্রে-ভরা (২৪ঘণ্টা; পরের-ট্যাপ=matrix-মাত্র)
+    if (PICK.size >= 400) PICK.delete(PICK.keys().next().value);
+    PICK.set(pk, { dp: usedDp, at: Date.now(), year });
+  }
+  if (process.env.NMDEBUG) console.error('[nx] +' + (Date.now() - tR0) + 'ms langs:', (b.languages || []).length, '| qualities:', (b.languages || []).reduce((a2, l2) => a2 + (l2.qualities || []).length, 0), '| title:', b.title);
+  ring(`langs:${(b.languages || []).length} +${Date.now() - tR0}ms`);
+  return toCards(r, type, season, episode, year);
+}
+function toCards(r, type, season, episode, year) { // v2.11.5: অ্যাসেম্বলি-হেল্পার (resolve+pick-cache-দুজনেই)
   const b = r.body;
   const streams = [];
   for (const lang of (b.languages || [])) {
@@ -258,8 +281,6 @@ async function resolve(type, imdb, season, episode) {
       streams.push(glassCard(b, lang, x, type, season, episode, year, b.subtitles));
     }
   }
-  if (process.env.NMDEBUG) console.error('[nx] +' + (Date.now() - tR0) + 'ms langs:', (b.languages || []).length, '| qualities:', streams.length, '| title:', b.title);
-  ring(`langs:${(b.languages || []).length} qualities:${streams.length} +${Date.now() - tR0}ms`);
   streams.sort((a, z) => (z._reso || 0) - (a._reso || 0));
   // old MovieBox glass: exact-title cards first, variant/spinoff rows sink,
   // readable cap 16 (audios always stay)
@@ -267,7 +288,6 @@ async function resolve(type, imdb, season, episode) {
   const nmOf = st => { const m2 = String(st.name || '').match(/✹ (.*)$/); return n(m2 ? m2[1] : st.title || ''); };
   const exact = streams.filter(st => { const nm = nmOf(st); return !nm || nm === t || t.startsWith(nm) || nm.startsWith(t); });
   const rest = streams.filter(st => !exact.includes(st));
-  if (process.env.NMDEBUG) console.error('[nx] done +' + (Date.now() - tR0) + 'ms cards=' + (exact.length + rest.length));
   return [...exact, ...rest].slice(0, 16);
 }
 // ---- v2.9.3 card format: the OLD MovieBox glass spec --------------------
@@ -449,6 +469,9 @@ const server = http.createServer(async (req, res) => {
 poolStart();   // v2.6.0: pool ALWAYS on for API calls (user directive)
 // v2.11.1c: উষ্ণকরণ — পুল-ফিড-ভরার-পরে (১২সে+২৫সে): playToken-মিন্ট + jwt-ক্যালিব্রেশন-সার্চ
 // (আগে-setImmediate-বুটে-হত → পুল-খালি → নীরব-ব্যর্থ → ১ম-ট্যাপে-সব-ক্যালিব্রেশন-লেগ)
+setInterval(() => { // v2.11.5: playToken-সর্বদা-<৪৫সে-তাজা — matrix-কখনো-মিন্ট-ব্যয় (~২সে) দেয়-না
+  import('./mb-lib/search.js').then(m => m.playToken()).catch(() => { });
+}, 45000).unref();
 for (const WARM_AT of [4000, 12000]) { // v2.11.4: আগে-ওয়ার্ম (বুট-বেঞ্চ ~৩.৫সে-তে-প্রমাণ-করে — playToken-৪সে-তে-মিন্ট)
   setTimeout(() => {
     import('./mb-lib/search.js').then(m => Promise.all([m.playToken(), m.search({ q: 'a', limit: 1, page: 1 })]).catch(() => { })).catch(() => { });

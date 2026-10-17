@@ -185,7 +185,7 @@ async function searchPage(keyword, page) {
 /** v2.9.1: two pool exits race the same POST (600ms apart); the first OK
  *  response wins.  Cuts the single-exit latency tail — still 100% pool
  *  (apiFetch), no direct path exists. */
-async function hedgedPost(url, headers, body, { hedgeMs = 600, timeoutMs = 3500 } = {}) {
+async function hedgedPost(url, headers, body, { hedgeMs = 300, timeoutMs = 3000 } = {}) { // v2.11.5: টাইট-হেজ (উষ্ণ-স্লটে ১ম-উত্তর-দ্রুত)
   return new Promise((resolve) => {
     let settled = false;
     const settle = (v) => { if (!settled) { settled = true; resolve(v); } };
