@@ -244,6 +244,23 @@ h1 .g{color:var(--acc)}
     </div>
   </div>
 
+  <div class="card src-card m4u" id="card4">
+    <div class="src-hd">
+      <div class="tile" style="background:#231a0b;color:#e6b878;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:20px;letter-spacing:1px">M4U</div>
+      <div class="s-body">
+        <div class="s-name">Movies4u <span class="badge n">MKV &middot; direct file</span></div>
+        <div class="s-sub">Direct R2 / pixeldrain masters &middot; HDR &middot; multi-audio &middot; movies only</div>
+      </div>
+      <div class="sw on" id="sw4"></div>
+    </div>
+
+    <div class="fzone">
+      <div class="flab">Resolution <em>&middot; movies4u-only filter</em></div>
+      <div class="chips" id="m4urChips"></div>
+      <div class="fhint" style="margin-top:9px">Pick a cap — only Movies4u cards at or under it stay. "All" shows everything.</div>
+    </div>
+  </div>
+
   <div class="seclab">Preview</div>
   <p class="sub" style="margin-bottom:4px">How stream cards will look in your app — both sources, one anatomy:</p>
   <div class="card">
@@ -253,6 +270,7 @@ h1 .g{color:var(--acc)}
       <div class="pcard nxc" id="pvR"><div class="dot n"></div><div class="pbody"><div class="hd n" id="pvRh"></div><div class="t" id="pvRt"></div></div><div class="q n" id="pvRq"></div></div>
       <div class="pcard nxc" id="pvT"><div class="dot n"></div><div class="pbody"><div class="hd n" id="pvTh"></div><div class="t" id="pvTt"></div></div><div class="q n" id="pvTq"></div></div>
       <div class="pcard nxc" id="pvM"><div class="dot n"></div><div class="pbody"><div class="hd n" id="pvMh"></div><div class="t" id="pvMt"></div></div><div class="q n" id="pvMq"></div></div>
+      <div class="pcard nxc" id="pv4"><div class="dot n"></div><div class="pbody"><div class="hd n" id="pv4h"></div><div class="t" id="pv4t"></div></div><div class="q n" id="pv4q"></div></div>
     </div>
   </div>
 
@@ -277,7 +295,7 @@ h1 .g{color:var(--acc)}
   var SRVS=[["miami","Miami","Primary · always-on workhorse"],["boise","Boise","Primary · up to 4K"],["atlanta","Atlanta","Primary · official subtitles"],["phoenix","Phoenix","Extra · 1080p mirror"],["dallas","Dallas","Extra · Auto-HLS feed"],["austin","Austin","Extra · audio variants (Hindi/English)"],["seattle","Seattle","Backup · Auto-HLS feed"],["delhi","Delhi","Extra · multi-audio (Hindi/English)"],["munich","Munich","Extra · 1080p (EU)"],["paris","Paris","Extra · always-on single feed"],["orlando","Orlando","Extra · 1080p feed"],["reno","Reno","Extra · Auto-HLS feed"],["oakland","Oakland","Extra · Auto-HLS feed"],["vegas","Vegas","Extra · Vidara feed"],["cancun","Cancun","Extra · Vimeos feed"],["tampa","Tampa","Extra · Auto-HLS feed"]];
   var LANGS=[["original","Original"],["english","English"],["hindi","Hindi"],["spanish","Spanish"],["russian","Russian"],["japanese","Japanese"],["tamil","Tamil"],["portuguese","Portuguese (BR)"],["french","French"],["german","German"],["korean","Korean"],["arabic","Arabic"]];
 
-  var st={ v:1, q:[], sub:1, srv:SRVS.map(function(x){return x[0];}), nx:1, nxq:[], nxl:[], rt:1, rtl:[], tw:1, twq:[], mm:1, mmr:0 };
+  var st={ v:1, q:[], sub:1, srv:SRVS.map(function(x){return x[0];}), nx:1, nxq:[], nxl:[], rt:1, rtl:[], tw:1, twq:[], mm:1, mmr:0, m4u:1, m4ur:0 };
 
   function b64u(o){return btoa(unescape(encodeURIComponent(JSON.stringify(o)))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');}
   function base(){return location.origin;}
@@ -301,6 +319,8 @@ h1 .g{color:var(--acc)}
     if(st.mm===0)c.mm=0;
     else if(st.mmr)c.mmr=st.mmr;
     else if(st.twq.length)c.twq=st.twq.slice();
+    if(st.m4u===0)c.m4u=0;
+    else if(st.m4ur)c.m4ur=st.m4ur;
     var u=base()+(Object.keys(c).length?'/cfg/'+b64u(c):'')+'/manifest.json';
     document.getElementById('url').value=u;
     document.getElementById('inst').href='stremio://'+u.replace(/^https?:\/\//,'');
@@ -333,6 +353,10 @@ h1 .g{color:var(--acc)}
     document.getElementById('pvM').style.display=st.mm?'':'none';
     document.getElementById('pvMh').textContent='\u25a5 1080 \u25a5';
     document.getElementById('pvMt').textContent='\u29c9 Scarlet | 2025 |\n\u29e0 Movie\n\u229e Multimovies \u00b7 MM-HLS \u2317 Bengali';
+    document.getElementById('pv4').style.display=st.m4u?'':'none';
+    document.getElementById('pv4h').textContent='\u25a5 2160 \u25a5';
+    document.getElementById('pv4t').textContent='\u29c9 Deadpool & Wolverine | 2024 |\n\u29e0 Movie\n\u229e Movies4u \u00b7 HDR10+/DV \u00b7 MKV \u2317 Multi-Audio+Atmos';
+    document.getElementById('pv4q').textContent=st.m4ur?('cap '+st.m4ur+'p'):'All';
     document.getElementById('pvTq').textContent=st.twq.length?st.twq.slice().sort(function(a,b){return b-a;}).join(', '):'All';
   }
 
@@ -477,6 +501,27 @@ h1 .g{color:var(--acc)}
     });
   }
   drawMMR();
+
+  /* movies4u master switch */
+  var sw4=document.getElementById('sw4'), card4=document.getElementById('card4');
+  sw4.onclick=function(){
+    st.m4u=st.m4u?0:1;
+    sw4.classList.toggle('on',!!st.m4u);
+    card4.classList.toggle('off',!st.m4u);
+    rebuild();
+  };
+
+  /* movies4u resolution filter (single pick) */
+  var m4urEl=document.getElementById('m4urChips');
+  function drawM4UR(){
+    m4urEl.innerHTML='';
+    MMR.forEach(function(l){
+      var c=document.createElement('div');c.className='chip'+(st.m4ur===l[0]?' on':'')+(l[0]===0?' all':'');c.textContent=l[1];
+      c.onclick=function(){st.m4ur=l[0];drawM4UR();rebuild();};
+      m4urEl.appendChild(c);
+    });
+  }
+  drawM4UR();
 
   /* source master switches */
   var swV=document.getElementById('swV'), cardV=document.getElementById('cardV');
