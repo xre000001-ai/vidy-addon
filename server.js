@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.61';
+const VERSION = '1.15.62';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -1550,15 +1550,13 @@ async function reanStreams(tmdbId, type, s, e) { // TMDB-direct servers, else se
       const host = fhm ? fhm[0] : REAN_API;
       const pr = await fetch(host + '/download/' + fid[0] + '/progress?token=' + tk[0], { headers: { Accept: '*/*', Referer: REAN_API + '/', 'User-Agent': REAN_UA }, signal: AbortSignal.timeout(5000) }).then(x => x.ok ? x.text() : '').catch(() => '');
       if (pr.indexOf('"status":"failed"') >= 0) return;
-      let fin = host + '/download/' + fid[0] + '?token=' + tk[0];
-      try { const rr = await fetch(fin, { headers: { 'User-Agent': REAN_UA, Accept: '*/*', Referer: REAN_API + '/' }, redirect: 'follow', signal: AbortSignal.timeout(6500) }); if (rr.ok && rr.url && /^https?:/.test(rr.url)) fin = rr.url; try { if (rr.body) rr.body.cancel(); } catch { } } catch { } // resolve the flixcloud→spacedl 302 NOW — the player gets a plain signed URL (spacedl needs no headers at all)
-      out.push({ url: fin, aud: em2.aud });
+      out.push({ url: host + '/download/' + fid[0] + '?token=' + tk[0], aud: em2.aud }); // the PLAYER follows the flixcloud→spacedl 302 natively — the spacedl sig locks to the FOLLOWER's IP, so pre-resolving here (server IP) 404s for the user; headerless 302 proven
     }));
     if (DBG) console.error('[rean] ' + tmdbId + '/' + (isTv ? 'S' + ss + 'E' + ep : 'movie') + ' cards=' + out.length + ' @' + (Date.now() - t3) + 'ms');
     return out.map(x => ({
       name: '\u25a5 MKV \u25a5', quality: 'MKV', url: x.url,
       title: '\u229e Re:ANIME \u2317 ' + x.aud, description: '\u229e Re:ANIME \u2317 ' + x.aud,
-      behaviorHints: { notWebReady: true, isBingeable: true, proxyHeaders: { request: { Referer: REAN_API + '/', 'User-Agent': REAN_UA } } },
+      behaviorHints: { notWebReady: false, isBingeable: true, filename: 'reanime.mkv' }, // fully native: headerless 302 + headerless spacedl — no proxy machinery at all
       bingeGroup: 'rean|' + (anTitle || 'anime').toLowerCase() + '::|' + x.aud
     }));
   } catch (e2) { if (DBG) console.error('[rean] ' + tmdbId + ' ERR ' + String(e2 && e2.message).slice(0, 60) + ' @' + (Date.now() - t3) + 'ms'); return []; }
