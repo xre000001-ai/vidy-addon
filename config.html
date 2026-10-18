@@ -305,6 +305,22 @@ h1 .g{color:var(--acc)}
       <div class="fhint" style="margin-top:9px">Pick qualities — only AsianTV cards at those stay. "All" shows everything.</div>
     </div>
   </div>
+  <div class="card src-card nx" id="cardAZ">
+    <div class="src-hd">
+      <div class="tile nx" style="background:#221a33;color:#c9b8ff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:20px;letter-spacing:1px">AZ</div>
+      <div class="s-body">
+        <div class="s-name">AniZone <span class="badge n">HLS &middot; Anime</span></div>
+        <div class="s-sub">Anime series &amp; movies &middot; multi-language subs &middot; direct play</div>
+      </div>
+      <div class="sw nx on" id="swAZ"></div>
+    </div>
+
+    <div class="fzone">
+      <div class="flab">Resolution <em>&middot; AniZone-only filter</em></div>
+      <div class="chips" id="azChips"></div>
+      <div class="fhint" style="margin-top:9px">Pick qualities — only AniZone cards at those stay. "All" shows everything.</div>
+    </div>
+  </div>
 
   <div class="seclab">Preview</div>
   <p class="sub" style="margin-bottom:4px">How stream cards will look in your app — both sources, one anatomy:</p>
@@ -318,6 +334,7 @@ h1 .g{color:var(--acc)}
       <div class="pcard nxc" id="pv4"><div class="dot n"></div><div class="pbody"><div class="hd n" id="pv4h"></div><div class="t" id="pv4t"></div></div><div class="q n" id="pv4q"></div></div>
       <div class="pcard nxc" id="pvS"><div class="dot n"></div><div class="pbody"><div class="hd n" id="pvSh"></div><div class="t" id="pvSt"></div></div><div class="q n" id="pvSq"></div></div>
       <div class="pcard nxc" id="pvO"><div class="dot n"></div><div class="pbody"><div class="hd n" id="pvOh"></div><div class="t" id="pvOt"></div></div><div class="q n" id="pvOq"></div></div>
+      <div class="pcard nxc" id="pvA"><div class="dot n"></div><div class="pbody"><div class="hd n" id="pvAh"></div><div class="t" id="pvAt"></div></div><div class="q n" id="pvAq"></div></div>
     </div>
   </div>
 
@@ -342,7 +359,7 @@ h1 .g{color:var(--acc)}
   var SRVS=[["miami","Miami","Primary · always-on workhorse"],["boise","Boise","Primary · up to 4K"],["atlanta","Atlanta","Primary · official subtitles"],["phoenix","Phoenix","Extra · 1080p mirror"],["dallas","Dallas","Extra · Auto-HLS feed"],["austin","Austin","Extra · audio variants (Hindi/English)"],["seattle","Seattle","Backup · Auto-HLS feed"],["delhi","Delhi","Extra · multi-audio (Hindi/English)"],["munich","Munich","Extra · 1080p (EU)"],["paris","Paris","Extra · always-on single feed"],["orlando","Orlando","Extra · 1080p feed"],["reno","Reno","Extra · Auto-HLS feed"],["oakland","Oakland","Extra · Auto-HLS feed"],["vegas","Vegas","Extra · Vidara feed"],["cancun","Cancun","Extra · Vimeos feed"],["tampa","Tampa","Extra · Auto-HLS feed"]];
   var LANGS=[["original","Original"],["english","English"],["hindi","Hindi"],["spanish","Spanish"],["russian","Russian"],["japanese","Japanese"],["tamil","Tamil"],["portuguese","Portuguese (BR)"],["french","French"],["german","German"],["korean","Korean"],["arabic","Arabic"]];
 
-  var st={ v:1, q:[], sub:1, srv:SRVS.map(function(x){return x[0];}), nx:1, nxq:[], nxl:[], rt:1, rtl:[], tw:1, twq:[], mm:1, mmr:0, m4u:1, m4ur:0, peng:1, vsp:1, vspq:[], ott:1, ottq:[] };
+  var st={ v:1, q:[], sub:1, srv:SRVS.map(function(x){return x[0];}), nx:1, nxq:[], nxl:[], rt:1, rtl:[], tw:1, twq:[], mm:1, mmr:0, m4u:1, m4ur:0, peng:1, vsp:1, vspq:[], ott:1, ottq:[], az:1, azq:[] };
 
   function b64u(o){return btoa(unescape(encodeURIComponent(JSON.stringify(o)))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');}
   function base(){return location.origin;}
@@ -373,6 +390,8 @@ h1 .g{color:var(--acc)}
     else if(st.vspq.length)c.vspq=st.vspq.slice();
     if(st.ott===0)c.ott=0;
     else if(st.ottq.length)c.ottq=st.ottq.slice();
+    if(st.az===0)c.az=0;
+    else if(st.azq.length)c.azq=st.azq.slice();
     var u=base()+(Object.keys(c).length?'/cfg/'+b64u(c):'')+'/manifest.json';
     document.getElementById('url').value=u;
     document.getElementById('inst').href='stremio://'+u.replace(/^https?:\/\//,'');
@@ -418,6 +437,10 @@ h1 .g{color:var(--acc)}
     document.getElementById('pvOh').textContent='\u25a5 1080 \u25a5';
     document.getElementById('pvOt').textContent='\u29c9 Vincenzo | 2021 |\n\u29e0 S1E5 \u2022 Episode Title\n\u229e AsianTV \u2317 Korean';
     document.getElementById('pvOq').textContent=st.ottq.length?st.ottq.slice().sort(function(a,b){return b-a;}).join(', '):'All';
+    document.getElementById('pvA').style.display=st.az?'':'none';
+    document.getElementById('pvAh').textContent='\u25a5 1080 \u25a5';
+    document.getElementById('pvAt').textContent='\u29c9 Frieren | 2023 |\n\u29e0 S1E1 \u2022 Episode Title\n\u229e AniZone \u2317 Subbed';
+    document.getElementById('pvAq').textContent=st.azq.length?st.azq.slice().sort(function(a,b){return b-a;}).join(', '):'All';
   }
 
   /* resolution chips factory (per source) */
@@ -640,6 +663,36 @@ h1 .g{color:var(--acc)}
     });
   }
   drawOTT();
+
+
+  /* anizone master switch */
+  var swAZ=document.getElementById('swAZ'), cardAZ=document.getElementById('cardAZ');
+  swAZ.onclick=function(){
+    st.az=st.az?0:1;
+    swAZ.classList.toggle('on',!!st.az);
+    cardAZ.classList.toggle('off',!st.az);
+    rebuild();
+  };
+
+  /* anizone resolution filter (multi pick) */
+  var azEl=document.getElementById('azChips');
+  function drawAZ(){
+    azEl.innerHTML='';
+    var all=document.createElement('div');all.className='chip all'+(st.azq.length?'':' on');all.textContent='All';
+    all.onclick=function(){st.azq=[];drawAZ();rebuild();};
+    azEl.appendChild(all);
+    [[1080,'1080p'],[720,'720p'],[480,'480p']].forEach(function(l){
+      var c=document.createElement('div');c.className='chip'+(st.azq.indexOf(l[0])>=0?' on':'');c.textContent=l[1];
+      c.onclick=function(){
+        var i=st.azq.indexOf(l[0]);
+        if(i>=0)st.azq.splice(i,1);else st.azq.push(l[0]);
+        if(st.azq.length===3)st.azq=[];
+        drawAZ();rebuild();
+      };
+      azEl.appendChild(c);
+    });
+  }
+  drawAZ();
 
   /* pengu master switch */
   var swP=document.getElementById('swP'), cardP=document.getElementById('cardP');

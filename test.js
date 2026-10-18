@@ -79,7 +79,7 @@ async function tap(label, url, checks) {
     ok(v.length && v.every(c => audioOf(c) === 'English'), 'vidy audio = English');
     ok(v.length && v.every(c => SERVER_WORDS.includes(slotOf(c).toLowerCase())), 'vidy slots = server names');
     ok(mb.length === 0 || mb.some(c => audioOf(c) === 'English'), 'moviebox: original audio present (English)');
-    ok(s.every(c => !c.bingeGroup || /^(mbxr|mm|tw|rt|m4u|peng|sky|vsp|ott)\|/.test(String(c.bingeGroup))), 'bingeGroup: known-source prefix'); // v1.15.71: vsp=Vidsrc; v1.15.72: ott=AsianTV
+    ok(s.every(c => !c.bingeGroup || /^(mbxr|mm|tw|rt|m4u|peng|sky|vsp|ott|az)\|/.test(String(c.bingeGroup))), 'bingeGroup: known-source prefix'); // v1.15.71: vsp=Vidsrc; v1.15.72: ott=AsianTV; v1.15.76: az=AniZone
     ok(mb.length === 0 || mb.every(c => c.bingeGroup && String(c.bingeGroup).indexOf('mbxr|') === 0), 'moviebox cards carry bingeGroup');
     ok(s.every(c => !c.behaviorHints || typeof c.behaviorHints === 'object'), 'behaviorHints sane');
     ok(v.every(c => !Array.isArray(c.subtitles) || c.subtitles.every(u2 => u2 && typeof u2.url === 'string')), 'vidy cards: subs shape sane (embedded subs retired — /subtitles resource serves them)');
@@ -172,6 +172,26 @@ async function tap(label, url, checks) {
     const ot = otOf(s);
     if (!ot.length) return skip('ottq 480: no AsianTV cards this run');
     ok(ot.every(c => ['480', '360'].includes(String(c.quality))), 'ottq=[480]: শুধু-ছোট-মান');
+  });
+
+  // ── 6e) AniZone মাস্টার+ফিল্টার (v1.15.76 — anime) ──
+  const azOf = s => s.filter(c => slotOf(c) === 'AniZone');
+  await tap('cfg az=0 (AniZone off)', cfgUrl({ az: 0 }, '/stream/series/tmdb209867%3A1%3A1.json'), (s) => {
+    ok(azOf(s).length === 0, 'az=0: zero AniZone cards');
+  });
+  await tap('AniZone কার্ড-গঠন (Frieren tmdb209867 S1E1)', BASE + '/stream/series/tmdb209867%3A1%3A1.json', (s) => {
+    const az = azOf(s);
+    if (!az.length) return skip('AniZone: no cards this run (pool/site)'); // ভাণ্ডার-ঝুঁকি — কাঠামো-টেস্ট-কার্ড-থাকলেই
+    ok(az.length === 1, 'AniZone: ১-কার্ড (single master)');
+    ok(az.every(c => /^https?:\/\//.test(String(c.url || '')) && String(c.url).indexOf('/vsp/') < 0), 'AniZone url = সরাসরি-m3u8 (vid-cdn, রিলে-নয়)');
+    ok(az.every(c => audioOf(c) === 'Subbed'), 'AniZone audio = Subbed');
+    ok(az.every(c => !c.bingeGroup || String(c.bingeGroup).indexOf('az|') === 0), 'AniZone bingeGroup az|');
+    ok(/^\u25a5 (\d{3,4}) \u25a5$/.test(String(az[0].name || '')), 'AniZone quality sane (' + String(az[0].name).replace(/\D/g, '') + 'p)'); // কার্ড-শেপার-quality-ছাঁটে — name-ই-সত্য
+  });
+  await tap('AniZone E28 (পেজ-১-ক্যাপ-বাইরে — watch-URL-সরাসরি)', BASE + '/stream/series/tmdb209867%3A1%3A28.json', (s) => {
+    const az = azOf(s);
+    if (!az.length) return skip('AniZone E28: no cards this run');
+    ok(/S1E28/.test(String(az[0].description || '')), 'AniZone E28: ⧠ S1E28 লাইন');
   });
 
   await tap('cfg sub=0 (subtitle gate)', cfgUrl({ sub: 0 }, '/stream/movie/tt0468569.json'), (s) => {
