@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.52';
+const VERSION = '1.15.53';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -235,17 +235,17 @@ async function mmProbeImg(u) { // image verdict by MAGIC BYTES, not extension �
 }
 function mmPut(map, k, v) { if (map.size > 300) map.clear(); map.set(k, { ts: Date.now(), v }); }
 function mmGet(map, k, ttl) { const e = map.get(k); return e && (Date.now() - e.ts) < ttl ? e.v : null; }
-function mmMiniKey(m, ref, h, vbq) { // stateless — the key carries everything (master|ref|height|vbq); works on any instance after any restart
-  return Buffer.from(m + '|' + (ref || WO_REF) + '|' + (h | 0) + '|' + (vbq || '')).toString('base64url');
+function mmMiniKey(m, ref, h, vbq, lang) { // stateless — the key carries everything (master|ref|height|vbq|lang); works on any instance after any restart
+  return Buffer.from(m + '|' + (ref || WO_REF) + '|' + (h | 0) + '|' + (vbq || '') + '|' + (lang || '')).toString('base64url');
 }
 function mmMiniOpen(k) { // recover params from the key — any instance, any time
   try {
     const pp = Buffer.from(k, 'base64url').toString('utf8').split('|');
     if (pp.length < 3 || !/^https?:\/\//.test(pp[0])) return null;
-    return { m: pp[0], ref: pp[1] || WO_REF, h: parseInt(pp[2], 10) || 0, vbq: pp[3] || '' };
+    return { m: pp[0], ref: pp[1] || WO_REF, h: parseInt(pp[2], 10) || 0, vbq: pp[3] || '', lang: pp[4] || '' };
   } catch { return null; }
 }
-function mmMiniBuild(masterUrl, wantH, raw) { // all qualities stay (switchable in the player menu), the wanted one first
+function mmMiniBuild(masterUrl, wantH, raw, langLabel) { // all qualities stay (switchable); v1.15.52: langLabel = সত্য-অডিও-লেবেল (NAME-রিরাইট)
   const L = String(raw).split('\n'); const tags = []; const vars = [];
   let baseQ = ''; try { baseQ = new URL(masterUrl).search; } catch { } // v1.15.33 (user: the ~10min stop): keyed index URL — a relative URI MUST inherit the api_key; a bare tiles.m3u8 403s the moment the buffer runs dry
   const absU = uu => { try { const a = new URL(uu, masterUrl); if (!a.search && baseQ) a.search = baseQ; return a.href; } catch { return uu; } };
@@ -262,6 +262,10 @@ function mmMiniBuild(masterUrl, wantH, raw) { // all qualities stay (switchable 
       continue;
     }
   }
+  // v1.15.52: mini-অডিও-লেবেল-সত্য-করা — single-audio-মাস্টারের NAME="Audio"-কে নিজের-ভাষা-নাম (upstream-default-ভান-করা-স্ট্রিমে
+  // প্লেয়ারের-অডিও-সেলেক্টর-পুরনো/ভিন্ন-কার্ডের-নাম-মনে-রাখলে-নীরবে-ভুল-অডিও-বাজে; লেবেল-আলাদা-হলে-প্লেয়ার-নিজেই-নতুন-কার্ডের-অডিও-ধরে)
+  const ai = tags.findIndex(t2 => /TYPE=AUDIO/i.test(t2) && !/NAME="[^"]*(Hindi|Japanese|English|French|Arabic|Spanish|Russian|Indonesian|Tagalog|Portuguese|German|Tamil|Telugu|Korean|Chinese|Italian|Bengali|Turkish)/i.test(t2)); // v1.15.52b: প্রথম-অজ্ঞান-অডিও-ট্যাগ (subs-আগে-থাকত-পারে)
+  if (langLabel && ai >= 0) tags[ai] = tags[ai].replace(/NAME="[^"]*"/, 'NAME="' + String(langLabel).replace(/"/g, '') + '"');
   vars.sort((a, b) => a.w - b.w || b.h - a.h); // wanted quality first, then high to low
   const seenK = new Set(); const out = tags.slice();
   for (const v of vars.slice(0, 6)) { if (seenK.has(v.uri)) continue; seenK.add(v.uri); out.push(v.ln, v.uri); }
@@ -1338,7 +1342,7 @@ async function mmStreams(tmdbId, title, type, s, e, origin, maxh) { // v1.15.28:
         title: txt,
         description: txt,
         quality: q2,
-        url: x.mini ? (origin ? origin + '/mm/' + mmMiniKey(x.url, x.ref || WO_REF, x.h, x.vbq) + '/mini.m3u8' : x.url) : x.url, // v1.15.30: mini-master — resolution pinned, audio intact, qualities switchable
+        url: x.mini ? (origin ? origin + '/mm/' + mmMiniKey(x.url, x.ref || WO_REF, x.h, x.vbq, x.lang) + '/mini.m3u8' : x.url) : x.url, // v1.15.30+52: mini-master — resolution pinned, সত্য-অডিও-লেবেল, qualities switchable
         behaviorHints: { notWebReady: false, isBingeable: true, filename: x.mp4 ? 'multimovies.mp4' : 'multimovies.m3u8', proxyHeaders: { request: { Referer: x.ref || WO_REF, 'User-Agent': UA } } },
         bingeGroup: 'mm|' + T.toLowerCase() + '::',
         ...(subs.length ? { subtitles: subs.map(y => ({ url: y.url, lang: y.lang })) } : {})
@@ -2285,7 +2289,7 @@ const server = http.createServer((req, res) => {
         }
         if (!raw || raw.indexOf('#EXTM') < 0) { res.writeHead(502, { 'content-type': 'text/plain' }); return res.end('upstream'); }
         mmPut(MM_MC, ent.m, raw);
-        let mini = mmMiniBuild(ent.m, ent.h, raw) || raw; // fall back to the full absolute master when no variants
+        let mini = mmMiniBuild(ent.m, ent.h, raw, ent.lang) || raw; // v1.15.52: সত্য-ভাষা-লেবেল-সহ; fall back to the full absolute master when no variants
         // v1.15.36 (user: NO media bytes through the server — our free proxies eat the limit-hitting fetches, the user plays the CDN DIRECT): inline the
         // wanted VARIANT with absolute keyed segment URIs — the player then pulls every segment straight from the CDN carrying the key (warm nodes);
         // we only ever touch the tiny .m3u8 TEXT. Up to 3 raced fetches keep the LONGEST listing (dodges the 29-segment stub nodes).
@@ -2298,7 +2302,10 @@ const server = http.createServer((req, res) => {
               if (vbest) mmPut(MM_WC, top, vbest);
             }
             if (vbest) {
-              const tg = mmMasterTags(raw, ent.m);
+              let tg = mmMasterTags(raw, ent.m); // স্ট্রিং (\n-joinড)
+              if (ent.lang && tg) { // v1.15.52b: এখানেও-সত্য-ভাষা-লেবেল
+                tg = tg.replace(/(#EXT-X-MEDIA:TYPE=AUDIO[^\n]*?NAME=")(?!Hindi|Japanese|English|French|Arabic|Spanish|Russian|Indonesian|Tagalog|Portuguese|German|Tamil|Telugu|Korean|Chinese|Italian|Bengali|Turkish)([^"]*)(")/i, '$1' + String(ent.lang).replace(/"/g, '') + '$3');
+              }
               const inl = mmVarInline(top, vbest);
               if (inl) mini = (tg ? tg + '\n' : '') + inl;
             }
