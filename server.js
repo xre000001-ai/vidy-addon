@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.73';
+const VERSION = '1.15.74';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -1589,7 +1589,8 @@ async function vspStreams(tmdbId, type, s, e, vspq) { // কার্ড: মা
   } catch (e2) { if (DBG) console.error('[vsp] ' + tmdbId + ' ERR ' + String(e2 && e2.message).slice(0, 60) + ' @' + (Date.now() - t3) + 'ms'); return []; }
 }
 // ---------- v1.15.72: AsianTV (OneTouchTV api3.devcorp.me) — AES-256-CBC-ডিক্রিপ্ট-API (কী-স্থায়ী, yastream+নিজস্ব-ক্র্যাক); পুল-শুধু-API/টোকা-সংগ্রহে (ইউজার-নির্দেশ: এক-সার্ভার-IP-ফ্ল্যাগ-প্রতিরোধ), মিডিয়া-সরাসরি-ইউজার-IP (রেফারার/টোকা-লাগে-না — প্রোব-প্রমাণ) ----------
-const OTT_API = 'https://api3.devcorp.me';
+const OTT_HOSTS = ['https://api3.devcorp.me', 'https://api2.devcorp.me']; // v1.15.74: জোড়া-হোস্ট (api2-একই-ক্রিপ্টো-প্রমাণিত) — একটা-থ্রটল-হলে-আরেকটা
+const OTT_API = OTT_HOSTS[0];
 const OTT_KEY = Buffer.from(Buffer.from('Njk2ZDM3MzI2MzY4NjE3MjUwNjE3MzczNzc2ZjcyNjQ2ZjY2NjQ0OTZlNjk3NDU2NjU2Mzc0NmY3MjUzNzQ2ZA==', 'base64').toString(), 'hex');
 const OTT_IV = Buffer.from(Buffer.from('Njk2ZDM3MzI2MzY4NjE3MjUwNjE3MzczNzc2ZjcyNjQ=', 'base64').toString(), 'hex');
 const OTT_MEMO = new Map();
@@ -1602,20 +1603,22 @@ function ottDec(t) { // '-_. '-অনুক্রম→'/'+ '@'→'+' (ক্র
 }
 async function ottGet(u, mkey, mttl) { // সরাসরি-fetch → ব্যর্থ/থ্রটল-হলে VSP-পুল (শুধু-API-কলে); মেমো-১০-৩০মিনিট
   if (mkey) { const m = OTT_MEMO.get(mkey); if (m && Date.now() - m.ts < (mttl || 600000)) return m.v; }
-  const one = async px => {
-    const t = await vspText(u, 'https://onetouchtv.xyz/', px, 9000);
+  const one = async (u2, px) => {
+    const t = await vspText(u2, 'https://onetouchtv.xyz/', px, 9000);
     const j = /^\s*[[{]/.test(t) ? JSON.parse(t) : ottDec(t);
     if (!j) throw new Error('ott-dec');
     return j;
   };
   let j = null;
-  try { j = await one(null); } catch (de) {
-    for (let i = 0; i < 3 && !j; i++) {
+  { const rs = await Promise.all(OTT_HOSTS.map(H => one(u.replace(OTT_API, H), null).catch(e3 => { if (DBG) console.error('[ott] সরাসরি-' + H.slice(8) + ' ' + String(e3 && e3.message).slice(0, 70)); return null; }))); j = rs.find(Boolean) || null; } // v1.15.74-ফিক্স: one(u2,px)-স্বাক্ষর (আগে-URL-px-স্লটে-গিয়ে-ENOTFOUND-https-হত)
+  if (DBG && !j) console.error('[ott] দুই-হোস্ট-ই-ব্যর্থ → পুল');
+  if (!j) {
+    for (let i = 0; i < 2 && !j; i++) {
       const px = vspPick(null); if (!px) break;
-      try { j = await one(px.px); if (DBG) console.error('[ott] পুল-পথ ✓ ' + px.px); } catch (pe) { if (DBG) console.error('[ott] পুল-' + px.px + ' ' + String(pe.message).slice(0, 30)); }
+      try { j = await one(u, px.px); if (DBG) console.error('[ott] পুল-পথ ✓ ' + px.px); } catch (pe) { if (DBG) console.error('[ott] পুল-' + px.px + ' ' + String(pe.message).slice(0, 30)); }
     }
   }
-  if (j && mkey) OTT_MEMO.set(mkey, { ts: Date.now(), v: j });
+  if (j && mkey && JSON.stringify(j).length > 120) OTT_MEMO.set(mkey, { ts: Date.now(), v: j }); // v1.15.74-গার্ড: খালি/থ্রটল-উত্তর (not_found-আকৃতি)-ক্যাশ-নয় — পরের-অনুরোধ-তাজা-চেষ্টা-পায়
   return j;
 }
 const OTT_LANG = { korean: 'Korean', chinese: 'Chinese', japanese: 'Japanese', thai: 'Thai', taiwanese: 'Mandarin', hongkong: 'Cantonese', philippines: 'Filipino', us: 'English' };
@@ -1639,7 +1642,13 @@ async function ottStreams(tmdbId, type, s, e, ottq) { // সার্চ→ম�
     const nt = ottNorm(T0);
     const scored = list.map(x => ({ x, cl: ottNorm(String(x.title).replace(/\(.*?\)/g, '')), sc: (String(x.type) === wantType ? 0 : 5) + (ottNorm(x.title) === nt ? 0 : 10) })).filter(z => z.sc < 90); // বছর-কাটা-নির্ভুল-টাইটেল-ম্যাচ
     for (const z of scored) { if (z.cl === nt || z.x.sc === undefined) z.sc += z.cl === nt ? 0 : z.cl.indexOf(nt) === 0 ? 1 : ottNorm(z.x.title).indexOf(nt) > -1 ? 2 : 90; } // অগ্রাধিকার: নির্ভুল>শুরু>অন্তর্ভুক্ত
-    const ordered = scored.filter(z => z.sc < 90).sort((a, b) => a.sc - b.sc);
+    let pool = scored;
+    if (isTv && Number(s || 1) >= 2) { // v1.15.74: সিজন-সচেতন — "Squid Game Season 2"-জাতীয়-আলাদা-এন্ট্রি (না-খুঁজলে-S1-এপিসোড-ভুল-দিত)
+      const sn = ottNorm('Season ' + (s || 1));
+      const ses = scored.filter(z => z.cl.indexOf(sn) > -1 || ottNorm(z.x.title).indexOf(sn) > -1);
+      if (ses.length) { pool = ses; if (DBG) console.error('[ott] সিজন-পুল s=' + s + ' → ' + ses.length + '-এন্ট্রি'); }
+    }
+    const ordered = pool.filter(z => z.sc < 90).sort((a, b) => a.sc - b.sc);
     if (!ordered.length) { if (DBG) console.error('[ott] ' + T0 + ' মেলেনি (' + list.length + '-প্রার্থী)'); return []; }
     const hit = ordered[0].x;
     const d2 = await ottGet(OTT_API + '/vod/' + hit.id + '/detail', 'd:' + hit.id, 1800000);
@@ -1648,21 +1657,23 @@ async function ottStreams(tmdbId, type, s, e, ottq) { // সার্চ→ম�
     let want = null;
     if (isTv) want = eps.find(x2 => String(x2.episode) === String(e || 1)) || null;
     else want = eps[0] || null;
-    const epid = want ? (want.identifier || want.id) : (!isTv ? hit.id : null); // মুভি-এপিসোড-শূন্য-হলে-নিজ-id (প্রোব-প্রমাণ)
-    const playId = want ? (want.playId || String(want.episode || 1)) : '1';
-    if (!epid) { if (DBG) console.error('[ott] ' + T0 + ' এপিসোড-' + (e || 1) + ' নেই (' + eps.length + '-এপ)'); return []; }
+    if (isTv && eps.length && !want) { if (DBG) console.error('[ott] ' + T0 + ' এপিসোড-' + (e || 1) + ' নেই (' + eps.length + '-এপ-তালিকায়)'); return []; } // তালিকা-আছে-কিন্তু-ওই-এপ-নেই → সত্যিই-নেই (স্পেশাল-জাত-বাদ)
+    let epid = want ? (want.identifier || want.id) : hit.id; // মুভি-এপিসোড-শূন্য-হলে-নিজ-id (প্রোব-প্রমাণ)
+    let playId = want ? (want.playId || String(want.episode || 1)) : String(e || 1);
+    if (isTv && !eps.length) { if (DBG) console.error('[ott] ' + T0 + ' তালিকা-শূন্য → সরাসরি-এপ-' + playId + '-চেষ্টা'); } // v1.15.74-উদ্ধার: eps=0-তালিকাও-episode/{n}-দেয় (SquidGame-S2E5-প্রমাণ)
     const e3 = await ottGet(OTT_API + '/vod/' + epid + '/episode/' + playId, 'e:' + epid + '#' + playId, 600000);
     const ed = (e3 && e3.result) || e3 || {};
     const srcs = (ed.sources || []).map(x2 => x2 && x2.url).filter(u2 => /^https?:\/\//.test(u2 || '') && u2.indexOf('/embed') < 0).sort((a, b) => (/\.m3u8/.test(b) ? 1 : 0) - (/\.m3u8/.test(a) ? 1 : 0)); // এমবেড-পাতা-বাদ; m3u8-আগে
     if (!srcs.length) { if (DBG) console.error('[ott] ' + T0 + ' সোর্স-শূন্য'); return []; }
     let q = 0, master = '';
-    for (const u2 of srcs.slice(0, 2)) { // মাস্টার-যাচাই+মান-পার্স (ছোট-টেক্সট; সরাসরি-কারণ-ইউজার-ও-ওটা-ই-আসবে)
+    for (const u2 of srcs.slice(0, 3)) { // v1.15.74: সর্বোচ্চ-রেজো-সোর্স-নির্বাচন (৩-প্রোব; প্রথম-জীবন্ত-নয়-সেরাটা)
       try {
         const mt = await fetch(u2, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(7000) }).then(r2 => r2.ok ? r2.text() : '');
         if (mt.indexOf('#EXTM') < 0) continue;
-        master = u2;
-        for (const m3 of mt.matchAll(/RESOLUTION=(\d+)x(\d+)/g)) { const w2 = Number(m3[1]); const cq = w2 >= 3600 ? 2160 : w2 >= 1900 ? 1080 : w2 >= 1200 ? 720 : w2 >= 640 ? 480 : 360; if (cq > q) q = cq; } // v1.15.72b: প্রস্থ-ভিত্তিক-শ্রেণি (স্ট্রিমিও-কনভেনশন — 1280x640=720-শ্রেণি, 960x480=480; উচ্চতা-ক্রপে-বিভ্রম-নেই)
-        break;
+        let cq = 0;
+        for (const m3 of mt.matchAll(/RESOLUTION=(\d+)x(\d+)/g)) { const w2 = Number(m3[1]); const c2 = w2 >= 3600 ? 2160 : w2 >= 1900 ? 1080 : w2 >= 1200 ? 720 : w2 >= 640 ? 480 : 360; if (c2 > cq) cq = c2; } // প্রস্থ-ভিত্তিক-শ্রেণি (স্ট্রিমিও-কনভেনশন — 1280x640=720-শ্রেণি, 960x480=480)
+        if (cq > q) { q = cq; master = u2; }
+        if (q >= 1080) break; // যথেষ্ট-ভালো — আর-প্রোব-বর্জ্য
       } catch (er2) { if (DBG) console.error('[ott] মাস্টার-ব্যর্থ ' + String(er2.message).slice(0, 30)); }
     }
     if (!master) { if (!/\.m3u8/.test(srcs[0])) { if (DBG) console.error('[ott] ' + T0 + ' কোনো-জীবন্ত-HLS-নেই'); return []; } master = srcs[0]; q = 720; } // যাচাই-ব্যর্থ-হলেও-প্রাথমিক-m3u8-কার্ড (ইউজার-IP-চলতে-পারে)
@@ -1670,7 +1681,8 @@ async function ottStreams(tmdbId, type, s, e, ottq) { // সার্চ→ম�
     const LANG = OTT_LANG[String(det.country || hit.country || '').toLowerCase()] || 'Subbed';
     const epLine = isTv ? '\u29e0 S' + (s || 1) + 'E' + (e || 1) : '\u29e0 Movie';
     const txt = '\u29c9 ' + T0 + ' |\n' + epLine + '\n\u229e AsianTV \u2317 ' + LANG;
-    const subs = (ed.track || []).filter(t4 => t4 && /^https?:/.test(t4.file || '')).slice(0, 4).map(t4 => ({ lang: String(t4.code || 'en').slice(0, 3), url: t4.file })); // এমবেডেড-VTT-সাবস (ফ্রি-প্রমাণ)
+    const seenL = new Set();
+    const subs = (ed.track || []).filter(t4 => { if (!t4 || !/^https?:/.test(t4.file || '')) return false; const L = String(t4.code || 'en').slice(0, 3); if (seenL.has(L)) return false; seenL.add(L); return true; }).slice(0, 4).map(t4 => ({ lang: String(t4.code || 'en').slice(0, 3), url: t4.file })); // ভাষা-প্রতি-এক-ট্র্যাক (ডুপ-কাটা)
     if (subs.length) OTT_SUBS.set((isTv ? 'series' : 'movie') + ':' + tmdbId + ':' + (isTv ? (s || 1) + 'x' + (e || 1) : 'm'), { ts: Date.now(), v: subs }); // /subtitles-রিসোর্স-চ্যানেল
     if (DBG) console.error('[ott] ' + type + ':' + tmdbId + ' কার্ড=১ q=' + q + ' lang=' + LANG + ' subs=' + subs.length + ' @' + (Date.now() - t3) + 'ms');
     return [{ name: '\u25a5 ' + q + ' \u25a5', quality: String(q), url: master, title: txt, description: txt, behaviorHints: { filename: 'asiantv.m3u8' }, bingeGroup: 'ott|' + T0.toLowerCase() + '::' }];
