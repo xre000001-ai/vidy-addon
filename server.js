@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.63';
+const VERSION = '1.15.64';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -1379,13 +1379,32 @@ const ANIPM_EMB = 'https://embed.settlar.io';
 const REAN_BASE = 'https://reanime.to';
 const REAN_API = 'https://flixcloud.cc';
 const REAN_UA = 'Mozilla/5.0 (Linux; Android 16; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Mobile Safari/537.36';
+async function anipmHanger(embedPageUrl) { // r.jina.ai renders the embed PAGE (x-respond-with: html) — the DOM's <video src> IS the settlar HLS master (jina's viewer egress is not TLS-fp-blocked; sandbox-proven 47KB DOM → media.settlar.io)
+  try {
+    const r = await fetch('https://r.jina.ai/' + embedPageUrl, { headers: { 'User-Agent': UA, Accept: 'text/html', 'x-respond-with': 'html' }, signal: AbortSignal.timeout(8000) });
+    const t = r.ok ? await r.text() : '';
+    const m = t && /src="https:\/\/media\.settlar\.io\/v1\/object\/[^"]+"/.exec(t);
+    if (m) { anipmMark('hanger:ok', true); return { source: m[0].slice(5, -1) }; }
+    anipmMark('hanger:' + (r.status || 'err') + ':' + t.length, false); // len≈2.7k = raw shell (no render this time); ~47k = rendered
+  } catch (e) { anipmMark('hanger:err', false); }
+  return null;
+}
 function anipmTok(v) { return String(v || '').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean); }
 function anipmNorm(v) { return anipmTok(v).join(''); }
-function anipmCurl(url, ref, ms) { // embed.settlar 403s node-undici's TLS fingerprint while curl's passes (same IP, same token — sandbox-proven); shell out as the fallback
+function anipmCurl(url, ref, ms) { // embed.settlar 403s node-undici's TLS fingerprint while curl/wget pass (same IP, same token — sandbox-proven); shell out, wget as the second binary
   try {
     const cp = require('child_process');
+    const args = ['-s', '--max-time', String(Math.ceil((ms || 4500) / 1000)), '-A', UA, '-H', 'Accept: application/json', '-e', ref || (ANIPM_BASE + '/'), url];
     return new Promise(resolve => {
-      cp.execFile('curl', ['-s', '--max-time', String(Math.ceil((ms || 4500) / 1000)), '-A', UA, '-H', 'Accept: application/json', '-e', ref || (ANIPM_BASE + '/'), url], { timeout: (ms || 4500) + 900 }, (er, so) => { try { resolve(er ? null : JSON.parse(String(so || ''))); } catch { resolve(null); } });
+      cp.execFile('curl', args, { timeout: (ms || 4500) + 900 }, (er, so) => {
+        if (!er) { try { resolve(JSON.parse(String(so || ''))); return; } catch { resolve(null); return; } }
+        anipmMark('curl:err-' + String(er.code || er.message).slice(0, 14), false); // ENOENT = binary missing (beamup?) — decisive signal at /anipmdbg
+        cp.execFile('wget', ['-qO-', '-U', UA, '--header', 'Referer: ' + (ref || (ANIPM_BASE + '/')), url], { timeout: (ms || 4500) + 900 }, (e2, s2) => {
+          if (!e2) { try { resolve(JSON.parse(String(s2 || ''))); return; } catch { resolve(null); return; } }
+          anipmMark('wget:' + String(e2.code || e2.message).slice(0, 14), false);
+          resolve(null);
+        });
+      });
     });
   } catch { return Promise.resolve(null); }
 }
@@ -1475,14 +1494,9 @@ async function anipmStreams(tmdbId, type, s, e, _bg) { // search → bootstrap �
         const se = await anipmJ(ANIPM_BASE + '/api/anime/settlar/session?selection=' + encodeURIComponent(sel) + '&provider=anipm&ep=' + ep + '&channel=' + vr[0] + '&telemetry=0', ANIPM_BASE + '/', 5000);
         const tm = se && se.embedUrl && /t=([^&]+)/.exec(se.embedUrl); if (!tm) return;
         const embU = ANIPM_EMB + '/api/embed/session?t=' + tm[1];
-        let em = await anipmJ(embU, ANIPM_EMB + '/embed/v1', 5000);
-        if (em && !/^https?:/i.test(em.source || '')) em = null;
-        if (!em) EMB_FP_BLOCKED = Date.now(); // direct failed — remember, next tap skips straight to relay
-        if (!em && !poolDead) { // pool proxies fetch with THEIR IPs/stacks — kept as a quiet last tier
-          const r3 = await mmRacePool(embU, 3, 2600).then(r4 => { try { return JSON.parse(String(r4.body || '')); } catch { return null; } }).catch(() => null);
-          anipmMark('pool:' + (r3 && r3.source ? 'ok' : 'miss'), !!(r3 && r3.source));
-          if (r3 && /^https?:/i.test(r3.source || '')) em = r3; else poolDead = true;
-        }
+        let em = await anipmHanger(embU.replace('/api/embed/session?', '/embed/v1?')); // v1.15.64 PRIMARY: jina renders the embed PAGE — the DOM's <video src> IS the media URL (the JSON API is TLS-fp-blocked; the page render is not)
+        if (!em) em = await anipmJ(embU, ANIPM_EMB + '/embed/v1', 5000); // fallback: old chain (direct→relay→curl→pool)
+        if (!em) EMB_FP_BLOCKED = Date.now();
         if (!em || !/^https?:/i.test(em.source || '')) return;
         const aud = (lang === 'dub' ? 'English (Dub)' : 'Japanese (Sub)') + vr[1];
         out.push({ url: em.source, aud });
@@ -1504,6 +1518,41 @@ async function anipmStreams(tmdbId, type, s, e, _bg) { // search → bootstrap �
     if (cards2.length) mmPut(ANIPM_RES, ck, cards2);
     return cards2;
   } catch (e2) { if (DBG) console.error('[anipm] ' + tmdbId + ' ERR ' + String(e2 && e2.message).slice(0, 60) + ' @' + (Date.now() - t3) + 'ms'); return []; }
+}
+function reanParseData(src) { // the embed page's type:"data" JS-object literal → object (praxiel's parser, condensed)
+  let json = '', i = 0;
+  while (i < src.length) {
+    const ch = src[i];
+    if (ch === '"' || ch === "'") {
+      let end = i + 1, body = '';
+      while (end < src.length && src[end] !== ch) { if (src[end] === '\\') { body += src[end] + src[end + 1]; end += 2; } else { body += src[end]; end += 1; } }
+      json += ch === '"' ? '"' + body + '"' : JSON.stringify(body.replace(/\\'/g, "'")); i = end + 1;
+    } else if (/[A-Za-z_$]/.test(ch)) {
+      let end = i; while (end < src.length && /[\w$]/.test(src[end])) end += 1;
+      const word = src.slice(i, end); let look = end; while (look < src.length && /\s/.test(src[look])) look += 1;
+      if (src[look] === ':') json += JSON.stringify(word);
+      else if (word === 'true' || word === 'false' || word === 'null') json += word;
+      else json += 'null';
+      i = end;
+    } else { json += ch; i += 1; }
+  }
+  return JSON.parse(json.replace(/,(\s*[}\]])/g, '$1'));
+}
+async function reanHlsMaster(embedLink) { // embed page → payload → enc-dec token/stream dance → enc-dec-served master m3u8 TEXT (children are enc-dec parse URLs, segments rundowncdn with Referer flixcloud — all player-fetchable via declared headers)
+  const pay0 = await fetch(embedLink, { headers: { 'User-Agent': REAN_UA, Referer: REAN_BASE + '/' }, signal: AbortSignal.timeout(6500) }).then(x => x.ok ? x.text() : '').catch(() => '');
+  if (!pay0) return '';
+  const pm = /type:\s*"data",\s*data:\s*(\{[\s\S]*?\})\s*,\s*uses:/.exec(pay0); if (!pm) return '';
+  let payload = null; try { payload = reanParseData(pm[1]); } catch { return ''; }
+  if (!payload) return '';
+  const post1 = await fetch('https://enc-dec.app/api/dec-flixcloud?type=token', { method: 'POST', headers: { 'Content-Type': 'application/json', 'User-Agent': REAN_UA }, body: JSON.stringify({ data: payload }), signal: AbortSignal.timeout(7000) }).then(x => x.ok ? x.json() : null).catch(() => null);
+  const tok = post1 && post1.status === 200 && post1.result && post1.result.token; if (!tok) return '';
+  const m3 = await fetch(REAN_API + '/api/m3u8/' + tok, { headers: { 'User-Agent': REAN_UA, Referer: REAN_BASE + '/' }, signal: AbortSignal.timeout(7000) }).then(x => x.ok ? x.text() : '').catch(() => '');
+  if (!m3) return '';
+  let sr = null; try { sr = JSON.parse(m3); } catch { return ''; }
+  const post2 = await fetch('https://enc-dec.app/api/dec-flixcloud?type=stream', { method: 'POST', headers: { 'Content-Type': 'application/json', 'User-Agent': REAN_UA }, body: JSON.stringify({ data: { context: post1.result.context, stream_response: sr } }), signal: AbortSignal.timeout(7000) }).then(x => x.ok ? x.json() : null).catch(() => null);
+  const st = post2 && post2.status === 200 && post2.result && post2.result.stream; if (!st || !post2.result.context || !post2.result.context.w_payload) return '';
+  const man = await fetch('https://enc-dec.app/api/parse-flixcloud?url=' + encodeURIComponent(st) + '&w_payload=' + encodeURIComponent(post2.result.context.w_payload), { headers: { 'User-Agent': REAN_UA, Referer: REAN_API + '/' }, signal: AbortSignal.timeout(8000) }).then(x => x.ok ? x.text() : '').catch(() => '');
+  return man && man.indexOf('#EXTM3U') >= 0 ? man : '';
 }
 async function reanStreams(tmdbId, type, s, e) { // TMDB-direct servers, else search+details match; MKV download link (flixcloud → spacedl); HLS path needs enc-dec.app — skipped (off-by-default upstream)
   if (!tmdbId) return [];
@@ -1542,8 +1591,10 @@ async function reanStreams(tmdbId, type, s, e) { // TMDB-direct servers, else se
       embeds.push({ link, aud: String(s2.dataType || '').toLowerCase() === 'dub' ? 'English (Dub)' : 'Japanese (Sub)' });
     }
     const out = [];
-    await Promise.all(embeds.slice(0, 3).map(async em2 => {
+    await Promise.all(embeds.slice(0, 2).map(async em2 => {
       const eid = /\/e\/([a-z0-9]+)/i.exec(em2.link); if (!eid) return;
+      const man = await reanHlsMaster(em2.link).catch(() => ''); // v1.15.64: the SITE's own play path — enc-dec-served master; children+segments need exactly Referer: flixcloud.cc (sandbox 206)
+      if (man) out.push({ url: 'data:application/vnd.apple.mpegurl;base64,' + Buffer.from(man, 'utf8').toString('base64'), aud: em2.aud, hls: true });
       const pay = await fetch(REAN_API + '/d/' + eid[1] + '/__data.json', { headers: { Accept: '*/*', Referer: REAN_API + '/', 'User-Agent': REAN_UA }, signal: AbortSignal.timeout(5000) }).then(x => x.ok ? x.text() : '').catch(() => '');
       if (!pay) return;
       const fid = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.exec(pay); const tk = /eyJ[\w-]+\.[\w-]+\.[\w-]+/.exec(pay);
@@ -1552,15 +1603,20 @@ async function reanStreams(tmdbId, type, s, e) { // TMDB-direct servers, else se
       const host = fhm ? fhm[0] : REAN_API;
       const pr = await fetch(host + '/download/' + fid[0] + '/progress?token=' + tk[0], { headers: { Accept: '*/*', Referer: REAN_API + '/', 'User-Agent': REAN_UA }, signal: AbortSignal.timeout(5000) }).then(x => x.ok ? x.text() : '').catch(() => '');
       if (pr.indexOf('"status":"failed"') >= 0) return;
-      out.push({ url: host + '/download/' + fid[0] + '?token=' + tk[0], aud: em2.aud }); // the PLAYER follows the flixcloud→spacedl 302 natively — the spacedl sig locks to the FOLLOWER's IP, so pre-resolving here (server IP) 404s for the user; headerless 302 proven
+      out.push({ url: host + '/download/' + fid[0] + '?token=' + tk[0], aud: em2.aud, hls: false }); // MKV fallback: headerless 302 followed natively (spacedl sig locks to the follower's IP)
     }));
     if (DBG) console.error('[rean] ' + tmdbId + '/' + (isTv ? 'S' + ss + 'E' + ep : 'movie') + ' cards=' + out.length + ' @' + (Date.now() - t3) + 'ms');
-    return out.map(x => ({
+    return out.map(x => x.hls ? {
+      name: '\u25a5 HLS \u25a5', quality: 'HLS', url: x.url,
+      title: '\u229e Re:ANIME \u2317 ' + x.aud, description: '\u229e Re:ANIME \u2317 ' + x.aud,
+      behaviorHints: { notWebReady: true, isBingeable: true, proxyHeaders: { request: { Referer: REAN_API + '/', 'User-Agent': REAN_UA } } }, // children+segments obey exactly Referer: flixcloud.cc (v1.15.56 contract)
+      bingeGroup: 'reanhls|' + (anTitle || 'anime').toLowerCase() + '::|' + x.aud
+    } : {
       name: '\u25a5 MKV \u25a5', quality: 'MKV', url: x.url,
       title: '\u229e Re:ANIME \u2317 ' + x.aud, description: '\u229e Re:ANIME \u2317 ' + x.aud,
-      behaviorHints: { notWebReady: false, isBingeable: true, filename: 'reanime.mkv' }, // fully native: headerless 302 + headerless spacedl — no proxy machinery at all
+      behaviorHints: { notWebReady: false, isBingeable: true, filename: 'reanime.mkv' }, // fully native: headerless 302 + headerless spacedl
       bingeGroup: 'rean|' + (anTitle || 'anime').toLowerCase() + '::|' + x.aud
-    }));
+    });
   } catch (e2) { if (DBG) console.error('[rean] ' + tmdbId + ' ERR ' + String(e2 && e2.message).slice(0, 60) + ' @' + (Date.now() - t3) + 'ms'); return []; }
 }
 // ---------- v1.15.40-local: Movies4u (M4U) — lookup.php-সার্চ + hubcloud→gamerxyt→FSL-R2 সরাসরি-MKV ----------
