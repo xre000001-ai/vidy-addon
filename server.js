@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.72';
+const VERSION = '1.15.72b';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -1661,8 +1661,7 @@ async function ottStreams(tmdbId, type, s, e, ottq) { // সার্চ→ম�
         const mt = await fetch(u2, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(7000) }).then(r2 => r2.ok ? r2.text() : '');
         if (mt.indexOf('#EXTM') < 0) continue;
         master = u2;
-        let h = 0; for (const m3 of mt.matchAll(/RESOLUTION=(\d+)x(\d+)/g)) h = Math.max(h, Number(m3[2]));
-        q = h >= 2160 ? 2160 : h >= 1000 ? 1080 : h >= 600 ? 720 : h >= 400 ? 480 : 360; // স্বাভাবিক-মান-শ্রেণি (onetouchtv-অদ্ভুত-উচ্চতা: 640→720)
+        for (const m3 of mt.matchAll(/RESOLUTION=(\d+)x(\d+)/g)) { const w2 = Number(m3[1]); const cq = w2 >= 3600 ? 2160 : w2 >= 1900 ? 1080 : w2 >= 1200 ? 720 : w2 >= 640 ? 480 : 360; if (cq > q) q = cq; } // v1.15.72b: প্রস্থ-ভিত্তিক-শ্রেণি (স্ট্রিমিও-কনভেনশন — 1280x640=720-শ্রেণি, 960x480=480; উচ্চতা-ক্রপে-বিভ্রম-নেই)
         break;
       } catch (er2) { if (DBG) console.error('[ott] মাস্টার-ব্যর্থ ' + String(er2.message).slice(0, 30)); }
     }
