@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.42';
+const VERSION = '1.15.43';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -1372,7 +1372,7 @@ function m4uAlive(u) { // 2KB-রেঞ্জ-প্রোব — R2-সাই�
     } catch { resolve(false); }
   });
 }
-async function m4uStreams(tmdbId, title, type, s, e, origin, maxh) { // maxh: cfg.mmr রেজো-ছাঁকনি (0=সব); সরাসরি-MKV-কার্ড
+async function m4uStreams(tmdbId, title, type, s, e, origin, maxh) { // maxh: cfg.m4ur রেজো-ছাঁকনি (0=সব); HLS-সিক-প্রথম + সরাসরি-MKV
   if (!tmdbId || type !== 'movie') return []; // লোকাল-টেস্ট: মুভি-পথ; সিরিজ-পরে (পোস্ট-স্ট্রাকচার-ভিন্ন)
   const t3 = Date.now(); const WOB = 8600; const left = () => Math.max(250, WOB - (Date.now() - t3));
   try {
@@ -1387,6 +1387,35 @@ async function m4uStreams(tmdbId, title, type, s, e, origin, maxh) { // maxh: cf
     const post = await m4uText(M4U_BASE + hit.permalink, M4U_BASE + '/', Math.min(4500, left())).catch(() => '');
     const lnk = (post.match(/https?:\/\/m4ulinks\.sbs\/number\/\d+/) || [])[0];
     if (!lnk) { if (DBG) console.error('[m4u] no-m4ulinks @' + (Date.now() - t3) + 'ms'); return []; }
+    const out = []; // ফাইনাল-কার্ড-সারি (HLS-আগে, ফাইল-পরে)
+    // ধাপ-২.৫: m4uplay-HLS (প্লেয়ারে-ঝড়ো-সিক) — MKV-লুপের-সাথে-সমান্তরালে-ছোটা, সরাসরি-CDN-মাস্টার (r173 ✓):
+    const mpl = (post.match(/https?:\/\/m4uplay\.[a-z.]+\/file\/([a-z0-9]+)/i) || [])[0];
+    const hlsP = (async () => {
+      if (!mpl) return;
+      try {
+        const mpPage = await m4uText(mpl, M4U_BASE + '/', Math.min(4200, left())).catch(() => '');
+        const pk = mpPage.indexOf('eval(function(p,a,c,k,e,d)');
+        if (pk < 0) return;
+        let d2 = 0, eEnd = -1;
+        for (let j2 = pk + 4; j2 < mpPage.length; j2++) { if (mpPage[j2] === '(') d2++; else if (mpPage[j2] === ')') { d2--; if (!d2) { eEnd = j2 + 1; break; } } }
+        const pm = mpPage.slice(pk, eEnd).match(/eval\(function\(p,a,c,k,e,d\)\{[\s\S]*?\}\('([\s\S]*?)',(\d+),(\d+),'([\s\S]*?)'\.split\('\|'\)\)/);
+        if (!pm) { if (DBG) console.error('[m4u] packer-unpack-fail'); return; }
+        let pld = pm[1].replace(/\\'/g, "'"); const ba = +pm[2], bc = +pm[3], kk = pm[4].split('|');
+        for (let i2 = bc - 1; i2 >= 0; i2--) { if (!kk[i2]) continue; pld = pld.replace(new RegExp('\\b' + i2.toString(ba) + '\\b', 'g'), kk[i2]); }
+        const h2u = (pld.match(/"hls2":"(https?:\/\/[^"]+?\.m3u8[^"]*)"/) || [])[1];
+        if (!h2u) return;
+        const mt = await m4uText(h2u, '', Math.min(3800, left())).catch(() => '');
+        if (!mt || !/EXTM3U/.test(mt)) return;
+        const hm2 = mt.match(/RESOLUTION=\d+x(\d+)/) || [];
+        const hh = parseInt(hm2[1], 10) || 720;
+        const langs = (mt.match(/LANGUAGE="([a-z-]{2,6})"/g) || []).map(z => z.slice(10, -1));
+        const vr = (mt.match(/VIDEO-RANGE=(\w+)/) || [])[1] || '';
+        const hdv = vr && vr !== 'SDR' ? (vr === 'PQ' ? 'HDR10' : vr) : '';
+        const haud = langs.length > 1 ? 'Multi-Audio' : ({ hi: 'Hindi', ta: 'Tamil', te: 'Telugu', en: 'English', bn: 'Bengali' }[langs[0]] || '');
+        if (!maxh || hh <= maxh) out.push({ h: hh, url: h2u, kind: 'hls', spec: '', aud: haud, dv: hdv });
+        if (DBG) console.error('[m4u] hls2 ' + hh + 'p langs=' + langs.join('+') + ' @' + (Date.now() - t3) + 'ms');
+      } catch { }
+    })();
     // ধাপ-৩: ডাউনলোড-হাব → hubcloud IDs + লেবেল (downloads-btns-div-ব্লক-ভাগ):
     const hub = await m4uText(lnk, M4U_BASE + '/', Math.min(4500, left())).catch(() => '');
     const rows = []; const seenId = new Set();
@@ -1404,7 +1433,6 @@ async function m4uStreams(tmdbId, title, type, s, e, origin, maxh) { // maxh: cf
     if (!rows.length) { if (DBG) console.error('[m4u] no-hubcloud-rows @' + (Date.now() - t3) + 'ms'); return []; }
     // ছাঁকনি (cfg.mmr — MM-ফিল্টার-পুনঃব্যবহার): অজানা-উচ্চতা-সবসময়-থাকে
     const frows = (maxh ? rows.filter(x => !x.h || x.h <= maxh) : rows).sort((a, b) => b.h - a.h).slice(0, 3);
-    const out = [];
     for (const r of frows) { // ধাপ-৪: hubcloud → gamerxyt → FSL-R2 (সর্বোচ্চ-২টা-ফাইল-পূর্ণ-রেজলভ):
       if (left() < 1800) break;
       const hc = await m4uText('https://hubcloud.ist/' + (r.seg || 'drive') + '/' + r.id, lnk, Math.min(4200, left())).catch(() => '');
@@ -1426,26 +1454,29 @@ async function m4uStreams(tmdbId, title, type, s, e, origin, maxh) { // maxh: cf
       else fdec = ((hc.match(/<title>([^<]{10,240})/) || [])[1] || '').replace(/&#038;|&amp;/g, '&').trim();
       const fh = parseInt((fdec.match(/(\d{3,4})\s*p/i) || [])[1] || '0', 10);
       const useH = fh || r.h;
-      if (out.some(o => o.h === useH)) continue; // একই-আসল-রেজো-দ্বিতীয়বার-নয়
+      if (out.some(o => o.h === useH && o.kind !== 'hls')) continue; // একই-আসল-রেজো-ফাইল-দ্বিতীয়বার-নয় (HLS-আলাদা)
       const aud = (/Multi[ ._]Audio/i.test(fdec + r.lbl + (hit.post_title || '')) ? 'Multi-Audio' : (/Dual[ ._]Audio/i.test(fdec + r.lbl + (hit.post_title || '')) ? 'Dual-Audio' : '')) + (/Atmos/i.test(fdec) ? '+Atmos' : '');
       const dv = [(/HDR10\+|HDR10Plus/i.test(fdec) && 'HDR10+'), (/\bDV\b|Dolby ?Vision/i.test(fdec) && 'DV'), (!/HDR10\+|HDR10Plus|\bDV\b|Dolby ?Vision/i.test(fdec) && /\bHDR10?\b|\bHDR\b/i.test(fdec) && 'HDR'), (/\bHLG\b/i.test(fdec) && 'HLG')].filter(Boolean).join('/');
       const spec = fdec || ((hc.match(/<title>([^<]{10,240})/) || [])[1] || r.lbl).replace(/&#038;|&amp;/g, '&').trim();
-      out.push({ h: useH, url: furl, spec, aud, dv });
-      if (out.length >= 2) break;
+      out.push({ h: useH, url: furl, kind: 'file', spec, aud, dv });
+      if (out.length >= 3) break;
     }
+    await Promise.race([hlsP, new Promise(r2 => setTimeout(r2, Math.max(200, left() - 150)))]); // HLS-সমান্তরাল-ফল-অপেক্ষা (বাজেট-ভেতরে)
+    out.sort((a, b) => (b.kind === 'hls' ? 1 : 0) - (a.kind === 'hls' ? 1 : 0)); // সিক-নিশ্চিত-HLS-আগে
+    if (out.length > 3) out.length = 3;
     if (DBG) console.error('[m4u] ' + tmdbId + ' "' + T + '" rows=' + rows.length + ' cards=' + out.length + ' @' + (Date.now() - t3) + 'ms');
     if (!out.length) return [];
     const epLine = type === 'tv' ? ('\u29e0 S' + (parseInt(s, 10) || 1) + 'E' + (parseInt(e, 10) || 1)) : '\u29e0 Movie';
     return out.map(x => {
       const q2 = String(x.h || '');
-      const txt = '\u29c9 ' + (hit.post_title ? String(hit.post_title).split(' Full Movie')[0].slice(0, 80) : T) + '\n' + epLine + '\n\u229e Movies4u \u00b7 ' + (x.dv ? x.dv + ' \u00b7 ' : '') + 'MKV' + (x.aud ? ' \u2317 ' + x.aud : '');
+      const txt = '\u29c9 ' + (hit.post_title ? String(hit.post_title).split(' Full Movie')[0].slice(0, 80) : T) + '\n' + epLine + '\n\u229e Movies4u \u00b7 ' + (x.dv ? x.dv + ' \u00b7 ' : '') + (x.kind === 'hls' ? 'HLS' : 'MKV') + (x.aud ? ' \u2317 ' + x.aud : '');
       return {
         name: '\u25a5 ' + q2 + ' \u25a5',
         title: txt,
         description: txt,
         quality: q2,
         url: x.url, // v1.15.40: সরাসরি-মূল-মাস্টার (r173) — কোনো-রিলে/টোকেন/মিনি-নয়
-        behaviorHints: { notWebReady: false, isBingeable: true, filename: (x.spec.match(/[A-Za-z0-9 ().&+\[\]-]+\.mkv/) || ['movies4u.mkv'])[0], proxyHeaders: { request: { 'User-Agent': UA } } },
+        behaviorHints: Object.assign({ notWebReady: false, isBingeable: true, proxyHeaders: { request: { 'User-Agent': UA } } }, x.kind === 'file' ? { filename: (x.spec.match(/[A-Za-z0-9 ().&+\[\]-]+\.mkv/) || ['movies4u.mkv'])[0] } : {}),
         bingeGroup: 'm4u|' + T.toLowerCase() + '::'
       };
     });
