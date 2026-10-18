@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.59';
+const VERSION = '1.15.60';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -1468,10 +1468,12 @@ async function anipmStreams(tmdbId, type, s, e) { // search → bootstrap → se
         if (em && !/^https?:/i.test(em.source || '')) em = null;
         if (!em && !fpFresh) EMB_FP_BLOCKED = Date.now(); // set BEFORE the slow pool: the window can cut us mid-race and the flag must survive for the next tap
         if (!em && !poolDead) { // pool proxies fetch with THEIR IPs/stacks (beamup has no curl; undici fp is 403'd); fpFresh skips the doomed direct try
-          const r3 = await mmRacePool(embU, 3, 2600).then(r4 => { try { return JSON.parse(String(r4.body || '')); } catch { return null; } }).catch(() => null);
+          mark('pool:enter', true);
+          let r3 = null;
+          try { r3 = await mmRacePool(embU, 3, 2600).then(r4 => { try { return JSON.parse(String(r4.body || '')); } catch { return null; } }); } catch (e4) { mark('pool:throw:' + String(e4 && e4.message).slice(0, 22)); }
           mark('pool:' + (r3 && r3.source ? 'ok' : 'miss'), !!(r3 && r3.source));
           if (r3 && /^https?:/i.test(r3.source || '')) em = r3; else poolDead = true;
-        }
+        } else if (!em && poolDead) { mark('pool:dead-skip'); }
         if (!em || !/^https?:/i.test(em.source || '')) continue;
         const aud = (lang === 'dub' ? 'English (Dub)' : 'Japanese (Sub)') + vr[1];
         out.push({ url: em.source, aud });
