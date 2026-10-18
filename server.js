@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.44';
+const VERSION = '1.15.45';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -1455,35 +1455,45 @@ async function m4uStreams(tmdbId, title, type, s, e, origin, maxh) { // maxh: cf
       const gx = (hc.match(/https:\/\/gamerxyt\.com\/hubcloud\.php\?[^"]+/) || [])[0];
       if (!gx) continue;
       const gpage = await m4uText(gx, 'https://hubcloud.ist/', Math.min(4200, left())).catch(() => '');
-      const r2u = (gpage.match(/https:\/\/[a-z0-9]+\.r2\.cloudflarestorage\.com\/[^"]+/) || [''])[0].replace(/&amp;/g, '&');
-      // seek-সংশোধন: R2-প্রেসাইন=HEAD-403+%20-রিরাইটে-সিগনেচার-ভাঙে → প্লেয়ারে-সিক-মরে; pixeldrain-মিরর (একই-ফাইল, unsigned, HEAD-200) থাকলে-সেটাই-কার্ড:
-      const r2v = r2u ? await m4uAlive(r2u) : null; // {alive,name,total}
-      if (r2u && !r2v.alive) { if (DBG) console.error('[m4u] dead-R2 ' + r.id + ' @' + (Date.now() - t3) + 'ms'); continue; }
-      let purl = '', pdName = '', pdTotal = 0;
-      const pdIds = [...new Set((gpage.match(/pixeldrain\.dev\/u\/([A-Za-z0-9]+)/g) || []).map(z => z.split('/u/')[1]))].slice(0, 4);
+      // seek-নীতি (ইউজার-নির্দেশ + সাইটের-নিজের-নোট "Resume Not Supported in 10Gbps"):
+      // কার্ড-যোগ্য: pixeldrain → FSL → FSL v2 (যেকোনো-signed-S3)। কখনোই-নয়: 10Gbps(gpdl/pixel.hubcloud→workers), Buzz, Telegram।
+      const s3s = [...new Set((gpage.match(/https?:\/\/[a-z0-9.-]+\/[^"'\s<>]*X-Amz-Signature=[A-Za-z0-9%]+/g) || []).map(z => z.replace(/&amp;/g, '&')))]; // FSL + FSL v2 — যেকোনো-signed-S3-হোস্ট
+      const pdIds = [...new Set((gpage.match(/pixeldrain\.dev\/u\/([A-Za-z0-9]+)/g) || []).map(z => z.split('/u/')[1]))].slice(0, 4); // বাটন+var pxl (DMCA-লুকানো-আসল-লিঙ্ক-সহ)
+      let furl = '', fdec = '', fsrc = '';
+      // ১) pixeldrain-মিরর — unsigned+HEAD-200, সব-প্লেয়ারে-সিক:
       if (pdIds.length && left() > 1500) {
-        const wantRes = (r2v && (r2v.name.match(/(\d{3,4})\s*p/i) || [])[1]) || (r.lbl.match(/(\d{3,4})\s*p/i) || [])[1] || '';
-        if (DBG) console.error('[m4u] pd-scan ids=' + pdIds.length + ' want=' + wantRes + ' left=' + left() + 'ms');
-        for (let qi = 0; qi < pdIds.length && left() > 1200; qi++) { // পরপর-প্রোব; মিল=রেজো-অথবা-হুবহু-সাইজ (CF-ক্যাশে-disposition-লুকালেও-সাইজ-দিয়ে-প্রমাণ)
+        let wantRes = '';
+        if (s3s[0]) { const pv0 = await m4uAlive(s3s[0]).catch(() => null); wantRes = ((pv0 && pv0.name || '').match(/(\d{3,4})\s*p/i) || [])[1] || ''; }
+        if (!wantRes) wantRes = (r.lbl.match(/(\d{3,4})\s*p/i) || [])[1] || '';
+        for (let qi = 0; qi < pdIds.length && left() > 1200; qi++) { // পরপর-প্রোব; মিল=রেজো-অথবা-হুবহু-সাইজ (CF-ক্যাশে-disposition-লুকালেও-সাইজ-প্রমাণ)
           const pv = await pdProbe('https://pixeldrain.dev/api/file/' + pdIds[qi] + '?download').catch(() => null);
           if (DBG) console.error('[m4u]   pd[' + qi + '] alive=' + (pv && pv.alive) + ' total=' + (pv && pv.total) + ' name=' + ((pv && pv.name) || '').slice(0, 40));
           if (!pv || !pv.alive) continue;
           const pres = ((pv.name || '').match(/(\d{3,4})\s*p/i) || [])[1];
-          const sameSize = !!(r2v && r2v.total && pv.total && pv.total === r2v.total);
+          let sameSize = false;
+          if (!sameSize && pv.total && s3s[0]) { const sv = await m4uAlive(s3s[0]).catch(() => null); sameSize = !!(sv && sv.total && sv.total === pv.total); }
           if (wantRes && pres && pres !== wantRes && !sameSize) continue; // ভিন্ন-রেজো-মিরর-নয়
-          purl = 'https://pixeldrain.dev/api/file/' + pdIds[qi] + '?download';
-          pdName = pv.name; pdTotal = pv.total;
+          furl = 'https://pixeldrain.dev/api/file/' + pdIds[qi] + '?download';
+          fdec = (pv.name || '').replace(/\+/g, ' ');
+          fsrc = 'pd';
           if (DBG) console.error('[m4u] pd-mirror ' + (pres || (pv.total ? Math.round(pv.total / 1e8) / 10 + 'G' : '?')) + ' @' + (Date.now() - t3) + 'ms');
           break;
         }
       }
-      const furl = purl || (r2v && r2v.alive ? r2u : '');
-      if (!furl) { if (!r2u && DBG) console.error('[m4u] no-pd ' + r.id + ' @' + (Date.now() - t3) + 'ms'); continue; }
-      // সত্য-যাচাই: R2-disposition / pd-disposition / hubcloud-title-ই-আসল (লেবেল-নয়) — ভুল-রেজো-কার্ড-নিষিদ্ধ:
-      let fdec = '';
-      if (pdName) fdec = pdName.replace(/\+/g, ' ');
-      else if (r2u) { try { fdec = decodeURIComponent((r2u.match(/filename%3D%22(.*?)%22/i) || [''])[1] || ''); } catch { } }
-      else fdec = ((hc.match(/<title>([^<]{10,240})/) || [])[1] || '').replace(/&#038;|&amp;/g, '&').trim();
+      // ২) FSL / FSL v2 — signed-S3 (HEAD-403-সত্ত্বেও-GET-রেঞ্জ-চলে; ইউজার-প্লেয়ারে-সিক-চলে):
+      if (!furl && s3s.length && left() > 1500) {
+        for (let si = 0; si < s3s.length && left() > 1200; si++) {
+          const sv = await m4uAlive(s3s[si]).catch(() => null);
+          if (DBG) console.error('[m4u]   s3[' + si + '] alive=' + (sv && sv.alive) + ' name=' + ((sv && sv.name) || '').slice(0, 44));
+          if (!sv || !sv.alive) continue;
+          furl = s3s[si];
+          try { fdec = decodeURIComponent((furl.match(/filename%3D%22(.*?)%22/i) || [''])[1] || ''); } catch { }
+          fsrc = 's3';
+          break;
+        }
+      }
+      if (!furl) { if (DBG) console.error('[m4u] no-seekable ' + r.id + ' @' + (Date.now() - t3) + 'ms'); continue; }
+      if (!fdec) fdec = ((hc.match(/<title>([^<]{10,240})/) || [])[1] || '').replace(/&#038;|&amp;/g, '&').trim();
       const fh = parseInt((fdec.match(/(\d{3,4})\s*p/i) || [])[1] || '0', 10);
       const useH = fh || r.h;
       if (out.some(o => o.h === useH && o.kind !== 'hls')) continue; // একই-আসল-রেজো-ফাইল-দ্বিতীয়বার-নয় (HLS-আলাদা)
