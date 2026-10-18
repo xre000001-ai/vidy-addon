@@ -1372,6 +1372,7 @@ async function mmStreams(tmdbId, title, type, s, e, origin, maxh, rel) { // v1.1
 }
 // ---------- v1.15.57: ANI.PM + Re:ANIME — anime sources (Eclipsia-plugin recipes: onyxia.js=ani.pm, praxiel.js=reanime.to) ----------
 const ANIPM_DBG = { ts: 0, lines: [] }; // last-run step diagnostics (visible at /anipmdbg)
+let EMB_FP_BLOCKED = 0; // embed.settlar 403s node-TLS by fingerprint (stable, not transient) — once seen, go straight to the pool for an hour
 const ANIPM_BASE = 'https://ani.pm';
 const ANIPM_EMB = 'https://embed.settlar.io';
 const REAN_BASE = 'https://reanime.to';
@@ -1461,12 +1462,16 @@ async function anipmStreams(tmdbId, type, s, e) { // search → bootstrap → se
           tm = se && se.embedUrl && /t=([^&]+)/.exec(se.embedUrl);
         }
         if (!tm) { await delay2(250); continue; }
-        let em = await anipmJ(ANIPM_EMB + '/api/embed/session?t=' + tm[1], ANIPM_EMB + '/embed/v1', 5000);
-        if ((!em || !/^https?:/i.test(em.source || '')) && !poolDead) { // last resort: pool proxies fetch with THEIR IPs/stacks (beamup has no curl; undici fp is 403'd)
-          const r3 = await mmRacePool(ANIPM_EMB + '/api/embed/session?t=' + tm[1], 3, 3200).then(r4 => { try { return JSON.parse(String(r4.body || '')); } catch { return null; } }).catch(() => null);
+        const embU = ANIPM_EMB + '/api/embed/session?t=' + tm[1];
+        const fpFresh = Date.now() - EMB_FP_BLOCKED < 3600000;
+        let em = fpFresh ? null : await anipmJ(embU, ANIPM_EMB + '/embed/v1', 5000);
+        if (em && !/^https?:/i.test(em.source || '')) em = null;
+        if (!em && !poolDead) { // pool proxies fetch with THEIR IPs/stacks (beamup has no curl; undici fp is 403'd); fpFresh skips the doomed direct try
+          const r3 = await mmRacePool(embU, 3, 2600).then(r4 => { try { return JSON.parse(String(r4.body || '')); } catch { return null; } }).catch(() => null);
           mark('pool:' + (r3 && r3.source ? 'ok' : 'miss'), !!(r3 && r3.source));
           if (r3 && /^https?:/i.test(r3.source || '')) em = r3; else poolDead = true;
         }
+        if (!fpFresh && em === null && ANIPM_DBG.lines.some(l => l.indexOf('emb:403') >= 0 && ANIPM_DBG.lines.indexOf(l) >= ANIPM_DBG.lines.length - 6)) EMB_FP_BLOCKED = Date.now(); // this run saw the fp 403 — next run skips straight to pool
         if (!em || !/^https?:/i.test(em.source || '')) continue;
         const aud = (lang === 'dub' ? 'English (Dub)' : 'Japanese (Sub)') + vr[1];
         out.push({ url: em.source, aud });
