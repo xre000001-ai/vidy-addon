@@ -79,7 +79,7 @@ async function tap(label, url, checks) {
     ok(v.length && v.every(c => audioOf(c) === 'English'), 'vidy audio = English');
     ok(v.length && v.every(c => SERVER_WORDS.includes(slotOf(c).toLowerCase())), 'vidy slots = server names');
     ok(mb.length === 0 || mb.some(c => audioOf(c) === 'English'), 'moviebox: original audio present (English)');
-    ok(s.every(c => !c.bingeGroup || /^(mbxr|mm|tw|rt|m4u|peng|sky|vsp)\|/.test(String(c.bingeGroup))), 'bingeGroup: known-source prefix'); // v1.15.71: vsp=Vidsrc
+    ok(s.every(c => !c.bingeGroup || /^(mbxr|mm|tw|rt|m4u|peng|sky|vsp|ott)\|/.test(String(c.bingeGroup))), 'bingeGroup: known-source prefix'); // v1.15.71: vsp=Vidsrc; v1.15.72: ott=AsianTV
     ok(mb.length === 0 || mb.every(c => c.bingeGroup && String(c.bingeGroup).indexOf('mbxr|') === 0), 'moviebox cards carry bingeGroup');
     ok(s.every(c => !c.behaviorHints || typeof c.behaviorHints === 'object'), 'behaviorHints sane');
     ok(v.every(c => !Array.isArray(c.subtitles) || c.subtitles.every(u2 => u2 && typeof u2.url === 'string')), 'vidy cards: subs shape sane (embedded subs retired — /subtitles resource serves them)');
@@ -146,6 +146,32 @@ async function tap(label, url, checks) {
     const vs = vsOf(s);
     if (!vs.length) return skip('vspq 480: no Vidsrc cards this run');
     ok(vs.every(c => parseInt(String(c.name).replace(/\D/g, ''), 10) <= 480 || /^\u25a5 (480|360) \u25a5$/.test(c.name)), 'vspq=[480]: শুধু-ছোট-মান');
+  });
+
+  // ── 6d) AsianTV মাস্টার+ফিল্টার (v1.15.72 — OneTouchTV) ──
+  const otOf = s => s.filter(c => slotOf(c) === 'AsianTV');
+  const OTT_LANGS = ['Korean', 'Chinese', 'Japanese', 'Thai', 'Mandarin', 'Cantonese', 'Filipino', 'English', 'Subbed'];
+  await tap('cfg ott=0 (AsianTV off)', cfgUrl({ ott: 0 }, '/stream/series/tmdb93405%3A1%3A1.json'), (s) => {
+    ok(otOf(s).length === 0, 'ott=0: zero AsianTV cards');
+  });
+  await tap('AsianTV কার্ড-গঠন (SquidGame tmdb93405 S1E1)', BASE + '/stream/series/tmdb93405%3A1%3A1.json', (s) => {
+    const ot = otOf(s);
+    if (!ot.length) return skip('AsianTV: no cards this run (upstream)'); // ভাণ্ডার-ঝুঁকি — কাঠামো-টেস্ট-কার্ড-থাকলেই
+    ok(ot.every(c => /^\u25a5 (\d{3,4}) \u25a5$/.test(String(c.name || ''))), 'AsianTV name = "\u25a5 Q \u25a5"');
+    ok(ot.every(c => /^https?:\/\//.test(String(c.url || '')) && String(c.url).indexOf('/vsp/') < 0), 'AsianTV url = সরাসরি-m3u8 (রিলে-নয়)');
+    ok(ot.every(c => OTT_LANGS.indexOf(audioOf(c)) >= 0), 'AsianTV audio = বাস্তব-ভাষা (দেশ-নির্ধারিত)');
+    ok(ot.every(c => !c.bingeGroup || String(c.bingeGroup).indexOf('ott|') === 0), 'AsianTV bingeGroup ott|');
+    ok(ot.every(c => !Array.isArray(c.subtitles) || c.subtitles.every(u2 => u2 && typeof u2.url === 'string' && /^https?:/.test(u2.url))), 'AsianTV subs sane');
+  });
+  await tap('AsianTV মুভি (Parasite tmdb496243)', BASE + '/stream/movie/tmdb496243.json', (s) => {
+    const ot = otOf(s);
+    if (!ot.length) return skip('AsianTV movie: no cards this run (upstream)');
+    ok(ot.every(c => /\u29e0 Movie/.test(String(c.description || ''))), 'AsianTV movie: ⧠ Movie লাইন');
+  });
+  await tap('cfg ottq=[480] (AsianTV-ছাঁকনি)', cfgUrl({ ottq: [480] }, '/stream/series/tmdb93405%3A1%3A1.json'), (s) => {
+    const ot = otOf(s);
+    if (!ot.length) return skip('ottq 480: no AsianTV cards this run');
+    ok(ot.every(c => ['480', '360'].includes(String(c.quality))), 'ottq=[480]: শুধু-ছোট-মান');
   });
 
   await tap('cfg sub=0 (subtitle gate)', cfgUrl({ sub: 0 }, '/stream/movie/tt0468569.json'), (s) => {
