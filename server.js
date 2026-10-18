@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.58';
+const VERSION = '1.15.59';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -1466,12 +1466,12 @@ async function anipmStreams(tmdbId, type, s, e) { // search → bootstrap → se
         const fpFresh = Date.now() - EMB_FP_BLOCKED < 3600000;
         let em = fpFresh ? null : await anipmJ(embU, ANIPM_EMB + '/embed/v1', 5000);
         if (em && !/^https?:/i.test(em.source || '')) em = null;
+        if (!em && !fpFresh) EMB_FP_BLOCKED = Date.now(); // set BEFORE the slow pool: the window can cut us mid-race and the flag must survive for the next tap
         if (!em && !poolDead) { // pool proxies fetch with THEIR IPs/stacks (beamup has no curl; undici fp is 403'd); fpFresh skips the doomed direct try
           const r3 = await mmRacePool(embU, 3, 2600).then(r4 => { try { return JSON.parse(String(r4.body || '')); } catch { return null; } }).catch(() => null);
           mark('pool:' + (r3 && r3.source ? 'ok' : 'miss'), !!(r3 && r3.source));
           if (r3 && /^https?:/i.test(r3.source || '')) em = r3; else poolDead = true;
         }
-        if (!fpFresh && em === null && ANIPM_DBG.lines.some(l => l.indexOf('emb:403') >= 0 && ANIPM_DBG.lines.indexOf(l) >= ANIPM_DBG.lines.length - 6)) EMB_FP_BLOCKED = Date.now(); // this run saw the fp 403 — next run skips straight to pool
         if (!em || !/^https?:/i.test(em.source || '')) continue;
         const aud = (lang === 'dub' ? 'English (Dub)' : 'Japanese (Sub)') + vr[1];
         out.push({ url: em.source, aud });
@@ -2461,7 +2461,7 @@ const server = http.createServer((req, res) => {
         return res.end(lb);
       } catch (eL) { return sendJson(res, 404, { error: 'no rt logo' }); }
     }
-    if (p === '/anipmdbg') { sendJson(res, 200, { ts: ANIPM_DBG.ts, lines: ANIPM_DBG.lines }); logReq(p, 0, 1, null, RVA); return; }
+    if (p === '/anipmdbg') { sendJson(res, 200, { v: VERSION, fp: EMB_FP_BLOCKED, now: Date.now(), ts: ANIPM_DBG.ts, lines: ANIPM_DBG.lines }); logReq(p, 0, 1, null, RVA); return; }
     if (p === '/_health') return sendJson(res, 200, { ok: 1, version: VERSION, pool: POOL.length, pxbench: POOL.filter(c => PX_SITE.has(c.px)).length, memo: memo.size, nx: NEXBASE ? 1 : 0, nxpool: NXBENCH, nxwaves: NXWAVES, nxsize: NXSIZE, tw: TWBASE ? 1 : 0, rt: RTBASE ? 1 : 0 }); // v1.15.18: pxbench=সাইট-প্রমাণিত-বেঞ্চ (v1.15.8: nxpool=MB-বেঞ্চ)
     if (p === '/_pool') return sendJson(res, 200, POOL.map(c => Object.assign({}, c, PX_RUN.get(c.px) || {}))); // v1.15.0: রানটাইম-স্বাস্থ্য-সহ
     if (p === '/_nxring') { if (!NEXBASE) return sendJson(res, 200, { off: 1 }); directGet(NEXBASE + '/debug/ring', 4000).then(b => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(b); }).catch(() => { res.writeHead(200, { 'content-type': 'application/json' }); res.end('{"err":1}'); }); return; } // v2.10.2 চাইল্ড-রিজলভ-ধাপ-প্রমাণ
