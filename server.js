@@ -684,7 +684,7 @@ function nameForTmdb(tmdbId, type) {
   const hit = memoGet(key, 86400000);
   if (hit) return Promise.resolve(hit);
   if (memoGet(key + ':neg', 600000)) return Promise.resolve(''); // ব্যর্থ-লুকআপ-মাত্র-১০মিন — দিনভর-'Vidy'-টাইটেল-নয়
-  return dedupe(key, () => tmdbGet('/' + (type === 'series' ? 'tv/' : 'movie/') + tmdbId, 10000).then(b => {
+  return dedupe(key, () => tmdbGet('/' + (type === 'series' || type === 'tv' ? 'tv/' : 'movie/') + tmdbId, 10000).then(b => { // v1.15.71: 'tv'-ও-গ্রহণ (Vidsrc-কলার)
     const j = JSON.parse(b);
     const v = j.name || j.title || '';
     memoSet(key, v);
