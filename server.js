@@ -1402,15 +1402,14 @@ function anipmJ(url, ref, ms, pool) { // direct first; embed misses go curl-chil
 function reanJ(url, ref, ms) {
   return fetch(url, { headers: { 'User-Agent': REAN_UA, Accept: 'application/json', Referer: ref || REAN_BASE + '/' }, signal: AbortSignal.timeout(ms || 4500) }).then(x => x.ok ? x.json() : null).catch(() => null);
 }
-async function anipmInfo(tmdbId, type) { // titles + year (memoized 1d) — shared by ani.pm search-match and reanime search fallback
+async function anipmInfo(tmdbId, type) { // titles + year — reuses the ALREADY-memoized nameForTmdb/yearForTmdb (zero extra TMDB roundtrip under load)
   const key = 'anipm:' + type + ':' + tmdbId;
   const hit = memoGet(key, 86400000); if (hit) return hit;
-  if (memoGet(key + ':neg', 600000)) return null;
-  try {
-    const j = JSON.parse(await tmdbGet('/' + (type === 'series' ? 'tv/' : 'movie/') + tmdbId, 8000));
-    const v = { titles: [...new Set([j.name || j.title || '', j.original_name || j.original_title || ''].filter(Boolean))], year: parseInt(String(j.first_air_date || j.release_date || '').slice(0, 4), 10) || 0 };
-    memoSet(key, v); return v;
-  } catch { memoSet(key + ':neg', 1); return null; }
+  const nm = await nameForTmdb(tmdbId, type).catch(() => '');
+  if (!nm) { memoSet(key + ':neg', 1); return null; }
+  const y = await yearForTmdb(tmdbId, type).catch(() => 0);
+  const v = { titles: [nm], year: y | 0 };
+  memoSet(key, v); return v;
 }
 function anipmScore(cand, info, isTv, s) { // same weights as the proven Eclipsia matcher (onyxia)
   const title = String(cand.title || '');
@@ -1433,8 +1432,11 @@ function anipmScore(cand, info, isTv, s) { // same weights as the proven Eclipsi
   }
   return score;
 }
+const ANIPM_RES = new Map(); // result cache: key→cards (ttl 8min — settlar media URLs live ~6h; second tap instant)
 async function anipmStreams(tmdbId, type, s, e) { // search → bootstrap → settlar session → embed m3u8 (sub/dub/hard); headers: Referer embed.settlar.io
   if (!tmdbId) return [];
+  const ck = type + ':' + tmdbId + ':' + (s || 0) + ':' + (e || 0);
+  const chit = mmGet(ANIPM_RES, ck, 480000); if (chit) return chit;
   const t3 = Date.now(); const isTv = type === 'series';
   try {
     const info = await anipmInfo(tmdbId, type); if (!info || !info.titles.length) { if (DBG) console.error('[anipm] no-info ' + tmdbId); return []; }
@@ -1477,12 +1479,14 @@ async function anipmStreams(tmdbId, type, s, e) { // search → bootstrap → se
       }
     }
     if (DBG) console.error('[anipm] ' + tmdbId + '/' + (isTv ? 'S' + ss + 'E' + ep : 'movie') + ' best=' + String(best.title || '').slice(0, 24) + ' cards=' + out.length + ' @' + (Date.now() - t3) + 'ms');
-    return out.map(x => ({
+    const cards2 = out.map(x => ({
       name: '\u25a5 HLS \u25a5', quality: 'HLS', url: x.url,
       title: '\u229e ANI.PM \u2317 ' + x.aud, description: '\u229e ANI.PM \u2317 ' + x.aud,
       behaviorHints: { notWebReady: true, isBingeable: true, proxyHeaders: { request: { Referer: ANIPM_EMB + '/', 'User-Agent': UA } } }, // v1.15.56 contract: notWebReady:true or headers are dropped
       bingeGroup: 'anipm|' + String(best.title || 'anime').toLowerCase() + '::|' + x.aud
     }));
+    if (cards2.length) mmPut(ANIPM_RES, ck, cards2);
+    return cards2;
   } catch (e2) { if (DBG) console.error('[anipm] ' + tmdbId + ' ERR ' + String(e2 && e2.message).slice(0, 60) + ' @' + (Date.now() - t3) + 'ms'); return []; }
 }
 async function reanStreams(tmdbId, type, s, e) { // TMDB-direct servers, else search+details match; MKV download link (flixcloud → spacedl); HLS path needs enc-dec.app — skipped (off-by-default upstream)
