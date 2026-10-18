@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.62';
+const VERSION = '1.15.63';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -1489,9 +1489,11 @@ async function anipmStreams(tmdbId, type, s, e, _bg) { // search → bootstrap �
       }));
     }));
     if (DBG) console.error('[anipm] ' + tmdbId + '/' + (isTv ? 'S' + ss + 'E' + ep : 'movie') + ' best=' + String(best.title || '').slice(0, 24) + ' cards=' + out.length + ' @' + (Date.now() - t3) + 'ms');
-    if (!out.length && !_bg && !ANIPM_BG.has(ck)) { // relays are slow/flaky — let an UNCAPPED background run finish and cache; the next tap serves instantly
+    if (!out.length && !_bg && !ANIPM_BG.has(ck)) { // relays are slow/flaky — UNCAPPED background runs retry until one relay lands; the cache then serves every later tap
       ANIPM_BG.add(ck);
-      setTimeout(() => { anipmStreams(tmdbId, type, s, e, true).catch(() => { }).finally(() => ANIPM_BG.delete(ck)); }, 60);
+      let tries = 0;
+      const bgRun = () => anipmStreams(tmdbId, type, s, e, true).then(c2 => { if (c2 && c2.length) { ANIPM_BG.delete(ck); return; } if (++tries < 3) setTimeout(bgRun, 15000); else ANIPM_BG.delete(ck); }).catch(() => { if (++tries < 3) setTimeout(bgRun, 15000); else ANIPM_BG.delete(ck); });
+      setTimeout(bgRun, 60);
     }
     const cards2 = out.map(x => ({
       name: '\u25a5 HLS \u25a5', quality: 'HLS', url: x.url,
