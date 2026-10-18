@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.45';
+const VERSION = '1.15.46';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -1466,14 +1466,14 @@ async function m4uStreams(tmdbId, title, type, s, e, origin, maxh) { // maxh: cf
         if (s3s[0]) { const pv0 = await m4uAlive(s3s[0]).catch(() => null); wantRes = ((pv0 && pv0.name || '').match(/(\d{3,4})\s*p/i) || [])[1] || ''; }
         if (!wantRes) wantRes = (r.lbl.match(/(\d{3,4})\s*p/i) || [])[1] || '';
         for (let qi = 0; qi < pdIds.length && left() > 1200; qi++) { // পরপর-প্রোব; মিল=রেজো-অথবা-হুবহু-সাইজ (CF-ক্যাশে-disposition-লুকালেও-সাইজ-প্রমাণ)
-          const pv = await pdProbe('https://pixeldrain.dev/api/file/' + pdIds[qi] + '?download').catch(() => null);
+          const pv = await pdProbe('https://pixeldrain.dev/api/file/' + pdIds[qi]).catch(() => null);
           if (DBG) console.error('[m4u]   pd[' + qi + '] alive=' + (pv && pv.alive) + ' total=' + (pv && pv.total) + ' name=' + ((pv && pv.name) || '').slice(0, 40));
           if (!pv || !pv.alive) continue;
           const pres = ((pv.name || '').match(/(\d{3,4})\s*p/i) || [])[1];
           let sameSize = false;
           if (!sameSize && pv.total && s3s[0]) { const sv = await m4uAlive(s3s[0]).catch(() => null); sameSize = !!(sv && sv.total && sv.total === pv.total); }
           if (wantRes && pres && pres !== wantRes && !sameSize) continue; // ভিন্ন-রেজো-মিরর-নয়
-          furl = 'https://pixeldrain.dev/api/file/' + pdIds[qi] + '?download';
+          furl = 'https://pixeldrain.dev/api/file/' + pdIds[qi]; // ?download-ছাড়া = inline-disposition (প্লেয়ারে-সিক-বান্ধব)
           fdec = (pv.name || '').replace(/\+/g, ' ');
           fsrc = 'pd';
           if (DBG) console.error('[m4u] pd-mirror ' + (pres || (pv.total ? Math.round(pv.total / 1e8) / 10 + 'G' : '?')) + ' @' + (Date.now() - t3) + 'ms');
@@ -1925,7 +1925,7 @@ const crypto = require('crypto');
 function manifest(cfg, origin, cfgged) {
   // v1.13.8 PHOENIX-প্যারিটি: Stremio-ম্যানিফেস্ট-id-প্রতি-ক্যাশ-করে — আগের-ভাঙা-ইনস্টলের-id-পুনঃব্যবহার-নিষিদ্ধ
   const m = {
-    id: cfgged ? 'community.xre.vidy.' + crypto.createHash('md5').update(JSON.stringify(cfg || {})).digest('hex').slice(0, 8) : 'community.xre.vidy.p7',
+    id: cfgged ? 'community.xre.vidy.' + crypto.createHash('md5').update(JSON.stringify(cfg || {})).digest('hex').slice(0, 8) : 'community.xre.vidy.' + VERSION.replace(/\./g, ''),
     version: VERSION,
     name: 'Phoenix',
     logo: (origin || '') + '/logo.png',
