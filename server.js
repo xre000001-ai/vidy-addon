@@ -1371,6 +1371,7 @@ async function mmStreams(tmdbId, title, type, s, e, origin, maxh, rel) { // v1.1
   } catch (e2) { if (DBG) console.error('[mm] ERR ' + String(e2 && e2.message).slice(0, 70) + ' @' + (Date.now() - t3) + 'ms'); return []; }
 }
 // ---------- v1.15.57: ANI.PM + Re:ANIME — anime sources (Eclipsia-plugin recipes: onyxia.js=ani.pm, praxiel.js=reanime.to) ----------
+const ANIPM_DBG = { ts: 0, lines: [] }; // last-run step diagnostics (visible at /anipmdbg)
 const ANIPM_BASE = 'https://ani.pm';
 const ANIPM_EMB = 'https://embed.settlar.io';
 const REAN_BASE = 'https://reanime.to';
@@ -1387,10 +1388,13 @@ function anipmCurl(url, ref, ms) { // embed.settlar 403s node-undici's TLS finge
   } catch { return Promise.resolve(null); }
 }
 function anipmJ(url, ref, ms, pool) { // direct first; embed misses go curl-child (right fingerprint), then the proxy pool
-  return fetch(url, { headers: { 'User-Agent': UA, Accept: 'application/json', Referer: ref || ANIPM_BASE + '/' }, signal: AbortSignal.timeout(ms || 4500) }).then(x => { if (DBG && !x.ok) console.error('[anipm] ' + x.status + ' ' + url.slice(0, 60)); return x.ok ? x.json() : null; }).catch(e => { if (DBG && e && e.name !== 'TimeoutError') console.error('[anipm] E ' + String(e && e.message).slice(0, 50)); return null; }).then(j => {
+  const mark = (t2, ok2) => { ANIPM_DBG.lines.push(t2 + (ok2 !== undefined ? ':' + ok2 : '')); if (ANIPM_DBG.lines.length > 14) ANIPM_DBG.lines.shift(); ANIPM_DBG.ts = Date.now(); };
+  return fetch(url, { headers: { 'User-Agent': UA, Accept: 'application/json', Referer: ref || ANIPM_BASE + '/' }, signal: AbortSignal.timeout(ms || 4500) }).then(x => { mark((url.indexOf('/embed/session') >= 0 ? 'emb' : url.indexOf('bootstrap') >= 0 ? 'boot' : url.indexOf('settlar/session') >= 0 ? 'sess' : url.indexOf('/search?') >= 0 ? 'srch' : 'oth') + ':' + x.status, x.ok); if (DBG && !x.ok) console.error('[anipm] ' + x.status + ' ' + url.slice(0, 60)); return x.ok ? x.json() : null; }).catch(e => { mark('net:' + String(e && e.message).slice(0, 24)); if (DBG && e && e.name !== 'TimeoutError') console.error('[anipm] E ' + String(e && e.message).slice(0, 50)); return null; }).then(j => {
     if (j || !pool) return j;
     return anipmCurl(url, ref, ms).then(j2 => {
-      if (j2 || !mmRacePool) return j2;
+      if (j2) { mark('curl:ok', true); return j2; }
+      mark('curl:null', false);
+      if (!mmRacePool) return j2;
       return mmRacePool(url, 2, Math.min(ms || 4500, 3500)).then(r => { try { return JSON.parse(String(r.body || '')); } catch { return null; } }).catch(() => null);
     });
   });
@@ -2447,6 +2451,7 @@ const server = http.createServer((req, res) => {
         return res.end(lb);
       } catch (eL) { return sendJson(res, 404, { error: 'no rt logo' }); }
     }
+    if (p === '/anipmdbg') { sendJson(res, 200, { ts: ANIPM_DBG.ts, lines: ANIPM_DBG.lines }); logReq(p, 0, 1, null, RVA); return; }
     if (p === '/_health') return sendJson(res, 200, { ok: 1, version: VERSION, pool: POOL.length, pxbench: POOL.filter(c => PX_SITE.has(c.px)).length, memo: memo.size, nx: NEXBASE ? 1 : 0, nxpool: NXBENCH, nxwaves: NXWAVES, nxsize: NXSIZE, tw: TWBASE ? 1 : 0, rt: RTBASE ? 1 : 0 }); // v1.15.18: pxbench=সাইট-প্রমাণিত-বেঞ্চ (v1.15.8: nxpool=MB-বেঞ্চ)
     if (p === '/_pool') return sendJson(res, 200, POOL.map(c => Object.assign({}, c, PX_RUN.get(c.px) || {}))); // v1.15.0: রানটাইম-স্বাস্থ্য-সহ
     if (p === '/_nxring') { if (!NEXBASE) return sendJson(res, 200, { off: 1 }); directGet(NEXBASE + '/debug/ring', 4000).then(b => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(b); }).catch(() => { res.writeHead(200, { 'content-type': 'application/json' }); res.end('{"err":1}'); }); return; } // v2.10.2 চাইল্ড-রিজলভ-ধাপ-প্রমাণ
