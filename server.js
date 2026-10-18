@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.67';
+const VERSION = '1.15.68';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -90,7 +90,7 @@ async function pxCheckerWave() {
   try {
     const tnow = Date.now();
     const wave = POOL.filter(c => (PX_COOL.get(c.px) || 0) <= tnow)
-      .sort((a, b) => (PX_LASTOK.get(a.px) || 0) - (PX_LASTOK.get(b.px) || 0)).slice(0, 42); // v1.15.27 (ইউজার): সমান্তরাল-ট্রিপল ১৪→৪২
+      .sort((a, b) => (PX_LASTOK.get(a.px) || 0) - (PX_LASTOK.get(b.px) || 0)).slice(0, 84); // v1.15.68: ঢেউ ২× ৪২→৮৪
     if (!wave.length) return;
     PXCHK++;
     let cok = 0, cspare = 0, cdead = 0;
@@ -111,12 +111,12 @@ async function pxCheckerWave() {
     })));
     const t2 = Date.now();
     let cut = 0;
-    for (let i = POOL.length - 1; i >= 0 && POOL.length > 20; i--) { // v1.15.21: ফ্লোর ১২→২০ (বেঞ্চ-রক্ষকের-জন্য-যথেষ্ট-প্রার্থী-সবসময়)
+    for (let i = POOL.length - 1; i >= 0 && POOL.length > 40; i--) { // v1.15.68: ফ্লোর ২× ২০→৪০
       if (t2 - (PX_LASTOK.get(POOL[i].px) || t2) > 600000) { const g = POOL.splice(i, 1)[0]; PX_RUN.delete(g.px); PX_LASTOK.delete(g.px); PX_COOL.delete(g.px); PX_SITE.delete(g.px); PX_MISS.delete(g.px); cut++; }
     }
     if (cut) { try { fs.writeFileSync(POOL_FILE, JSON.stringify(POOL)); } catch (e) {} setTimeout(enrichPool, 1500).unref(); }
     const benchN = POOL.filter(c => PX_SITE.has(c.px)).length;
-    if (benchN < 24) { setTimeout(enrichPool, 2000).unref(); if (PXCHK % 10 === 1) console.log('[pxbench-keeper] bench=' + benchN + ' < ২৪ → এনরিচ-ফসল-তাৎক্ষণিক'); } // v1.15.22 বেঞ্চ-রক্ষক: ম্যাক্স-টানা (থ্রেশহোল্ড ১৮→২৪)
+    if (benchN < 48) { setTimeout(enrichPool, 2000).unref(); if (PXCHK % 10 === 1) console.log('[pxbench-keeper] bench=' + benchN + ' < ৪৮ → এনরিচ-ফসল-তাৎক্ষণিক'); } // v1.15.68: বেঞ্চ-রক্ষক ২× ২৪→৪৮
     if (cut || PXCHK % 15 === 1 || process.env.VPCHK) console.log('[pxchk] wave=' + wave.length + ' site=' + cok + ' spare=' + cspare + ' dead=' + cdead + ' pool=' + POOL.length + ' bench=' + benchN + ' cut=' + cut); // VPCHK=1: প্রতি-ঢেউয়ে-লগ (ডিবাগ)
   } finally { pxChkBusy = false; }
 }
@@ -129,7 +129,7 @@ function pxCheckerStart() {
 // Multimovies' OWN pool, the vidy-pool model exactly: the same harvest feeds both, but this
 // pool's bench criterion is vidbolt.xyz reachability (the multimovies CDN condition). Fully
 // parallel maps + own file — nothing here touches the vidy pool.
-const MM_CAP = 154, MM_FILE = path.join(__dirname, 'vidy_mm_pool.json');
+const MM_CAP = 308, MM_FILE = path.join(__dirname, 'vidy_mm_pool.json'); // v1.15.68: ২× (১৫৪→৩০৮)
 let MM_POOL = []; try { for (const c of JSON.parse(fs.readFileSync(MM_FILE, 'utf8'))) if (c && c.px) MM_POOL.push({ px: c.px, ms: Number(c.ms) || 2000 }); } catch (e) { }
 const MM_RUN = new Map(), MM_LASTOK = new Map(), MM_COOL = new Map(), MM_SITE = new Set(), MM_MISS = new Map();
 const VB_REF = 'https://vidbolt.xyz/';
@@ -284,7 +284,7 @@ async function mmCheckerWave() { // pxCheckerWave's twin — bench = vidbolt rea
   if (mmChkBusy || !MM_POOL.length) return; mmChkBusy = true;
   try {
     const tnow = Date.now();
-    const wave = MM_POOL.filter(c => (MM_COOL.get(c.px) || 0) <= tnow).sort((a, b) => (MM_LASTOK.get(a.px) || 0) - (MM_LASTOK.get(b.px) || 0)).slice(0, 42);
+    const wave = MM_POOL.filter(c => (MM_COOL.get(c.px) || 0) <= tnow).sort((a, b) => (MM_LASTOK.get(a.px) || 0) - (MM_LASTOK.get(b.px) || 0)).slice(0, 84); // v1.15.68: ঢেউ ২×
     if (!wave.length) return;
     await Promise.all(wave.map(c => new Promise(r2 => {
       const t0 = Date.now();
@@ -302,7 +302,7 @@ async function mmCheckerWave() { // pxCheckerWave's twin — bench = vidbolt rea
     })));
     const t2 = Date.now();
     let cutN = 0;
-    for (let i = MM_POOL.length - 1; i >= 0 && MM_POOL.length > 20; i--) if (t2 - (MM_LASTOK.get(MM_POOL[i].px) || t2) > 600000) { const g = MM_POOL.splice(i, 1)[0]; cutN++; MM_RUN.delete(g.px); MM_LASTOK.delete(g.px); MM_COOL.delete(g.px); MM_SITE.delete(g.px); MM_MISS.delete(g.px); }
+    for (let i = MM_POOL.length - 1; i >= 0 && MM_POOL.length > 40; i--) // v1.15.68: ফ্লোর ২× if (t2 - (MM_LASTOK.get(MM_POOL[i].px) || t2) > 600000) { const g = MM_POOL.splice(i, 1)[0]; cutN++; MM_RUN.delete(g.px); MM_LASTOK.delete(g.px); MM_COOL.delete(g.px); MM_SITE.delete(g.px); MM_MISS.delete(g.px); }
     if (cutN) mmSave(); // v1.15.29 revise: write only when members were cut (no idle disk churn)
     if (DBG) console.error('[mmchk] pool=' + MM_POOL.length + ' bench=' + MM_POOL.filter(c => MM_SITE.has(c.px)).length);
   } finally { mmChkBusy = false; }
@@ -337,7 +337,7 @@ function mmRacePool(url, n, timeoutMs) { // racePool's twin over the multimovies
 }
 // v1.15.4 পুল-ট্রেইনার (enrich): পাবলিক-তালিকা → নমুনা-১২০ → সমান্তরাল-২০৪-যাচাই → দ্রুততম(<১.৮সে)-যোগ;
 // মূল-১৭-অক্ষত-প্রথমে, ক্যাপ-৭৭, জেতা-প্রক্সি-ফাইলেও-লেখা (রিস্টার্টে-উষ্ণ); PX_ENRICH=0 দিলে-বন্ধ
-const PX_BASE_N = 17, PX_CAP = 154, POOL_FILE = path.join(__dirname, 'vidy_proxy_pool.json'); // v1.15.27 (ইউজার): ক্যাপ-ডাবল ৭৭→১৫৪
+const PX_BASE_N = 34, PX_CAP = 308, POOL_FILE = path.join(__dirname, 'vidy_proxy_pool.json'); // v1.15.68 (ইউজার): ২×-স্কেল — ক্যাপ ১৫৪→৩০৮, বেস ১৭→৩৪
 let _training = false;
 async function enrichPool() {
   if (_training || process.env.PX_ENRICH === '0' || !POOL.length) return;
@@ -351,8 +351,8 @@ async function enrichPool() {
     const have = new Set(POOL.map(c => c.px));
     const cands = [...new Set((txts.join('\n').match(/\b\d{1,3}(?:\.\d{1,3}){3}:\d{2,5}\b/g) || [])).values()].filter(px => !have.has(px));
     for (let i = cands.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); const w = cands[i]; cands[i] = cands[j]; cands[j] = w; }
-    const sample = cands.slice(0, 200), good = []; // v1.15.18: নমুনা ১২০→২০০
-    for (let i = 0; i < sample.length && POOL.length < PX_CAP; i += 120) { // v1.15.27 (ইউজার): হার্ভেস্ট-ব্যাচ-ট্রিপল ৪০→১২০
+    const sample = cands.slice(0, 400), good = []; // v1.15.68: স্ক্যান ২× ২০০→৪০০
+    for (let i = 0; i < sample.length && POOL.length < PX_CAP; i += 240) { // v1.15.68: ব্যাচ ২× ১২০→২৪০
       const res = await Promise.all(sample.slice(i, i + 120).map(px => new Promise(r2 => {
         const t0 = Date.now();
         proxiedGet(px, PX_PROBE_URL, 4000).then(() => { const ms = Date.now() - t0; r2(ms < 2500 ? { px, ms } : null); }).catch(() => r2(null)); // v1.15.22: ভর্তি-সীমা ১.৮→২.৫সে (পুল-ম্যাক্স-পর্যন্ত-ভরে; মান-বেঞ্চের-কাছে-আবার-ছাঁটা)
