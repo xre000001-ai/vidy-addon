@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.68';
+const VERSION = '1.15.69';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -77,7 +77,7 @@ function prunePool(snap) {
   if (DBG) console.error('[pool] probe: ' + alive.length + '/' + snap.length + ' জীবিত');
 }
 // v1.15.16 রেজলভার-স্থাপত্য (ইউজার: 'vidy-ও resolver-এর-মতো কঠোর, ২৪ঘণ্টা জাগ্রত'):
-// প্রতি-১২সে-য় ১২টা সবচেয়ে-পুরনো-প্রমাণ; প্রমাণ-সিঁড়ি: vidy.st-নিজেই খোলা=পূর্ণ (রেজলভার _TARGETS-প্যারিটি);
+// প্রতি-৮সে-য় ৮৪টা সবচেয়ে-পুরনো-প্রমাণ (v1.15.68: ২×-স্কেল); প্রমাণ-সিঁড়ি: vidy.st-নিজেই খোলা=পূর্ণ (রেজলভার _TARGETS-প্যারিটি);
 // জীবিত-কিন্তু-সাইট-অন্ধ=স্পেয়ার (থাকে, স্কোর-জরিমানায়-পিছিয়ে); Google-204-ও-মরা=প্রমাণহীন → ৬০০সে-কাটা → এনরিচ
 const PX_SITE_URL = VIDY_REFERER; // টার্গেট-সাইট-নিজেই
 const PX_SITE = new Set(); // v1.15.17 বেঞ্চ-মানদণ্ড (ইউজার): বেঞ্চ = সাইটে-যেতে-পারে + জীবিত — চেকার-ই-একমাত্র-কর্তৃত্ব (রেস-জয়/Google-204 সাইট-প্রমাণ-নয়)
@@ -121,7 +121,7 @@ async function pxCheckerWave() {
   } finally { pxChkBusy = false; }
 }
 function pxCheckerStart() {
-  const loop = () => { setTimeout(() => { Promise.resolve(pxCheckerWave()).catch(() => {}).finally(loop); }, 8000); }; // v1.15.19: ব্যবধান ১২সে→৮সে (পুল-৪৩ → সম্পূর্ণ-চক্র ~২৫সে)
+  const loop = () => { setTimeout(() => { Promise.resolve(pxCheckerWave()).catch(() => {}).finally(loop); }, 8000); }; // v1.15.19: ব্যবধান ১২সে→৮সে (v1.15.68: পুল-৩০৮ → সম্পূর্ণ-চক্র ~৩০সে)
   loop();
 }
 
@@ -2129,7 +2129,7 @@ function qToList(q) { // মাল্টি-রেজোলিউশন: অ্�
   const n = Math.min(2160, Math.max(0, Number(q) || 0));
   return n ? QH.filter(h => h <= n) : [];
 }
-const DEFAULT_CFG = { q: 0, sub: 1, cat: 'kd,mv', lang: '', sort: 'pop', era: '', g: [], srv: [], v: 1, nx: 1, nxq: 0, nxl: [], tw: 1, rt: 1, twq: [], rtl: [], mmr: 0, m4u: 1, m4ur: 0, peng: 1, mm: 1, mmrelay: 0 }; // v1.15.54: mmrelay=1 → MM-মিনি-মিডিয়া-আমাদের-সার্ভার-রিলে (ব্যবহারকারীর-IP-CDN-আটকালে) // mmr = Multimovies-রেজোলিউশন-ছাঁকনি (0=সব) // v/nx/tw/rt = per-source master switches (tw=ToonWorld, rt=RareToons) // v/nx = per-source master switches; nxq/nxl = NetHex's OWN quality/audio-language filters (independent of the vidy-side q)
+const DEFAULT_CFG = { q: 0, sub: 1, cat: 'kd,mv', lang: '', sort: 'pop', era: '', g: [], srv: [], v: 1, nx: 1, nxq: 0, nxl: [], tw: 1, rt: 1, twq: [], rtl: [], mmr: 0, m4u: 1, m4ur: 0, peng: 1, mm: 1, mmrelay: 0 }; // v1.15.54: mmrelay=1 → MM-মিনি-মিডিয়া-আমাদের-সার্ভার-রিলে (ব্যবহারকারীর-IP-CDN-আটকালে) // mmr = Multimovies-রেজোলিউশন-ছাঁকনি (0=সব) // v/nx/tw/rt/mm/m4u/peng = per-source master switches (tw=ToonWorld, rt=RareToons; mm v1.15.67-ফিক্স) // v/nx = per-source master switches; nxq/nxl = NetHex's OWN quality/audio-language filters (independent of the vidy-side q)
 function parseCfgFromObj(o) {
   const c = Object.assign({}, DEFAULT_CFG, { g: [] });
   if (o) {

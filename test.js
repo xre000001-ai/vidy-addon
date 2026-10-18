@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Vidy addon — MASS test: card schema, audio language truth, auto→resolution, per-source masters/filters, speed
 // usage: node test.js [baseURL]   (default http://127.0.0.1:7300)
-const BASE = process.argv[2] || 'http://127.0.0.1:' + (process.env.PORT || 7300);
+const BASE = process.argv[2] || 'http://127.0.0.1:' + (process.env.PORT || 7000); // server-ডিফল্ট-পোর্টের-সাথে-সামঞ্জস্য (আগে 7300 — অমিল)
 
 let pass = 0, fail = 0;
 const ok = (cond, label) => { cond ? pass++ : fail++; console.log('   ' + (cond ? '\u2713' : '\u2717 FAIL') + ' ' + label); };
