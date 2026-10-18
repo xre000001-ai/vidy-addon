@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.47';
+const VERSION = '1.15.48';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -1503,6 +1503,26 @@ async function m4uStreams(tmdbId, title, type, s, e, origin, maxh) { // maxh: cf
       out.push({ h: useH, url: furl, kind: 'file', spec, aud, dv });
       if (out.length >= 3) break;
     }
+    // ধাপ-৫: toonworld4all-মিরর (Movies4u-রিলিজ pixeldrainে-রিপোস্ট — সিক-নিশ্চিত; ইউজার-নমুনা DwpvDvky):
+    if (TWBASE && left() > 2600) {
+      try {
+        const twb = await m4uText(TWBASE + '/find?source=toonworld&title=' + encodeURIComponent(T) + '&_=' + Date.now(), '', Math.min(3200, left())).catch(() => '');
+        const tj = JSON.parse(twb || '{}');
+        for (const rc of (((tj || {}).results) || []).slice(0, 6)) {
+          const ru = String(rc.url || '');
+          if (!/^https:\/\/pixeldrain\.dev\/api\/file\/[A-Za-z0-9]+$/.test(ru)) continue; // শুধু-pixeldrain (সিক-ম্যাপ)
+          const pv = await pdProbe(ru).catch(() => null);
+          if (!pv || !pv.alive) continue;
+          const prh = parseInt((((pv.name || '') + ' ' + (rc.name || '')).match(/(\d{3,4})\s*p/i) || [])[1] || '0', 10) || 720;
+          if (maxh && prh > maxh) continue;
+          if (out.some(o => o.h === prh)) continue;
+          const taud = /Multi/i.test((rc.name || '') + (rc.title || '')) ? 'Multi-Audio' : '';
+          out.push({ h: prh, url: ru, kind: 'file', spec: (pv.name || '').replace(/\+/g, ' '), aud: taud, dv: '' });
+          if (DBG) console.error('[m4u] tw-mirror ' + prh + 'p @' + (Date.now() - t3) + 'ms');
+          if (out.length >= 4) break;
+        }
+      } catch { }
+    }
     await Promise.race([hlsP, new Promise(r2 => setTimeout(r2, Math.max(200, left() - 150)))]); // HLS-সমান্তরাল-ফল-অপেক্ষা (বাজেট-ভেতরে)
     out.sort((a, b) => (b.kind === 'hls' ? 1 : 0) - (a.kind === 'hls' ? 1 : 0)); // সিক-নিশ্চিত-HLS-আগে
     if (out.length > 3) out.length = 3;
@@ -1530,7 +1550,7 @@ const PENGU_BASE = 'https://pengu.uk/' + PENGU_CFG;
 function pengResolve(u) { // 307-অনুসরণ-না-করে-location-পড়া (রেঞ্জ-সহ — গন্তব্য-সাইন-অপরিবর্তিত-থাকে):
   return new Promise(resolve => {
     try {
-      const req = https.get(u, { headers: { 'User-Agent': UA, 'Range': 'bytes=0-0' }, timeout: 6000 }, res => {
+      const req = https.get(u, { headers: { 'User-Agent': UA, 'Range': 'bytes=0-0' }, timeout: 2500 }, res => {
         res.resume();
         resolve({ loc: res.headers.location || '', st: res.statusCode });
       });
@@ -1551,20 +1571,30 @@ async function penguStreams(tmdbId, title, type, s, e, origin, maxh) {
     const cs = ((js || {}).streams || []).filter(x => x && /pengu\.uk\/direct\//.test(x.url || ''));
     if (!cs.length) { if (DBG) console.error('[peng] 0-direct @' + (Date.now() - t9) + 'ms'); return []; }
     // রেজো-ভিত্তিক-ডিডুপ (৪K→1080→720 ক্রমে-সেরা-প্রথম):
-    const byRes = new Map();
+    const byRes = new Map(); const seenLand = new Set();
     for (const c of cs) {
       const dsc = (c.description || c.title || '');
       const r = (dsc.match(/(2160|1080|720|480)\s*p/i) || [])[1] || (/\b4K\b/i.test(dsc) ? '2160' : '');
       if (!r) continue;
       const rh = parseInt(r, 10);
       if (maxh && rh > maxh) continue;
-      if (!byRes.has(rh)) byRes.set(rh, c); // প্রথম-আসা-সেরা (৪K-আগে-আসে)
+      try { // একই-ল্যান্ডিং-ফাইলের-গুলিপুঞ্জ-নয় (b64-payload-এ-fileUrl/landingUrl-ডিকোড):
+        const pl = decodeURIComponent((c.url.split('/direct/')[1] || '').split('?')[0].split('/')[1] || '');
+        const jf = JSON.parse(Buffer.from(pl + '='.repeat((4 - pl.length % 4) % 4), 'base64').toString('utf8') || '{}');
+        const lf = jf.fileUrl || jf.landingUrl || '';
+        if (lf) { if (seenLand.has(lf)) continue; seenLand.add(lf); }
+      } catch { }
+      const arr = byRes.get(rh) || [];
+      if (arr.length < 2) { arr.push(c); byRes.set(rh, arr); } // প্রতি-রেজো-সর্বোচ্চ-২-উৎস
     }
-    const picks = [...byRes.entries()].sort((a, b) => b[0] - a[0]).slice(0, 3);
+    const picks = [];
+    for (const rh of [...byRes.keys()].sort((a2, b2) => b2 - a2)) for (const c of byRes.get(rh)) picks.push([rh, c]);
+    picks.length = Math.min(picks.length, 6);
     const out = [];
-    for (const [rh, c] of picks) {
-      if (l9() < 1500) break;
-      const rv = await pengResolve(c.url);
+    const rvPicks = await Promise.all(picks.map(([rh, c]) => pengResolve(c.url).then(rv => ({ rh, c, rv })).catch(() => null))); // সমান্তরাল-307 (ধারাবাহিকে-বাজেট-কাটত)
+    for (const pick of rvPicks) {
+      if (!pick) continue;
+      const { rh, c, rv } = pick;
       if (!rv.loc || !/^https?:/.test(rv.loc)) { if (DBG) console.error('[peng] no-loc ' + rh + ' st=' + rv.st); continue; } // 307-টাটকা-লোকেশন — প্রোব-বাদ (সময়-বাঁচাতে)
       const dsc = (c.description || c.title || '');
       const aud = /Multi/i.test(dsc) ? 'Multi-Audio' : (/Dual/i.test(dsc) ? 'Dual-Audio' : '');
@@ -1579,7 +1609,7 @@ async function penguStreams(tmdbId, title, type, s, e, origin, maxh) {
     if (DBG) console.error('[peng] ' + tmdbId + ' cards=' + out.length + '/' + cs.length + ' @' + (Date.now() - t9) + 'ms');
     return out.map(x => {
       const q2 = String(x.h);
-      const txt = '\u29c9 ' + T + '\n\u29e0 Movie\n\u229e Pengu-Arctic \u00b7 ' + (x.dv ? x.dv + ' \u00b7 ' : '') + 'MKV' + (x.aud ? ' \u2317 ' + x.aud : '');
+      const txt = '\u29c9 ' + T + '\n\u29e0 Movie\n\u229e Arctic \u00b7 ' + (x.dv ? x.dv + ' \u00b7 ' : '') + 'MKV' + (x.aud ? ' \u2317 ' + x.aud : '');
       return {
         name: '\u25a5 ' + q2 + ' \u25a5',
         title: txt,
@@ -1988,7 +2018,7 @@ function parseCfgFromObj(o) {
     if (o.mmr !== undefined && o.mmr !== null && o.mmr !== '') { const mv = parseInt(o.mmr, 10) || 0; if ([0, 480, 720, 1080].indexOf(mv) >= 0) c.mmr = mv; } // v1.15.39: MM-রেজোলিউশন-ছাঁকনি
     if (o.m4u === 0 || o.m4u === '0') c.m4u = 0; // v1.15.42: Movies4u-মাস্টার-সুইচ
     if (o.m4ur !== undefined && o.m4ur !== null && o.m4ur !== '') { const m4v = parseInt(o.m4ur, 10) || 0; if ([0, 480, 720, 1080].indexOf(m4v) >= 0) c.m4ur = m4v; } // v1.15.42: Movies4u-নিজের-রেজোলিউশন-ছাঁকনি (MM-থেকে-স্বাধীন)
-    if (o.peng === 0 || o.peng === '0') c.peng = 0; // v1.15.47: Pengu-Arctic-মাস্টার-সুইচ
+    if (o.peng === 0 || o.peng === '0') c.peng = 0; // v1.15.47: Arctic-মাস্টার-সুইচ
   }
   return c;
 }
@@ -2165,7 +2195,7 @@ const server = http.createServer((req, res) => {
       const rtP = (RTBASE && !(cfg && cfg.rt === 0)) ? tp.then(n => twrStreams(RTBASE, 'raretoons', n, 'movie', 0, 0)).catch(() => []) : null;
       const mmP = !(cfg && cfg.mm === 0) ? mmStreams(Number(m[1]), '', 'movie', 0, 0, originOf(req), cfg && cfg.mmr || 0).catch(() => []) : null; // v1.15.28: Multimovies (cfg.mm toggle)
       const m4uP = !(cfg && cfg.m4u === 0) ? m4uStreams(Number(m[1]), '', 'movie', 0, 0, originOf(req), cfg && cfg.m4ur || 0).catch(() => []) : null; // v1.15.40-local: Movies4u
-      const pengP = !(cfg && cfg.peng === 0) ? penguStreams(Number(m[1]), '', 'movie', 0, 0, originOf(req), cfg && cfg.m4ur || 0).catch(() => []) : null; // v1.15.47: Pengu-Arctic
+      const pengP = !(cfg && cfg.peng === 0) ? penguStreams(Number(m[1]), '', 'movie', 0, 0, originOf(req), cfg && cfg.m4ur || 0).catch(() => []) : null; // v1.15.47: Arctic
       kickSubs('tmdb' + m[1], 'movie', null, null, cfg);
       return withDeadline(withSources(vOn ? getSources(Number(m[1]), 'movie', null, null, '', cfg, tp) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: pengP, key: 'peng' }], cfg, t0), 11900 /* v1.15.26 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
         cards => { sendStreams(res, req.url, p, Date.now() - t0, cards, RVA); },
@@ -2180,7 +2210,7 @@ const server = http.createServer((req, res) => {
       const rtP = (RTBASE && !(cfg && cfg.rt === 0)) ? tp.then(n => twrStreams(RTBASE, 'raretoons', n, 'series', Number(m[2] || 1), Number(m[3] || 1))).catch(() => []) : null;
       const mmP = !(cfg && cfg.mm === 0) ? mmStreams(Number(m[1]), '', 'series', Number(m[2] || 1), Number(m[3] || 1), originOf(req), cfg && cfg.mmr || 0).catch(() => []) : null; // v1.15.28: Multimovies (cfg.mm toggle)
       const m4uP = !(cfg && cfg.m4u === 0) ? m4uStreams(Number(m[1]), '', 'series', Number(m[2] || 1), Number(m[3] || 1), originOf(req), cfg && cfg.m4ur || 0).catch(() => []) : null; // v1.15.40-local
-      const pengP = !(cfg && cfg.peng === 0) ? penguStreams(Number(m[1]), '', 'series', Number(m[2] || 1), Number(m[3] || 1), originOf(req), cfg && cfg.m4ur || 0).catch(() => []) : null; // v1.15.47: Pengu-Arctic
+      const pengP = !(cfg && cfg.peng === 0) ? penguStreams(Number(m[1]), '', 'series', Number(m[2] || 1), Number(m[3] || 1), originOf(req), cfg && cfg.m4ur || 0).catch(() => []) : null; // v1.15.47: Arctic
       if (nxOn) nxPrewarm('series', String(m[1]), Number(m[2] || 1), Number(m[3] || 1));
       twRtPrewarm(tp, 'series', Number(m[2] || 1), Number(m[3] || 1));
       kickSubs('tmdb' + m[1], 'series', Number(m[2] || 1), Number(m[3] || 1), cfg);
@@ -2198,7 +2228,7 @@ const server = http.createServer((req, res) => {
       const rtP = (RTBASE && !(cfg && cfg.rt === 0)) ? nmP.then(nm => nm ? twrStreams(RTBASE, 'raretoons', nm, 'movie', 0, 0) : []).catch(() => []) : null;
       const mmP = !(cfg && cfg.mm === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? mmStreams(info.id, info.name || '', 'movie', 0, 0, originOf(req), cfg && cfg.mmr || 0).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.28: Multimovies (cfg.mm toggle)
       const m4uP = !(cfg && cfg.m4u === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? m4uStreams(info.id, info.name || '', 'movie', 0, 0, originOf(req), cfg && cfg.m4ur || 0).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.40-local
-      const pengP = !(cfg && cfg.peng === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? penguStreams(info.id, info.name || '', 'movie', 0, 0, originOf(req), cfg && cfg.m4ur || 0).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.47: Pengu-Arctic
+      const pengP = !(cfg && cfg.peng === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? penguStreams(info.id, info.name || '', 'movie', 0, 0, originOf(req), cfg && cfg.m4ur || 0).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.47: Arctic
       kickSubs(m[1], 'movie', null, null, cfg);
       return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'movie', null, null, info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: pengP, key: 'peng' }], cfg, t0), 11900 /* v1.15.26 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
         cards => { sendStreams(res, req.url, p, Date.now() - t0, cards, RVA); },
@@ -2214,7 +2244,7 @@ const server = http.createServer((req, res) => {
       const rtP = (RTBASE && !(cfg && cfg.rt === 0)) ? nmP.then(nm => nm ? twrStreams(RTBASE, 'raretoons', nm, 'series', Number(m[2]), Number(m[3])) : []).catch(() => []) : null;
       const mmP = !(cfg && cfg.mm === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? mmStreams(info.id, info.name || '', 'series', Number(m[2]), Number(m[3]), originOf(req), cfg && cfg.mmr || 0).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.28: Multimovies (cfg.mm toggle)
       const m4uP = !(cfg && cfg.m4u === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? m4uStreams(info.id, info.name || '', 'series', Number(m[2]), Number(m[3]), originOf(req), cfg && cfg.m4ur || 0).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.40-local
-      const pengP = !(cfg && cfg.peng === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? penguStreams(info.id, info.name || '', 'series', Number(m[2]), Number(m[3]), originOf(req), cfg && cfg.m4ur || 0).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.47: Pengu-Arctic
+      const pengP = !(cfg && cfg.peng === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? penguStreams(info.id, info.name || '', 'series', Number(m[2]), Number(m[3]), originOf(req), cfg && cfg.m4ur || 0).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.47: Arctic
       if (nxOn) nxPrewarm('series', m[1], Number(m[2]), Number(m[3]));
       twRtPrewarm(nmP, 'series', Number(m[2]), Number(m[3]));
       kickSubs(m[1], 'series', Number(m[2]), Number(m[3]), cfg);
@@ -2232,7 +2262,7 @@ const server = http.createServer((req, res) => {
       const rtP = (RTBASE && !(cfg && cfg.rt === 0)) ? nmP.then(nm => nm ? twrStreams(RTBASE, 'raretoons', nm, 'series', 1, 1) : []).catch(() => []) : null;
       const mmP = !(cfg && cfg.mm === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? mmStreams(info.id, info.name || '', 'series', 1, 1, originOf(req), cfg && cfg.mmr || 0).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.28: Multimovies (cfg.mm toggle)
       const m4uP = !(cfg && cfg.m4u === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? m4uStreams(info.id, info.name || '', 'series', 1, 1, originOf(req), cfg && cfg.m4ur || 0).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.40-local
-      const pengP = !(cfg && cfg.peng === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? penguStreams(info.id, info.name || '', 'series', 1, 1, originOf(req), cfg && cfg.m4ur || 0).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.47: Pengu-Arctic
+      const pengP = !(cfg && cfg.peng === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? penguStreams(info.id, info.name || '', 'series', 1, 1, originOf(req), cfg && cfg.m4ur || 0).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.47: Arctic
       if (nxOn) nxPrewarm('series', m[1], 1, 1);
       twRtPrewarm(nmP, 'series', 1, 1);
       kickSubs(m[1], 'series', 1, 1, cfg);
