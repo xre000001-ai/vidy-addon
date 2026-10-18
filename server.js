@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.40';
+const VERSION = '1.15.41';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -1427,8 +1427,8 @@ async function m4uStreams(tmdbId, title, type, s, e, origin, maxh) { // maxh: cf
       const fh = parseInt((fdec.match(/(\d{3,4})\s*p/i) || [])[1] || '0', 10);
       const useH = fh || r.h;
       if (out.some(o => o.h === useH)) continue; // একই-আসল-রেজো-দ্বিতীয়বার-নয়
-      const aud = /Multi Audio/i.test(fdec + r.lbl) ? 'Multi-Audio' : (/Dual Audio/i.test(fdec + r.lbl) ? 'Dual-Audio' : '');
-      const dv = /HDR10\+|Dolby Vision|\bDV\b/i.test(fdec) ? 'HDR10+/DV' : (/HDR/i.test(fdec) ? 'HDR' : '');
+      const aud = (/Multi[ ._]Audio/i.test(fdec + r.lbl + (hit.post_title || '')) ? 'Multi-Audio' : (/Dual[ ._]Audio/i.test(fdec + r.lbl + (hit.post_title || '')) ? 'Dual-Audio' : '')) + (/Atmos/i.test(fdec) ? '+Atmos' : '');
+      const dv = [(/HDR10\+|HDR10Plus/i.test(fdec) && 'HDR10+'), (/\bDV\b|Dolby ?Vision/i.test(fdec) && 'DV'), (!/HDR10\+|HDR10Plus|\bDV\b|Dolby ?Vision/i.test(fdec) && /\bHDR10?\b|\bHDR\b/i.test(fdec) && 'HDR'), (/\bHLG\b/i.test(fdec) && 'HLG')].filter(Boolean).join('/');
       const spec = fdec || ((hc.match(/<title>([^<]{10,240})/) || [])[1] || r.lbl).replace(/&#038;|&amp;/g, '&').trim();
       out.push({ h: useH, url: furl, spec, aud, dv });
       if (out.length >= 2) break;
