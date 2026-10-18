@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.60';
+const VERSION = '1.15.61';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -1372,6 +1372,7 @@ async function mmStreams(tmdbId, title, type, s, e, origin, maxh, rel) { // v1.1
 }
 // ---------- v1.15.57: ANI.PM + Re:ANIME — anime sources (Eclipsia-plugin recipes: onyxia.js=ani.pm, praxiel.js=reanime.to) ----------
 const ANIPM_DBG = { ts: 0, lines: [] }; // last-run step diagnostics (visible at /anipmdbg)
+function anipmMark(t2, ok2) { ANIPM_DBG.lines.push(t2 + (ok2 !== undefined ? ':' + ok2 : '')); if (ANIPM_DBG.lines.length > 14) ANIPM_DBG.lines.shift(); ANIPM_DBG.ts = Date.now(); }
 let EMB_FP_BLOCKED = 0; // embed.settlar 403s node-TLS by fingerprint (stable, not transient) — once seen, go straight to the pool for an hour
 const ANIPM_BASE = 'https://ani.pm';
 const ANIPM_EMB = 'https://embed.settlar.io';
@@ -1389,11 +1390,27 @@ function anipmCurl(url, ref, ms) { // embed.settlar 403s node-undici's TLS finge
   } catch { return Promise.resolve(null); }
 }
 function anipmJ(url, ref, ms, pool) { // direct first; embed misses go curl-child (right fingerprint), then the proxy pool
-  const mark = (t2, ok2) => { ANIPM_DBG.lines.push(t2 + (ok2 !== undefined ? ':' + ok2 : '')); if (ANIPM_DBG.lines.length > 14) ANIPM_DBG.lines.shift(); ANIPM_DBG.ts = Date.now(); };
-  return fetch(url, { headers: { 'User-Agent': UA, Accept: 'application/json', Referer: ref || ANIPM_BASE + '/' }, signal: AbortSignal.timeout(ms || 4500) }).then(x => { mark((url.indexOf('/embed/session') >= 0 ? 'emb' : url.indexOf('bootstrap') >= 0 ? 'boot' : url.indexOf('settlar/session') >= 0 ? 'sess' : url.indexOf('/search?') >= 0 ? 'srch' : 'oth') + ':' + x.status, x.ok); if (DBG && !x.ok) console.error('[anipm] ' + x.status + ' ' + url.slice(0, 60)); return x.ok ? x.json() : null; }).catch(e => { mark('net:' + String(e && e.message).slice(0, 24)); if (DBG && e && e.name !== 'TimeoutError') console.error('[anipm] E ' + String(e && e.message).slice(0, 50)); return null; }).then(j => {
+  return fetch(url, { headers: { 'User-Agent': UA, Accept: 'application/json', Referer: ref || ANIPM_BASE + '/' }, signal: AbortSignal.timeout(ms || 4500) }).then(x => { anipmMark((url.indexOf('/embed/session') >= 0 ? 'emb' : url.indexOf('bootstrap') >= 0 ? 'boot' : url.indexOf('settlar/session') >= 0 ? 'sess' : url.indexOf('/search?') >= 0 ? 'srch' : 'oth') + ':' + x.status, x.ok); if (DBG && !x.ok) console.error('[anipm] ' + x.status + ' ' + url.slice(0, 60)); return x.ok ? x.json() : null; }).catch(e => { anipmMark('net:' + String(e && e.message).slice(0, 24)); if (DBG && e && e.name !== 'TimeoutError') console.error('[anipm] E ' + String(e && e.message).slice(0, 50)); return null; }).then(j => {
     if (j) return j;
-    return anipmCurl(url, ref, ms).then(j2 => { if (!j2) mark('curl:null', false); return j2; });
+    return anipmRelay(url, ref, ms);
   });
+}
+async function anipmRelay(url, ref, ms) { // r.jina.ai first (fast, ~0.6s, wraps JSON after the first '{'), allorigins next, curl-child last
+  try {
+    const r1 = await fetch('https://r.jina.ai/' + url, { headers: { 'User-Agent': UA, Accept: 'application/json' }, signal: AbortSignal.timeout(3500) });
+    const t1 = r1.ok ? await r1.text() : '';
+    if (t1) { const i0 = t1.indexOf('{'), i1 = t1.lastIndexOf('}'); if (i0 >= 0 && i1 > i0) { try { const j1 = JSON.parse(t1.slice(i0, i1 + 1)); if (j1 && (j1.source || j1.items || j1.embedUrl || j1.settlarSelection)) { anipmMark('jina:ok', true); return j1; } } catch { } } }
+    anipmMark('jina:wrap', false); // wrapper/403-page — jina's own egress got flagged
+  } catch (e1) { anipmMark('jina:err', false); }
+  try {
+    const r2 = await fetch('https://api.allorigins.win/raw?url=' + encodeURIComponent(url), { headers: { 'User-Agent': UA, Accept: 'application/json' }, signal: AbortSignal.timeout(14000) });
+    const t2 = r2.ok ? await r2.text() : '';
+    if (t2) { try { const j2 = JSON.parse(t2); if (j2 && (j2.source || j2.items || j2.embedUrl || j2.settlarSelection)) { anipmMark('ao:ok', true); return j2; } } catch { } }
+    anipmMark('ao:' + (r2.status || 'err'), r2.ok);
+  } catch (e2) { anipmMark('ao:err', false); }
+  const j3 = await anipmCurl(url, ref, ms);
+  if (!j3) anipmMark('curl:null', false);
+  return j3;
 }
 function reanJ(url, ref, ms) {
   return fetch(url, { headers: { 'User-Agent': REAN_UA, Accept: 'application/json', Referer: ref || REAN_BASE + '/' }, signal: AbortSignal.timeout(ms || 4500) }).then(x => x.ok ? x.json() : null).catch(() => null);
@@ -1429,7 +1446,8 @@ function anipmScore(cand, info, isTv, s) { // same weights as the proven Eclipsi
   return score;
 }
 const ANIPM_RES = new Map(); // result cache: key→cards (ttl 8min — settlar media URLs live ~6h; second tap instant)
-async function anipmStreams(tmdbId, type, s, e) { // search → bootstrap → settlar session → embed m3u8 (sub/dub/hard); headers: Referer embed.settlar.io
+const ANIPM_BG = new Set(); // in-flight background resolves (one per key)
+async function anipmStreams(tmdbId, type, s, e, _bg) { // search → bootstrap → settlar session → embed m3u8 (sub/dub/hard); headers: Referer embed.settlar.io
   if (!tmdbId) return [];
   const ck = type + ':' + tmdbId + ':' + (s || 0) + ':' + (e || 0);
   const chit = mmGet(ANIPM_RES, ck, 480000); if (chit) return chit;
@@ -1445,42 +1463,36 @@ async function anipmStreams(tmdbId, type, s, e) { // search → bootstrap → se
     const pkgP = best.anilistId != null ? anipmJ(ANIPM_BASE + '/api/anime/anipm-server/_packages?anilistId=' + encodeURIComponent(String(best.anilistId).trim()), ANIPM_BASE + '/', 4500) : Promise.resolve(null);
     const langs = ['sub', 'dub'].filter(l => (best[l + 'Count'] || 0) > 0);
     const out = [];
-    // SERIAL per language + one retry: embed.settlar.io 403s on parallel/burst hits (sandbox-proven) — sub chain fully, gap, then dub
-    let poolDead = false; // one pool proof per run — a missed race never re-races (the 10.8s window must cover dub too)
-    const delay2 = ms2 => new Promise(r => setTimeout(r, ms2));
-    for (const lang of (langs.length ? langs : ['sub', 'dub'])) {
+    let poolDead = false; // pool tier silences itself after one full miss
+    // sub+dub in PARALLEL — embeds go through the relay host (r.jina.ai), not embed.settlar, so the old parallel-403 rule no longer binds
+    await Promise.all((langs.length ? langs : ['sub', 'dub']).map(async lang => {
       const bo = await anipmJ(ANIPM_BASE + '/api/anime/playback-bootstrap/settlar/' + best.id + '?ep=' + ep + '&lang=' + lang + '&backup=1', ANIPM_BASE + '/', 5000);
       const sel = bo && typeof bo.settlarSelection === 'string' ? bo.settlarSelection.trim() : '';
-      if (!sel) { await delay2(300); continue; }
+      if (!sel) return;
       const pe = ((await pkgP) || {}).episodes;
       const variants = [[lang, '']]; if (pe && pe[ep] && pe[ep][lang + 'hard'] === true) variants.push([lang + 'hard', ' \u00b7 Hard']);
-      for (const vr of variants) {
-        let tm = null;
-        for (let att = 0; att < 2 && !tm; att++) { // sess retries (transient-capable); emb is single-shot below (its 403 is a stable TLS-fp verdict, never transient)
-          if (att) await delay2(350);
-          const se = await anipmJ(ANIPM_BASE + '/api/anime/settlar/session?selection=' + encodeURIComponent(sel) + '&provider=anipm&ep=' + ep + '&channel=' + vr[0] + '&telemetry=0', ANIPM_BASE + '/', 5000);
-          tm = se && se.embedUrl && /t=([^&]+)/.exec(se.embedUrl);
-        }
-        if (!tm) { await delay2(250); continue; }
+      await Promise.all(variants.map(async vr => {
+        const se = await anipmJ(ANIPM_BASE + '/api/anime/settlar/session?selection=' + encodeURIComponent(sel) + '&provider=anipm&ep=' + ep + '&channel=' + vr[0] + '&telemetry=0', ANIPM_BASE + '/', 5000);
+        const tm = se && se.embedUrl && /t=([^&]+)/.exec(se.embedUrl); if (!tm) return;
         const embU = ANIPM_EMB + '/api/embed/session?t=' + tm[1];
-        const fpFresh = Date.now() - EMB_FP_BLOCKED < 3600000;
-        let em = fpFresh ? null : await anipmJ(embU, ANIPM_EMB + '/embed/v1', 5000);
+        let em = await anipmJ(embU, ANIPM_EMB + '/embed/v1', 5000);
         if (em && !/^https?:/i.test(em.source || '')) em = null;
-        if (!em && !fpFresh) EMB_FP_BLOCKED = Date.now(); // set BEFORE the slow pool: the window can cut us mid-race and the flag must survive for the next tap
-        if (!em && !poolDead) { // pool proxies fetch with THEIR IPs/stacks (beamup has no curl; undici fp is 403'd); fpFresh skips the doomed direct try
-          mark('pool:enter', true);
-          let r3 = null;
-          try { r3 = await mmRacePool(embU, 3, 2600).then(r4 => { try { return JSON.parse(String(r4.body || '')); } catch { return null; } }); } catch (e4) { mark('pool:throw:' + String(e4 && e4.message).slice(0, 22)); }
-          mark('pool:' + (r3 && r3.source ? 'ok' : 'miss'), !!(r3 && r3.source));
+        if (!em) EMB_FP_BLOCKED = Date.now(); // direct failed — remember, next tap skips straight to relay
+        if (!em && !poolDead) { // pool proxies fetch with THEIR IPs/stacks — kept as a quiet last tier
+          const r3 = await mmRacePool(embU, 3, 2600).then(r4 => { try { return JSON.parse(String(r4.body || '')); } catch { return null; } }).catch(() => null);
+          anipmMark('pool:' + (r3 && r3.source ? 'ok' : 'miss'), !!(r3 && r3.source));
           if (r3 && /^https?:/i.test(r3.source || '')) em = r3; else poolDead = true;
-        } else if (!em && poolDead) { mark('pool:dead-skip'); }
-        if (!em || !/^https?:/i.test(em.source || '')) continue;
+        }
+        if (!em || !/^https?:/i.test(em.source || '')) return;
         const aud = (lang === 'dub' ? 'English (Dub)' : 'Japanese (Sub)') + vr[1];
         out.push({ url: em.source, aud });
-        await delay2(300);
-      }
-    }
+      }));
+    }));
     if (DBG) console.error('[anipm] ' + tmdbId + '/' + (isTv ? 'S' + ss + 'E' + ep : 'movie') + ' best=' + String(best.title || '').slice(0, 24) + ' cards=' + out.length + ' @' + (Date.now() - t3) + 'ms');
+    if (!out.length && !_bg && !ANIPM_BG.has(ck)) { // relays are slow/flaky — let an UNCAPPED background run finish and cache; the next tap serves instantly
+      ANIPM_BG.add(ck);
+      setTimeout(() => { anipmStreams(tmdbId, type, s, e, true).catch(() => { }).finally(() => ANIPM_BG.delete(ck)); }, 60);
+    }
     const cards2 = out.map(x => ({
       name: '\u25a5 HLS \u25a5', quality: 'HLS', url: x.url,
       title: '\u229e ANI.PM \u2317 ' + x.aud, description: '\u229e ANI.PM \u2317 ' + x.aud,
@@ -1538,7 +1550,9 @@ async function reanStreams(tmdbId, type, s, e) { // TMDB-direct servers, else se
       const host = fhm ? fhm[0] : REAN_API;
       const pr = await fetch(host + '/download/' + fid[0] + '/progress?token=' + tk[0], { headers: { Accept: '*/*', Referer: REAN_API + '/', 'User-Agent': REAN_UA }, signal: AbortSignal.timeout(5000) }).then(x => x.ok ? x.text() : '').catch(() => '');
       if (pr.indexOf('"status":"failed"') >= 0) return;
-      out.push({ url: host + '/download/' + fid[0] + '?token=' + tk[0], aud: em2.aud });
+      let fin = host + '/download/' + fid[0] + '?token=' + tk[0];
+      try { const rr = await fetch(fin, { headers: { 'User-Agent': REAN_UA, Accept: '*/*', Referer: REAN_API + '/' }, redirect: 'follow', signal: AbortSignal.timeout(6500) }); if (rr.ok && rr.url && /^https?:/.test(rr.url)) fin = rr.url; try { if (rr.body) rr.body.cancel(); } catch { } } catch { } // resolve the flixcloud→spacedl 302 NOW — the player gets a plain signed URL (spacedl needs no headers at all)
+      out.push({ url: fin, aud: em2.aud });
     }));
     if (DBG) console.error('[rean] ' + tmdbId + '/' + (isTv ? 'S' + ss + 'E' + ep : 'movie') + ' cards=' + out.length + ' @' + (Date.now() - t3) + 'ms');
     return out.map(x => ({
