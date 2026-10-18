@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.43';
+const VERSION = '1.15.44';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -1360,16 +1360,32 @@ function m4uText(u, ref, tmo) { // ছোট-টেক্সট-GET (r171: ম�
     } catch { resolve(''); }
   });
 }
-function m4uAlive(u) { // 2KB-রেঞ্জ-প্রোব — R2-সাইনড-URL-জীবিত-রায় (HEAD-403-দেয়-কিন্তু-GET-206-চলে)
+function m4uAlive(u) { // 2KB-রেঞ্জ-প্রোব — জীবন+সাইজ+disposition (R2-HEAD-403-দেয়-কিন্তু-GET-206-চলে)
   return new Promise(resolve => {
     try {
       const req = https.get(u, { headers: { 'User-Agent': UA, 'Range': 'bytes=0-2047', 'Connection': 'close' }, timeout: 5000 }, res => {
+        const nm = ((res.headers['content-disposition'] || '').match(/filename="?([^"\r\n;]+)/i) || [])[1] || '';
+        const tot = +(((res.headers['content-range'] || '').split('/')[1] || res.headers['content-length'] || '0') + '').replace(/[^0-9]/g, '') || 0;
         res.destroy();
-        resolve(res.statusCode === 206 || res.statusCode === 200);
+        resolve({ alive: res.statusCode === 206 || res.statusCode === 200, name: nm, total: tot });
       });
       req.on('timeout', () => req.destroy(new Error('timeout')));
-      req.on('error', () => resolve(false));
-    } catch { resolve(false); }
+      req.on('error', () => resolve({ alive: false, name: '', total: 0 }));
+    } catch { resolve({ alive: false, name: '', total: 0 }); }
+  });
+}
+function pdProbe(u) { // 1KB-রেঞ্জ-GET-প্রোব — pixeldrain; CF-ক্যাশে-disposition-লুকাতে-পারে বলে-সাইজ-সহ-ফেরত
+  return new Promise(resolve => {
+    try {
+      const req = https.get(u, { headers: { 'User-Agent': UA, 'Range': 'bytes=0-1023', 'Connection': 'close' }, timeout: 5000 }, res => {
+        const nm = ((res.headers['content-disposition'] || '').match(/filename="?([^"\r\n;]+)/i) || [])[1] || '';
+        const tot = +(((res.headers['content-range'] || '').split('/')[1] || res.headers['content-length'] || '0') + '').replace(/[^0-9]/g, '') || 0;
+        res.destroy();
+        resolve({ alive: res.statusCode === 206 || res.statusCode === 200, name: nm, total: tot });
+      });
+      req.on('timeout', () => req.destroy(new Error('timeout')));
+      req.on('error', () => resolve({ alive: false, name: '', total: 0 }));
+    } catch { resolve({ alive: false, name: '', total: 0 }); }
   });
 }
 async function m4uStreams(tmdbId, title, type, s, e, origin, maxh) { // maxh: cfg.m4ur রেজো-ছাঁকনি (0=সব); HLS-সিক-প্রথম + সরাসরি-MKV
@@ -1440,17 +1456,33 @@ async function m4uStreams(tmdbId, title, type, s, e, origin, maxh) { // maxh: cf
       if (!gx) continue;
       const gpage = await m4uText(gx, 'https://hubcloud.ist/', Math.min(4200, left())).catch(() => '');
       const r2u = (gpage.match(/https:\/\/[a-z0-9]+\.r2\.cloudflarestorage\.com\/[^"]+/) || [''])[0].replace(/&amp;/g, '&');
-      let purl = '';
-      if (!r2u) { // video-ধরন: R2-নেই — pixeldrain-সরাসরি (?download → 206+disposition):
-        const pd = gpage.match(/pixeldrain\.dev\/u\/([A-Za-z0-9]+)/);
-        if (!pd) continue;
-        purl = 'https://pixeldrain.dev/api/file/' + pd[1] + '?download';
+      // seek-সংশোধন: R2-প্রেসাইন=HEAD-403+%20-রিরাইটে-সিগনেচার-ভাঙে → প্লেয়ারে-সিক-মরে; pixeldrain-মিরর (একই-ফাইল, unsigned, HEAD-200) থাকলে-সেটাই-কার্ড:
+      const r2v = r2u ? await m4uAlive(r2u) : null; // {alive,name,total}
+      if (r2u && !r2v.alive) { if (DBG) console.error('[m4u] dead-R2 ' + r.id + ' @' + (Date.now() - t3) + 'ms'); continue; }
+      let purl = '', pdName = '', pdTotal = 0;
+      const pdIds = [...new Set((gpage.match(/pixeldrain\.dev\/u\/([A-Za-z0-9]+)/g) || []).map(z => z.split('/u/')[1]))].slice(0, 4);
+      if (pdIds.length && left() > 1500) {
+        const wantRes = (r2v && (r2v.name.match(/(\d{3,4})\s*p/i) || [])[1]) || (r.lbl.match(/(\d{3,4})\s*p/i) || [])[1] || '';
+        if (DBG) console.error('[m4u] pd-scan ids=' + pdIds.length + ' want=' + wantRes + ' left=' + left() + 'ms');
+        for (let qi = 0; qi < pdIds.length && left() > 1200; qi++) { // পরপর-প্রোব; মিল=রেজো-অথবা-হুবহু-সাইজ (CF-ক্যাশে-disposition-লুকালেও-সাইজ-দিয়ে-প্রমাণ)
+          const pv = await pdProbe('https://pixeldrain.dev/api/file/' + pdIds[qi] + '?download').catch(() => null);
+          if (DBG) console.error('[m4u]   pd[' + qi + '] alive=' + (pv && pv.alive) + ' total=' + (pv && pv.total) + ' name=' + ((pv && pv.name) || '').slice(0, 40));
+          if (!pv || !pv.alive) continue;
+          const pres = ((pv.name || '').match(/(\d{3,4})\s*p/i) || [])[1];
+          const sameSize = !!(r2v && r2v.total && pv.total && pv.total === r2v.total);
+          if (wantRes && pres && pres !== wantRes && !sameSize) continue; // ভিন্ন-রেজো-মিরর-নয়
+          purl = 'https://pixeldrain.dev/api/file/' + pdIds[qi] + '?download';
+          pdName = pv.name; pdTotal = pv.total;
+          if (DBG) console.error('[m4u] pd-mirror ' + (pres || (pv.total ? Math.round(pv.total / 1e8) / 10 + 'G' : '?')) + ' @' + (Date.now() - t3) + 'ms');
+          break;
+        }
       }
-      const furl = r2u || purl;
-      if (!await m4uAlive(furl)) { if (DBG) console.error('[m4u] dead-' + (r2u ? 'R2' : 'PD') + ' ' + r.id + ' @' + (Date.now() - t3) + 'ms'); continue; }
-      // সত্য-যাচাই: R2-disposition / hubcloud-title-ই-আসল (লেবেল-নয়) — ভুল-রেজো-কার্ড-নিষিদ্ধ:
+      const furl = purl || (r2v && r2v.alive ? r2u : '');
+      if (!furl) { if (!r2u && DBG) console.error('[m4u] no-pd ' + r.id + ' @' + (Date.now() - t3) + 'ms'); continue; }
+      // সত্য-যাচাই: R2-disposition / pd-disposition / hubcloud-title-ই-আসল (লেবেল-নয়) — ভুল-রেজো-কার্ড-নিষিদ্ধ:
       let fdec = '';
-      if (r2u) { try { fdec = decodeURIComponent((r2u.match(/filename%3D%22(.*?)%22/i) || [''])[1] || ''); } catch { } }
+      if (pdName) fdec = pdName.replace(/\+/g, ' ');
+      else if (r2u) { try { fdec = decodeURIComponent((r2u.match(/filename%3D%22(.*?)%22/i) || [''])[1] || ''); } catch { } }
       else fdec = ((hc.match(/<title>([^<]{10,240})/) || [])[1] || '').replace(/&#038;|&amp;/g, '&').trim();
       const fh = parseInt((fdec.match(/(\d{3,4})\s*p/i) || [])[1] || '0', 10);
       const useH = fh || r.h;
