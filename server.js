@@ -1492,6 +1492,12 @@ async function reanStreams(tmdbId, type, s, e) { // TMDB-direct servers, else se
 // ---------- v1.15.66: REAN টোকা-রিলে — প্লেয়ার পায় শুধু আমাদের টোকা-URL; ম্যানিফেস্ট/কী/সেগমেন্ট/MKV সার্ভার-নিজে-টানে (হেডার+IP-সার্ভারে-পিনড → ইউজার-সরাসরি-প্লে) ----------
 const REAN_TOKS = new Map(); const REAN_REV = new Map(); let REAN_PUB = ''; let REAN_PXI = 0;
 setInterval(() => { const now = Date.now(); for (const [k, v] of REAN_TOKS) if (now - v.ts > 2100000) { REAN_TOKS.delete(k); for (const [s, t] of REAN_REV) if (t === k) REAN_REV.delete(s); } }, 600000).unref();
+function reanHostOf(req) { // পাবলিক-হোস্ট: ডট-যুক্ত-মান-প্রাধান্য (beamup x-forwarded-host=শুধু-app-নাম-দেয় — v1.15.66-fix)
+  const xf = String(req.headers['x-forwarded-host'] || '');
+  const hs = String(req.headers.host || '');
+  const good = v => v && v.indexOf('.') > 0;
+  return good(xf) ? xf : (good(hs) ? hs : (xf || hs));
+}
 function reanMint(link) { // sig→tok স্থায়িত্ব (একই-এমবেড=একই-টোকা)
   const sig = crypto.createHash('sha1').update(link).digest('hex').slice(0, 16);
   let tok = REAN_REV.get(sig);
@@ -1520,7 +1526,7 @@ async function reanChildBuild(ent, tok, i, base) { // চাইল্ড-এক�
   return txt;
 }
 function reanRelay(req, res, p) { // /rean/t/<tok>.m3u8 | /rean/c/<tok>/<i>.m3u8 | /rean/k/<tok>/<i> | /rean/s/<tok>/<i>/<n> | /rean/v/<tok>
-  const hs = String(req.headers['x-forwarded-host'] || req.headers.host || '');
+  const hs = reanHostOf(req);
   const pr = String(req.headers['x-forwarded-proto'] || (hs.indexOf('localhost') >= 0 || hs.indexOf('127.0.0.1') >= 0 ? 'http' : 'https'));
   const base = pr + '://' + hs;
   const sg = p.split('/'); // ['', 'rean', kind, tok, ...]
@@ -2588,7 +2594,7 @@ const server = http.createServer((req, res) => {
     let m;
     // সব-পথ-লগ (৪০৪-ও-দৃশ্যমান-হোক):
     logReq(p, 0, -1, 'route-in', RVA);
-    { const hs = String(req.headers['x-forwarded-host'] || req.headers.host || ''); REAN_PUB = String(req.headers['x-forwarded-proto'] || (hs.indexOf('localhost') >= 0 || hs.indexOf('127.0.0.1') >= 0 ? 'http' : 'https')) + '://' + hs; } // v1.15.66: কার্ড-URL-বেস
+    { const hs = reanHostOf(req); REAN_PUB = String(req.headers['x-forwarded-proto'] || (hs.indexOf('localhost') >= 0 || hs.indexOf('127.0.0.1') >= 0 ? 'http' : 'https')) + '://' + hs; } // v1.15.66: কার্ড-URL-বেস
     if (p.indexOf('/rean/') === 0) return void reanRelay(req, res, p); // v1.15.66: টোকা-রিলে-এন্ডপয়েন্ট
     // v1.15.8 (ইউজার): স্ট্রিম-উত্তরে-ক্যাশ-পাঠ-বিলোপ — আগে-৩০মিন-পিন-মিস-হলে-২য়-ক্লিকে-একই-মিস-দেখাত; এখন-প্রতি-ক্লিক-প্রকৃত-স্ক্যান
     // ── catalog (search + genre + skip — NetHex-ধাঁচ):
