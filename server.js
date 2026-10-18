@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.55';
+const VERSION = '1.15.56';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -1200,9 +1200,18 @@ async function mmVidbolt(tmdbId, isSeries, s, e, ms) { // v1.15.28: the vidbolt 
       if (hlsS.length) {
         let pl = '';
         const em = String(hlsS[0].master || ''); // v1.15.32 (orion-type servers): the resolve answer already carries the master text — zero extra hits on the shared key; the mini endpoint still caches/rebuilds
+        let fresh0 = false; // v1.15.56: pl টাটকা-ফেচ-নাকি em-ক্যাশ — সেটাই-প্রমাণের-মান
         if (em.indexOf('#EXTM') >= 0) pl = em;
-        else { try { pl = await mmPoolText(hlsS[0].url, vLeft(5500)) || ''; } catch { } } // hls bridge — direct first, the MM pool for rescue; ONE fetch proves the whole draw
-        if (pl && pl.indexOf('#EXTM') >= 0) {
+        else { try { pl = await mmPoolText(hlsS[0].url, vLeft(5500)) || ''; fresh0 = true; } catch { } } // hls bridge — direct first, the MM pool for rescue; ONE fetch proves the whole draw
+        // v1.15.56: প্রমাণ=কার্ডে-ঘোষিত-হেডার-ই (UA+Referer — notWebReady:true-তে-Stremio-ঠিক-এগুলোই-পাঠায়); em-ক্যাশ-বিশ্বাস-নয়
+        // টাটকা-mmPoolText-ফেচ-থাকলে-সেটাই-প্রমাণ; না-হলে ২.৫সে+pool-rescue-প্রোব (worker-সহনশীল — ১.৬সে-এক-নিক্সে-COTE-ব্ল্যাঙ্ক-হয়েছিল)
+        let h0Live = false;
+        if (h0) {
+          if (fresh0) h0Live = pl.indexOf('#EXTM') >= 0;
+          else { let t0 = ''; try { t0 = await mmPoolText(h0.url, 2500); } catch { } h0Live = t0.indexOf('#EXTM') >= 0; }
+          if (DBG && !h0Live) console.error('[vbd3] প্লেয়ার-অনাগাল-মাস্টার-বাদ: …' + String(h0.url).slice(-40));
+        }
+        if (h0Live && pl && pl.indexOf('#EXTM') >= 0) {
           const sc0 = hlsS[0];
           const hq0 = parseInt(String(sc0.quality || ''), 10) || 0;
           const lang0 = String(sc0.language || '').trim();
@@ -1256,16 +1265,27 @@ async function mmVidbolt(tmdbId, isSeries, s, e, ms) { // v1.15.28: the vidbolt 
         // Japanese/Arabic/French/Hindi/Spanish/Tagalog…)। আগে labels-লুপ প্রথম-মাস্টার-প্রমাণের-ভেতরে ছিল — প্রমাণ-ফেল হলে সব-ভাষা মারা যেত;
         // এখন বাইরে: sc0-প্রমাণ পাস-বা-ফেল যা-ই হোক, সব-ভাষা-কার্ড যায়। কার্ড=mini (mini-endpoint প্লেব্যাকে নিজেই রিবিল্ড করে: mmGrabMaster+pool-rescue+vbq-rescue;
         // stream-টাইমে শূন্য worker-হিট — r1.15.31-রেট-লিমিট-নিরাপদ; tile-প্রোটেক্টেড):
-        const langSeen = new Map();
+        // v1.15.56 (ইউজার: Lanterns-এ-MM "slow/চলেই না" — রোগ: মৃত-মাস্টারের-কার্ড, যেমন discountcouponfinds=404; শুধু-MM-স্কোপ):
+        // প্রতি-ইউনিক-মাস্টার-একবার-সমান্তরাল-প্রমাণ (~1.6s-বাজেট): #EXTM-না-এলে মৃত → কার্ড-নেই; লাইভ-মাস্টার-আগে-সাজানো-তাই-লাইভ-আগে-কার্ড
+        const langSeen = new Map(); const mmAlive = new Map();
+        if (h0Live && hlsS[0]) mmAlive.set(hlsS[0].url, true); // sc0-টাটকা-প্রমাণিত — পুনঃপ্রোব-নয়
+        const mmU = [...new Set(hlsS.map(x => x && x.url).filter(Boolean))].filter(u2 => !mmAlive.has(u2));
+        await Promise.all(mmU.map(async u2 => {
+          let t2 = ''; try { t2 = await mmPoolText(u2, 2500); } catch { }
+          const ok2 = t2.indexOf('#EXTM') >= 0;
+          mmAlive.set(u2, ok2);
+          if (!ok2 && DBG) console.error('[vbd3] মৃত-মাস্টার-বাদ: …' + String(u2).slice(-40));
+        }));
         for (let i2 = 0; i2 < hlsS.length; i2++) {
           const sc2 = hlsS[i2];
           if (!sc2 || !sc2.url || oseen.has(sc2.url)) continue;
+          if (!mmAlive.get(sc2.url)) continue; // v1.15.56: মৃত-মাস্টার → কার্ড-নেই (প্লেয়ার-ঘোরানো-নিষিদ্ধ)
           const lang2 = String(sc2.language || '').trim();
           if ((langSeen.get(lang2) || 0) >= 2) continue; // প্রতি-ভাষা-সর্বোচ্চ-২ (মিরর-বিস্ফোরণ-নয়)
           langSeen.set(lang2, (langSeen.get(lang2) || 0) + 1);
           const hq2 = parseInt(String(sc2.quality || ''), 10) || hq0 || 0;
           if (i2 === 0 && pl && pl.indexOf('#EXTM') >= 0) continue; // sc0-প্রমাণ-পাস → ওর-কার্ড উপরেই-গেছে (whole/variants)
-          push(hq2, sc2.url, VB_REF, 0, lang2, '', 0); // v1.15.55: DIRECT (beamup-মিনি-হপ-বাদ — ইউজারের-পরিবেশে-মিনি-হপ-ব্যর্থ; লেবেল=কার্ড-টেক্সটে)
+          push(hq2, sc2.url, VB_REF, 0, lang2, '', 0); // v1.15.55: DIRECT (beamup-মিনি-হপ-বাদ; লেবেল=কার্ড-টেক্সটে)
         }
       }
       break; // a productive draw is enough
@@ -1343,7 +1363,7 @@ async function mmStreams(tmdbId, title, type, s, e, origin, maxh, rel) { // v1.1
         description: txt,
         quality: q2,
         url: x.mini ? (origin ? origin + '/mm/' + mmMiniKey(x.url, x.ref || WO_REF, x.h, x.vbq, x.lang) + '/mini.m3u8' + (rel ? '?r=1' : '') : x.url) : x.url, // v1.15.30+52+54: mini — রেজো-পিনড+সত্য-অডিও-লেবেল; rel=?r=1
-        behaviorHints: { notWebReady: false, isBingeable: true, filename: x.mp4 ? 'multimovies.mp4' : 'multimovies.m3u8', proxyHeaders: { request: { Referer: x.ref || WO_REF, 'User-Agent': UA } } },
+        behaviorHints: { notWebReady: true, isBingeable: true, filename: x.mp4 ? 'multimovies.mp4' : 'multimovies.m3u8', proxyHeaders: { request: { Referer: x.ref || WO_REF, 'User-Agent': UA } } }, // v1.15.56 (ডক: proxyHeaders শুধু notWebReady:true-তে-কাজ-করে; false-এ-Stremio-হেডার-ফেলে-দেয় → রেফারার-গেটেড-মাস্টার-প্লেয়ারে-404)
         bingeGroup: 'mm|' + T.toLowerCase() + '::',
         ...(subs.length ? { subtitles: subs.map(y => ({ url: y.url, lang: y.lang })) } : {})
       };
