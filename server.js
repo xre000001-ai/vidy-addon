@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.65';
+const VERSION = '1.15.66';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -1396,17 +1396,7 @@ function reanParseData(src) { // the embed page's type:"data" JS-object literal 
   }
   return JSON.parse(json.replace(/,(\s*[}\]])/g, '$1'));
 }
-async function reanHlsChild(absParseUrl) { // fetch an enc-dec parse-URL child; absolutize its relative key.bin to the fetch9 sibling (the 16B AES key — reachable with Referer flixcloud; sandbox-proven 200/16B) so the player decrypts natively
-  const ch = await fetch(absParseUrl, { headers: { 'User-Agent': REAN_UA, Referer: REAN_API + '/' }, signal: AbortSignal.timeout(9000) }).then(x => x.ok ? x.text() : '').catch(() => '');
-  if (!ch || ch.indexOf('#EXTM') < 0) return '';
-  let real = '';
-  try { real = decodeURIComponent((/(?:[?&])url=([^&]+)/.exec(absParseUrl) || [])[1] || ''); } catch { }
-  let out = ch;
-  const km = /(#EXT-X-KEY:[^\n]*URI=")([^"\n]+)(")/.exec(ch);
-  if (km && !/^https?:/i.test(km[2]) && real) { try { out = out.replace(km[0], km[1] + new URL(km[2], real).href + km[3]); } catch { } }
-  return out;
-}
-async function reanHlsMaster(embedLink) { // embed page → payload → enc-dec token/stream dance → master; EVERY child inlined as data-URI with an ABSOLUTE AES key (relative key.bin dies on the enc-dec base → decrypt fail → "plays not")
+async function reanHlsChain(embedLink) { // embed page → payload → enc-dec token/stream dance → RAW master m3u8 text (children = enc-dec parse URLs, key relative — v1.15.66 relay rewrites everything server-side; the player never touches flixcloud)
   const pay0 = await fetch(embedLink, { headers: { 'User-Agent': REAN_UA, Referer: REAN_BASE + '/' }, signal: AbortSignal.timeout(6500) }).then(x => x.ok ? x.text() : '').catch(() => '');
   if (!pay0) return '';
   const pm = /type:\s*"data",\s*data:\s*(\{[\s\S]*?\})\s*,\s*uses:/.exec(pay0); if (!pm) return '';
@@ -1419,17 +1409,8 @@ async function reanHlsMaster(embedLink) { // embed page → payload → enc-dec 
   let sr = null; try { sr = JSON.parse(m3); } catch { return ''; }
   const post2 = await fetch('https://enc-dec.app/api/dec-flixcloud?type=stream', { method: 'POST', headers: { 'Content-Type': 'application/json', 'User-Agent': REAN_UA }, body: JSON.stringify({ data: { context: post1.result.context, stream_response: sr } }), signal: AbortSignal.timeout(7000) }).then(x => x.ok ? x.json() : null).catch(() => null);
   const st = post2 && post2.status === 200 && post2.result && post2.result.stream; if (!st || !post2.result.context || !post2.result.context.w_payload) return '';
-  let man = await fetch('https://enc-dec.app/api/parse-flixcloud?url=' + encodeURIComponent(st) + '&w_payload=' + encodeURIComponent(post2.result.context.w_payload), { headers: { 'User-Agent': REAN_UA, Referer: REAN_API + '/' }, signal: AbortSignal.timeout(8000) }).then(x => x.ok ? x.text() : '').catch(() => '');
-  if (!man || man.indexOf('#EXTM3U') < 0) return '';
-  const B64 = t2 => 'data:application/vnd.apple.mpegurl;base64,' + Buffer.from(t2, 'utf8').toString('base64');
-  const uris = [];
-  for (const m2 of man.matchAll(/URI="([^"]+)"/g)) if (/^https?:/.test(m2[1])) uris.push(m2[1]);
-  for (let i2 = 0; i2 < man.length - 1; i2++) { if (man[i2] === '\n' && man[i2 + 1] !== '#') { let j2 = man.indexOf('\n', i2 + 1); const ln = man.slice(i2 + 1, j2 < 0 ? man.length : j2).trim(); if (/^https?:/.test(ln)) uris.push(ln); } }
-  for (const u2 of [...new Set(uris)]) {
-    const ch2 = await reanHlsChild(u2).catch(() => '');
-    if (ch2) man = man.split(u2).join(B64(ch2));
-  }
-  return man;
+  const man = await fetch('https://enc-dec.app/api/parse-flixcloud?url=' + encodeURIComponent(st) + '&w_payload=' + encodeURIComponent(post2.result.context.w_payload), { headers: { 'User-Agent': REAN_UA, Referer: REAN_API + '/' }, signal: AbortSignal.timeout(8000) }).then(x => x.ok ? x.text() : '').catch(() => '');
+  return man && man.indexOf('#EXTM3U') >= 0 ? man : '';
 }
 async function reanStreams(tmdbId, type, s, e) { // TMDB-direct servers, else search+details match; MKV download link (flixcloud → spacedl); HLS path needs enc-dec.app — skipped (off-by-default upstream)
   if (!tmdbId) return [];
@@ -1470,8 +1451,18 @@ async function reanStreams(tmdbId, type, s, e) { // TMDB-direct servers, else se
     const out = [];
     await Promise.all(embeds.slice(0, 2).map(async em2 => {
       const eid = /\/e\/([a-z0-9]+)/i.exec(em2.link); if (!eid) return;
-      const man = await reanHlsMaster(em2.link).catch(() => ''); // v1.15.64: the SITE's own play path — enc-dec-served master; children+segments need exactly Referer: flixcloud.cc (sandbox 206)
-      if (man) out.push({ url: 'data:application/vnd.apple.mpegurl;base64,' + Buffer.from(man, 'utf8').toString('base64'), aud: em2.aud, hls: true });
+      const man = await reanHlsChain(em2.link).catch(() => ''); // v1.15.66: RAW master (children = enc-dec parse URLs) — the relay rewrites; the old data-URI card died because the player cannot send the Referer flixcloud demands
+      let tok = null;
+      if (man) {
+        const sig = crypto.createHash('sha1').update(em2.link).digest('hex').slice(0, 16);
+        tok = REAN_REV.get(sig);
+        if (!tok || !REAN_TOKS.has(tok)) { tok = crypto.randomBytes(9).toString('hex'); REAN_REV.set(sig, tok); }
+        const kids = [];
+        man.replace(/URI="(https?:\/\/[^"]+)"/g, (m0, u) => { kids.push(u); return m0; });
+        man.replace(/^(https?:\/\/\S+)$/gm, (m0, u) => { kids.push(u); return m0; });
+        REAN_TOKS.set(tok, { ts: Date.now(), master: man, kids: kids, _c: {}, mkv: '' });
+        out.push({ url: REAN_PUB + '/rean/t/' + tok + '.m3u8', aud: em2.aud, hls: true }); // token-only URL — server fetches manifest/key/segments (headers+IP pinned server-side); user plays direct
+      }
       const pay = await fetch(REAN_API + '/d/' + eid[1] + '/__data.json', { headers: { Accept: '*/*', Referer: REAN_API + '/', 'User-Agent': REAN_UA }, signal: AbortSignal.timeout(5000) }).then(x => x.ok ? x.text() : '').catch(() => '');
       if (!pay) return;
       const fid = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.exec(pay); const tk = /eyJ[\w-]+\.[\w-]+\.[\w-]+/.exec(pay);
@@ -1480,21 +1471,121 @@ async function reanStreams(tmdbId, type, s, e) { // TMDB-direct servers, else se
       const host = fhm ? fhm[0] : REAN_API;
       const pr = await fetch(host + '/download/' + fid[0] + '/progress?token=' + tk[0], { headers: { Accept: '*/*', Referer: REAN_API + '/', 'User-Agent': REAN_UA }, signal: AbortSignal.timeout(5000) }).then(x => x.ok ? x.text() : '').catch(() => '');
       if (pr.indexOf('"status":"failed"') >= 0) return;
-      out.push({ url: host + '/download/' + fid[0] + '?token=' + tk[0], aud: em2.aud, hls: false }); // MKV fallback: headerless 302 followed natively (spacedl sig locks to the follower's IP)
+      tok = tok || reanMint(em2.link);
+      REAN_TOKS.get(tok).mkv = host + '/download/' + fid[0] + '?token=' + tk[0];
+      out.push({ url: REAN_PUB + '/rean/v/' + tok, aud: em2.aud, hls: false }); // MKV also relayed: spacedl sig locks to the FETCHER's IP — the server follows the 302, the player just downloads
     }));
     if (DBG) console.error('[rean] ' + tmdbId + '/' + (isTv ? 'S' + ss + 'E' + ep : 'movie') + ' cards=' + out.length + ' @' + (Date.now() - t3) + 'ms');
     return out.map(x => x.hls ? {
       name: '\u25a5 HLS \u25a5', quality: 'HLS', url: x.url,
       title: '\u229e Re:ANIME \u2317 ' + x.aud, description: '\u229e Re:ANIME \u2317 ' + x.aud,
-      behaviorHints: { notWebReady: true, isBingeable: true, proxyHeaders: { request: { Referer: REAN_API + '/', 'User-Agent': REAN_UA } } }, // children+segments obey exactly Referer: flixcloud.cc (v1.15.56 contract)
+      behaviorHints: { notWebReady: true, isBingeable: true }, // v1.15.66: token-relay — NO proxyHeaders needed, the player talks only to us
       bingeGroup: 'reanhls|' + (anTitle || 'anime').toLowerCase() + '::|' + x.aud
     } : {
       name: '\u25a5 MKV \u25a5', quality: 'MKV', url: x.url,
       title: '\u229e Re:ANIME \u2317 ' + x.aud, description: '\u229e Re:ANIME \u2317 ' + x.aud,
-      behaviorHints: { notWebReady: false, isBingeable: true, filename: 'reanime.mkv' }, // fully native: headerless 302 + headerless spacedl
+      behaviorHints: { notWebReady: false, isBingeable: true, filename: 'reanime.mkv' }, // v1.15.66: piped through /rean/v/<tok>
       bingeGroup: 'rean|' + (anTitle || 'anime').toLowerCase() + '::|' + x.aud
     });
   } catch (e2) { if (DBG) console.error('[rean] ' + tmdbId + ' ERR ' + String(e2 && e2.message).slice(0, 60) + ' @' + (Date.now() - t3) + 'ms'); return []; }
+}
+// ---------- v1.15.66: REAN টোকা-রিলে — প্লেয়ার পায় শুধু আমাদের টোকা-URL; ম্যানিফেস্ট/কী/সেগমেন্ট/MKV সার্ভার-নিজে-টানে (হেডার+IP-সার্ভারে-পিনড → ইউজার-সরাসরি-প্লে) ----------
+const REAN_TOKS = new Map(); const REAN_REV = new Map(); let REAN_PUB = ''; let REAN_PXI = 0;
+setInterval(() => { const now = Date.now(); for (const [k, v] of REAN_TOKS) if (now - v.ts > 2100000) { REAN_TOKS.delete(k); for (const [s, t] of REAN_REV) if (t === k) REAN_REV.delete(s); } }, 600000).unref();
+function reanMint(link) { // sig→tok স্থায়িত্ব (একই-এমবেড=একই-টোকা)
+  const sig = crypto.createHash('sha1').update(link).digest('hex').slice(0, 16);
+  let tok = REAN_REV.get(sig);
+  if (!tok || !REAN_TOKS.has(tok)) { tok = crypto.randomBytes(9).toString('hex'); REAN_REV.set(sig, tok); }
+  if (!REAN_TOKS.has(tok)) REAN_TOKS.set(tok, { ts: 0, master: '', kids: [], _c: {}, mkv: '' });
+  REAN_TOKS.get(tok).ts = Date.now();
+  return tok;
+}
+function reanUpstream(u, ref, rng, tmo) { // মিডিয়া-আপস্ট্রিম। REAN_PROXIES=কমা-তালিকা GET-টেমপ্লেট ({u}=encoded-গন্তব্য) → প্রতি-অনুরোধ-অটো-ঘূর্ণন; টেমপ্লেট-নিজে-UA/Referer-অগ্রবর্তী-করবে (worker-রিলে); ডিফল্ট-সরাসরি
+  const px = String(process.env.REAN_PROXIES || '').split(',').map(s => s.trim()).filter(Boolean);
+  const hh = { 'User-Agent': REAN_UA }; if (ref) hh.Referer = ref; if (rng) hh.Range = rng;
+  if (!px.length) return fetch(u, { headers: hh, signal: AbortSignal.timeout(tmo || 30000) }).catch(e => { if (DBG) console.error('[rean-up] ' + String(u).slice(0, 66) + ' :: ' + String(e && e.message).slice(0, 70)); throw e; });
+  REAN_PXI = (REAN_PXI + 1) % px.length;
+  const tpl = px[REAN_PXI];
+  return fetch(tpl.indexOf('{u}') >= 0 ? tpl.replace('{u}', encodeURIComponent(u)) : tpl + encodeURIComponent(u), { headers: hh, signal: AbortSignal.timeout(tmo || 30000) }).catch(e => { if (DBG) console.error('[rean-up] ' + String(u).slice(0, 66) + ' :: ' + String(e && e.message).slice(0, 70)); throw e; });
+}
+async function reanChildBuild(ent, tok, i, base) { // চাইল্ড-একবার-নির্মাণ+ক্যাশ: কী→/rean/k/<tok>/<i>, সেগমেন্ট→/rean/s/<tok>/<i>/<n> (ক্রম-সংরক্ষণ)
+  if (ent._c[i]) return ent._c[i].text;
+  const u = ent.kids[i]; if (!u) return '';
+  const up = await reanUpstream(u, REAN_API + '/', null, 9000).then(x => x.ok ? x.text() : '').catch(() => '');
+  if (!up || up.indexOf('#EXTM') < 0) return '';
+  const segs = [];
+  let txt = up.replace(/(#EXT-X-KEY:[^\n]*URI=")([^"\n]+)(")/g, (m0, a, b2, c2) => a + base + '/rean/k/' + tok + '/' + i + c2);
+  txt = txt.replace(/^(https?:\/\/\S+)$/gm, m0 => { segs.push(m0.trim()); return base + '/rean/s/' + tok + '/' + i + '/' + (segs.length - 1); });
+  ent._c[i] = { text: txt, segs: segs };
+  return txt;
+}
+function reanRelay(req, res, p) { // /rean/t/<tok>.m3u8 | /rean/c/<tok>/<i>.m3u8 | /rean/k/<tok>/<i> | /rean/s/<tok>/<i>/<n> | /rean/v/<tok>
+  const hs = String(req.headers['x-forwarded-host'] || req.headers.host || '');
+  const pr = String(req.headers['x-forwarded-proto'] || (hs.indexOf('localhost') >= 0 || hs.indexOf('127.0.0.1') >= 0 ? 'http' : 'https'));
+  const base = pr + '://' + hs;
+  const sg = p.split('/'); // ['', 'rean', kind, tok, ...]
+  const ent = REAN_TOKS.get((sg[3] || '').replace(/\.m3u8$/, ''));
+  if (!ent) { res.writeHead(404, { 'Content-Type': 'text/plain' }); return void res.end('expired'); }
+  ent.ts = Date.now();
+  const tok = (sg[3] || '').replace(/\.m3u8$/, '');
+  if (sg[2] === 't') { // মাস্টার: সব-চাইল্ড-URI → আমাদের /rean/c (টেক্সট-অর্ডার=kids-অর্ডার: অডিও-URI-আগে, তারপর-ভিডিয়ো-লাইন)
+    if (!ent.master) { res.writeHead(404, { 'Content-Type': 'text/plain' }); return void res.end('no-master'); }
+    let ci = 0, txt = ent.master;
+    txt = txt.replace(/URI="https?:\/\/[^"]+"/g, m0 => m0.replace(/"([^"]+)"/, '"' + base + '/rean/c/' + tok + '/' + (ci++) + '.m3u8"'));
+    txt = txt.replace(/^(https?:\/\/\S+)$/gm, () => base + '/rean/c/' + tok + '/' + (ci++) + '.m3u8');
+    res.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl', 'Cache-Control': 'no-store' });
+    return void res.end(txt);
+  }
+  if (sg[2] === 'c') { // চাইল্ড
+    const i = Number(sg[4]) || 0;
+    if (!ent.kids[i]) { res.writeHead(404, { 'Content-Type': 'text/plain' }); return void res.end('no-child'); }
+    return void reanChildBuild(ent, tok, i, base).then(ct2 => {
+      if (!ct2) { res.writeHead(502, { 'Content-Type': 'text/plain' }); return void res.end('upstream'); }
+      res.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl', 'Cache-Control': 'no-store' });
+      res.end(ct2);
+    }, () => { try { res.writeHead(502, { 'Content-Type': 'text/plain' }); res.end('upstream'); } catch { } });
+  }
+  if (sg[2] === 'k') { // AES-কী-পাইপ (fetch9-সহোদর; Referer-flixcloud-সার্ভার-পাঠায়)
+    const i = Number(sg[4]) || 0; const u = ent.kids[i];
+    if (!u) { res.writeHead(404, { 'Content-Type': 'text/plain' }); return void res.end('no-key'); }
+    let real = ''; try { real = decodeURIComponent((/[?&]url=([^&]+)/.exec(u) || [])[1] || ''); } catch { } // enc-dec-পার্স-URL-এর-ভেতরের-আসল-fetch9-মিডিয়া-URL — কী-তার-সহোদর (v1.15.66-fix: dirname-নয়!)
+    const kb = (real || u).split('/').slice(0, -1).join('/') + '/key.bin';
+    const k1 = () => reanUpstream(kb, REAN_API + '/', null, 9000).then(x => { if (!x.ok && DBG) console.error('[rean-key] http ' + x.status + ' ' + kb.slice(0, 70)); return x.ok ? x.arrayBuffer() : Promise.reject(new Error('k' + x.status)); });
+    return void k1().catch(() => k1()).then(ab2 => { if (!ab2) { try { res.writeHead(502, { 'Content-Type': 'text/plain' }); res.end('key-upstream'); } catch { } return; }
+      res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': String(ab2.byteLength) });
+      res.end(Buffer.from(ab2));
+    }, () => { try { res.writeHead(502, { 'Content-Type': 'text/plain' }); res.end('key-upstream'); } catch { } });
+  }
+  if (sg[2] === 's') { // সেগমেন্ট-পাইপ (Range-অগ্রবর্তী; rundowncdn-Referer-সার্ভার-পাঠায়)
+    const i = Number(sg[4]) || 0, n = Number(sg[5]) || 0;
+    return void reanChildBuild(ent, tok, i, base).then(ct2 => {
+      const segs = (ent._c[i] && ent._c[i].segs) || [];
+      if (!ct2 || !segs[n]) { res.writeHead(404, { 'Content-Type': 'text/plain' }); return void res.end('no-seg'); }
+      const up1 = () => reanUpstream(segs[n], REAN_API + '/', req.headers.range || null, 30000);
+      return up1().catch(() => up1()).then(up => { if (!up) { try { res.writeHead(502, { 'Content-Type': 'text/plain' }); res.end('seg-upstream'); } catch { } return; }
+        const hh2 = { 'Content-Type': 'video/mp2t', 'Accept-Ranges': 'bytes', 'Cache-Control': 'public, max-age=86400' };
+        if (up.headers.get('content-length')) hh2['Content-Length'] = up.headers.get('content-length');
+        if (up.headers.get('content-range')) hh2['Content-Range'] = up.headers.get('content-range');
+        res.writeHead(up.status, hh2);
+        if (!up.body) return void res.end();
+        require('stream').Readable.fromWeb(up.body).pipe(res);
+      }, () => { try { res.writeHead(502, { 'Content-Type': 'text/plain' }); res.end('seg-upstream'); } catch { } });
+    }, () => { try { res.writeHead(502, { 'Content-Type': 'text/plain' }); res.end('seg-upstream'); } catch { } });
+  }
+  if (sg[2] === 'v') { // MKV-পাইপ (fetchN-302-সার্ভার-অনুসরণ — spacedl-sig-সার্ভার-IP-বাউন্ড)
+    if (!ent.mkv) { res.writeHead(404, { 'Content-Type': 'text/plain' }); return void res.end('no-mkv'); }
+    const hh3 = {}; if (req.headers.range) hh3.Range = req.headers.range;
+    fetch(ent.mkv, { headers: hh3, redirect: 'follow' }).then(up => {
+      const hh2 = { 'Content-Type': 'video/x-matroska', 'Accept-Ranges': 'bytes' };
+      if (up.headers.get('content-length')) hh2['Content-Length'] = up.headers.get('content-length');
+      if (up.headers.get('content-range')) hh2['Content-Range'] = up.headers.get('content-range');
+      res.writeHead(up.status, hh2);
+      if (!up.body) return void res.end();
+      require('stream').Readable.fromWeb(up.body).pipe(res);
+    }, () => { try { res.writeHead(502, { 'Content-Type': 'text/plain' }); res.end('mkv-upstream'); } catch { } });
+    return;
+  }
+  res.writeHead(404, { 'Content-Type': 'text/plain' }); res.end('nf');
 }
 // ---------- v1.15.40-local: Movies4u (M4U) — lookup.php-সার্চ + hubcloud→gamerxyt→FSL-R2 সরাসরি-MKV ----------
 const M4U_BASE = 'https://new2.movies4u.garden';
@@ -2497,6 +2588,8 @@ const server = http.createServer((req, res) => {
     let m;
     // সব-পথ-লগ (৪০৪-ও-দৃশ্যমান-হোক):
     logReq(p, 0, -1, 'route-in', RVA);
+    { const hs = String(req.headers['x-forwarded-host'] || req.headers.host || ''); REAN_PUB = String(req.headers['x-forwarded-proto'] || (hs.indexOf('localhost') >= 0 || hs.indexOf('127.0.0.1') >= 0 ? 'http' : 'https')) + '://' + hs; } // v1.15.66: কার্ড-URL-বেস
+    if (p.indexOf('/rean/') === 0) return void reanRelay(req, res, p); // v1.15.66: টোকা-রিলে-এন্ডপয়েন্ট
     // v1.15.8 (ইউজার): স্ট্রিম-উত্তরে-ক্যাশ-পাঠ-বিলোপ — আগে-৩০মিন-পিন-মিস-হলে-২য়-ক্লিকে-একই-মিস-দেখাত; এখন-প্রতি-ক্লিক-প্রকৃত-স্ক্যান
     // ── catalog (search + genre + skip — NetHex-ধাঁচ):
     if ((m = p.match(/^\/catalog\/(series|movie)\/(vidy-kdrama|vidy-movies)(?:\/(.*))?\.json$/))) {
