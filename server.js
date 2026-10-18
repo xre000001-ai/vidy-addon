@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.51';
+const VERSION = '1.15.52';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -645,7 +645,8 @@ function findTmdbInfo(imdb, type) {
   return dedupe(key, () => cinemetaMeta(15000).then(m => { // ① IMDb-প্রথম: Cinemeta-নাম → অফিসিয়াল-TMDB-search
       const name = m.name || '';
       if (!name) throw new Error('cinemeta-empty');
-      return tmdbSearchPick(name, String(m.releaseInfo || m.year || ''), type);
+      const cy = parseInt(String(m.releaseInfo || m.year || '').slice(0, 4), 10) || 0; // v1.15.52: Cinemeta-বছর (imdb-id-র-সত্য-বছর — ম্যাপ-ভুল-হলেও)
+      return tmdbSearchPick(name, String(m.releaseInfo || m.year || ''), type).then(v => { v.year = cy; return v; });
     }).catch(() => suggMeta().then(m2 => tmdbSearchPick(m2.name, m2.year, type))) // ② IMDb-suggestion → অফিসিয়াল-search
   ).catch(() => pooledGet(TMDBP + '/find/' + encodeURIComponent(imdb) + '?external_source=imdb_id', 10000).then(body => { // ③ শেষ-ভরসা: আয়না-find
     const j = JSON.parse(body);
@@ -2179,6 +2180,37 @@ function sendJson(res, code, obj) {
 }
 // v1.13.9 স্ট্রিম-উত্তর-ক্যাশ — nethex-v2.4.0-প্যারিটি: TTL-৩০মি + সর্বোচ্চ-৪০০, পুরনো-আগে-বাদ
 const stripCards = cards => (cards || []).map(({ _hq, _lang, quality, headers, subtitles, ...r }) => r); // nethex-প্যারিটি-শেপ: ভেতরে-গাঁথা-সাব+অ-স্পেক-ফিল্ড-ছাঁটা
+// ---------- v1.15.52: সব-সোর্সের-কার্ড-এক-ফরম্যাটে (ইউজার: "প্রতি-সোর্সের-কার্ড-ফরম্যাট-এমনি-চাই") — decorate()-এর-ভিডি-ফরম্যাট:
+// ⧉ Title | Year |  /  ⧠ Movie|SsEe  /  ⊞ Server ⌗ Audio — mbxr-চাইল্ড-ইতিমধ্যে-এই-ফরম্যাটে-প্রমাণিত; বাকি-সোর্স-এখানে-বসে
+const YEAR_CACHE = new Map();
+function yearForTmdb(tmdbId, type) { // মুভি=release_date, সিরিজ=first_air_date — মেমোইজড (১ দিন):
+  const k = (type === 'series' ? 'tv' : 'mv') + ':' + tmdbId;
+  if (YEAR_CACHE.has(k)) return Promise.resolve(YEAR_CACHE.get(k));
+  return tmdbGet('/' + (type === 'series' ? 'tv/' : 'movie/') + tmdbId, 8000).then(b => {
+    let y = 0; try { y = parseInt(((JSON.parse(b).release_date || JSON.parse(b).first_air_date) || '').slice(0, 4), 10) || 0; } catch { }
+    YEAR_CACHE.set(k, y); return y;
+  }).catch(() => { YEAR_CACHE.set(k, 0); return 0; });
+}
+const UNIFY_SRV = { peng: 'Arctic', sky: 'Arctic', m4u: 'Movies4u', mm: 'Multimovies', tw: 'ToonWorld', rt: 'RareToons' };
+async function unifyCards(cards, meta) { // শুধু-টেক্সট-বদলায়: name/quality/url/bingeGroup/_lang/_hq/সাব — সব-অস্পৃশ্য (ফিল্টার-নিরাপদ)
+  try {
+    if (!cards || !cards.length || !meta || !meta.tmdbId) return cards;
+    const tcards = cards.filter(c => /^(peng|sky|m4u|mm|tw|rt)\|/.test(String(c.bingeGroup || '')));
+    if (!tcards.length) return cards;
+    const T = await nameForTmdb(meta.tmdbId, meta.type).catch(() => '');
+    if (!T) return cards; // টাইটেল-না-পেলে পুরনো-লেখাই-থাকে (খালি-কখনো-নয়)
+    const Y = (parseInt(meta.year, 10) || 0) || await yearForTmdb(meta.tmdbId, meta.type).catch(() => 0); // v1.15.52: imdb-রুটে Cinemeta-বছর-আগে (ম্যাপ-নিরপেক্ষ-সত্য)
+    const head = '\u29c9 ' + T + (Y ? ' | ' + Y + ' |' : '');
+    const epLine = meta.type === 'series' ? ('\u29e0 S' + (parseInt(meta.s, 10) || 1) + 'E' + (parseInt(meta.e, 10) || 1)) : '\u29e0 Movie';
+    for (const c of tcards) {
+      const src = String(c.bingeGroup).split('|')[0];
+      const au = (String(c.description || '').split('\u2317')[1] || '').split('\n')[0].trim(); // সোর্সের-সত্য-অডিও-রক্ষা
+      const txt = head + '\n' + epLine + '\n\u229e ' + (UNIFY_SRV[src] || src) + (au ? ' \u2317 ' + au : '');
+      c.title = txt; c.description = txt;
+    }
+    return cards;
+  } catch { return cards; }
+}
 function sendStreams(res, skey, plog, ms, cards, ua) {
   const partial = !!(cards && cards.$partial);
   const n = (cards || []).length; // v1.15.8: কোনো-stash-নেই — প্রতি-উত্তর-তাজা
@@ -2308,7 +2340,7 @@ const server = http.createServer((req, res) => {
       const skyP = !(cfg && cfg.peng === 0) ? skyStreams(Number(m[1]), '', 'movie', 0, 0, originOf(req), cfg && cfg.m4ur || 0).catch(() => []) : null; // v1.15.50: Arctic-স্বাধীন (SkymoviesHD)
       kickSubs('tmdb' + m[1], 'movie', null, null, cfg);
       return withDeadline(withSources(vOn ? getSources(Number(m[1]), 'movie', null, null, '', cfg, tp) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: pengP, key: 'peng' }, { p: skyP, key: 'sky' }], cfg, t0), 11900 /* v1.15.26 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
-        cards => { sendStreams(res, req.url, p, Date.now() - t0, cards, RVA); },
+cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'movie', s: 0, e: 0 }).then(u => sendStreams(res, req.url, p, Date.now() - t0, u, RVA)); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }
     if ((m = p.match(/^\/stream\/series\/tmdb(\d+):?(?:(\d+):(\d+))?\.json$/))) {
@@ -2326,7 +2358,7 @@ const server = http.createServer((req, res) => {
       twRtPrewarm(tp, 'series', Number(m[2] || 1), Number(m[3] || 1));
       kickSubs('tmdb' + m[1], 'series', Number(m[2] || 1), Number(m[3] || 1), cfg);
       return withDeadline(withSources(vOn ? getSources(Number(m[1]), 'tv', Number(m[2] || 1), Number(m[3] || 1), '', cfg, tp) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: pengP, key: 'peng' }, { p: skyP, key: 'sky' }], cfg, t0), 11900 /* v1.15.26 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
-        cards => { sendStreams(res, req.url, p, Date.now() - t0, cards, RVA); },
+cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'series', s: Number(m[2] || 1), e: Number(m[3] || 1) }).then(u => sendStreams(res, req.url, p, Date.now() - t0, u, RVA)); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }
     if ((m = p.match(/^\/stream\/movie\/(tt\d+)\.json$/))) {
@@ -2343,7 +2375,7 @@ const server = http.createServer((req, res) => {
       const skyP = !(cfg && cfg.peng === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? skyStreams(info.id, info.name || '', 'movie', 0, 0, originOf(req), cfg && cfg.m4ur || 0).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.50: Arctic-স্বাধীন (SkymoviesHD)
       kickSubs(m[1], 'movie', null, null, cfg);
       return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'movie', null, null, info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: pengP, key: 'peng' }, { p: skyP, key: 'sky' }], cfg, t0), 11900 /* v1.15.26 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
-        cards => { sendStreams(res, req.url, p, Date.now() - t0, cards, RVA); },
+cards => { Promise.resolve(infoP).then(info => unifyCards(cards, { tmdbId: info && info.id, type: 'movie', s: 0, e: 0, year: info && info.year })).then(u => sendStreams(res, req.url, p, Date.now() - t0, u, RVA)); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }
     if ((m = p.match(/^\/stream\/series\/(tt\d+):(\d+):(\d+)\.json$/))) {
@@ -2362,7 +2394,7 @@ const server = http.createServer((req, res) => {
       twRtPrewarm(nmP, 'series', Number(m[2]), Number(m[3]));
       kickSubs(m[1], 'series', Number(m[2]), Number(m[3]), cfg);
       return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'tv', Number(m[2]), Number(m[3]), info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: pengP, key: 'peng' }, { p: skyP, key: 'sky' }], cfg, t0), 11900 /* v1.15.26 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
-        cards => { sendStreams(res, req.url, p, Date.now() - t0, cards, RVA); },
+cards => { Promise.resolve(infoP).then(info => unifyCards(cards, { tmdbId: info && info.id, type: 'series', s: Number(m[2]), e: Number(m[3]), year: info && info.year })).then(u => sendStreams(res, req.url, p, Date.now() - t0, u, RVA)); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }
     if ((m = p.match(/^\/stream\/series\/(tt\d+)\.json$/))) { // সেফটি-নেট: s:e-ছাড়া কল → S1E1
@@ -2381,7 +2413,7 @@ const server = http.createServer((req, res) => {
       twRtPrewarm(nmP, 'series', 1, 1);
       kickSubs(m[1], 'series', 1, 1, cfg);
       return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'tv', 1, 1, info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: pengP, key: 'peng' }, { p: skyP, key: 'sky' }], cfg, t0), 11900 /* v1.15.26 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
-        cards => { sendStreams(res, req.url, p + ' [no-s:e]', Date.now() - t0, cards, RVA); },
+cards => { Promise.resolve(infoP).then(info => unifyCards(cards, { tmdbId: info && info.id, type: 'series', s: 1, e: 1, year: info && info.year })).then(u => sendStreams(res, req.url, p + ' [no-s:e]', Date.now() - t0, u, RVA)); },
         e => { logReq(p + ' [no-s:e]', Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }
     // ── subtitles-রিসোর্স (MovieBox-সাবটাইটেল-ট্র্যাক — এমবেডেড-চাইল্ডের-/subtitles-প্রক্সি) ──
