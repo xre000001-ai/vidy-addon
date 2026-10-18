@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.48';
+const VERSION = '1.15.49';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -1503,26 +1503,7 @@ async function m4uStreams(tmdbId, title, type, s, e, origin, maxh) { // maxh: cf
       out.push({ h: useH, url: furl, kind: 'file', spec, aud, dv });
       if (out.length >= 3) break;
     }
-    // ধাপ-৫: toonworld4all-মিরর (Movies4u-রিলিজ pixeldrainে-রিপোস্ট — সিক-নিশ্চিত; ইউজার-নমুনা DwpvDvky):
-    if (TWBASE && left() > 2600) {
-      try {
-        const twb = await m4uText(TWBASE + '/find?source=toonworld&title=' + encodeURIComponent(T) + '&_=' + Date.now(), '', Math.min(3200, left())).catch(() => '');
-        const tj = JSON.parse(twb || '{}');
-        for (const rc of (((tj || {}).results) || []).slice(0, 6)) {
-          const ru = String(rc.url || '');
-          if (!/^https:\/\/pixeldrain\.dev\/api\/file\/[A-Za-z0-9]+$/.test(ru)) continue; // শুধু-pixeldrain (সিক-ম্যাপ)
-          const pv = await pdProbe(ru).catch(() => null);
-          if (!pv || !pv.alive) continue;
-          const prh = parseInt((((pv.name || '') + ' ' + (rc.name || '')).match(/(\d{3,4})\s*p/i) || [])[1] || '0', 10) || 720;
-          if (maxh && prh > maxh) continue;
-          if (out.some(o => o.h === prh)) continue;
-          const taud = /Multi/i.test((rc.name || '') + (rc.title || '')) ? 'Multi-Audio' : '';
-          out.push({ h: prh, url: ru, kind: 'file', spec: (pv.name || '').replace(/\+/g, ' '), aud: taud, dv: '' });
-          if (DBG) console.error('[m4u] tw-mirror ' + prh + 'p @' + (Date.now() - t3) + 'ms');
-          if (out.length >= 4) break;
-        }
-      } catch { }
-    }
+    // ধাপ-৫-বাদ (1.15.49): TW-রেজলভার-মুভি-ইনডেক্স-করে-না (কার্টুন-সিরিজ-only; লাইভ-প্রোবে-সব-০) — hglink.to/skymovieshd-বাটন-ব্রাউজার-JS-ফানেল+drivebot-AES+gdflix-Turnstile = দেয়াল।
     await Promise.race([hlsP, new Promise(r2 => setTimeout(r2, Math.max(200, left() - 150)))]); // HLS-সমান্তরাল-ফল-অপেক্ষা (বাজেট-ভেতরে)
     out.sort((a, b) => (b.kind === 'hls' ? 1 : 0) - (a.kind === 'hls' ? 1 : 0)); // সিক-নিশ্চিত-HLS-আগে
     if (out.length > 3) out.length = 3;
