@@ -79,7 +79,7 @@ async function tap(label, url, checks) {
     ok(v.length && v.every(c => audioOf(c) === 'English'), 'vidy audio = English');
     ok(v.length && v.every(c => SERVER_WORDS.includes(slotOf(c).toLowerCase())), 'vidy slots = server names');
     ok(mb.length === 0 || mb.some(c => audioOf(c) === 'English'), 'moviebox: original audio present (English)');
-    ok(s.every(c => !c.bingeGroup || /^(mbxr|mm|tw|rt|m4u|peng|sky)\|/.test(String(c.bingeGroup))), 'bingeGroup: known-source prefix');
+    ok(s.every(c => !c.bingeGroup || /^(mbxr|mm|tw|rt|m4u|peng|sky|vsp)\|/.test(String(c.bingeGroup))), 'bingeGroup: known-source prefix'); // v1.15.71: vsp=Vidsrc
     ok(mb.length === 0 || mb.every(c => c.bingeGroup && String(c.bingeGroup).indexOf('mbxr|') === 0), 'moviebox cards carry bingeGroup');
     ok(s.every(c => !c.behaviorHints || typeof c.behaviorHints === 'object'), 'behaviorHints sane');
     ok(v.every(c => !Array.isArray(c.subtitles) || c.subtitles.every(u2 => u2 && typeof u2.url === 'string')), 'vidy cards: subs shape sane (embedded subs retired — /subtitles resource serves them)');
@@ -126,6 +126,26 @@ async function tap(label, url, checks) {
     ok(mb.some(c => audioOf(c) === 'English'), 'moviebox: original row survives "original" chip (labeled English)');
     ok(mb.some(c => audioOf(c) === 'Hindi'), 'moviebox: Hindi row present');
     ok(mb.length >= 2 && mb.every(c => ['English', 'Hindi'].indexOf(audioOf(c)) >= 0), 'only original+hindi rows');
+  });
+
+  // ── 6c) Vidsrc মাস্টার+ফিল্টার (v1.15.71) ──
+  const vsOf = s => s.filter(c => String(c.url || '').indexOf('/vsp/') === 0 || String(c.url || '').includes('/vsp/'));
+  await tap('cfg vsp=0 (Vidsrc off)', cfgUrl({ vsp: 0 }, '/stream/movie/tmdb155.json'), (s) => {
+    ok(vsOf(s).length === 0, 'vsp=0: zero Vidsrc cards');
+  });
+  await tap('Vidsrc কার্ড-গঠন (DK tmdb155)', BASE + '/stream/movie/tmdb155.json', (s) => {
+    const vs = vsOf(s);
+    if (!vs.length) return skip('Vidsrc: no cards this run (upstream)'); // ভাণ্ডার-ঝুঁকি — কাঠামো-টেস্ট-কার্ড-থাকলেই
+    ok(vs.every(c => /^\u25a5 (\d{3,4}) \u25a5$/.test(String(c.name || ''))), 'Vidsrc name = "\u25a5 Q \u25a5"');
+    ok(vs.every(c => /\/vsp\/t\/[a-f0-9]+\.m3u8$/.test(String(c.url || '').split('?')[0])), 'Vidsrc url = আমাদের /vsp/t রিলে');
+    ok(vs.every(c => slotOf(c) === 'Vidsrc'), 'Vidsrc slot = "Vidsrc"');
+    ok(vs.every(c => audioOf(c) === 'English'), 'Vidsrc audio = English');
+    ok(vs.every(c => !c.bingeGroup || String(c.bingeGroup).indexOf('vsp|') === 0), 'Vidsrc bingeGroup vsp|');
+  });
+  await tap('cfg vspq=[480] (Vidsrc-ছাঁকনি)', cfgUrl({ vspq: [480] }, '/stream/movie/tmdb155.json'), (s) => {
+    const vs = vsOf(s);
+    if (!vs.length) return skip('vspq 480: no Vidsrc cards this run');
+    ok(vs.every(c => parseInt(String(c.name).replace(/\D/g, ''), 10) <= 480 || /^\u25a5 (480|360) \u25a5$/.test(c.name)), 'vspq=[480]: শুধু-ছোট-মান');
   });
 
   await tap('cfg sub=0 (subtitle gate)', cfgUrl({ sub: 0 }, '/stream/movie/tt0468569.json'), (s) => {

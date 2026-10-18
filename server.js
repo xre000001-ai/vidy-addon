@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.70';
+const VERSION = '1.15.71';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -369,6 +369,7 @@ async function enrichPool() {
     if (n) { try { fs.writeFileSync(POOL_FILE, JSON.stringify(POOL)); } catch (e) {} }
     // v1.15.28: the same harvest feeds the multimovies pool — its own bench then decides vidbolt-capable members
     if (good.length) { const mseen = new Set(MM_POOL.map(c => c.px)); for (const g of good) { if (MM_POOL.length >= MM_CAP) break; if (!mseen.has(g.px)) { mseen.add(g.px); MM_POOL.push({ px: g.px, ms: g.ms }); } } mmSave(); }
+    { const vseen = new Set(VSP_POOL.map(c => c.px)); for (const g of good) { if (VSP_POOL.length >= VSP_CAP) break; if (!vseen.has(g.px)) { vseen.add(g.px); VSP_POOL.push({ px: g.px, ms: g.ms }); } } vspSave(); } // v1.15.71: Vidsrc-পুলও-একই-ফসল-থেকে
     if (DBG) console.error('[pool] enrich: +' + n + ' (মোট ' + POOL.length + ', প্রার্থী ' + cands.length + ')');
   } catch (e) { if (DBG) console.error('[pool] enrich-ERR ' + String(e && e.message).slice(0, 80)); } finally { _training = false; }
 }
@@ -1370,6 +1371,223 @@ async function mmStreams(tmdbId, title, type, s, e, origin, maxh, rel) { // v1.1
     });
   } catch (e2) { if (DBG) console.error('[mm] ERR ' + String(e2 && e2.message).slice(0, 70) + ' @' + (Date.now() - t3) + 'ms'); return []; }
 }
+// ---------- v1.15.71: Vidsrc (EasyPlay-apk রেসিপি) — vidsrc.ir → vs_src → player(apiToken এমবেডেড) → api&stream_urls (ChaCha20-WASM প্রতি-৫মিনিট) → /pl-হোস্টগুলো; সব-হপ IP-বাউন্ড → নিজস্ব /24-পিনড-প্রক্সি-পুল + পূর্ণ-রিলে (/vsp/t|c|s) ----------
+const VSP_FILE = path.join(__dirname, 'vidy_vsp_pool.json');
+let VSP_POOL = []; try { for (const c of JSON.parse(fs.readFileSync(VSP_FILE, 'utf8'))) if (c && c.px) VSP_POOL.push({ px: c.px, ms: Number(c.ms) || 2000 }); } catch (e) {}
+const VSP_CAP = 77; const VSP_BAD = new Map();
+function vspSave() { try { fs.writeFileSync(VSP_FILE, JSON.stringify(VSP_POOL)); } catch (e) {} }
+function vspSubnet(px) { const h = String(px).split(':')[0].split('.'); return h.length >= 3 ? h.slice(0, 3).join('.') : String(px); }
+function vspPick(ent) { // /24-সামঞ্জস্য-নির্বাচন: একই-সাবনেটের-সদস্য-ঘোরে (টোকা-সিদ্ধি অটুট); সরাসরি-ব্যর্থ-হলেই-পুল
+  if (!VSP_POOL.length) return null;
+  const now = Date.now();
+  let group = VSP_POOL;
+  if (ent && ent.sub) { const same = VSP_POOL.filter(c => vspSubnet(c.px) === ent.sub && now - (VSP_BAD.get(c.px) || 0) > 300000); if (same.length) group = same; }
+  const alive = group.filter(c => now - (VSP_BAD.get(c.px) || 0) > 300000);
+  const cand = (alive.length ? alive : group).slice().sort((a, b) => a.ms - b.ms);
+  return cand[Math.floor(Math.random() * Math.min(cand.length, 6))] || null;
+}
+const VSP_TOKS = new Map(); const VSP_JWT = new Map(); let VSP_PUB = '';
+const VSP_MEMO = new Map(); // key→{urls, fileName, ts} — ৩০মিনিট-চেইন-মেমো (vidsrc-রেট-প্রতিরোধ)
+setInterval(() => { const now = Date.now(); for (const [k, v] of VSP_TOKS) if (now - v.ts > 3600000) VSP_TOKS.delete(k); for (const [o, j] of VSP_JWT) if (now - j.ts > 12600000) VSP_JWT.delete(o); for (const [k, m] of VSP_MEMO) if (now - m.ts > 3600000) VSP_MEMO.delete(k); for (const [b, t] of VSP_BAD) if (now - t > 3600000) VSP_BAD.delete(b); }, 900000).unref();
+function vspMint(key) { // key=type:id:s:e → স্থায়ী-টোকা
+  let tok = null;
+  for (const [t, v] of VSP_TOKS) if (v.key === key) { tok = t; break; }
+  if (!tok) { tok = crypto.randomBytes(9).toString('hex'); VSP_TOKS.set(tok, { ts: 0, key, urls: [], srv: -1, kids: [], px: null, sub: '' }); }
+  VSP_TOKS.get(tok).ts = Date.now();
+  return tok;
+}
+function vspText(u, ref, px, tmo) { // ছোট-টেক্সট: সরাসরি-fetch নয়তো প্রক্সি-সুরঙ্গ (proxiedGet)
+  if (!px) return fetch(u, { headers: { 'User-Agent': UA, Accept: '*/*', ...(ref ? { Referer: ref } : {}) }, signal: AbortSignal.timeout(tmo || 12000) }).then(x => x.ok ? x.text() : Promise.reject(new Error('h' + x.status)));
+  return proxiedGet(px, u, tmo || 12000);
+}
+function vspBuf(u, px, rng, tmo) { // বাইনারি-বাফ (wasm): প্রক্সি-মোডে-শুধু
+  return new Promise((resolve, reject) => {
+    if (!px) return fetch(u, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(tmo || 12000) }).then(r => r.arrayBuffer()).then(b => resolve(Buffer.from(b))).catch(reject);
+    const ur = new URL(u); const ci = px.indexOf(':');
+    const sock = net.connect({ host: px.slice(0, ci), port: Number(px.slice(ci + 1)) || 8080 });
+    const hardTo = setTimeout(() => { sock.destroy(); reject(new Error('vsp-timeout')); }, tmo || 12000);
+    sock.once('error', e => { clearTimeout(hardTo); reject(e); });
+    sock.once('connect', () => sock.write('CONNECT ' + ur.host + ':443 HTTP/1.1\r\nHost: ' + ur.host + ':443\r\n\r\n'));
+    let buf = Buffer.alloc(0);
+    sock.once('data', function onData(d) {
+      buf = Buffer.concat([buf, d]);
+      const i = buf.indexOf('\r\n\r\n');
+      if (i < 0) return sock.once('data', onData);
+      sock.removeListener('data', onData);
+      if (!/^HTTP\/1\.[01] 200/.test(buf.slice(0, i).toString('latin1'))) { clearTimeout(hardTo); sock.destroy(); return reject(new Error('vsp-refused')); }
+      const tl = tls.connect({ socket: sock, servername: ur.hostname, rejectUnauthorized: false }, () => {
+        tl.write('GET ' + (ur.pathname + ur.search) + ' HTTP/1.1\r\nHost: ' + ur.hostname + '\r\nUser-Agent: ' + UA + '\r\nConnection: close\r\n\r\n');
+        const chunks = []; let headTxt = '', hdrDone = false;
+        tl.on('data', d2 => { if (!hdrDone) { headTxt += d2.toString('latin1'); const j = headTxt.indexOf('\r\n\r\n'); if (j < 0) return; hdrDone = true; chunks.push(Buffer.from(headTxt.slice(j + 4), 'latin1')); headTxt = headTxt.slice(0, j); return; } chunks.push(d2); });
+        tl.on('close', () => { clearTimeout(hardTo); const raw = Buffer.concat(chunks); resolve(/chunked/i.test(headTxt) ? dechunk(raw) : raw); });
+        tl.once('error', e => { clearTimeout(hardTo); reject(e); });
+      });
+      tl.once('error', e => { clearTimeout(hardTo); reject(e); });
+    });
+  });
+}
+function vspPipe(px, u, rng, res) { // প্রক্সি-সুরঙ্গ-পাইপ (সেগমেন্ট): বাইনারি-স্ট্রিম → res
+  return new Promise((resolve, reject) => {
+    const ur = new URL(u); const ci = px.indexOf(':');
+    const sock = net.connect({ host: px.slice(0, ci), port: Number(px.slice(ci + 1)) || 8080 });
+    const hardTo = setTimeout(() => { sock.destroy(); reject(new Error('vsp-pipe-timeout')); }, 45000);
+    sock.once('error', e => { clearTimeout(hardTo); reject(e); });
+    sock.once('connect', () => sock.write('CONNECT ' + ur.host + ':443 HTTP/1.1\r\nHost: ' + ur.host + ':443\r\n\r\n'));
+    let buf = Buffer.alloc(0);
+    sock.once('data', function onData(d) {
+      buf = Buffer.concat([buf, d]);
+      const i = buf.indexOf('\r\n\r\n');
+      if (i < 0) return sock.once('data', onData);
+      sock.removeListener('data', onData);
+      if (!/^HTTP\/1\.[01] 200/.test(buf.slice(0, i).toString('latin1'))) { clearTimeout(hardTo); sock.destroy(); return reject(new Error('vsp-pipe-refused')); }
+      const tl = tls.connect({ socket: sock, servername: ur.hostname, rejectUnauthorized: false }, () => {
+        tl.write('GET ' + (ur.pathname + ur.search) + ' HTTP/1.1\r\nHost: ' + ur.hostname + '\r\nUser-Agent: ' + UA + '\r\n' + (rng ? 'Range: ' + rng + '\r\n' : '') + 'Connection: close\r\n\r\n'); // সেগমেন্টে-রেফারার-নেই (৪০৩-প্রতিরোধ)
+        let headTxt = '', hdrDone = false;
+        tl.on('data', d2 => { if (!hdrDone) { headTxt += d2.toString('latin1'); const j = headTxt.indexOf('\r\n\r\n'); if (j < 0) return; hdrDone = true; clearTimeout(hardTo); const code = parseInt((headTxt.split('\r\n')[0] || '').split(' ')[1] || '0', 10); const hh2 = { 'Content-Type': 'video/mp2t', 'Accept-Ranges': 'bytes' }; const cl = (/content-length:\s*(\d+)/i.exec(headTxt) || [])[1]; if (cl) hh2['Content-Length'] = cl; const cr = (/content-range:\s*([^\r\n]+)/i.exec(headTxt) || [])[1]; if (cr) hh2['Content-Range'] = cr; res.writeHead(code, hh2); resolve(true); return; } res.write(d2); return; });
+        tl.on('data', d2 => res.write(d2));
+        tl.on('close', () => { try { res.end(); } catch (e2) {} });
+        tl.once('error', () => { try { res.end(); } catch (e2) {} });
+      });
+      tl.once('error', e => { clearTimeout(hardTo); reject(e); });
+    });
+  });
+}
+async function vspChain(tmdbId, type, s, e, ent) { // পূর্ণ-চেইন → {urls, fileName} (স্যান্ডবক্স-প্রমাণিত-প্রতিলিপি)
+  const tvq = type === 'tv' ? '&s=' + (s || 1) + '&e=' + (e || 1) : '';
+  const tryOnce = async px => {
+    const emb = 'https://vidsrc.ir/embed/' + type + '/' + tmdbId;
+    const e1 = await vspText(emb, null, px, 10000);
+    const api1 = (/data-api="([^"]+)"/.exec(e1) || [])[1];
+    if (!api1) throw new Error('embed-noapi');
+    const j1 = JSON.parse(await vspText('https://vidsrc.ir' + api1.replace(/&amp;/g, '&') + tvq, emb, px, 10000));
+    if (!j1.src) throw new Error('vssrc-empty');
+    const e2 = await vspText(j1.src, 'https://vidsrc.ir/', px, 10000);
+    const pu = /playerUrl":"([^"]+)"/.exec(e2);
+    if (!pu) throw new Error('playerUrl-none');
+    const purl = new URL(j1.src).origin + JSON.parse('"' + pu[1] + '"');
+    const e3 = await vspText(purl, j1.src, px, 10000);
+    const cfgm = /window\.CONFIG = (\{.*?\});/s.exec(e3);
+    if (!cfgm) throw new Error('CONFIG-none');
+    const cfg = JSON.parse(cfgm[1]);
+    const apiBase = (type === 'tv' // v1.15.71-ফিক্স: টিভি=streamBase&season=&episode=&stream_urls (player.js-এর apiFor() হুবহু — প্যারাম s/e নয়)
+      ? (cfg.streamBase ? cfg.streamBase + '&season=' + (s || 1) + '&episode=' + (e || 1) + '&stream_urls' : cfg.api)
+      : cfg.api || '').replace(/&amp;/g, '&');
+    if (!apiBase) throw new Error('api-none');
+    const sep = apiBase.indexOf('?') > -1 ? '&' : '?';
+    const j4 = JSON.parse(await vspText(apiBase + sep + 'api_token=' + encodeURIComponent(cfg.apiToken), purl, px, 12000));
+    if (!j4 || !j4.data || !j4.data.stream_urls) throw new Error('api-' + (j4 && j4.status_code || 'x'));
+    let urls = j4.data.stream_urls;
+    if (typeof urls === 'string') {
+      const wb = j4.vs && j4.vs.wasm_url ? await vspBuf(j4.vs.wasm_url, px, null, 12000) : Buffer.from(j4.vs.wasm, 'base64');
+      const ex = (await WebAssembly.instantiate(await WebAssembly.compile(new Uint8Array(wb)), {})).exports;
+      const enc = Buffer.from(urls, 'base64');
+      const ptr = ex.alloc(enc.length);
+      new Uint8Array(ex.memory.buffer, ptr, enc.length).set(enc);
+      const outLen = ex.decrypt(ptr, enc.length);
+      urls = Buffer.from(ex.memory.buffer).slice(ptr + 12, ptr + 12 + outLen).toString('utf8').split('\n').filter(Boolean);
+    }
+    return { urls: urls.filter(u => /^https?:/.test(u)), fileName: String(j4.data.file_name || '') };
+  };
+  try { const r = await tryOnce(null); ent.px = null; ent.sub = ''; return r; } catch (de) { if (DBG) console.error('[vsp] direct-ERR ' + String(de.message).slice(0, 50) + ' → pool'); }
+  for (let i = 0; i < 3; i++) {
+    const px = vspPick(ent && ent.sub ? { sub: ent.sub } : null);
+    if (!px) break;
+    try { const r = await tryOnce(px.px); ent.px = px.px; ent.sub = vspSubnet(px.px); if (DBG) console.error('[vsp] pool-পথ ✓ ' + px.px); return r; }
+    catch (pe) { VSP_BAD.set(px.px, Date.now()); if (DBG) console.error('[vsp] ' + px.px + ' ERR ' + String(pe.message).slice(0, 40)); }
+  }
+  return { urls: [], fileName: '' };
+}
+function vspRelay(req, res, p) { // /vsp/t/<tok>.m3u8 | /vsp/c/<tok>/<i>.m3u8 | /vsp/s/<tok>/<i>/<n>
+  const base = originOf(req);
+  const sg = p.split('/');
+  const ent = VSP_TOKS.get((sg[3] || '').replace(/\.m3u8$/, ''));
+  if (!ent) { res.writeHead(404, { 'Content-Type': 'text/plain' }); return void res.end('expired'); }
+  ent.ts = Date.now();
+  const tok = (sg[3] || '').replace(/\.m3u8$/, '');
+  const ref = 'https://vidsrc.ir/';
+  if (sg[2] === 't') { // মাস্টার: সার্ভার-ঘূর্ণন (০→১→২) + generate.php-JWT (/২৪-বাউন্ড) + শিশু→আমাদের-/vsp/c
+    (async () => {
+      const start = ent.srv >= 0 ? ent.srv : 0;
+      for (let k = 0; k < 3; k++) {
+        const i = (start + k) % 3;
+        const u = ent.urls[i]; if (!u) continue;
+        try {
+          const o = new URL(u).origin;
+          let jw = VSP_JWT.get(o);
+          if (!jw) { const t2 = (await vspText(o + '/generate.php', ref, ent.px, 10000)).trim(); if (!t2) throw new Error('gen-empty'); jw = { jwt: t2, ts: Date.now() }; VSP_JWT.set(o, jw); }
+          const mm = await vspText(u + '?token=' + jw.jwt, ref, ent.px, 12000);
+          if (mm.indexOf('#EXTM3U') < 0) throw new Error('master-bad:' + mm.slice(0, 20));
+          ent.srv = i; ent.jwt = jw.jwt; // সেগমেন্ট-ও-এই-টোকা-চায় (recipe: segments?token=)
+          const kids = []; let ci = 0;
+          let txt = mm.replace(/^([ \t]*)(\/[^\s"']+|https?:\/\/[^\s"']+)(\r?)$/gm, (m0, ws, cu, cr) => { kids.push(new URL(cu, o).href); return ws + base + '/vsp/c/' + tok + '/' + (ci++) + cr; });
+          ent.kids = kids;
+          if (DBG) console.error('[vsp] মাস্টার-সার্ভার-' + i + ' ✓ ' + kids.length + '-শিশু');
+          res.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl', 'Cache-Control': 'no-store' });
+          return void res.end(txt);
+        } catch (er) { if (DBG) console.error('[vsp] srv-' + i + ' ERR ' + String(er.message).slice(0, 50)); VSP_BAD.set(ent.px || '', Date.now()); }
+      }
+      res.writeHead(502, { 'Content-Type': 'text/plain' }); res.end('no-server');
+    })().catch(() => { try { res.writeHead(502, { 'Content-Type': 'text/plain' }); res.end('relay-err'); } catch (e2) {} });
+    return;
+  }
+  if (sg[2] === 'c') { // শিশু: সেগমেন্ট→/vsp/s
+    const i = Number(sg[4]) || 0; const cu = ent.kids[i];
+    if (!cu) { res.writeHead(404, { 'Content-Type': 'text/plain' }); return void res.end('no-child'); }
+    if (DBG) console.error('[vsp] শিশু-আপস্ট্রিম=' + cu.slice(0, 100));
+    return void vspText(cu, ref, ent.px, 15000).then(ct2 => {
+      if (!ct2 || ct2.indexOf('#EXTM') < 0) throw new Error('child-bad');
+      const segs = []; let ni = 0;
+      const txt = ct2.replace(/^([ \t]*)(\/[^\s"']+|https?:\/\/[^\s"']+)(\r?)$/gm, (m0, ws, su, cr) => { segs.push(new URL(su, cu).href); return ws + base + '/vsp/s/' + tok + '/' + i + '/' + (ni++) + cr; });
+      ent.segs = ent.segs || []; ent.segs[i] = segs;
+      res.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl', 'Cache-Control': 'no-store' });
+      res.end(txt);
+    }).catch(() => { try { res.writeHead(502, { 'Content-Type': 'text/plain' }); res.end('child-upstream'); } catch (e2) {} });
+  }
+  if (sg[2] === 's') { // সেগমেন্ট-পাইপ (রেঞ্জ-অগ্রবর্তী; প্রক্সি-মোডে /২৪-একই-সুরঙ্গ)
+    const i = Number(sg[4]) || 0, n = Number(sg[5]) || 0;
+    let su = (ent.segs || [])[i] && ent.segs[i][n];
+    if (su && ent.jwt && su.indexOf('token=') < 0) su = su + (su.indexOf('?') < 0 ? '?' : '&') + 'token=' + ent.jwt; // v1.15.71: /content/-লিঙ্ক-টোকা-ছাড়া-৪০৩/৪০৪
+    if (!su) { res.writeHead(404, { 'Content-Type': 'text/plain' }); return void res.end('no-seg'); }
+    const rng = req.headers.range || null;
+    if (DBG) console.error('[vsp] সেগ=' + su.slice(0, 90) + ' rng=' + (rng || '-'));
+    const one = () => ent.px ? vspPipe(ent.px, su, rng, res) : fetch(su, { headers: { 'User-Agent': UA, ...(rng ? { Range: rng } : {}) }, signal: AbortSignal.timeout(30000) }).then(up => { // v1.15.71-ফিক্স: সেগমেন্টে-রেফারার-নিষিদ্ধ (আপস্ট্রিম-৪০৩; প্রোব-প্রমাণ ২০০-রেফারার-ছাড়া)
+      const hh2 = { 'Content-Type': 'video/mp2t', 'Accept-Ranges': 'bytes', 'Cache-Control': 'public, max-age=86400' };
+      if (up.headers.get('content-length')) hh2['Content-Length'] = up.headers.get('content-length');
+      if (up.headers.get('content-range')) hh2['Content-Range'] = up.headers.get('content-range');
+      res.writeHead(up.status, hh2);
+      if (!up.body) return void res.end();
+      require('stream').Readable.fromWeb(up.body).pipe(res);
+    });
+    return void one().catch(() => one().catch(() => { try { res.writeHead(502, { 'Content-Type': 'text/plain' }); res.end('seg-upstream'); } catch (e2) {} }));
+  }
+  res.writeHead(404, { 'Content-Type': 'text/plain' }); res.end('nf');
+}
+async function vspStreams(tmdbId, type, s, e, vspq) { // কার্ড: মান-ফাইল-নাম-থেকে (অতিরিক্ত-ফেচ-নয়); vspq=নিজস্ব-মান-ছাঁকনি
+  const t3 = Date.now();
+  try {
+    const key = type + ':' + tmdbId + ':' + (type === 'tv' ? (s || 1) + 'x' + (e || 1) : 'm');
+    const tok = vspMint(key);
+    const ent = VSP_TOKS.get(tok);
+    const mo = VSP_MEMO.get(key);
+    const r = (mo && Date.now() - mo.ts < 1800000) ? mo : await (async () => { const rr = await vspChain(tmdbId, type, s, e, ent); if (rr.urls.length) VSP_MEMO.set(key, { urls: rr.urls, fileName: rr.fileName, ts: Date.now() }); return rr; })();
+    if (!r.urls.length) return [];
+    ent.urls = r.urls; ent.fileName = r.fileName; // v1.15.71-ফিক্স: রিলে-টোকায়-সার্ভার-তালিকা-বাঁধা (আগে-শূন্য-থেকে-যাচ্ছিল → no-server)
+    const qm = /(\d{3,4})p/i.exec(r.fileName);
+    const q = qm ? Math.min(Number(qm[1]), 2160) : 720;
+    if (Array.isArray(vspq) && vspq.length && vspq.indexOf(q) < 0) { if (DBG) console.error('[vsp] ' + key + ' q=' + q + ' ছাঁকা'); return []; }
+    const nm = await nameForTmdb(tmdbId, type).catch(() => '');
+    const T = nm || 'Vidsrc';
+    const epLine = type === 'tv' ? '\u29e0 S' + (s || 1) + 'E' + (e || 1) : '\u29e0 Movie';
+    const txt = '\u29c9 ' + T + ' |\n' + epLine + '\n\u229e Vidsrc \u2317 English';
+    if (DBG) console.error('[vsp] ' + key + ' কার্ড=১ q=' + q + ' সার্ভার=' + r.urls.length + ' @' + (Date.now() - t3) + 'ms');
+    return [{
+      name: '\u25a5 ' + q + ' \u25a5', quality: String(q), url: VSP_PUB + '/vsp/t/' + tok + '.m3u8',
+      title: txt, description: txt,
+      behaviorHints: { notWebReady: true, isBingeable: true, filename: 'vidsrc.m3u8' }, // রিলে-হওয়া — কোনো-হেডার-লাগে-না (সব-IP-বাঁধাই-সার্ভারে)
+      bingeGroup: 'vsp|' + T.toLowerCase() + '::'
+    }];
+  } catch (e2) { if (DBG) console.error('[vsp] ' + tmdbId + ' ERR ' + String(e2 && e2.message).slice(0, 60) + ' @' + (Date.now() - t3) + 'ms'); return []; }
+}
 // ---------- v1.15.40-local: Movies4u (M4U) — lookup.php-সার্চ + hubcloud→gamerxyt→FSL-R2 সরাসরি-MKV ----------
 const M4U_BASE = 'https://new2.movies4u.garden';
 function m4uText(u, ref, tmo) { // ছোট-টেক্সট-GET (r171: মিডিয়া-বাইট-নয়; identity-এনকোডিং — node-নিজে-গানজিপ-ভাঙে-না)
@@ -2129,7 +2347,7 @@ function qToList(q) { // মাল্টি-রেজোলিউশন: অ্�
   const n = Math.min(2160, Math.max(0, Number(q) || 0));
   return n ? QH.filter(h => h <= n) : [];
 }
-const DEFAULT_CFG = { q: 0, sub: 1, cat: 'kd,mv', lang: '', sort: 'pop', era: '', g: [], srv: [], v: 1, nx: 1, nxq: 0, nxl: [], tw: 1, rt: 1, twq: [], rtl: [], mmr: 0, m4u: 1, m4ur: 0, peng: 1, mm: 1, mmrelay: 0 }; // v1.15.54: mmrelay=1 → MM-মিনি-মিডিয়া-আমাদের-সার্ভার-রিলে (ব্যবহারকারীর-IP-CDN-আটকালে) // mmr = Multimovies-রেজোলিউশন-ছাঁকনি (0=সব) // v/nx/tw/rt/mm/m4u/peng = per-source master switches (tw=ToonWorld, rt=RareToons; mm v1.15.67-ফিক্স) // v/nx = per-source master switches; nxq/nxl = NetHex's OWN quality/audio-language filters (independent of the vidy-side q)
+const DEFAULT_CFG = { q: 0, sub: 1, cat: 'kd,mv', lang: '', sort: 'pop', era: '', g: [], srv: [], v: 1, nx: 1, nxq: 0, nxl: [], tw: 1, rt: 1, twq: [], rtl: [], mmr: 0, m4u: 1, m4ur: 0, peng: 1, mm: 1, mmrelay: 0, vsp: 1, vspq: 0 }; // v1.15.71: vsp=Vidsrc-মাস্টার-সুইচ, vspq=Vidsrc-নিজের-মান-ছাঁকনি (0=সব) // v1.15.54: mmrelay=1 → MM-মিনি-মিডিয়া-আমাদের-সার্ভার-রিলে (ব্যবহারকারীর-IP-CDN-আটকালে) // mmr = Multimovies-রেজোলিউশন-ছাঁকনি (0=সব) // v/nx/tw/rt/mm/m4u/peng = per-source master switches (tw=ToonWorld, rt=RareToons; mm v1.15.67-ফিক্স) // v/nx = per-source master switches; nxq/nxl = NetHex's OWN quality/audio-language filters (independent of the vidy-side q)
 function parseCfgFromObj(o) {
   const c = Object.assign({}, DEFAULT_CFG, { g: [] });
   if (o) {
@@ -2155,6 +2373,8 @@ function parseCfgFromObj(o) {
     if (o.peng === 0 || o.peng === '0') c.peng = 0; // v1.15.47: Arctic-মাস্টার-সুইচ
     if (o.mm === 0 || o.mm === '0') c.mm = 0; // v1.15.67-debug: MM-মাস্টার-সুইচ (v1.15.28-থেকে-মৃত-ছিল — parseCfg-তে-লাইন-ই-ছিল-না)
     if (o.mmrelay === 1 || o.mmrelay === '1') c.mmrelay = 1; // v1.15.54: MM-রিলে-সুইচ
+    if (o.vsp === 0 || o.vsp === '0') c.vsp = 0; // v1.15.71: Vidsrc-মাস্টার-সুইচ
+    if (o.vspq !== undefined && o.vspq !== null && o.vspq !== '') c.vspq = qToList(o.vspq).filter(x => [480, 720, 1080, 2160].indexOf(x) >= 0).sort((a, b) => b - a).slice(0, 4); // v1.15.71: Vidsrc-নিজের-মান-ছাঁকনি (nxq-একই-স্ট্রিং→তালিকা-পথ)
   }
   return c;
 }
@@ -2217,7 +2437,7 @@ function yearForTmdb(tmdbId, type) { // মুভি=release_date, সিরি�
     YEAR_CACHE.set(k, y); return y;
   }).catch(() => { YEAR_CACHE.set(k, 0); return 0; });
 }
-const UNIFY_SRV = { peng: 'Arctic', sky: 'Arctic', m4u: 'Movies4u', mm: 'Multimovies', tw: 'ToonWorld', rt: 'RareToons' };
+const UNIFY_SRV = { peng: 'Arctic', sky: 'Arctic', m4u: 'Movies4u', mm: 'Multimovies', tw: 'ToonWorld', rt: 'RareToons', vsp: 'Vidsrc' };
 async function unifyCards(cards, meta) { // শুধু-টেক্সট-বদলায়: name/quality/url/bingeGroup/_lang/_hq/সাব — সব-অস্পৃশ্য (ফিল্টার-নিরাপদ)
   try {
     if (!cards || !cards.length || !meta || !meta.tmdbId) return cards;
@@ -2264,9 +2484,10 @@ const server = http.createServer((req, res) => {
     if (cm2) { cfg = decodeCfg(cm2[1]); p = cm2[2]; cfgged = true; }
     else {
       const qs = new URL(req.url, 'http://x').searchParams;
-      if ([...qs.keys()].length) cfg = parseCfgFromObj({ q: qs.get('q') || qs.get('maxq'), sub: qs.get('sub') === '0' ? 0 : 1, cat: qs.get('cat') || '', lang: qs.get('lang') || '', sort: qs.get('sort') || '', era: qs.get('era') || '', g: (qs.get('g') || '').split(',').filter(Boolean), srv: (qs.get('srv') || '').split(',').filter(Boolean), v: qs.get('v') === '0' ? 0 : undefined, nx: qs.get('nx') === '0' ? 0 : undefined, tw: qs.get('tw') === '0' ? 0 : undefined, rt: qs.get('rt') === '0' ? 0 : undefined, m4u: qs.get('m4u') === '0' ? 0 : undefined, m4ur: qs.get('m4ur') || undefined, peng: qs.get('peng') === '0' ? 0 : undefined, mm: qs.get('mm') === '0' ? 0 : undefined, mmrelay: qs.get('mmrelay') === '1' ? 1 : undefined, rtl: qs.get('rtl') ? qs.get('rtl').split(',') : undefined, nxq: qs.get('nxq') || undefined, nxl: qs.get('nxl') ? qs.get('nxl').split(',') : undefined });
+      if ([...qs.keys()].length) cfg = parseCfgFromObj({ q: qs.get('q') || qs.get('maxq'), sub: qs.get('sub') === '0' ? 0 : 1, cat: qs.get('cat') || '', lang: qs.get('lang') || '', sort: qs.get('sort') || '', era: qs.get('era') || '', g: (qs.get('g') || '').split(',').filter(Boolean), srv: (qs.get('srv') || '').split(',').filter(Boolean), v: qs.get('v') === '0' ? 0 : undefined, nx: qs.get('nx') === '0' ? 0 : undefined, tw: qs.get('tw') === '0' ? 0 : undefined, rt: qs.get('rt') === '0' ? 0 : undefined, m4u: qs.get('m4u') === '0' ? 0 : undefined, m4ur: qs.get('m4ur') || undefined, peng: qs.get('peng') === '0' ? 0 : undefined, mm: qs.get('mm') === '0' ? 0 : undefined, mmrelay: qs.get('mmrelay') === '1' ? 1 : undefined, vsp: qs.get('vsp') === '0' ? 0 : undefined, vspq: qs.get('vspq') || undefined, rtl: qs.get('rtl') ? qs.get('rtl').split(',') : undefined, nxq: qs.get('nxq') || undefined, nxl: qs.get('nxl') ? qs.get('nxl').split(',') : undefined });
     }
     if (!cfg) cfg = Object.assign({}, DEFAULT_CFG, { g: [], srv: [] });
+    VSP_PUB = originOf(req) || VSP_PUB; // v1.15.71: রিলে-বেস (x-forwarded-host-সচেতন)
     if (p === '/' || p === '/config' || p === '/configure') return sendFile2(res, 'config.html');
     if (p === '/manifest.json') return sendJson(res, 200, manifest(cfg, originOf(req), cfgged));
     if (p === '/logo.png') {
@@ -2283,11 +2504,12 @@ const server = http.createServer((req, res) => {
         return res.end(lb);
       } catch (eL) { return sendJson(res, 404, { error: 'no rt logo' }); }
     }
-    if (p === '/_health') return sendJson(res, 200, { ok: 1, version: VERSION, pool: POOL.length, pxbench: POOL.filter(c => PX_SITE.has(c.px)).length, memo: memo.size, nx: NEXBASE ? 1 : 0, nxpool: NXBENCH, nxwaves: NXWAVES, nxsize: NXSIZE, tw: TWBASE ? 1 : 0, rt: RTBASE ? 1 : 0 }); // v1.15.18: pxbench=সাইট-প্রমাণিত-বেঞ্চ (v1.15.8: nxpool=MB-বেঞ্চ)
+    if (p === '/_health') return sendJson(res, 200, { ok: 1, version: VERSION, pool: POOL.length, pxbench: POOL.filter(c => PX_SITE.has(c.px)).length, memo: memo.size, nx: NEXBASE ? 1 : 0, nxpool: NXBENCH, nxwaves: NXWAVES, nxsize: NXSIZE, tw: TWBASE ? 1 : 0, rt: RTBASE ? 1 : 0, vsp: VSP_POOL.length }); // v1.15.71: vsp=Vidsrc-পুল-আকার // v1.15.18: pxbench=সাইট-প্রমাণিত-বেঞ্চ (v1.15.8: nxpool=MB-বেঞ্চ)
     if (p === '/_pool') return sendJson(res, 200, POOL.map(c => Object.assign({}, c, PX_RUN.get(c.px) || {}))); // v1.15.0: রানটাইম-স্বাস্থ্য-সহ
     if (p === '/_nxring') { if (!NEXBASE) return sendJson(res, 200, { off: 1 }); directGet(NEXBASE + '/debug/ring', 4000).then(b => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(b); }).catch(() => { res.writeHead(200, { 'content-type': 'application/json' }); res.end('{"err":1}'); }); return; } // v2.10.2 চাইল্ড-রিজলভ-ধাপ-প্রমাণ
     if (p === '/_log') return sendJson(res, 200, reqLog.slice(-40).reverse());
     if (p === '/_servers') return sendJson(res, 200, { order: srvOrder(), scores: SRV_SCORE }); // কনফিগ-পেজের-লাইভ-হেলথ
+    if (VSP_PUB && p.indexOf('/vsp/') === 0) return void vspRelay(req, res, p); // v1.15.71: Vidsrc-রিলে (/vsp/t|c|s)
     const mmR = p.match(/^\/mm\/([A-Za-z0-9_-]{8,2400})\/mini\.m3u8$/); // v1.15.30: signed bridge master keys run ~1400 chars
     const rel = !!(cfg && cfg.mmrelay === 1) || /[?&]r=1/.test(req.url); const origin2 = originOf(req); // v1.15.54: cfg-বা-মিনি-ইউআরএলে ?r=1
     if (mmR) return (async () => { // mini-master — resolution pinned + audio intact; fresh fetch per request (not the stream-result cache)
@@ -2398,8 +2620,9 @@ const server = http.createServer((req, res) => {
       const m4uP = !(cfg && cfg.m4u === 0) ? m4uStreams(Number(m[1]), '', 'movie', 0, 0, originOf(req), cfg && cfg.m4ur || 0).catch(() => []) : null; // v1.15.40-local: Movies4u
       const pengP = !(cfg && cfg.peng === 0) ? penguStreams(Number(m[1]), '', 'movie', 0, 0, originOf(req), cfg && cfg.m4ur || 0).catch(() => []) : null; // v1.15.47: Arctic
       const skyP = !(cfg && cfg.peng === 0) ? skyStreams(Number(m[1]), '', 'movie', 0, 0, originOf(req), cfg && cfg.m4ur || 0).catch(() => []) : null; // v1.15.50: Arctic-স্বাধীন (SkymoviesHD)
+      const vspP = !(cfg && cfg.vsp === 0) ? vspStreams(Number(m[1]), 'movie', 0, 0, cfg && cfg.vspq || []).catch(() => []) : null; // v1.15.71: Vidsrc
       kickSubs('tmdb' + m[1], 'movie', null, null, cfg);
-      return withDeadline(withSources(vOn ? getSources(Number(m[1]), 'movie', null, null, '', cfg, tp) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: pengP, key: 'peng' }, { p: skyP, key: 'sky' },], cfg, t0), 11900 /* v1.15.26 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
+      return withDeadline(withSources(vOn ? getSources(Number(m[1]), 'movie', null, null, '', cfg, tp) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: pengP, key: 'peng' }, { p: skyP, key: 'sky' }, { p: vspP, key: 'vsp' },], cfg, t0), 11900 /* v1.15.26 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
 cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'movie', s: 0, e: 0 }).then(u => sendStreams(res, req.url, p, Date.now() - t0, u, RVA)); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }
@@ -2414,10 +2637,11 @@ cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'movie', s: 0, e: 0 }
       const m4uP = !(cfg && cfg.m4u === 0) ? m4uStreams(Number(m[1]), '', 'series', Number(m[2] || 1), Number(m[3] || 1), originOf(req), cfg && cfg.m4ur || 0).catch(() => []) : null; // v1.15.40-local
       const pengP = !(cfg && cfg.peng === 0) ? penguStreams(Number(m[1]), '', 'series', Number(m[2] || 1), Number(m[3] || 1), originOf(req), cfg && cfg.m4ur || 0).catch(() => []) : null; // v1.15.47: Arctic
       const skyP = !(cfg && cfg.peng === 0) ? skyStreams(Number(m[1]), '', 'series', Number(m[2] || 1), Number(m[3] || 1), originOf(req), cfg && cfg.m4ur || 0).catch(() => []) : null; // v1.15.50: Arctic-স্বাধীন (SkymoviesHD)
+      const vspP = !(cfg && cfg.vsp === 0) ? vspStreams(Number(m[1]), 'tv', Number(m[2] || 1), Number(m[3] || 1), cfg && cfg.vspq || []).catch(() => []) : null; // v1.15.71: Vidsrc
       if (nxOn) nxPrewarm('series', String(m[1]), Number(m[2] || 1), Number(m[3] || 1));
       twRtPrewarm(tp, 'series', Number(m[2] || 1), Number(m[3] || 1));
       kickSubs('tmdb' + m[1], 'series', Number(m[2] || 1), Number(m[3] || 1), cfg);
-      return withDeadline(withSources(vOn ? getSources(Number(m[1]), 'tv', Number(m[2] || 1), Number(m[3] || 1), '', cfg, tp) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: pengP, key: 'peng' }, { p: skyP, key: 'sky' },], cfg, t0), 11900 /* v1.15.26 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
+      return withDeadline(withSources(vOn ? getSources(Number(m[1]), 'tv', Number(m[2] || 1), Number(m[3] || 1), '', cfg, tp) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: pengP, key: 'peng' }, { p: skyP, key: 'sky' }, { p: vspP, key: 'vsp' },], cfg, t0), 11900 /* v1.15.26 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
 cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'series', s: Number(m[2] || 1), e: Number(m[3] || 1) }).then(u => sendStreams(res, req.url, p, Date.now() - t0, u, RVA)); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }
@@ -2433,8 +2657,9 @@ cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'series', s: Number(m
       const m4uP = !(cfg && cfg.m4u === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? m4uStreams(info.id, info.name || '', 'movie', 0, 0, originOf(req), cfg && cfg.m4ur || 0).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.40-local
       const pengP = !(cfg && cfg.peng === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? penguStreams(info.id, info.name || '', 'movie', 0, 0, originOf(req), cfg && cfg.m4ur || 0).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.47: Arctic
       const skyP = !(cfg && cfg.peng === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? skyStreams(info.id, info.name || '', 'movie', 0, 0, originOf(req), cfg && cfg.m4ur || 0).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.50: Arctic-স্বাধীন (SkymoviesHD)
+      const vspP = !(cfg && cfg.vsp === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? vspStreams(info.id, 'movie', 0, 0, cfg && cfg.vspq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.71: Vidsrc
       kickSubs(m[1], 'movie', null, null, cfg);
-      return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'movie', null, null, info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: pengP, key: 'peng' }, { p: skyP, key: 'sky' },], cfg, t0), 11900 /* v1.15.26 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
+      return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'movie', null, null, info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: pengP, key: 'peng' }, { p: skyP, key: 'sky' }, { p: vspP, key: 'vsp' },], cfg, t0), 11900 /* v1.15.26 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
 cards => { Promise.resolve(infoP).then(info => unifyCards(cards, { tmdbId: info && info.id, type: 'movie', s: 0, e: 0, year: info && info.year })).then(u => sendStreams(res, req.url, p, Date.now() - t0, u, RVA)); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }
@@ -2450,10 +2675,11 @@ cards => { Promise.resolve(infoP).then(info => unifyCards(cards, { tmdbId: info 
       const m4uP = !(cfg && cfg.m4u === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? m4uStreams(info.id, info.name || '', 'series', Number(m[2]), Number(m[3]), originOf(req), cfg && cfg.m4ur || 0).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.40-local
       const pengP = !(cfg && cfg.peng === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? penguStreams(info.id, info.name || '', 'series', Number(m[2]), Number(m[3]), originOf(req), cfg && cfg.m4ur || 0).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.47: Arctic
       const skyP = !(cfg && cfg.peng === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? skyStreams(info.id, info.name || '', 'series', Number(m[2]), Number(m[3]), originOf(req), cfg && cfg.m4ur || 0).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.50: Arctic-স্বাধীন (SkymoviesHD)
+      const vspP = !(cfg && cfg.vsp === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? vspStreams(info.id, 'tv', Number(m[2]), Number(m[3]), cfg && cfg.vspq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.71: Vidsrc
       if (nxOn) nxPrewarm('series', m[1], Number(m[2]), Number(m[3]));
       twRtPrewarm(nmP, 'series', Number(m[2]), Number(m[3]));
       kickSubs(m[1], 'series', Number(m[2]), Number(m[3]), cfg);
-      return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'tv', Number(m[2]), Number(m[3]), info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: pengP, key: 'peng' }, { p: skyP, key: 'sky' },], cfg, t0), 11900 /* v1.15.26 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
+      return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'tv', Number(m[2]), Number(m[3]), info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: pengP, key: 'peng' }, { p: skyP, key: 'sky' }, { p: vspP, key: 'vsp' },], cfg, t0), 11900 /* v1.15.26 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
 cards => { Promise.resolve(infoP).then(info => unifyCards(cards, { tmdbId: info && info.id, type: 'series', s: Number(m[2]), e: Number(m[3]), year: info && info.year })).then(u => sendStreams(res, req.url, p, Date.now() - t0, u, RVA)); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }
@@ -2469,10 +2695,11 @@ cards => { Promise.resolve(infoP).then(info => unifyCards(cards, { tmdbId: info 
       const m4uP = !(cfg && cfg.m4u === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? m4uStreams(info.id, info.name || '', 'series', 1, 1, originOf(req), cfg && cfg.m4ur || 0).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.40-local
       const pengP = !(cfg && cfg.peng === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? penguStreams(info.id, info.name || '', 'series', 1, 1, originOf(req), cfg && cfg.m4ur || 0).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.47: Arctic
       const skyP = !(cfg && cfg.peng === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? skyStreams(info.id, info.name || '', 'series', 1, 1, originOf(req), cfg && cfg.m4ur || 0).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.50: Arctic-স্বাধীন (SkymoviesHD)
+      const vspP = !(cfg && cfg.vsp === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? vspStreams(info.id, 'tv', 1, 1, cfg && cfg.vspq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.71: Vidsrc
       if (nxOn) nxPrewarm('series', m[1], 1, 1);
       twRtPrewarm(nmP, 'series', 1, 1);
       kickSubs(m[1], 'series', 1, 1, cfg);
-      return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'tv', 1, 1, info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: pengP, key: 'peng' }, { p: skyP, key: 'sky' },], cfg, t0), 11900 /* v1.15.26 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
+      return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'tv', 1, 1, info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: pengP, key: 'peng' }, { p: skyP, key: 'sky' }, { p: vspP, key: 'vsp' },], cfg, t0), 11900 /* v1.15.26 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
 cards => { Promise.resolve(infoP).then(info => unifyCards(cards, { tmdbId: info && info.id, type: 'series', s: 1, e: 1, year: info && info.year })).then(u => sendStreams(res, req.url, p + ' [no-s:e]', Date.now() - t0, u, RVA)); },
         e => { logReq(p + ' [no-s:e]', Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }

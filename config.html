@@ -272,6 +272,23 @@ h1 .g{color:var(--acc)}
     </div>
   </div>
 
+  <div class="card src-card nx" id="cardVS">
+    <div class="src-hd">
+      <div class="tile nx" style="background:#241a33;color:#c9a7ff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:20px;letter-spacing:1px">VS</div>
+      <div class="s-body">
+        <div class="s-name">Vidsrc <span class="badge n">HLS &middot; English</span></div>
+        <div class="s-sub">vidsrc.ir chain &middot; own IP-bound proxy pool &middot; full relay</div>
+      </div>
+      <div class="sw nx on" id="swVS"></div>
+    </div>
+
+    <div class="fzone">
+      <div class="flab">Resolution <em>&middot; vidsrc-only filter</em></div>
+      <div class="chips" id="vspChips"></div>
+      <div class="fhint" style="margin-top:9px">Pick qualities — only Vidsrc cards at those stay. "All" shows everything.</div>
+    </div>
+  </div>
+
   <div class="seclab">Preview</div>
   <p class="sub" style="margin-bottom:4px">How stream cards will look in your app — both sources, one anatomy:</p>
   <div class="card">
@@ -282,6 +299,7 @@ h1 .g{color:var(--acc)}
       <div class="pcard nxc" id="pvT"><div class="dot n"></div><div class="pbody"><div class="hd n" id="pvTh"></div><div class="t" id="pvTt"></div></div><div class="q n" id="pvTq"></div></div>
       <div class="pcard nxc" id="pvM"><div class="dot n"></div><div class="pbody"><div class="hd n" id="pvMh"></div><div class="t" id="pvMt"></div></div><div class="q n" id="pvMq"></div></div>
       <div class="pcard nxc" id="pv4"><div class="dot n"></div><div class="pbody"><div class="hd n" id="pv4h"></div><div class="t" id="pv4t"></div></div><div class="q n" id="pv4q"></div></div>
+      <div class="pcard nxc" id="pvS"><div class="dot n"></div><div class="pbody"><div class="hd n" id="pvSh"></div><div class="t" id="pvSt"></div></div><div class="q n" id="pvSq"></div></div>
     </div>
   </div>
 
@@ -306,7 +324,7 @@ h1 .g{color:var(--acc)}
   var SRVS=[["miami","Miami","Primary · always-on workhorse"],["boise","Boise","Primary · up to 4K"],["atlanta","Atlanta","Primary · official subtitles"],["phoenix","Phoenix","Extra · 1080p mirror"],["dallas","Dallas","Extra · Auto-HLS feed"],["austin","Austin","Extra · audio variants (Hindi/English)"],["seattle","Seattle","Backup · Auto-HLS feed"],["delhi","Delhi","Extra · multi-audio (Hindi/English)"],["munich","Munich","Extra · 1080p (EU)"],["paris","Paris","Extra · always-on single feed"],["orlando","Orlando","Extra · 1080p feed"],["reno","Reno","Extra · Auto-HLS feed"],["oakland","Oakland","Extra · Auto-HLS feed"],["vegas","Vegas","Extra · Vidara feed"],["cancun","Cancun","Extra · Vimeos feed"],["tampa","Tampa","Extra · Auto-HLS feed"]];
   var LANGS=[["original","Original"],["english","English"],["hindi","Hindi"],["spanish","Spanish"],["russian","Russian"],["japanese","Japanese"],["tamil","Tamil"],["portuguese","Portuguese (BR)"],["french","French"],["german","German"],["korean","Korean"],["arabic","Arabic"]];
 
-  var st={ v:1, q:[], sub:1, srv:SRVS.map(function(x){return x[0];}), nx:1, nxq:[], nxl:[], rt:1, rtl:[], tw:1, twq:[], mm:1, mmr:0, m4u:1, m4ur:0, peng:1 };
+  var st={ v:1, q:[], sub:1, srv:SRVS.map(function(x){return x[0];}), nx:1, nxq:[], nxl:[], rt:1, rtl:[], tw:1, twq:[], mm:1, mmr:0, m4u:1, m4ur:0, peng:1, vsp:1, vspq:[] };
 
   function b64u(o){return btoa(unescape(encodeURIComponent(JSON.stringify(o)))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');}
   function base(){return location.origin;}
@@ -333,6 +351,8 @@ h1 .g{color:var(--acc)}
     if(st.m4u===0)c.m4u=0;
     else if(st.m4ur)c.m4ur=st.m4ur;
     if(st.peng===0)c.peng=0;
+    if(st.vsp===0)c.vsp=0;
+    else if(st.vspq.length)c.vspq=st.vspq.slice();
     var u=base()+(Object.keys(c).length?'/cfg/'+b64u(c):'')+'/manifest.json';
     document.getElementById('url').value=u;
     document.getElementById('inst').href='stremio://'+u.replace(/^https?:\/\//,'');
@@ -370,6 +390,10 @@ h1 .g{color:var(--acc)}
     document.getElementById('pv4t').textContent='\u29c9 Deadpool & Wolverine | 2024 |\n\u29e0 Movie\n\u229e Movies4u \u00b7 HDR10+/DV \u00b7 MKV \u2317 Multi-Audio+Atmos';
     document.getElementById('pv4q').textContent=st.m4ur?('cap '+st.m4ur+'p'):'All';
     document.getElementById('pvTq').textContent=st.twq.length?st.twq.slice().sort(function(a,b){return b-a;}).join(', '):'All';
+    document.getElementById('pvS').style.display=st.vsp?'':'none';
+    document.getElementById('pvSh').textContent='\u25a5 1080 \u25a5';
+    document.getElementById('pvSt').textContent='\u29c9 The Dark Knight | 2008 |\n\u29e0 Movie\n\u229e Vidsrc \u2317 English';
+    document.getElementById('pvSq').textContent=st.vspq.length?st.vspq.slice().sort(function(a,b){return b-a;}).join(', '):'All';
   }
 
   /* resolution chips factory (per source) */
@@ -534,6 +558,35 @@ h1 .g{color:var(--acc)}
     });
   }
   drawM4UR();
+
+  /* vidsrc master switch */
+  var swVS=document.getElementById('swVS'), cardVS=document.getElementById('cardVS');
+  swVS.onclick=function(){
+    st.vsp=st.vsp?0:1;
+    swVS.classList.toggle('on',!!st.vsp);
+    cardVS.classList.toggle('off',!st.vsp);
+    rebuild();
+  };
+
+  /* vidsrc resolution filter (multi pick) */
+  var vspEl=document.getElementById('vspChips');
+  function drawVSP(){
+    vspEl.innerHTML='';
+    var all=document.createElement('div');all.className='chip all'+(st.vspq.length?'':' on');all.textContent='All';
+    all.onclick=function(){st.vspq=[];drawVSP();rebuild();};
+    vspEl.appendChild(all);
+    [[1080,'1080p'],[720,'720p'],[480,'480p']].forEach(function(l){
+      var c=document.createElement('div');c.className='chip'+(st.vspq.indexOf(l[0])>=0?' on':'');c.textContent=l[1];
+      c.onclick=function(){
+        var i=st.vspq.indexOf(l[0]);
+        if(i>=0)st.vspq.splice(i,1);else st.vspq.push(l[0]);
+        if(st.vspq.length===3)st.vspq=[];
+        drawVSP();rebuild();
+      };
+      vspEl.appendChild(c);
+    });
+  }
+  drawVSP();
 
   /* pengu master switch */
   var swP=document.getElementById('swP'), cardP=document.getElementById('cardP');
