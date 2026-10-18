@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.50';
+const VERSION = '1.15.51';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -1246,12 +1246,21 @@ async function mmVidbolt(tmdbId, isSeries, s, e, ms) { // v1.15.28: the vidbolt 
             if (!found) push(0, sc0.url, VB_REF, 0, lang0, atag);
           }
           mmPut(MM_VC, q, sc0.url); // seed the sticky memory — a later rotation gap can still serve a card
-          for (let i2 = 1; i2 < hlsS.length; i2++) { // labels only — no worker fetch per source
-            const sc2 = hlsS[i2];
-            const hq2 = parseInt(String(sc2.quality || ''), 10) || 0;
-            const lang2 = String(sc2.language || '').trim();
-            push(hq2, sc2.url, VB_REF, 0, lang2, '', 0, 'm' + i2 + 'h' + hq2); // v1.15.38: DIRECT
-          }
+        }
+        // v1.15.51 (ইউজার: "Multimovies single audio er sokol file dicche ni"): প্রতিটা hls-সোর্স = আলাদা single-audio ফাইল (Ribbon-প্রমাণ: ৯-সোর্স =
+        // Japanese/Arabic/French/Hindi/Spanish/Tagalog…)। আগে labels-লুপ প্রথম-মাস্টার-প্রমাণের-ভেতরে ছিল — প্রমাণ-ফেল হলে সব-ভাষা মারা যেত;
+        // এখন বাইরে: sc0-প্রমাণ পাস-বা-ফেল যা-ই হোক, সব-ভাষা-কার্ড যায়। কার্ড=mini (mini-endpoint প্লেব্যাকে নিজেই রিবিল্ড করে: mmGrabMaster+pool-rescue+vbq-rescue;
+        // stream-টাইমে শূন্য worker-হিট — r1.15.31-রেট-লিমিট-নিরাপদ; tile-প্রোটেক্টেড):
+        const langSeen = new Map();
+        for (let i2 = 0; i2 < hlsS.length; i2++) {
+          const sc2 = hlsS[i2];
+          if (!sc2 || !sc2.url || oseen.has(sc2.url)) continue;
+          const lang2 = String(sc2.language || '').trim();
+          if ((langSeen.get(lang2) || 0) >= 2) continue; // প্রতি-ভাষা-সর্বোচ্চ-২ (মিরর-বিস্ফোরণ-নয়)
+          langSeen.set(lang2, (langSeen.get(lang2) || 0) + 1);
+          const hq2 = parseInt(String(sc2.quality || ''), 10) || hq0 || 0;
+          if (i2 === 0 && pl && pl.indexOf('#EXTM') >= 0) continue; // sc0-প্রমাণ-পাস → ওর-কার্ড উপরেই-গেছে (whole/variants)
+          push(hq2, sc2.url, VB_REF, 0, lang2, '', 1); // mini — key=url (প্রতি-ভাষা-ইউনিক); vbq-সহ-রিবিল্ট
         }
       }
       break; // a productive draw is enough
@@ -1271,7 +1280,7 @@ async function mmStreams(tmdbId, title, type, s, e, origin, maxh) { // v1.15.28:
     let servers = [];
     if (idxTxt) {
       if (isSeries) { const d = (() => { try { return JSON.parse(idxTxt); } catch { return null; } })(); const ep = String(parseInt(e, 10) || 1); if (d && typeof d[ep] === 'string') servers = [d[ep]]; } // the exact episode only
-      else { const txt = idxTxt.trim(); if (txt && /^https?:/.test(txt)) servers = [txt.split('\n')[0].trim()]; }
+      else { const txt = idxTxt.trim(); if (txt && /^https?:/.test(txt)) servers = txt.split('\n').map(z => z.trim()).filter(z => /^https?:\/\//.test(z)).slice(0, 6); } // v1.15.51: সব-সার্ভার-লাইন (আগে শুধু-১ম-লাইন — বাকি single-audio-সার্ভার হারাত)
     }
     servers = servers.slice(0, 6);
     const lists = servers.length ? await Promise.all(servers.map(su => woFetch(su, Math.min(6500, left())).then(x => x.ok ? x.text() : '').catch(() => ''))) : [];
@@ -1314,7 +1323,7 @@ async function mmStreams(tmdbId, title, type, s, e, origin, maxh) { // v1.15.28:
     try { const vbl = await vbP; for (const v of (vbl || [])) { if (!v || !v.url) continue; const vk2 = v.url + '|' + (v.h | 0) + (v.mini ? 'm' : ''); if (seen.has(vk2)) continue; seen.add(vk2); raws.push(v); } } catch { } // vidbolt merge — dedup per url+height so per-quality minis all survive
     if (DBG) console.error('[mm] ' + tmdbId + '/' + (isSeries ? 'S' + (s || 1) + 'E' + (e || 1) : 'movie') + ' servers=' + servers.length + ' variants=' + raws.length + ' @' + (Date.now() - t3) + 'ms');
     const fvars = maxh ? raws.filter(x => !x.h || x.h <= maxh) : raws; // v1.15.39: config-রেজোলিউশন-ফিল্টার — অজানা-উচ্চতা (0) সবসময়-থাকে
-    const vars = fvars.slice().sort((a, b) => b.h - a.h).slice(0, 12);
+    const vars = fvars.slice().sort((a, b) => b.h - a.h).slice(0, 16); // v1.15.51: 12→16 (সব-ভাষা-ফাইল-ঢোকে)
     if (!vars.length) return [];
     const subs = await woSubs(tmdbId, type, s, e, left()).catch(() => []);
     const T = String(title || 'Multimovies');
@@ -1448,12 +1457,14 @@ async function m4uStreams(tmdbId, title, type, s, e, origin, maxh) { // maxh: cf
     }
     if (!rows.length) { if (DBG) console.error('[m4u] no-hubcloud-rows @' + (Date.now() - t3) + 'ms'); return []; }
     // ছাঁকনি (cfg.mmr — MM-ফিল্টার-পুনঃব্যবহার): অজানা-উচ্চতা-সবসময়-থাকে
-    const frows = (maxh ? rows.filter(x => !x.h || x.h <= maxh) : rows).sort((a, b) => b.h - a.h).slice(0, 3);
-    for (const r of frows) { // ধাপ-৪: hubcloud → gamerxyt → FSL-R2 (সর্বোচ্চ-২টা-ফাইল-পূর্ণ-রেজলভ):
-      if (left() < 1800) break;
+    const frows = (maxh ? rows.filter(x => !x.h || x.h <= maxh) : rows).sort((a, b) => b.h - a.h).slice(0, 5); // v1.15.51: 3→5-সারি (সাইটের-সব-রেজো-সারি)
+    const oneRow = async r => { // ধাপ-৪: hubcloud → gamerxyt → FSL-R2 — v1.15.51: সমান্তরাল-সারি (ধারাবাহিকে-বাজেটে-মাত্র-২-সারি-শেষ-হত), প্রতি-সারিতে-সর্বোচ্চ-২-pd:
+      const cands = [];
+      try {
+      if (left() < 1800) return cands;
       const hc = await m4uText('https://hubcloud.ist/' + (r.seg || 'drive') + '/' + r.id, lnk, Math.min(4200, left())).catch(() => '');
       const gx = (hc.match(/https:\/\/gamerxyt\.com\/hubcloud\.php\?[^"]+/) || [])[0];
-      if (!gx) continue;
+      if (!gx) return cands;
       const gpage = await m4uText(gx, 'https://hubcloud.ist/', Math.min(4200, left())).catch(() => '');
       // seek-নীতি (ইউজার-নির্দেশ + সাইটের-নিজের-নোট "Resume Not Supported in 10Gbps"):
       // কার্ড-যোগ্য: pixeldrain → FSL → FSL v2 (যেকোনো-signed-S3)। কখনোই-নয়: 10Gbps(gpdl/pixel.hubcloud→workers), Buzz, Telegram।
@@ -1465,7 +1476,7 @@ async function m4uStreams(tmdbId, title, type, s, e, origin, maxh) { // maxh: cf
         let wantRes = '';
         if (s3s[0]) { const pv0 = await m4uAlive(s3s[0]).catch(() => null); wantRes = ((pv0 && pv0.name || '').match(/(\d{3,4})\s*p/i) || [])[1] || ''; }
         if (!wantRes) wantRes = (r.lbl.match(/(\d{3,4})\s*p/i) || [])[1] || '';
-        for (let qi = 0; qi < pdIds.length && left() > 1200; qi++) { // পরপর-প্রোব; মিল=রেজো-অথবা-হুবহু-সাইজ (CF-ক্যাশে-disposition-লুকালেও-সাইজ-প্রমাণ)
+        for (let qi = 0; qi < pdIds.length && left() > 1200 && cands.length < 2; qi++) { // পরপর-প্রোব; মিল=রেজো-অথবা-হুবহু-সাইজ; v1.15.51: ২-ম্যাচ-পর্যন্ত (আগে-১-এ-ব্রেক)
           const pv = await pdProbe('https://pixeldrain.dev/api/file/' + pdIds[qi]).catch(() => null);
           if (DBG) console.error('[m4u]   pd[' + qi + '] alive=' + (pv && pv.alive) + ' total=' + (pv && pv.total) + ' name=' + ((pv && pv.name) || '').slice(0, 40));
           if (!pv || !pv.alive) continue;
@@ -1473,15 +1484,13 @@ async function m4uStreams(tmdbId, title, type, s, e, origin, maxh) { // maxh: cf
           let sameSize = false;
           if (!sameSize && pv.total && s3s[0]) { const sv = await m4uAlive(s3s[0]).catch(() => null); sameSize = !!(sv && sv.total && sv.total === pv.total); }
           if (wantRes && pres && pres !== wantRes && !sameSize) continue; // ভিন্ন-রেজো-মিরর-নয়
-          furl = 'https://pixeldrain.dev/api/file/' + pdIds[qi]; // ?download-ছাড়া = inline-disposition (প্লেয়ারে-সিক-বান্ধব)
-          fdec = (pv.name || '').replace(/\+/g, ' ');
-          fsrc = 'pd';
+          const pnm = (pv.name || '').replace(/\+/g, ' ');
+          cands.push({ h: parseInt((pnm.match(/(\d{3,4})\s*p/i) || [])[1] || '0', 10) || r.h, url: 'https://pixeldrain.dev/api/file/' + pdIds[qi], kind: 'file', spec: pnm, aud: '', dv: '' }); // ?download-ছাড়া = inline (সিক-বান্ধব)
           if (DBG) console.error('[m4u] pd-mirror ' + (pres || (pv.total ? Math.round(pv.total / 1e8) / 10 + 'G' : '?')) + ' @' + (Date.now() - t3) + 'ms');
-          break;
         }
       }
       // ২) FSL / FSL v2 — signed-S3 (HEAD-403-সত্ত্বেও-GET-রেঞ্জ-চলে; ইউজার-প্লেয়ারে-সিক-চলে):
-      if (!furl && s3s.length && left() > 1500) {
+      if (!cands.length && s3s.length && left() > 1500) { // v1.15.51: FSL-শুধু-pd-শূন্যে (একই-ফাইলের-মিরর-ডুপ-নয়)
         for (let si = 0; si < s3s.length && left() > 1200; si++) {
           const sv = await m4uAlive(s3s[si]).catch(() => null);
           if (DBG) console.error('[m4u]   s3[' + si + '] alive=' + (sv && sv.alive) + ' name=' + ((sv && sv.name) || '').slice(0, 44));
@@ -1492,21 +1501,24 @@ async function m4uStreams(tmdbId, title, type, s, e, origin, maxh) { // maxh: cf
           break;
         }
       }
-      if (!furl) { if (DBG) console.error('[m4u] no-seekable ' + r.id + ' @' + (Date.now() - t3) + 'ms'); continue; }
-      if (!fdec) fdec = ((hc.match(/<title>([^<]{10,240})/) || [])[1] || '').replace(/&#038;|&amp;/g, '&').trim();
-      const fh = parseInt((fdec.match(/(\d{3,4})\s*p/i) || [])[1] || '0', 10);
-      const useH = fh || r.h;
-      if (out.some(o => o.h === useH && o.kind !== 'hls')) continue; // একই-আসল-রেজো-ফাইল-দ্বিতীয়বার-নয় (HLS-আলাদা)
-      const aud = (/Multi[ ._]Audio/i.test(fdec + r.lbl + (hit.post_title || '')) ? 'Multi-Audio' : (/Dual[ ._]Audio/i.test(fdec + r.lbl + (hit.post_title || '')) ? 'Dual-Audio' : '')) + (/Atmos/i.test(fdec) ? '+Atmos' : '');
-      const dv = [(/HDR10\+|HDR10Plus/i.test(fdec) && 'HDR10+'), (/\bDV\b|Dolby ?Vision/i.test(fdec) && 'DV'), (!/HDR10\+|HDR10Plus|\bDV\b|Dolby ?Vision/i.test(fdec) && /\bHDR10?\b|\bHDR\b/i.test(fdec) && 'HDR'), (/\bHLG\b/i.test(fdec) && 'HLG')].filter(Boolean).join('/');
-      const spec = fdec || ((hc.match(/<title>([^<]{10,240})/) || [])[1] || r.lbl).replace(/&#038;|&amp;/g, '&').trim();
-      out.push({ h: useH, url: furl, kind: 'file', spec, aud, dv });
-      if (out.length >= 3) break;
+      if (!cands.length) { if (DBG) console.error('[m4u] no-seekable ' + r.id + ' @' + (Date.now() - t3) + 'ms'); return cands; }
+      for (const c2 of cands) {
+        c2.aud = (/Multi[ ._]Audio/i.test(c2.spec + r.lbl + (hit.post_title || '')) ? 'Multi-Audio' : (/Dual[ ._]Audio/i.test(c2.spec + r.lbl + (hit.post_title || '')) ? 'Dual-Audio' : '')) + (/Atmos/i.test(c2.spec) ? '+Atmos' : '');
+        c2.dv = [(/HDR10\+|HDR10Plus/i.test(c2.spec) && 'HDR10+'), (/\bDV\b|Dolby ?Vision/i.test(c2.spec) && 'DV'), (!/HDR10\+|HDR10Plus|\bDV\b|Dolby ?Vision/i.test(c2.spec) && /\bHDR10?\b|\bHDR\b/i.test(c2.spec) && 'HDR'), (/\bHLG\b/i.test(c2.spec) && 'HLG')].filter(Boolean).join('/');
+      }
+      return cands;
+      } catch { return cands; }
+    };
+    const rowLists = await Promise.all(frows.map(r => oneRow(r).catch(() => []))); // সব-সারি-একসাথে
+    for (const cl of rowLists) for (const c2 of cl) { // মার্জ: প্রতি-রেজো-সর্বোচ্চ-২-ফাইল (আগে ১), মোট-ফাইল 3→7 (v1.15.51 — সাইটের-সব-ফাইল):
+      if (out.some(o => o.url === c2.url)) continue;
+      if (out.filter(o => o.kind !== 'hls' && o.h === c2.h).length >= 2) continue;
+      out.push(c2);
+      if (out.filter(o => o.kind !== 'hls').length >= 7) break;
     }
     // ধাপ-৫-বাদ (1.15.49): TW-রেজলভার-মুভি-ইনডেক্স-করে-না (কার্টুন-সিরিজ-only; লাইভ-প্রোবে-সব-০) — hglink.to/skymovieshd-বাটন-ব্রাউজার-JS-ফানেল+drivebot-AES+gdflix-Turnstile = দেয়াল।
     await Promise.race([hlsP, new Promise(r2 => setTimeout(r2, Math.max(200, left() - 150)))]); // HLS-সমান্তরাল-ফল-অপেক্ষা (বাজেট-ভেতরে)
     out.sort((a, b) => (a.kind === 'hls' ? 1 : 0) - (b.kind === 'hls' ? 1 : 0)); // v1.15.50 (ইউজার: Runner-এ hls2-সিক-ভাঙে, pd-সিক-হয়) — সিক-প্রমাণিত-সরাসরি-ফাইল-আগে, HLS-শেষে
-    if (out.length > 3) out.length = 3;
     if (DBG) console.error('[m4u] ' + tmdbId + ' "' + T + '" rows=' + rows.length + ' cards=' + out.length + ' @' + (Date.now() - t3) + 'ms');
     if (!out.length) return [];
     const epLine = type === 'tv' ? ('\u29e0 S' + (parseInt(s, 10) || 1) + 'E' + (parseInt(e, 10) || 1)) : '\u29e0 Movie';
@@ -1644,7 +1656,7 @@ async function skyStreams(tmdbId, title, type, s, e, origin, maxh) {
       sc -= Math.max(0, n.split(' ').length - Tn.split(' ').length) * 3; // অতিরিক্ত-টোকেন-দণ্ড
       const rh = parseInt((d.match(/[\s.-](\d{3,4})p/i) || [])[1] || '0', 10);
       return { p, sc, rh };
-    }).filter(x => x.sc >= 60).sort((a, b) => (b.sc - a.sc) || ((b.rh || 0) - (a.rh || 0))).slice(0, 2); // শীর্ষ-২-পোস্ট
+    }).filter(x => x.sc >= 60).sort((a, b) => (b.sc - a.sc) || ((b.rh || 0) - (a.rh || 0))).slice(0, 4); // v1.15.51: 2→4-পোস্ট (সাইটের-সব-ভ্যারিয়েন্ট: 1080/720/480/HEVC)
     if (!scored.length) { if (DBG) console.error('[sky] no-match "' + T + '" posts=' + posts.length + ' @' + (Date.now() - tS) + 'ms'); return []; }
     // ধাপ-২: পোস্ট → howblogs → hubcloud → gamerxyt → R2/pd (পোস্ট-সমান্তরাল):
     const got = []; const seenUrl = new Set();
@@ -1654,19 +1666,19 @@ async function skyStreams(tmdbId, title, type, s, e, origin, maxh) {
         const slugEnc = encodeURIComponent(slugRaw).replace(/%28/g, '(').replace(/%29/g, ')'); // quote(safe='()')-সমতুল্য — ব্র্যাকেট-এনকোড, প্যারেন-র
         const ph = await m4uText(SKY_BASE + '/movie/' + slugEnc, SKY_BASE + '/', Math.min(3400, lS())).catch(() => '');
         const hbIds = [...new Set((ph.match(/https?:\/\/howblogs\.xyz\/([a-z0-9]+)/gi) || []).map(z => z.split('/').pop()))].slice(0, 3);
-        for (const hb of hbIds) {
-          if (lS() < 2400 || got.length >= 4) break;
+        await Promise.all(hbIds.map(async hb => { // v1.15.51: hb-চেইন-সমান্তরাল (ধারাবাহিকে-৩-চেইন-বাজেট-কাটত)
+          if (lS() < 2400 || got.length >= 8) return;
           const bw = await m4uText('https://howblogs.xyz/' + hb, SKY_BASE + '/', Math.min(3000, lS())).catch(() => '');
           const hcm = bw.match(/https?:\/\/hubcloud\.[a-z.]+\/(drive|video)\/([a-z0-9]+)/);
-          if (!hcm) continue;
+          if (!hcm) return;
           const hc = await m4uText(hcm[0], 'https://howblogs.xyz/', Math.min(3600, lS())).catch(() => '');
           const ttl = ((hc.match(/<title>([^<]{4,200})</) || [])[1] || '').trim();
           const gx = (hc.match(/https:\/\/gamerxyt\.com\/hubcloud\.php\?[^"']+/) || [])[0];
-          if (!gx) continue;
+          if (!gx) return;
           const gp = await m4uText(gx.replace(/&amp;/g, '&'), 'https://hubcloud.ist/', Math.min(3600, lS())).catch(() => '');
           const s3s = [...new Set((gp.match(/https?:\/\/[a-z0-9.-]+\/[^"'<> ]*X-Amz-Signature=[A-Za-z0-9%]+/g) || []).map(z => z.replace(/&amp;/g, '&')))];
           const pds = [...new Set((gp.match(/pixeldrain\.dev\/u\/([A-Za-z0-9]+)/g) || []).map(z => z.split('/u/')[1]))];
-          if (!s3s.length && !pds.length) { if (DBG) console.error('[sky] hub-no-file ' + hb); continue; }
+          if (!s3s.length && !pds.length) { if (DBG) console.error('[sky] hub-no-file ' + hb); return; }
           const fh0 = sp.rh || parseInt((ttl.match(/[\s.-](\d{3,4})p/i) || [])[1] || '0', 10) || 720;
           for (const pdi of pds.slice(0, 2)) { // v1.15.50: pd-প্রোব-বাধ্যতামূলক (negn6f-মৃত-প্রমাণিত; পেঙ্গু-ও-মৃত-ফাইল-দেয়):
             if (lS() < 2200) break;
@@ -1678,11 +1690,11 @@ async function skyStreams(tmdbId, title, type, s, e, origin, maxh) {
             if (!seenUrl.has(pu)) { seenUrl.add(pu); got.push({ h: fh, url: pu, spec: (pv.name || ttl).replace(/\+/g, ' '), pd: 1 }); }
           }
           const fh = fh0;
-          if (maxh && fh > maxh) continue;
+          if (maxh && fh > maxh) return;
           for (const s3 of s3s.slice(0, 1)) { if (!seenUrl.has(s3)) { seenUrl.add(s3); got.push({ h: fh, url: s3, spec: ttl.replace(/\+/g, ' '), pd: 0 }); } }
           if (DBG) console.error('[sky] res ' + fh + ' pd=' + pds.length + ' s3=' + s3s.length + ' @' + (Date.now() - tS) + 'ms');
-          if (got.length >= 4) break;
-        }
+          if (got.length >= 8) return;
+        }));
       } catch { }
     }));
     if (!got.length) { if (DBG) console.error('[sky] ' + tmdbId + ' 0-cards @' + (Date.now() - tS) + 'ms'); return []; }
@@ -1693,7 +1705,7 @@ async function skyStreams(tmdbId, title, type, s, e, origin, maxh) {
       if (cN >= 2) continue;
       perRes.set(x.h, cN + 1);
       fin.push(x);
-      if (fin.length >= 5) break;
+      if (fin.length >= 8) break; // v1.15.51: 5→8 (প্রতি-রেজো-২-র-সাথে-সাইটের-৪-ভ্যারিয়েন্ট-ঢোকে)
     }
     return fin.map(x => {
       const q2 = String(x.h);
