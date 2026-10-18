@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.74';
+const VERSION = '1.15.75';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -1640,7 +1640,13 @@ async function ottStreams(tmdbId, type, s, e, ottq) { // সার্চ→ম�
     const s1 = await ottGet(OTT_API + '/vod/search?page=1&keyword=' + encodeURIComponent(T0), 's:' + ottNorm(T0), 1800000);
     const list = (s1 && (Array.isArray(s1.result) ? s1.result : s1.result && s1.result.list)) || [];
     const nt = ottNorm(T0);
-    const scored = list.map(x => ({ x, cl: ottNorm(String(x.title).replace(/\(.*?\)/g, '')), sc: (String(x.type) === wantType ? 0 : 5) + (ottNorm(x.title) === nt ? 0 : 10) })).filter(z => z.sc < 90); // বছর-কাটা-নির্ভুল-টাইটেল-ম্যাচ
+    const Y0 = await yearForTmdb(tmdbId, type).catch(() => 0); // v1.15.75: বছর-সচেতন-ম্যাচ ("The Glory"→"The Glory Fades (2026)"-জাতীয়-ভুল-বন্ধ)
+    const scored = list.map(x => {
+      const xy = parseInt(x.year, 10) || 0;
+      let sc = (String(x.type) === wantType ? 0 : 5) + (ottNorm(x.title) === nt ? 0 : 10);
+      if (Y0 && xy) sc += Math.abs(xy - Y0) <= 1 ? -3 : Math.abs(xy - Y0) > 3 ? 8 : 0; // বছর-মিল-বোনাস/দূরত্ব-দণ্ড
+      return { x, cl: ottNorm(String(x.title).replace(/\(.*?\)/g, '')), sc };
+    }).filter(z => z.sc < 90); // বছর-কাটা-নির্ভুল-টাইটেল-ম্যাচ
     for (const z of scored) { if (z.cl === nt || z.x.sc === undefined) z.sc += z.cl === nt ? 0 : z.cl.indexOf(nt) === 0 ? 1 : ottNorm(z.x.title).indexOf(nt) > -1 ? 2 : 90; } // অগ্রাধিকার: নির্ভুল>শুরু>অন্তর্ভুক্ত
     let pool = scored;
     if (isTv && Number(s || 1) >= 2) { // v1.15.74: সিজন-সচেতন — "Squid Game Season 2"-জাতীয়-আলাদা-এন্ট্রি (না-খুঁজলে-S1-এপিসোড-ভুল-দিত)
