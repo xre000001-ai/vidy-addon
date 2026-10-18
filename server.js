@@ -1390,13 +1390,8 @@ function anipmCurl(url, ref, ms) { // embed.settlar 403s node-undici's TLS finge
 function anipmJ(url, ref, ms, pool) { // direct first; embed misses go curl-child (right fingerprint), then the proxy pool
   const mark = (t2, ok2) => { ANIPM_DBG.lines.push(t2 + (ok2 !== undefined ? ':' + ok2 : '')); if (ANIPM_DBG.lines.length > 14) ANIPM_DBG.lines.shift(); ANIPM_DBG.ts = Date.now(); };
   return fetch(url, { headers: { 'User-Agent': UA, Accept: 'application/json', Referer: ref || ANIPM_BASE + '/' }, signal: AbortSignal.timeout(ms || 4500) }).then(x => { mark((url.indexOf('/embed/session') >= 0 ? 'emb' : url.indexOf('bootstrap') >= 0 ? 'boot' : url.indexOf('settlar/session') >= 0 ? 'sess' : url.indexOf('/search?') >= 0 ? 'srch' : 'oth') + ':' + x.status, x.ok); if (DBG && !x.ok) console.error('[anipm] ' + x.status + ' ' + url.slice(0, 60)); return x.ok ? x.json() : null; }).catch(e => { mark('net:' + String(e && e.message).slice(0, 24)); if (DBG && e && e.name !== 'TimeoutError') console.error('[anipm] E ' + String(e && e.message).slice(0, 50)); return null; }).then(j => {
-    if (j || !pool) return j;
-    return anipmCurl(url, ref, ms).then(j2 => {
-      if (j2) { mark('curl:ok', true); return j2; }
-      mark('curl:null', false);
-      if (!mmRacePool) return j2;
-      return mmRacePool(url, 2, Math.min(ms || 4500, 3500)).then(r => { try { return JSON.parse(String(r.body || '')); } catch { return null; } }).catch(() => null);
-    });
+    if (j) return j;
+    return anipmCurl(url, ref, ms).then(j2 => { if (!j2) mark('curl:null', false); return j2; });
   });
 }
 function reanJ(url, ref, ms) {
@@ -1459,20 +1454,20 @@ async function anipmStreams(tmdbId, type, s, e) { // search → bootstrap → se
       const pe = ((await pkgP) || {}).episodes;
       const variants = [[lang, '']]; if (pe && pe[ep] && pe[ep][lang + 'hard'] === true) variants.push([lang + 'hard', ' \u00b7 Hard']);
       for (const vr of variants) {
-        let em = null;
-        for (let att = 0; att < 2 && !em; att++) { // one quiet retry — single 403s recover in ~a beat
+        let tm = null;
+        for (let att = 0; att < 2 && !tm; att++) { // sess retries (transient-capable); emb is single-shot below (its 403 is a stable TLS-fp verdict, never transient)
           if (att) await delay2(350);
           const se = await anipmJ(ANIPM_BASE + '/api/anime/settlar/session?selection=' + encodeURIComponent(sel) + '&provider=anipm&ep=' + ep + '&channel=' + vr[0] + '&telemetry=0', ANIPM_BASE + '/', 5000);
-          const tm = se && se.embedUrl && /t=([^&]+)/.exec(se.embedUrl); if (!tm) continue;
-          let er = await anipmJ(ANIPM_EMB + '/api/embed/session?t=' + tm[1], ANIPM_EMB + '/embed/v1', 5000, true);
-          if ((!er || !/^https?:/i.test(er.source || '')) && !poolDead) { // last resort: pool proxies fetch with THEIR IPs/stacks (beamup has no curl; undici fp is 403'd)
-            const r3 = await mmRacePool(ANIPM_EMB + '/api/embed/session?t=' + tm[1], 3, 3200).then(r4 => { try { return JSON.parse(String(r4.body || '')); } catch { return null; } }).catch(() => null);
-            mark('pool:' + (r3 && r3.source ? 'ok' : 'miss'), !!(r3 && r3.source));
-            if (r3 && /^https?:/i.test(r3.source || '')) er = r3; else poolDead = true;
-          }
-          if (er && /^https?:/i.test(er.source || '')) em = er;
+          tm = se && se.embedUrl && /t=([^&]+)/.exec(se.embedUrl);
         }
-        if (!em) continue;
+        if (!tm) { await delay2(250); continue; }
+        let em = await anipmJ(ANIPM_EMB + '/api/embed/session?t=' + tm[1], ANIPM_EMB + '/embed/v1', 5000);
+        if ((!em || !/^https?:/i.test(em.source || '')) && !poolDead) { // last resort: pool proxies fetch with THEIR IPs/stacks (beamup has no curl; undici fp is 403'd)
+          const r3 = await mmRacePool(ANIPM_EMB + '/api/embed/session?t=' + tm[1], 3, 3200).then(r4 => { try { return JSON.parse(String(r4.body || '')); } catch { return null; } }).catch(() => null);
+          mark('pool:' + (r3 && r3.source ? 'ok' : 'miss'), !!(r3 && r3.source));
+          if (r3 && /^https?:/i.test(r3.source || '')) em = r3; else poolDead = true;
+        }
+        if (!em || !/^https?:/i.test(em.source || '')) continue;
         const aud = (lang === 'dub' ? 'English (Dub)' : 'Japanese (Sub)') + vr[1];
         out.push({ url: em.source, aud });
         await delay2(300);
