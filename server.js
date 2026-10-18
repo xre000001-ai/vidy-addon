@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.54';
+const VERSION = '1.15.55';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -1265,7 +1265,7 @@ async function mmVidbolt(tmdbId, isSeries, s, e, ms) { // v1.15.28: the vidbolt 
           langSeen.set(lang2, (langSeen.get(lang2) || 0) + 1);
           const hq2 = parseInt(String(sc2.quality || ''), 10) || hq0 || 0;
           if (i2 === 0 && pl && pl.indexOf('#EXTM') >= 0) continue; // sc0-প্রমাণ-পাস → ওর-কার্ড উপরেই-গেছে (whole/variants)
-          push(hq2, sc2.url, VB_REF, 0, lang2, '', 1); // mini — key=url (প্রতি-ভাষা-ইউনিক); vbq-সহ-রিবিল্ট
+          push(hq2, sc2.url, VB_REF, 0, lang2, '', 0); // v1.15.55: DIRECT (beamup-মিনি-হপ-বাদ — ইউজারের-পরিবেশে-মিনি-হপ-ব্যর্থ; লেবেল=কার্ড-টেক্সটে)
         }
       }
       break; // a productive draw is enough
