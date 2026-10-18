@@ -1448,6 +1448,7 @@ async function anipmStreams(tmdbId, type, s, e) { // search → bootstrap → se
     const langs = ['sub', 'dub'].filter(l => (best[l + 'Count'] || 0) > 0);
     const out = [];
     // SERIAL per language + one retry: embed.settlar.io 403s on parallel/burst hits (sandbox-proven) — sub chain fully, gap, then dub
+    let poolDead = false; // one pool proof per run — a missed race never re-races (the 10.8s window must cover dub too)
     const delay2 = ms2 => new Promise(r => setTimeout(r, ms2));
     for (const lang of (langs.length ? langs : ['sub', 'dub'])) {
       const bo = await anipmJ(ANIPM_BASE + '/api/anime/playback-bootstrap/settlar/' + best.id + '?ep=' + ep + '&lang=' + lang + '&backup=1', ANIPM_BASE + '/', 5000);
@@ -1461,7 +1462,12 @@ async function anipmStreams(tmdbId, type, s, e) { // search → bootstrap → se
           if (att) await delay2(350);
           const se = await anipmJ(ANIPM_BASE + '/api/anime/settlar/session?selection=' + encodeURIComponent(sel) + '&provider=anipm&ep=' + ep + '&channel=' + vr[0] + '&telemetry=0', ANIPM_BASE + '/', 5000);
           const tm = se && se.embedUrl && /t=([^&]+)/.exec(se.embedUrl); if (!tm) continue;
-          const er = await anipmJ(ANIPM_EMB + '/api/embed/session?t=' + tm[1], ANIPM_EMB + '/embed/v1', 5000, true);
+          let er = await anipmJ(ANIPM_EMB + '/api/embed/session?t=' + tm[1], ANIPM_EMB + '/embed/v1', 5000, true);
+          if ((!er || !/^https?:/i.test(er.source || '')) && !poolDead) { // last resort: pool proxies fetch with THEIR IPs/stacks (beamup has no curl; undici fp is 403'd)
+            const r3 = await mmRacePool(ANIPM_EMB + '/api/embed/session?t=' + tm[1], 3, 3200).then(r4 => { try { return JSON.parse(String(r4.body || '')); } catch { return null; } }).catch(() => null);
+            mark('pool:' + (r3 && r3.source ? 'ok' : 'miss'), !!(r3 && r3.source));
+            if (r3 && /^https?:/i.test(r3.source || '')) er = r3; else poolDead = true;
+          }
           if (er && /^https?:/i.test(er.source || '')) em = er;
         }
         if (!em) continue;
