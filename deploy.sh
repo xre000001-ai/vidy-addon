@@ -15,7 +15,7 @@ git push gh HEAD:master
 echo 'gh: main+master ✓'
 
 # rule 2: retry loop on pre-receive declines (deploy lock) — never force
-BEAMUP="${BEAMUP_REMOTE:-beamup-id_ed25519:3404d3c5dc63-vidy}"
+BEAMUP="${BEAMUP_REMOTE:-beamup-id_ed25519:3404d3c5dc63-vidy}" # xre-অ্যাকাউন্ট-কী (ইউজার-নির্দেশ: vidy-addon xre-অ্যাকাউন্টের — badhan-নয়)
 OK=0
 for i in 1 2 3 4 5; do
   if OUT=$(git push "$BEAMUP" main:main 2>&1); then
