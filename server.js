@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.84'; // v1.15.84: workers.dev আর বাদ নয় (পরিমাপিত — সিক-যোগ্য)। প্রমাণ: সরাসরি-ফাইল workers.dev-এ মাঝ-রেঞ্জে HTTP 206, content-type video/x-matroska, ১৭.৫/২৪.৮ GB; টোকেন t=0/60/180/360/600s-এ বহাল। নিরাপত্তা: .m3u8 বাদ (সেকেন্ডেই 404), text/*-কনটেন্ট-টাইপ বাতিল, শুধু মিডিয়া-এক্সটেনশন-যুক্ত ফাইলনাম, রেজো কেবল পরিচিত-সিঁড়ি থেকে (ভুল-লেবেল-নিষিদ্ধ), অন্তর্বর্তী 403-এ একবার পুনঃচেষ্টা। ফল: Sikandar-2025-এ 0→2×2160 (আগে সর্বোচ্চ 1080)  // v1.15.83: সিজন-প্যাক-ফলব্যাক (হুবহু SxxExx-মিল-থাকলে সেটাই; না-থাকলে সিজন-নিশ্চিত 'S01…' প্যাক — লেবেলে "· S1 Pack" + "ⓘ সম্পূর্ণ সিজন (এক-ফাইলে) — Ep 1 থেকে শুরু")। প্রমাণ: Kon Yashwant Pansare (2026) S01 শুধু-প্যাক, 2160p-কপিতে pixeldrain×2+signed-S3×2 (206, সিক-যোগ্য) — আগে হুবহু-শর্তে সম্পূর্ণ বাতিল হত। ভুল-সিজন কখনো নয় (ssn !== SE → বাতিল; S02E01-এ S01-প্যাক যায় না — পরীক্ষিত)  // v1.15.82: Sky + Movies4u সিরিজ-পথ (হাবক্লাউড-পাতার-শিরোনামে SxxExx মিল — প্রতি-এপিসোড; ভুল-এপিসোড-নিষিদ্ধ, সিজন-জিপ-বাদ) + 4K (মৃত-S3/FSL-শাখা-জীবিত → 2160p-কার্ড; ভুল-h4-লেবেলে 4K-মিরর-বাতিল-হত) + hits[0]-অন্ধ-গ্রহণ-বন্ধ (বছর-সচেতন m4uPick — Superman-২০২৫-এ hits[0] ছিল Superman-১৯৭৮ = ভুল-টাইটেল) + m4ur/mmr-ক্যাপে 2160  // কনফিগ-পেজ-বাগ-মেরামত (৫-ট্যাব): সার্ভার-টাইল-বুটে-রিড্র, "None"=ফ্লিট-বন্ধ (খালি=সব-চুক্তি), Reset-এ-চিপ-রিড্র, flab-<em>-আক্ষরিক-লেখা, Jump-টগল+লেবেল, Sky-প্রিভিউ-m4ur-লিক, rtsrv-দুটোই-বাদ-সম্মান // v1.15.80: RT-দ্বিতীয়-সার্ভার (WN/pixeldrain)-পুনরুদ্ধার: é-ডিঅ্যাকসেন্ট+রেস-মার্জ+PD-inline+per-সার্ভার-টগল (rtsrv)
+const VERSION = '1.15.85'; // v1.15.85: (ক) কার্ড-টেক্সট থেকে বাংলা সম্পূর্ণ সরানো — "ⓘ সম্পূর্ণ সিজন (এক-ফাইলে) — Ep 1 থেকে শুরু" → "ⓘ Full season in one file — starts at Ep 1" (Movies4u/Sky/unifyCards — ৩ জায়গা)। (খ) Sky-মিরর-ডুপ্লিকেট বন্ধ: একই হাবে pixeldrain যে-রেজো দিয়েছে, সেই রেজোতে signed-S3/workers-মিরর আর ঢোকে না। প্রমাণ: Shawshank-এ ৬ কার্ডের ২ জোড়া ছিল **হুবহু একই ফাইল** (pd ২.৬১GB = S3 ২.৬১GB, ৪৮০-তেও তাই) — অথচ ৬টির কার্ড-টেক্সট অভিন্ন, ব্যবহারকারী পার্থক্য বুঝতেই পারত না → ৬→৪। (গ) Sky-সার্চ/স্কোরার-এ অ্যাপোস্ট্রোফি-স্বাভাবিকীকরণ: "Schindler's List" সার্চে ০ পোস্ট, "Schindlers List"-এ ১ — অ্যাপোস্ট্রোফি সার্চ ভেঙে দিত; স্কোরারেও অতিরিক্ত-টোকেন-দণ্ডে স্কোর ৩৩ (<৬০, বাতিল) → এখন ১২০ (মিল)। (ঘ) S3/ফলব্যাক-রেজো এখন স্লাগ-লেবেল নয়, আসল ফাইলনাম থেকে — প্রমাণ: Godfather-স্লাগ "720p" কিন্তু ফাইল 1080p/৩.৪২GB (আগে 720 ভুল-লেবেল)  // v1.15.84: workers.dev আর বাদ নয় (পরিমাপিত — সিক-যোগ্য)। প্রমাণ: সরাসরি-ফাইল workers.dev-এ মাঝ-রেঞ্জে HTTP 206, content-type video/x-matroska, ১৭.৫/২৪.৮ GB; টোকেন t=0/60/180/360/600s-এ বহাল। নিরাপত্তা: .m3u8 বাদ (সেকেন্ডেই 404), text/*-কনটেন্ট-টাইপ বাতিল, শুধু মিডিয়া-এক্সটেনশন-যুক্ত ফাইলনাম, রেজো কেবল পরিচিত-সিঁড়ি থেকে (ভুল-লেবেল-নিষিদ্ধ), অন্তর্বর্তী 403-এ একবার পুনঃচেষ্টা। ফল: Sikandar-2025-এ 0→2×2160 (আগে সর্বোচ্চ 1080)  // v1.15.83: সিজন-প্যাক-ফলব্যাক (হুবহু SxxExx-মিল-থাকলে সেটাই; না-থাকলে সিজন-নিশ্চিত 'S01…' প্যাক — লেবেলে "· S1 Pack" + "ⓘ সম্পূর্ণ সিজন (এক-ফাইলে) — Ep 1 থেকে শুরু")। প্রমাণ: Kon Yashwant Pansare (2026) S01 শুধু-প্যাক, 2160p-কপিতে pixeldrain×2+signed-S3×2 (206, সিক-যোগ্য) — আগে হুবহু-শর্তে সম্পূর্ণ বাতিল হত। ভুল-সিজন কখনো নয় (ssn !== SE → বাতিল; S02E01-এ S01-প্যাক যায় না — পরীক্ষিত)  // v1.15.82: Sky + Movies4u সিরিজ-পথ (হাবক্লাউড-পাতার-শিরোনামে SxxExx মিল — প্রতি-এপিসোড; ভুল-এপিসোড-নিষিদ্ধ, সিজন-জিপ-বাদ) + 4K (মৃত-S3/FSL-শাখা-জীবিত → 2160p-কার্ড; ভুল-h4-লেবেলে 4K-মিরর-বাতিল-হত) + hits[0]-অন্ধ-গ্রহণ-বন্ধ (বছর-সচেতন m4uPick — Superman-২০২৫-এ hits[0] ছিল Superman-১৯৭৮ = ভুল-টাইটেল) + m4ur/mmr-ক্যাপে 2160  // কনফিগ-পেজ-বাগ-মেরামত (৫-ট্যাব): সার্ভার-টাইল-বুটে-রিড্র, "None"=ফ্লিট-বন্ধ (খালি=সব-চুক্তি), Reset-এ-চিপ-রিড্র, flab-<em>-আক্ষরিক-লেখা, Jump-টগল+লেবেল, Sky-প্রিভিউ-m4ur-লিক, rtsrv-দুটোই-বাদ-সম্মান // v1.15.80: RT-দ্বিতীয়-সার্ভার (WN/pixeldrain)-পুনরুদ্ধার: é-ডিঅ্যাকসেন্ট+রেস-মার্জ+PD-inline+per-সার্ভার-টগল (rtsrv)
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -2296,7 +2296,7 @@ async function m4uSeries(tmdbId, title, s, e, origin, maxh) {
       return {
         name: '\u25a5 ' + q2 + ' \u25a5',
         title: txt,
-        description: txt + (isPack ? '\n\u24d8 \u09b8\u09ae\u09cd\u09aa\u09c2\u09b0\u09cd\u09a3 \u09b8\u09bf\u099c\u09a8 (\u098f\u0995-\u09ab\u09be\u0987\u09b2\u09c7) \u2014 Ep 1 \u09a5\u09c7\u0995\u09c7 \u09b6\u09c1\u09b0\u09c1' : '') + (x.spec ? '\n' + x.spec.slice(0, 120) : ''),
+        description: txt + (isPack ? '\n\u24d8 Full season in one file \u2014 starts at Ep 1' : '') + (x.spec ? '\n' + x.spec.slice(0, 120) : ''),
         quality: q2,
         url: x.url,
         behaviorHints: {
@@ -2462,13 +2462,19 @@ async function skyStreams(tmdbId, title, type, s, e, origin, maxh) {
     if (!T || lS() < 3200) return [];
     const yP = skyYear(tmdbId, isTv).catch(() => 0);
     // ধাপ-১: skymovieshd-সার্চ:
-    const sh = await m4uText(SKY_BASE + '/search.php?search=' + encodeURIComponent(T) + '&cat=All', SKY_BASE + '/', Math.min(3600, lS())).catch(() => '');
+    // v1.15.85: সার্চ-কোয়েরি থেকে অ্যাপোস্ট্রোফি বাদ — প্রমাণ: "Schindler's List" → **০ পোস্ট**,
+    // "Schindlers List" → ১ পোস্ট (সাইটে স্লাগ "Schindlers-List")। অ্যাপোস্ট্রোফি সার্চ-ই ভেঙে দেয়।
+    const skyQ = T.replace(/['\u2018\u2019\u02bc`]/g, '').trim();
+    const sh = await m4uText(SKY_BASE + '/search.php?search=' + encodeURIComponent(skyQ) + '&cat=All', SKY_BASE + '/', Math.min(3600, lS())).catch(() => '');
     if (!sh) { if (DBG) console.error('[sky] no-search @' + (Date.now() - tS) + 'ms'); return []; }
     const posts = [...new Set((sh.match(/\/movie\/[^'"]+?\.html/g) || []).map(z => z.replace(/&amp;/g, '&')))];
     if (!posts.length) { if (DBG) console.error('[sky] 0-posts @' + (Date.now() - tS) + 'ms'); return []; }
     // মিল: বাক্যাংশ-কঠোর (এক-শব্দ-টাইটেল=প্রিফিক্স-মাত্র — "Animals"≠"Dangerous Animals", "Runner"≠"The Runner") + বছর:
     const Y = await yP;
-    const nrm = z => z.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    // v1.15.85: অ্যাপোস্ট্রোফি আগেই সরানো — "Schindler's List" কে "schindler s list" (৩ টোকেন) না-ভেবে
+    // "schindlers list" (২ টোকেন) ধরা হয়। নইলে স্লাগ "schindlers list 1993 …" (১১ টোকেন)-এর
+    // অতিরিক্ত-টোকেন-দণ্ড (৮×৩=২৪) স্কোর ৬০→৩৬ নামিয়ে ফিল্টার-আউট করে দিত (সার্চ-ঠিক-হওয়া সত্ত্বেও)।
+    const nrm = z => String(z || '').toLowerCase().replace(/['\u2018\u2019\u02bc`]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
     const Tn = nrm(T);
     const oneW = Tn.split(' ').length === 1;
     const scored = posts.map(p => {
@@ -2522,7 +2528,15 @@ async function skyStreams(tmdbId, title, type, s, e, origin, maxh) {
           const pds = [...new Set((gp.match(/pixeldrain\.dev\/u\/([A-Za-z0-9]+)/g) || []).map(z => z.split('/u/')[1]))];
           if (!s3s.length && !pds.length) { if (DBG) console.error('[sky] hub-no-file ' + hb); return; }
           const fhT = resOfName(ttl) || parseInt((ttl.match(/[\s.-](\d{3,4})p/i) || [])[1] || '0', 10) || 0; // v1.15.82: আসল-ফাইলনাম-থেকেই-রেজো (স্লাগ-রেজোর-চেয়ে-নির্ভর; 2160p/4K-ও-ধরা)
-          const fh0 = (isTv && fhT) ? fhT : (sp.rh || fhT || 720); // মুভি-পথ-অপরিবর্তিত
+          // v1.15.85: আসল-ফাইলনাম (fhT) কে স্লাগ-লেবেলের (sp.rh) আগে — প্রমাণ: Godfather-পোস্টের স্লাগ "720p"
+          // কিন্তু ভিতরের ফাইল "The.Godfather.1972.REMASTERED.1080p…" (৩.৪২ GB)। আগে S3-কার্ড 720 লেবেল পেত (ভুল)।
+          const fh0 = (isTv && fhT) ? fhT : (fhT || sp.rh || 720);
+          // v1.15.85: এই-হাবে pixeldrain যে-রেজো দিয়েছে তার সেট — একই ফাইলের দ্বিতীয় মিরর (signed-S3/workers)
+          // আর ঢোকানো হবে না। প্রমাণ (Shawshank tmdb278): ৬ কার্ডের মধ্যে ২ জোড়া ছিল **হুবহু একই ফাইল** —
+          // pd ২.৬১GB ও S3 ২.৬১GB (দুটিই "…1080p.Blu-Ray.DUAL…SkymoviesHD.mkv"), ৪৮০-তেও তাই।
+          // কিন্তু কার্ড-টেক্সট ৬টির-ই অভিন্ন ("▥ 1080 ▥ / ⧉ The Shawshank Redemption…") — ব্যবহারকারী
+          // পার্থক্য বুঝতেই পারত না। নীতি অনুযায়ী pixeldrain-ই অগ্রাধিকার, তাই S3-মিরর বাদ।
+          const pdH = new Set();
           for (const pdi of pds.slice(0, 2)) { // v1.15.50: pd-প্রোব-বাধ্যতামূলক (negn6f-মৃত-প্রমাণিত; পেঙ্গু-ও-মৃত-ফাইল-দেয়):
             if (lS() < 2200) break;
             const pu = 'https://pixeldrain.dev/api/file/' + pdi;
@@ -2530,11 +2544,11 @@ async function skyStreams(tmdbId, title, type, s, e, origin, maxh) {
             if (!pv || !pv.alive) { if (DBG) console.error('[sky] pd-dead ' + pdi); continue; }
             const fh = parseInt(((pv.name || '').match(/[\s.\-](\d{3,4})p/i) || [])[1] || '0', 10) || fh0;
             if (maxh && fh > maxh) continue;
-            if (!seenUrl.has(pu)) { seenUrl.add(pu); got.push({ h: fh, url: pu, spec: (pv.name || ttl).replace(/\+/g, ' '), pd: 1, kind: kind }); }
+            if (!seenUrl.has(pu)) { seenUrl.add(pu); pdH.add(fh); got.push({ h: fh, url: pu, spec: (pv.name || ttl).replace(/\+/g, ' '), pd: 1, kind: kind }); }
           }
           const fh = fh0;
           if (maxh && fh > maxh) return;
-          for (const s3 of s3s.slice(0, 1)) { if (!seenUrl.has(s3)) { seenUrl.add(s3); got.push({ h: fh, url: s3, spec: ttl.replace(/\+/g, ' '), pd: 0, kind: kind }); } }
+          for (const s3 of s3s.slice(0, 1)) { if (!pdH.has(fh) && !seenUrl.has(s3)) { seenUrl.add(s3); got.push({ h: fh, url: s3, spec: ttl.replace(/\+/g, ' '), pd: 0, kind: kind }); } }
           // workers.dev (v1.15.84): সিক-যোগ্য পরিমাপিত — শেষ অবলম্বন (pd/S3 না থাকলে)। Referer নেই (403 এড়াতে)।
           if (lS() > 1600) {
             for (const w of wkCands(gp).slice(0, 2)) {
@@ -2543,6 +2557,7 @@ async function skyStreams(tmdbId, title, type, s, e, origin, maxh) {
               const wh = wkReso(sv.name, w);
               if (!wh) continue;                               // রেজো-অনিশ্চিত → কার্ড-নয়
               if (maxh && wh > maxh) break;
+              if (pdH.has(wh)) continue;                       // v1.15.85: এই রেজোতে ইতিমধ্যে pixeldrain-কার্ড আছে
               if (!seenUrl.has(w)) {
                 seenUrl.add(w);
                 got.push({ h: wh, url: w, spec: (sv.name || wkName(w) || ttl).replace(/\+/g, ' '), pd: 0, kind: kind });
@@ -2579,7 +2594,7 @@ async function skyStreams(tmdbId, title, type, s, e, origin, maxh) {
       return {
         name: '\u25a5 ' + q2 + ' \u25a5',
         title: txt,
-        description: txt + (skyPack ? '\n\u24d8 \u09b8\u09ae\u09cd\u09aa\u09c2\u09b0\u09cd\u09a3 \u09b8\u09bf\u099c\u09a8 (\u098f\u0995-\u09ab\u09be\u0987\u09b2\u09c7) \u2014 Ep 1 \u09a5\u09c7\u0995\u09c7 \u09b6\u09c1\u09b0\u09c1' : '') + (x.spec ? '\n' + x.spec.slice(0, 120) : ''),
+        description: txt + (skyPack ? '\n\u24d8 Full season in one file \u2014 starts at Ep 1' : '') + (x.spec ? '\n' + x.spec.slice(0, 120) : ''),
         quality: q2,
         url: x.url, // gamerxyt-মাধ্যমে-সরাসরি-ফাইল — কোনো-টোকেন/রিলে-নয়
         behaviorHints: { notWebReady: false, isBingeable: true, proxyHeaders: { request: { 'User-Agent': UA } } },
@@ -3102,7 +3117,7 @@ async function unifyCards(cards, meta) { // শুধু-টেক্সট-ব�
       const pk = c._pack ? (' \u00b7 S' + c._pack + ' Pack') : ''; // v1.15.83: সিজন-প্যাক — লেবেলে স্পষ্ট (ভুল-কনটেন্ট-নয় বোঝাতে)
       const txt = head + '\n' + epLine + '\n\u229e ' + (UNIFY_SRV[src] || src) + (au ? ' \u2317 ' + au : '') + pk;
       c.title = txt;
-      c.description = txt + (pk ? '\n\u24d8 \u09b8\u09ae\u09cd\u09aa\u09c2\u09b0\u09cd\u09a3 \u09b8\u09bf\u099c\u09a8 (\u098f\u0995-\u09ab\u09be\u0987\u09b2\u09c7) \u2014 Ep 1 \u09a5\u09c7\u0995\u09c7 \u09b6\u09c1\u09b0\u09c1' : '');
+      c.description = txt + (pk ? '\n\u24d8 Full season in one file \u2014 starts at Ep 1' : '');
     }
     return cards;
   } catch { return cards; }
