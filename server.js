@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.77';
+const VERSION = '1.15.78';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -1823,16 +1823,16 @@ async function azStreams(tmdbId, type, s, e, azq) { // সার্চ→সি�
       const pat = new RegExp('(?:season|saison|temporada|part|parte)\\s*0*' + sn2 + '\\b|\\b0*' + sn2 + '(?:st|nd|rd|th)\\s+season\\b' + (word ? '|\\b' + word + '\\s+season\\b' : ''), 'i');
       const ses = pool2.filter(z => azVariants(z.x).some(v => pat.test(v)));
       if (ses.length) { pool2 = ses; if (DBG) console.error('[az] সিজন-প্যাটার্ন-পুল s=' + sn2 + ' → ' + ses.length + '-এন্ট্রি'); }
-      else { // বছর-পথ: TMDB-সিজন-বছর == প্রার্থীর-start_year (±১) + বর্ষ-খোলা-পরিষ্কার-টাইটেল-মূল-টাইটেলের-অন্তর্ভুক্ত ('Jujutsu Kaisen (2023)'→'jujutsukaisen')
+      else {
         const Ys = await seasonYearForTmdb(tmdbId, sn2).catch(() => 0);
-        if (Ys) {
-          const byr = pool2.filter(z => {
-            const vy = parseInt(z.x.start_year, 10) || 0;
-            if (!vy || Math.abs(vy - Ys) > 1) return false;
-            const clean = azNorm(String(z.x.main_title || '').replace(/\(\d{4}\)/g, ''));
-            return clean === nt || clean.indexOf(nt) > -1;
-          });
+        const vBase = z => azVariants(z.x).some(v => { const clean = azNorm(String(v).replace(/\(\d{4}\)/g, '')); return clean === nt || (nt && clean.indexOf(nt) > -1); }); // বর্ষ-খোলা-ভ্যারিয়েন্ট-মিল ('Sousou no Frieren (2026)'-এর-en-ভ্যারিয়েন্ট-'Frieren: Beyond...'-সহ-সব-ভাষা)
+        if (Ys) { // পথ-২: TMDB-সিজন-বছর == প্রার্থীর-start_year (±১)
+          const byr = pool2.filter(z => { const vy = parseInt(z.x.start_year, 10) || 0; return vy && Math.abs(vy - Ys) <= 1 && vBase(z); });
           if (byr.length) { pool2 = byr; if (DBG) console.error('[az] সিজন-বছর-পুল s=' + sn2 + ' Y=' + Ys + ' → ' + byr.length + '-এন্ট্রি'); }
+        }
+        if (pool2 === scored) { // পথ-৩ (v1.15.78): TMDB-সিজন-রেকর্ড-ই-না-থাকলেও (/tv/209867/season/2=404 — Frieren-S2-প্রমাণ) বছর-অনুক্রম: anizone-সিকোয়েল-একই-শো+(বছর)-প্যাক-হিসেবে-নামায় ('Jujutsu Kaisen (2023)', 'Sousou no Frieren (2026)') → exact-base-প্যাক-এন্ট্রি-বছর-আরোহী-সারিতে-s-তম-টা
+          const same = pool2.map(z => ({ z, vy: parseInt(z.x.start_year, 10) || 0 })).filter(w => w.vy && azVariants(w.z.x).some(v => azNorm(String(v).replace(/\(\d{4}\)/g, '')) === nt)).sort((a, b) => a.vy - b.vy);
+          if (same.length >= 2) { const pick = same[Math.min(sn2, same.length) - 1].z; pool2 = [pick]; if (DBG) console.error('[az] বছর-অনুক্রম-পুল s=' + sn2 + ' → ' + pick.x.slug + '@' + pick.vy); }
         }
       }
     }

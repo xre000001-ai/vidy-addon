@@ -198,6 +198,11 @@ async function tap(label, url, checks) {
     if (!az.length) return skip('AniZone JJK-S2: no cards this run');
     ok(/S2E9/.test(String(az[0].description || '')), 'AniZone JJK-S2: ⧠ S2E9 লাইন (uuid-প্রমাণ-প্রোবে-আলাদা)'); // সঠিক-সিজন-প্রমাণ = az-uuid == ২০২৩-এন্ট্রি-E9-uuid (azseason-probe)
   });
+  await tap('AniZone সিকোয়েল-ভিন্ন-টাইটেল (Frieren tmdb209867 S2E1 — Sousou no Frieren (2026))', BASE + '/stream/series/tmdb209867%3A2%3A1.json', (s) => {
+    const az = azOf(s);
+    if (!az.length) return skip('AniZone Frieren-S2: no cards this run');
+    ok(/S2E1/.test(String(az[0].description || '')), 'AniZone Frieren-S2: ⧠ S2E1 লাইন (uuid-প্রমাণ-প্রোবে-আলাদা)'); // v1.15.78: বছর-পথ-সব-ভ্যারিয়েন্ট — en-ভ্যারিয়েন্টে-(2026)-প্রত্যয়-থাকায়-আগে-বাদ-পড়ত
+  });
 
   await tap('cfg sub=0 (subtitle gate)', cfgUrl({ sub: 0 }, '/stream/movie/tt0468569.json'), (s) => {
     ok(s.length === 0 || s.every(c => !c.subtitles || c.subtitles.length === 0), 'sub=0: zero tracks on cards');
