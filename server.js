@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.81'; // কনফিগ-পেজ-বাগ-মেরামত (৫-ট্যাব): সার্ভার-টাইল-বুটে-রিড্র, "None"=ফ্লিট-বন্ধ (খালি=সব-চুক্তি), Reset-এ-চিপ-রিড্র, flab-<em>-আক্ষরিক-লেখা, Jump-টগল+লেবেল, Sky-প্রিভিউ-m4ur-লিক, rtsrv-দুটোই-বাদ-সম্মান // v1.15.80: RT-দ্বিতীয়-সার্ভার (WN/pixeldrain)-পুনরুদ্ধার: é-ডিঅ্যাকসেন্ট+রেস-মার্জ+PD-inline+per-সার্ভার-টগল (rtsrv)
+const VERSION = '1.15.82'; // v1.15.82: Sky + Movies4u সিরিজ-পথ (হাবক্লাউড-পাতার-শিরোনামে SxxExx মিল — প্রতি-এপিসোড; ভুল-এপিসোড-নিষিদ্ধ, সিজন-জিপ-বাদ) + 4K (মৃত-S3/FSL-শাখা-জীবিত → 2160p-কার্ড; ভুল-h4-লেবেলে 4K-মিরর-বাতিল-হত) + hits[0]-অন্ধ-গ্রহণ-বন্ধ (বছর-সচেতন m4uPick — Superman-২০২৫-এ hits[0] ছিল Superman-১৯৭৮ = ভুল-টাইটেল) + m4ur/mmr-ক্যাপে 2160  // কনফিগ-পেজ-বাগ-মেরামত (৫-ট্যাব): সার্ভার-টাইল-বুটে-রিড্র, "None"=ফ্লিট-বন্ধ (খালি=সব-চুক্তি), Reset-এ-চিপ-রিড্র, flab-<em>-আক্ষরিক-লেখা, Jump-টগল+লেবেল, Sky-প্রিভিউ-m4ur-লিক, rtsrv-দুটোই-বাদ-সম্মান // v1.15.80: RT-দ্বিতীয়-সার্ভার (WN/pixeldrain)-পুনরুদ্ধার: é-ডিঅ্যাকসেন্ট+রেস-মার্জ+PD-inline+per-সার্ভার-টগল (rtsrv)
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -1926,15 +1926,17 @@ function pdProbe(u) { // 1KB-রেঞ্জ-GET-প্রোব — pixeldrain;
   });
 }
 async function m4uStreams(tmdbId, title, type, s, e, origin, maxh) { // maxh: cfg.m4ur রেজো-ছাঁকনি (0=সব); HLS-সিক-প্রথম + সরাসরি-MKV
-  if (!tmdbId || type !== 'movie') return []; // লোকাল-টেস্ট: মুভি-পথ; সিরিজ-পরে (পোস্ট-স্ট্রাকচার-ভিন্ন)
+  if (!tmdbId) return []; // v1.15.82: মুভি + সিরিজ (আগে type!=='movie'-তে সিরিজ-শূন্য ছিল)
+  if (type === 'series') return m4uSeries(tmdbId, title, s, e, origin, maxh); // সিরিজ = নিজস্ব-পথ (মুভি-কোড-অস্পৃষ্ট — ভাঙার-ঝুঁকি-না)
   const t3 = Date.now(); const WOB = 8600; const left = () => Math.max(250, WOB - (Date.now() - t3));
   try {
     const T = String(title || '').trim() || (await nameForTmdb(tmdbId, 'movie').catch(() => ''));
     if (!T) return [];
     // ধাপ-১: সার্চ-API (টাইটেল+TMDB-পোস্টার+কোয়ালিটি):
+    const yPM = skyYear(tmdbId, false).catch(() => 0); // v1.15.82: hits[0]-অন্ধ-গ্রহণ-বন্ধ (Superman-২০২৫-এ hits[0] ছিল Superman-১৯৭৮ — ভুল-টাইটেল)
     const sr = await m4uText(M4U_BASE + '/lookup.php?q=' + encodeURIComponent(T) + '&page=1&per_page=8', M4U_BASE + '/', Math.min(4500, left())).catch(() => '');
     let hit = null;
-    try { const j = JSON.parse(sr); const hits = (j && j.hits) || []; if (hits.length) hit = hits[0]; } catch { }
+    try { const j = JSON.parse(sr); hit = m4uPick((j && j.hits) || [], T, await yPM, false); } catch { }
     if (!hit || !hit.permalink) { if (DBG) console.error('[m4u] ' + tmdbId + ' no-search-hit for "' + T + '" @' + (Date.now() - t3) + 'ms'); return []; }
     // ধাপ-২: পোস্ট-পেজ → m4ulinks /number/<N>:
     const post = await m4uText(M4U_BASE + hit.permalink, M4U_BASE + '/', Math.min(4500, left())).catch(() => '');
@@ -1984,6 +1986,28 @@ async function m4uStreams(tmdbId, title, type, s, e, origin, maxh) { // maxh: cf
       if (rows.length >= 8) break;
     }
     if (!rows.length) { if (DBG) console.error('[m4u] no-hubcloud-rows @' + (Date.now() - t3) + 'ms'); return []; }
+    // ধাপ-৩ব (v1.15.82): লেবেল-বিহীন-hubcloud-থেকেও 4K — প্রমাণ (Sikandar-২০২৫): h4-সারি ১০৮০p-তেই-শেষ,
+    //   কিন্তু একই-m4ulinks-পাতার অতিরিক্ত-লেবেলহীন hubcloud-এন্ট্রিতে "Sikandar.2025.2160p.NF.WEB-DL.DDP5.1.HDR.H.265"
+    //   — h4-লেবেল-পথে এই 4K-ফাইল-মিস-হত। খরচ: শিরোনাম-পড়াই (বাড়তি-চেইন-নয়), শুধু-4K-অনুমোদিত-হলে।
+    if ((!maxh || maxh >= 2160) && !rows.some(r => r.h >= 2160) && left() > 2600) {
+      const labeled = new Set(rows.map(r => r.id)); const extra = [];
+      for (const mm2 of hub.matchAll(/hubcloud\.[a-z.]+\/(drive|video)\/([a-z0-9]+)/g)) {
+        if (labeled.has(mm2[2]) || extra.some(z => z.id === mm2[2])) continue;
+        extra.push({ seg: mm2[1], id: mm2[2] });
+        if (extra.length >= 4) break;
+      }
+      const exGot = await Promise.all(extra.map(async x => {
+        if (left() < 2200) return null;
+        const pg2 = await m4uText('https://hubcloud.ist/' + (x.seg || 'drive') + '/' + x.id, lnk, Math.min(3000, left())).catch(() => '');
+        const t2 = ((pg2.match(/<title>([^<]{4,220})</) || [])[1] || '').trim();
+        if (!t2 || /\.zip\b/i.test(t2)) return null;
+        const h2 = resOfName(t2);
+        if (h2 < 2160) return null; // 4K-হলে-যোগ; অন্য-রেজো-লেবেল-পথেই-আছে (ডুপ-না)
+        if (DBG) console.error('[m4u] 4K-অতিরিক্ত "' + t2.slice(0, 68) + '"');
+        return { id: x.id, seg: x.seg, lbl: t2, h: 2160 };
+      }));
+      for (const g of exGot) if (g) rows.push(g);
+    }
     // ছাঁকনি (cfg.mmr — MM-ফিল্টার-পুনঃব্যবহার): অজানা-উচ্চতা-সবসময়-থাকে
     const frows = (maxh ? rows.filter(x => !x.h || x.h <= maxh) : rows).sort((a, b) => b.h - a.h).slice(0, 5); // v1.15.51: 3→5-সারি (সাইটের-সব-রেজো-সারি)
     const oneRow = async r => { // ধাপ-৪: hubcloud → gamerxyt → FSL-R2 — v1.15.51: সমান্তরাল-সারি (ধারাবাহিকে-বাজেটে-মাত্র-২-সারি-শেষ-হত), প্রতি-সারিতে-সর্বোচ্চ-২-pd:
@@ -1991,6 +2015,16 @@ async function m4uStreams(tmdbId, title, type, s, e, origin, maxh) { // maxh: cf
       try {
       if (left() < 1800) return cands;
       const hc = await m4uText('https://hubcloud.ist/' + (r.seg || 'drive') + '/' + r.id, lnk, Math.min(4200, left())).catch(() => '');
+      // v1.15.82: h4-লেবেল-ভুল-হতে-পারে (প্রমাণ Sikandar: লেবেল "1080p HQ", আসল-ফাইল "Sikandar.2025.2160p…HDR") —
+      // ভুল-লেবেলে wantRes-মিল-না-মিলে 4K-মিরর-বাতিল-হত। তাই আসল-ফাইলনাম (hubcloud-শিরোনাম)-ই-ভরসা। ছাঁকনি-সৎ: আসল-উচ্চতা-দিয়েই।
+      const hcT = ((hc.match(/<title>([^<]{4,220})</) || [])[1] || '').trim();
+      if (hcT) {
+        const hcH = resOfName(hcT);
+        if (hcH) {
+          if (maxh && hcH > maxh) return cands;
+          r.h = hcH; r.lbl = hcT + ' | ' + r.lbl;
+        }
+      }
       const gx = (hc.match(/https:\/\/gamerxyt\.com\/hubcloud\.php\?[^"]+/) || [])[0];
       if (!gx) return cands;
       const gpage = await m4uText(gx, 'https://hubcloud.ist/', Math.min(4200, left())).catch(() => '');
@@ -2029,6 +2063,17 @@ async function m4uStreams(tmdbId, title, type, s, e, origin, maxh) { // maxh: cf
           break;
         }
       }
+      // v1.15.82: S3/FSL-শাখা-আগে-মৃত-কোড ছিল — furl/fdec-সেট-হত কিন্তু cands-এ-push-হত-না, তাই
+      // pd-মিরর-না-থাকা-সারি (বড়-ফাইল/4K-সাধারণত-এখানে) কখনোই-কার্ড-হত-না। m4uAlive-প্রোব-আগেই-জীবিত-যাচাই।
+      if (!cands.length && furl) {
+        let snd = fdec || '';
+        if (!snd) { try { snd = decodeURIComponent((furl.split('?')[0].split('/').pop()) || ''); } catch { } }
+        const sh = resOfName(snd) || r.h;
+        if (!(maxh && sh && sh > maxh)) {
+          cands.push({ h: sh, url: furl, kind: 'file', spec: snd, aud: '', dv: '' });
+          if (DBG) console.error('[m4u] s3-mirror ' + sh + ' "' + snd.slice(0, 52) + '"');
+        }
+      }
       if (!cands.length) { if (DBG) console.error('[m4u] no-seekable ' + r.id + ' @' + (Date.now() - t3) + 'ms'); return cands; }
       for (const c2 of cands) {
         c2.aud = (/Multi[ ._]Audio/i.test(c2.spec + r.lbl + (hit.post_title || '')) ? 'Multi-Audio' : (/Dual[ ._]Audio/i.test(c2.spec + r.lbl + (hit.post_title || '')) ? 'Dual-Audio' : '')) + (/Atmos/i.test(c2.spec) ? '+Atmos' : '');
@@ -2065,6 +2110,110 @@ async function m4uStreams(tmdbId, title, type, s, e, origin, maxh) { // maxh: cf
     });
   } catch (e2) { if (DBG) console.error('[m4u] ERR ' + String(e2 && e2.message).slice(0, 70) + ' @' + (Date.now() - t3) + 'ms'); return []; }
 }
+// ─── v1.15.82: Movies4u-সিরিজ (নিজস্ব-পথ — মুভি-কোড-অস্পৃষ্ট) ───
+// প্রমাণ (১৯ অক্টো, The Diplomat / Breaking Bad): সিরিজ-পোস্টে m4uplay-HLS নেই এবং m4ulinks-লেবেলে
+// SxxExx নেই (পুরনো-সিজন-প্যাক-ছাড়া, যা .zip — প্লেয়ারে-চলে-না)। এপিসোড-চিহ্ন শুধু hubcloud-পাতার
+// <title>-এ: "(Movies4u.Foo).The.Diplomat.S01E04.480p.WEB-DL.Hindi.English.H.264.mkv"।
+// তাই: পোস্ট → সব-m4ulinks (সমান্তরাল) → সব-hubcloud (সমান্তরাল, শিরোনাম-পড়া) → SxxExx-মিল → gamerxyt → সরাসরি-ফাইল।
+async function m4uSeries(tmdbId, title, s, e, origin, maxh) {
+  const SE = Math.max(1, parseInt(s, 10) || 1), EP = Math.max(1, parseInt(e, 10) || 1);
+  const t3 = Date.now(); const WOB = 8600; const left = () => Math.max(250, WOB - (Date.now() - t3));
+  try {
+    const T = String(title || '').trim() || (await nameForTmdb(tmdbId, 'series').catch(() => ''));
+    if (!T) return [];
+    // ধাপ-১: lookup → সিরিজ-হিট-বাছাই ("El Camino: A Breaking Bad Movie"-জাতীয়-মুভি-হিট-বাদ):
+    const sr = await m4uText(M4U_BASE + '/lookup.php?q=' + encodeURIComponent(T) + '&page=1&per_page=8', M4U_BASE + '/', Math.min(4500, left())).catch(() => '');
+    let hits = []; try { hits = ((JSON.parse(sr) || {}).hits) || []; } catch { }
+    if (!hits.length) { if (DBG) console.error('[m4us] ' + tmdbId + ' no-hit "' + T + '"'); return []; }
+    const best = m4uPick(hits, T, await skyYear(tmdbId, true).catch(() => 0), true); // বছর + সিরিজ-পক্ষপাত (m4uPick — মুভি-পথের-সাথে-একই-নীতি)
+    if (!best) { if (DBG) console.error('[m4us] no-series-hit "' + T + '" hits=' + hits.length); return []; }
+    // ধাপ-২: পোস্ট → সব-m4ulinks (প্রতি-এপিসোড/প্রতি-রেজো-ভিন্ন-এন্ট্রি):
+    const post = await m4uText(M4U_BASE + best.permalink, M4U_BASE + '/', Math.min(4500, left())).catch(() => '');
+    const nums = [...new Set(post.match(/https?:\/\/m4ulinks\.sbs\/number\/\d+/g) || [])].slice(0, 18); // The Diplomat-এ ১৫-এন্ট্রি (প্রমাণ) — ৮-এ E04-মিস-হত
+    if (!nums.length) { if (DBG) console.error('[m4us] no-m4ulinks'); return []; }
+    // ধাপ-৩+৪: তরঙ্গে-তরঙ্গে (প্রতি-তরঙ্গে ৬-m4ulinks → তাদের-hubcloud → শিরোনাম-পড়া) — মিল-পেলেই-থামা (সব-একসাথে=বাজেট-কাটে):
+    const mts = []; const seenHc = new Set(); let hcN = 0;
+    for (let w = 0; w < nums.length && !mts.length; w += 6) {
+      if (left() < 2600) break;
+      const hcSet = new Set();
+      await Promise.all(nums.slice(w, w + 6).map(async u => { // m4ulinks → hubcloud-লিংক (সমান্তরাল)
+        if (left() < 2400) return;
+        const hb = await m4uText(u, M4U_BASE + '/', Math.min(3400, left())).catch(() => '');
+        for (const m2 of (hb.match(/hubcloud\.[a-z.]+\/(?:drive|video)\/[a-z0-9]+/g) || [])) hcSet.add(m2);
+      }));
+      const got = await Promise.all([...hcSet].filter(z => !seenHc.has(z)).map(async hp => { // hubcloud → শিরোনাম(=ফাইলনাম) → হুবহু SxxExx
+        seenHc.add(hp); hcN++;
+        if (left() < 2200) return null;
+        const hu = 'https://' + hp;
+        const pg = await m4uText(hu, M4U_BASE + '/', Math.min(3000, left())).catch(() => '');
+        const ttl = ((pg.match(/<title>([^<]{4,220})</) || [])[1] || '').trim();
+        if (!ttl) return null;
+        if (/\.zip\b/i.test(ttl)) return null;              // সিজন-জিপ-প্যাক = প্লেয়ারে-চলে-না
+        const ep = epOfName(ttl);
+        if (!ep || ep.s !== SE || ep.e !== EP) return null; // ভুল-এপিসোড-নিষিদ্ধ
+        const h2 = resOfName(ttl);
+        if (maxh && h2 && h2 > maxh) return null;
+        const gx = (pg.match(/https:\/\/gamerxyt\.com\/hubcloud\.php\?[^"']+/) || [])[0];
+        if (!gx) return null;
+        if (DBG) console.error('[m4us] EPMATCH "' + ttl.slice(0, 80) + '" h=' + (h2 || 0));
+        return { h: h2 || 0, url: hu, gx: gx.replace(/&amp;/g, '&'), spec: ttl.replace(/\+/g, ' ') };
+      }));
+      for (const g of got) if (g) mts.push(g);
+      if (DBG) console.error('[m4us] wave' + (w / 6 + 1) + ' hc=' + hcSet.size + ' match=' + mts.length + ' @' + (Date.now() - t3) + 'ms');
+    }
+    if (!mts.length) { if (DBG) console.error('[m4us] S' + SE + 'E' + EP + ' no-ep-match (hub=' + hcN + ') @' + (Date.now() - t3) + 'ms'); return []; }
+    mts.sort((a, b) => (b.h - a.h) || (b.url < a.url ? 1 : -1)); // 4K→1080→720→480
+    // ধাপ-৫: মিল-থাকা-hubcloud → gamerxyt → সরাসরি-ফাইল (pd-মিরর-আগে — unsigned+সিক; তারপর-signed-S3):
+    const out = []; const seenU = new Set();
+    await Promise.all(mts.slice(0, 3).map(async mt => {
+      if (left() < 1800) return;
+      const gp = await m4uText(mt.gx, 'https://hubcloud.ist/', Math.min(3600, left())).catch(() => '');
+      const pds = [...new Set((gp.match(/pixeldrain\.dev\/u\/([A-Za-z0-9]+)/g) || []).map(z => z.split('/u/')[1]))];
+      const s3s = [...new Set((gp.match(/https?:\/\/[a-z0-9.-]+\/[^"'<> ]*X-Amz-Signature=[A-Za-z0-9%]+/g) || []).map(z => z.replace(/&amp;/g, '&')))];
+      if (DBG) console.error('[m4us]   gamerxyt bytes=' + gp.length + ' pd=' + pds.length + ' s3=' + s3s.length + ' left=' + left());
+      for (const pdi of pds.slice(0, 2)) {
+        if (left() < 1500) break;
+        const pu = 'https://pixeldrain.dev/api/file/' + pdi;
+        const pv = await pdProbe(pu).catch(() => null);
+        if (!pv || !pv.alive) continue;
+        const ph = resOfName(pv.name) || mt.h;
+        if (maxh && ph && ph > maxh) continue;
+        if (!seenU.has(pu)) { seenU.add(pu); out.push({ h: ph, url: pu, spec: (pv.name || mt.spec).replace(/\+/g, ' ') }); }
+        break;
+      }
+      if (!out.some(o => o.h === mt.h) && s3s.length && left() > 1500) {
+        for (const s3 of s3s.slice(0, 2)) {
+          const sv = await m4uAlive(s3).catch(() => null);
+          if (!sv || !sv.alive) continue;
+          if (!seenU.has(s3)) { seenU.add(s3); out.push({ h: mt.h, url: s3, spec: (sv.name || mt.spec).replace(/\+/g, ' ') }); }
+          break;
+        }
+      }
+    }));
+    if (!out.length) { if (DBG) console.error('[m4us] ' + tmdbId + ' 0-cards @' + (Date.now() - t3) + 'ms'); return []; }
+    if (DBG) console.error('[m4us] ' + tmdbId + ' "' + T + '" S' + SE + 'E' + EP + ' hub=' + hcN + ' epMatch=' + mts.length + ' cards=' + out.length + ' @' + (Date.now() - t3) + 'ms');
+    out.sort((a, b) => b.h - a.h);
+    const fin = []; const seenF = new Set();
+    for (const x of out) { if (seenF.has(x.url)) continue; seenF.add(x.url); fin.push(x); if (fin.length >= 4) break; }
+    const epLine = '\u29e0 S' + SE + 'E' + EP;
+    return fin.map(x => {
+      const q2 = String(x.h || '');
+      const txt = '\u29c9 ' + String(best.post_title || T).split(' Full Movie')[0].slice(0, 80) + '\n' + epLine + '\n\u229e Movies4u \u00b7 MKV';
+      return {
+        name: '\u25a5 ' + q2 + ' \u25a5',
+        title: txt,
+        description: txt + (x.spec ? '\n' + x.spec.slice(0, 120) : ''),
+        quality: q2,
+        url: x.url,
+        behaviorHints: {
+          notWebReady: false, isBingeable: true, proxyHeaders: { request: { 'User-Agent': UA } },
+          filename: (x.spec.match(/[A-Za-z0-9 ().&+\[\]-]+\.mkv/) || ['movies4u.mkv'])[0]
+        },
+        bingeGroup: 'm4u|' + T.toLowerCase() + '::'
+      };
+    });
+  } catch (e2) { if (DBG) console.error('[m4us] ERR ' + String(e2 && e2.message).slice(0, 70) + ' @' + (Date.now() - t3) + 'ms'); return []; }
+}
 // ─── Pengu (com.penguplay) — ইউজার-সরবরাহকৃত-টোকেন; /stream → /direct/<b64>/<file>?psig → 307-টাটকা-সমাধানকৃত-সরাসরি-URL (রিলে-নয়; প্লেয়ারে-কোনো-টোকেন-যায়-না r173 ✓):
 const PENGU_CFG = '%7B%22auth_token%22%3A%22r3oEkTdC2juLpr1PxmmXcpBOsXy-OTbbBGOhbzZfYAA%22%7D';
 const PENGU_BASE = 'https://pengu.uk/' + PENGU_CFG;
@@ -2081,7 +2230,7 @@ function pengResolve(u) { // 307-অনুসরণ-না-করে-location-�
   });
 }
 async function penguStreams(tmdbId, title, type, s, e, origin, maxh) {
-  if (!tmdbId || type !== 'movie') return []; // মুভি-পথ
+  if (!tmdbId || type !== 'movie') return []; // মুভি-পথ — v1.15.82: সিরিজ-সাপোর্ট-নেই (প্রমাণ ১৯ অক্টো: /stream/series/…, /stream/tv/… সব-রূপ = ১৫৩B "support the project"-ডামি)
   const t9 = Date.now(); const W9 = 8000; const l9 = () => Math.max(250, W9 - (Date.now() - t9));
   try {
     const T = String(title || '').trim() || (await nameForTmdb(tmdbId, 'movie').catch(() => ''));
@@ -2148,20 +2297,73 @@ async function penguStreams(tmdbId, title, type, s, e, origin, maxh) {
 //   → hubcloud.<tld>/(drive|video)/<id> → gamerxyt.com/hubcloud.php → R2-signed/pixeldrain — সিক-নিশ্চিত-সরাসরি-ফাইল (hglink/hgcloud-বাউন্স-ডোমেইন-বাইপাস: id-সব-জায়গায়-এক):
 const SKY_BASE = 'https://new1.skymovieshd.clinic';
 const SKY_YEARS = new Map(); // tmdbId → বছর (মিল-বাড়াতে)
-function skyYear(tmdbId) {
-  if (SKY_YEARS.has(tmdbId)) return Promise.resolve(SKY_YEARS.get(tmdbId));
-  return tmdbGet('/movie/' + tmdbId, 8000).then(b => {
-    let y = 0; try { y = parseInt(((JSON.parse(b).release_date) || '').slice(0, 4), 10) || 0; } catch { }
-    SKY_YEARS.set(tmdbId, y); return y;
-  }).catch(() => { SKY_YEARS.set(tmdbId, 0); return 0; });
+function skyYear(tmdbId, isTv) { // v1.15.82: সিরিজ-বছর = first_air_date (মুভি = release_date)
+  const k = (isTv ? 'tv:' : 'movie:') + tmdbId; // টাইপ-সহ-কী (একই-আইডি-দু-টাইপে-আলাদা)
+  if (SKY_YEARS.has(k)) return Promise.resolve(SKY_YEARS.get(k));
+  return tmdbGet('/' + (isTv ? 'tv' : 'movie') + '/' + tmdbId, 8000).then(b => {
+    let y = 0; try { const j = JSON.parse(b); y = parseInt(((isTv ? j.first_air_date : j.release_date) || '').slice(0, 4), 10) || 0; } catch { }
+    SKY_YEARS.set(k, y); return y;
+  }).catch(() => { SKY_YEARS.set(k, 0); return 0; });
+}
+// ─── v1.15.82: সিরিজ-নির্ণায়ক (Sky + Movies4u — হাবক্লাউড-পাতার-শিরোনামেই ফাইলনাম) ───
+// প্রমাণ (১৯ অক্টো): sky → hubcloud.cx শিরোনাম "Breaking.Bad.S01E03.720p.HEVC.BluRay…mkv"
+//                   m4u → hubcloud.ist শিরোনাম "(Movies4u.Foo).The.Diplomat.S01E04.480p.WEB-DL…mkv"
+function epOfName(nm) { // '…S01E03…' → {s:1,e:3}; মিল-না-হলে null (ভুল-এপিসোড-এড়াতে)
+  const m = String(nm || '').match(/(?:^|[^a-z0-9])s(\d{1,2})[ ._x-]?e(\d{1,2})(?:[^0-9]|$)/i);
+  if (!m) return null;
+  const s = parseInt(m[1], 10), e = parseInt(m[2], 10);
+  return (s > 0 && s < 100 && e > 0 && e < 1000) ? { s, e } : null;
+}
+function seasonOfName(nm) { // '…-S02-Complete…' → 2 (SxxExx-এ-মিলবে-না — 'E' বর্ণ-বাধা)
+  const m = String(nm || '').match(/(?:^|[^a-z0-9])s(\d{1,2})(?:[^0-9a-z]|$)/i);
+  if (!m) return 0;
+  const v = parseInt(m[1], 10);
+  return (v > 0 && v < 100) ? v : 0;
+}
+function resOfName(nm) { // '2160p' → 2160; শুধু-'4K'/'UHD'-লেখা-থাকলেও 2160 (না-থাকলে 0)
+  const n = String(nm || '');
+  const m = n.match(/(?:^|[^0-9])(\d{3,4})\s*[pi]/i);
+  if (m) { const h = parseInt(m[1], 10); return (h >= 360 && h <= 2160) ? h : 0; }
+  if (/\b(4k|uhd|2160)\b/i.test(n)) return 2160;
+  return 0;
+}
+// ─── v1.15.82: Movies4u লুকআপ-হিট-বাছাই (বছর-সচেতন) — hits[0]-অন্ধ-গ্রহণ বন্ধ ───
+// প্রমাণ: "Superman" (tmdb 1061474 = ২০২৫) → hits[0] = "Superman (1978) …2160p 4K" — ভুল-সিনেমার-কার্ড (ভুল-টাইটেল-নিষিদ্ধ)।
+// বছর-মিল +৬০ / অমিল −৪০ → ২০২৫-এর-হিট জেতে; সিরিজে "Web Series/Season/Complete" +৭০, "…Movie" −১২০ (El Camino-জাতীয়-হিট-বাদ)।
+function m4uPick(hits, T, year, isTv) {
+  const nrm = z => String(z || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const Tn = nrm(T); if (!Tn) return null;
+  const oneW = Tn.split(' ').length === 1;
+  let best = null, bestSc = 0;
+  for (const h of (hits || [])) {
+    const pt = String(h.post_title || ''); const n = nrm(pt);
+    if (!n || !h.permalink) continue;
+    let sc = 0;
+    if (n === Tn) sc = 200;
+    else if (n.startsWith(Tn + ' ')) sc = 150;
+    else if (!oneW && (n.includes(' ' + Tn + ' ') || n.endsWith(' ' + Tn))) sc = 110;
+    else if (!oneW) { const w = Tn.split(' '); if (w.every(t => n.includes(t))) sc = 55; }
+    else continue;
+    const py = parseInt(((pt.match(/\((19|20)\d{2}\)/) || [])[0] || '').replace(/[^0-9]/g, '') || '0', 10);
+    if (py && year) sc += (py === year ? 60 : -40); // ভুল-সাল-কার্ড-বন্ধ
+    if (isTv && /web series|\bseries\b|season|\bcomplete\b/i.test(pt)) sc += 70;
+    if (isTv && /\bmovie\b/i.test(pt) && !/series/i.test(pt)) sc -= 120;
+    if (!isTv && /\bmovie\b/i.test(pt)) sc += 10;
+    sc -= Math.max(0, n.split(' ').length - Tn.split(' ').length) * 3;
+    if (sc > bestSc) { bestSc = sc; best = h; }
+  }
+  if (DBG) console.error('[m4uPick] "' + T + '" y=' + (year || 0) + (isTv ? ' tv' : '') + ' → ' + (best ? (bestSc + ' ' + String(best.post_title).slice(0, 54)) : 'কোনো-হিট-নেই'));
+  return bestSc >= 60 ? best : null;
 }
 async function skyStreams(tmdbId, title, type, s, e, origin, maxh) {
-  if (!tmdbId || type !== 'movie') return []; // v1: মুভি-পথ (সিরিজ-পরে)
+  if (!tmdbId) return []; // v1.15.82: মুভি + সিরিজ (দুটোই) — আগে type!=='movie' তে সিরিজ-শূন্য ছিল
+  const isTv = type === 'series';
+  const SE = Math.max(1, parseInt(s, 10) || 1), EP = Math.max(1, parseInt(e, 10) || 1);
   const tS = Date.now(); const WS = 8000; const lS = () => Math.max(250, WS - (Date.now() - tS));
   try {
-    const T = String(title || '').trim() || (await nameForTmdb(tmdbId, 'movie').catch(() => ''));
+    const T = String(title || '').trim() || (await nameForTmdb(tmdbId, isTv ? 'series' : 'movie').catch(() => ''));
     if (!T || lS() < 3200) return [];
-    const yP = skyYear(tmdbId).catch(() => 0);
+    const yP = skyYear(tmdbId, isTv).catch(() => 0);
     // ধাপ-১: skymovieshd-সার্চ:
     const sh = await m4uText(SKY_BASE + '/search.php?search=' + encodeURIComponent(T) + '&cat=All', SKY_BASE + '/', Math.min(3600, lS())).catch(() => '');
     if (!sh) { if (DBG) console.error('[sky] no-search @' + (Date.now() - tS) + 'ms'); return []; }
@@ -2182,8 +2384,15 @@ async function skyStreams(tmdbId, title, type, s, e, origin, maxh) {
       const py = parseInt((d.match(/\((20\d\d)\)/) || [])[1] || '0', 10);
       if (py && Y) sc += (py === Y ? 40 : -30);
       sc -= Math.max(0, n.split(' ').length - Tn.split(' ').length) * 3; // অতিরিক্ত-টোকেন-দণ্ড
-      const rh = parseInt((d.match(/[\s.-](\d{3,4})p/i) || [])[1] || '0', 10);
-      return { p, sc, rh };
+      let rh = parseInt((d.match(/[\s.-](\d{3,4})p/i) || [])[1] || '0', 10);
+      if (!rh && /\b(4k|uhd)\b/i.test(d)) rh = 2160; // v1.15.82: 4K-শব্দ-থাকলেও-রেজো-ধরা (২১৬০p-লেখা-নাও-থাকতে-পারে)
+      let ssn = seasonOfName(d); // v1.15.82: সিরিজ-সিজন-মিল (পোস্ট-স্লাগে '-S02-Complete')
+      if (isTv) {
+        if (!ssn) sc -= 60;            // সিজন-চিহ্ন-নেই (মুভি/প্যাক) → নিচে-ঠেলা
+        else if (ssn === SE) sc += 120; // হুবহু-সিজন
+        else sc -= 200;                 // অন্য-সিজন → কার্যত-বাদ (ভুল-সিজন-নিষিদ্ধ)
+      }
+      return { p, sc, rh, ssn };
     }).filter(x => x.sc >= 60).sort((a, b) => (b.sc - a.sc) || ((b.rh || 0) - (a.rh || 0))).slice(0, 4); // v1.15.51: 2→4-পোস্ট (সাইটের-সব-ভ্যারিয়েন্ট: 1080/720/480/HEVC)
     if (!scored.length) { if (DBG) console.error('[sky] no-match "' + T + '" posts=' + posts.length + ' @' + (Date.now() - tS) + 'ms'); return []; }
     // ধাপ-২: পোস্ট → howblogs → hubcloud → gamerxyt → R2/pd (পোস্ট-সমান্তরাল):
@@ -2193,7 +2402,7 @@ async function skyStreams(tmdbId, title, type, s, e, origin, maxh) {
         const slugRaw = sp.p.split('/').pop();
         const slugEnc = encodeURIComponent(slugRaw).replace(/%28/g, '(').replace(/%29/g, ')'); // quote(safe='()')-সমতুল্য — ব্র্যাকেট-এনকোড, প্যারেন-র
         const ph = await m4uText(SKY_BASE + '/movie/' + slugEnc, SKY_BASE + '/', Math.min(3400, lS())).catch(() => '');
-        const hbIds = [...new Set((ph.match(/https?:\/\/howblogs\.xyz\/([a-z0-9]+)/gi) || []).map(z => z.split('/').pop()))].slice(0, 3);
+        const hbIds = [...new Set((ph.match(/https?:\/\/howblogs\.xyz\/([a-z0-9]+)/gi) || []).map(z => z.split('/').pop()))].slice(0, isTv ? 8 : 3); // v1.15.82: সিরিজে-এপিসোড-howblogs-এ-ছড়ানো (৩-এ-S01E05-মিস-হত)
         await Promise.all(hbIds.map(async hb => { // v1.15.51: hb-চেইন-সমান্তরাল (ধারাবাহিকে-৩-চেইন-বাজেট-কাটত)
           if (lS() < 2400 || got.length >= 8) return;
           const bw = await m4uText('https://howblogs.xyz/' + hb, SKY_BASE + '/', Math.min(3000, lS())).catch(() => '');
@@ -2201,13 +2410,19 @@ async function skyStreams(tmdbId, title, type, s, e, origin, maxh) {
           if (!hcm) return;
           const hc = await m4uText(hcm[0], 'https://howblogs.xyz/', Math.min(3600, lS())).catch(() => '');
           const ttl = ((hc.match(/<title>([^<]{4,200})</) || [])[1] || '').trim();
+          if (isTv) { // v1.15.82: সিরিজে হুবহু S<SE>E<EP>-ফাইল-ছাড়া-কার্ড-নয় (ভুল-এপিসোড-নিষিদ্ধ; ttl = আসল-ফাইলনাম)
+            const ep = epOfName(ttl);
+            if (!ep || ep.s !== SE || ep.e !== EP) return;
+            if (DBG) console.error('[sky] EPMATCH ttl="' + ttl.slice(0, 90) + '" fhT=' + (resOfName(ttl) || 0) + ' spRh=' + sp.rh);
+          }
           const gx = (hc.match(/https:\/\/gamerxyt\.com\/hubcloud\.php\?[^"']+/) || [])[0];
           if (!gx) return;
           const gp = await m4uText(gx.replace(/&amp;/g, '&'), 'https://hubcloud.ist/', Math.min(3600, lS())).catch(() => '');
           const s3s = [...new Set((gp.match(/https?:\/\/[a-z0-9.-]+\/[^"'<> ]*X-Amz-Signature=[A-Za-z0-9%]+/g) || []).map(z => z.replace(/&amp;/g, '&')))];
           const pds = [...new Set((gp.match(/pixeldrain\.dev\/u\/([A-Za-z0-9]+)/g) || []).map(z => z.split('/u/')[1]))];
           if (!s3s.length && !pds.length) { if (DBG) console.error('[sky] hub-no-file ' + hb); return; }
-          const fh0 = sp.rh || parseInt((ttl.match(/[\s.-](\d{3,4})p/i) || [])[1] || '0', 10) || 720;
+          const fhT = resOfName(ttl) || parseInt((ttl.match(/[\s.-](\d{3,4})p/i) || [])[1] || '0', 10) || 0; // v1.15.82: আসল-ফাইলনাম-থেকেই-রেজো (স্লাগ-রেজোর-চেয়ে-নির্ভর; 2160p/4K-ও-ধরা)
+          const fh0 = (isTv && fhT) ? fhT : (sp.rh || fhT || 720); // মুভি-পথ-অপরিবর্তিত
           for (const pdi of pds.slice(0, 2)) { // v1.15.50: pd-প্রোব-বাধ্যতামূলক (negn6f-মৃত-প্রমাণিত; পেঙ্গু-ও-মৃত-ফাইল-দেয়):
             if (lS() < 2200) break;
             const pu = 'https://pixeldrain.dev/api/file/' + pdi;
@@ -2237,7 +2452,7 @@ async function skyStreams(tmdbId, title, type, s, e, origin, maxh) {
     }
     return fin.map(x => {
       const q2 = String(x.h);
-      const txt = '\u29c9 ' + T + '\n\u29e0 Movie\n\u229e Sky Movies \u00b7 MKV';
+      const txt = '\u29c9 ' + T + '\n' + (isTv ? ('\u29e0 S' + SE + 'E' + EP) : '\u29e0 Movie') + '\n\u229e Sky Movies \u00b7 MKV'; // v1.15.82: সিরিজে SxxExx-লাইন
       return {
         name: '\u25a5 ' + q2 + ' \u25a5',
         title: txt,
@@ -2672,9 +2887,9 @@ function parseCfgFromObj(o) {
     if (Array.isArray(o.rtsrv)) { const rs = o.rtsrv.map(x => String(x).toLowerCase()).filter(x => ['mq', 'pd'].indexOf(x) >= 0).slice(0, 2); if (rs.length) c.rtsrv = rs; } // v1.15.81: RT-নিজস্ব-সার্ভার (বাদ-তালিকা; ১ বা ২ — দুটোই-বাদ-মানে-RT-শূন্য)
     const wipL = (key) => { if (Array.isArray(o[key])) c[key] = o[key].map(x => String(x).toLowerCase().replace(/[^a-z]/g, '')).filter(x => x.length >= 2 && x.length <= 12).slice(0, 14); }; // v1.15.80-wip
     wipL('twl'); wipL('mml'); wipL('m4ul'); wipL('pengl'); wipL('vspl'); wipL('ottl'); wipL('azl');
-    if (o.mmr !== undefined && o.mmr !== null && o.mmr !== '') { const mv = parseInt(o.mmr, 10) || 0; if ([0, 480, 720, 1080].indexOf(mv) >= 0) c.mmr = mv; } // v1.15.39: MM-রেজোলিউশন-ছাঁকনি
+    if (o.mmr !== undefined && o.mmr !== null && o.mmr !== '') { const mv = parseInt(o.mmr, 10) || 0; if ([0, 480, 720, 1080, 2160].indexOf(mv) >= 0) c.mmr = mv; } // v1.15.39: MM-রেজোলিউশন-ছাঁকনি
     if (o.m4u === 0 || o.m4u === '0') c.m4u = 0; // v1.15.42: Movies4u-মাস্টার-সুইচ
-    if (o.m4ur !== undefined && o.m4ur !== null && o.m4ur !== '') { const m4v = parseInt(o.m4ur, 10) || 0; if ([0, 480, 720, 1080].indexOf(m4v) >= 0) c.m4ur = m4v; } // v1.15.42: Movies4u-নিজের-রেজোলিউশন-ছাঁকনি (MM-থেকে-স্বাধীন)
+    if (o.m4ur !== undefined && o.m4ur !== null && o.m4ur !== '') { const m4v = parseInt(o.m4ur, 10) || 0; if ([0, 480, 720, 1080, 2160].indexOf(m4v) >= 0) c.m4ur = m4v; } // v1.15.42: Movies4u-নিজের-রেজোলিউশন-ছাঁকনি (MM-থেকে-স্বাধীন)
     if (o.peng === 0 || o.peng === '0') c.peng = 0; // v1.15.47: Arctic-মাস্টার-সুইচ
     if (o.mm === 0 || o.mm === '0') c.mm = 0; // v1.15.67-debug: MM-মাস্টার-সুইচ (v1.15.28-থেকে-মৃত-ছিল — parseCfg-তে-লাইন-ই-ছিল-না)
     if (o.mmrelay === 1 || o.mmrelay === '1') c.mmrelay = 1; // v1.15.54: MM-রিলে-সুইচ
