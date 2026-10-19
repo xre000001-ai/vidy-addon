@@ -203,6 +203,14 @@ async function tap(label, url, checks) {
     if (!az.length) return skip('AniZone Frieren-S2: no cards this run');
     ok(/S2E1/.test(String(az[0].description || '')), 'AniZone Frieren-S2: ⧠ S2E1 লাইন (uuid-প্রমাণ-প্রোবে-আলাদা)'); // v1.15.78: বছর-পথ-সব-ভ্যারিয়েন্ট — en-ভ্যারিয়েন্টে-(2026)-প্রত্যয়-থাকায়-আগে-বাদ-পড়ত
   });
+  await tap('AniZone সিকোয়েল-সাবটাইটেল (JJK tmdb95479 S3E1 — The Culling Game)', BASE + '/stream/series/tmdb95479%3A3%3A1.json', (s) => {
+    const az = azOf(s);
+    if (!az.length) return skip('AniZone JJK-S3: no cards this run');
+    ok(/S3E1/.test(String(az[0].description || '')), 'AniZone JJK-S3: ⧠ S3E1 লাইন (uuid=d305e94e-প্রোব=Culling-Game-এন্ট্রি)'); // v1.15.79: পরিবার-অনুক্রম — সাবটাইটেলযুক্ত-সিকোয়েল-ও-গণনায়
+  });
+  await tap('AniZone সৎ-শূন্য (JJK tmdb95479 S4E1 — পরিবারে-৪-না-থাকলে-ভুল-নয়)', BASE + '/stream/series/tmdb95479%3A4%3A1.json', (s) => {
+    ok(azOf(s).length === 0, 'AniZone S4: শূন্য-কার্ড (S1/S2/S3-এর-কোনোটা-ছল-করে-নয়)'); // ভুল-সিজন-নয় — সৎ-শূন্যই-নীতি
+  });
 
   await tap('cfg sub=0 (subtitle gate)', cfgUrl({ sub: 0 }, '/stream/movie/tt0468569.json'), (s) => {
     ok(s.length === 0 || s.every(c => !c.subtitles || c.subtitles.length === 0), 'sub=0: zero tracks on cards');

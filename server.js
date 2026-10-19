@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.78';
+const VERSION = '1.15.79';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -1830,9 +1830,13 @@ async function azStreams(tmdbId, type, s, e, azq) { // সার্চ→সি�
           const byr = pool2.filter(z => { const vy = parseInt(z.x.start_year, 10) || 0; return vy && Math.abs(vy - Ys) <= 1 && vBase(z); });
           if (byr.length) { pool2 = byr; if (DBG) console.error('[az] সিজন-বছর-পুল s=' + sn2 + ' Y=' + Ys + ' → ' + byr.length + '-এন্ট্রি'); }
         }
-        if (pool2 === scored) { // পথ-৩ (v1.15.78): TMDB-সিজন-রেকর্ড-ই-না-থাকলেও (/tv/209867/season/2=404 — Frieren-S2-প্রমাণ) বছর-অনুক্রম: anizone-সিকোয়েল-একই-শো+(বছর)-প্যাক-হিসেবে-নামায় ('Jujutsu Kaisen (2023)', 'Sousou no Frieren (2026)') → exact-base-প্যাক-এন্ট্রি-বছর-আরোহী-সারিতে-s-তম-টা
-          const same = pool2.map(z => ({ z, vy: parseInt(z.x.start_year, 10) || 0 })).filter(w => w.vy && azVariants(w.z.x).some(v => azNorm(String(v).replace(/\(\d{4}\)/g, '')) === nt)).sort((a, b) => a.vy - b.vy);
-          if (same.length >= 2) { const pick = same[Math.min(sn2, same.length) - 1].z; pool2 = [pick]; if (DBG) console.error('[az] বছর-অনুক্রম-পুল s=' + sn2 + ' → ' + pick.x.slug + '@' + pick.vy); }
+        if (pool2 === scored) { // পথ-৩ (v1.15.79-পুনর্লিখন — JJK-S3-ভুলের-চূড়ান্ত-সমাধান): পরিবার-বছর-অনুক্রম (TV-শুধু)। anizone-ফ্র্যাঞ্চাইজ-নামকরণ = বেস-উপসর্গ + সাবটাইটেল/বছর ('Jujutsu Kaisen'→'Jujutsu Kaisen (2023)'→'Jujutsu Kaisen: The Culling Game' — সাইট-প্রোব; Frieren-এ-'Frieren: Beyond...'-সাবটাইটেল-আগে-থেকেই) → বেস-উপসর্গযুক্ত-TV-পরিবার-বছর-আরোহী-সারিতে-s-তম। s-তম-শনাক্ত-না-হলে-সৎ-শূন্য (ভুল-সিজন-কখনো-নয় — ইউজার-নির্দেশ)
+          const fam = pool2.map(z => ({ z, vy: parseInt(z.x.start_year, 10) || 0 }))
+            .filter(w => w.vy && /tv|series/i.test(String(w.z.x.type || '')) && azVariants(w.z.x).some(v => azNorm(String(v).replace(/\(\d{4}\)/g, '')).indexOf(nt) === 0))
+            .sort((a, b) => a.vy - b.vy || a.z.sc - b.z.sc);
+          if (fam.length >= sn2) { const pick = fam[sn2 - 1].z; pool2 = [pick]; if (DBG) console.error('[az] পরিবার-অনুক্রম-পুল s=' + sn2 + ' → ' + pick.x.slug + '@' + fam[sn2 - 1].vy); }
+          else if (fam.length === 1) { if (DBG) console.error('[az] এক-এন্ট্রি-ধারাবাহিক s=' + sn2 + ' → এন্ট্রি-ই (সিজন-এন্ট্রির-ভেতরে-পরম-নম্বর)'); } // একই-এন্ট্রিতে-সব-সিজন (দীর্ঘ-ধারাবাহিক) — রাখা
+          else { if (DBG) console.error('[az] সিজন-' + sn2 + '-শনাক্ত-নয় (পরিবার=' + fam.length + ') → সৎ-শূন্য'); return []; }
         }
       }
     }
