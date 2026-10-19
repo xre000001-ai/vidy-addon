@@ -14,8 +14,10 @@ setTimeout(()=>{try{
   const byTxt=(row,txt)=>[...row.querySelectorAll('.chip')].find(c=>c.textContent===txt);
   let c,o;
   /* সোর্স */
-  c=d.querySelectorAll('#srcGrid .card').length===10;A('সোর্স-কার্ড ১০টি',c);
-  c=d.getElementById('card-peng').textContent.indexOf('Sky Movies')>=0;A('সোর্স-কার্ড: Sky Movies (Arctic-পরিবার)',c);
+  // v1.15.86: Pengu-সোর্স সম্পূর্ণ সরানো, Sky Movies নিজস্ব সোর্স ⇒ মোট ১০ কার্ড (peng-কার্ড আর নেই)
+  c=d.querySelectorAll('#srcGrid .card').length===10;A('সোর্স-কার্ড ১০টি (Pengu সরানো, Sky যোগ)',c);
+  c=!!d.getElementById('card-sky')&&d.getElementById('card-sky').textContent.indexOf('Sky Movies')>=0;A('সোর্স-কার্ড: Sky Movies (নিজস্ব)',c);
+  c=!d.getElementById('card-peng');A('সোর্স-কার্ড: Pengu আর নেই',c);
   /* MovieBox: রেজো ৪+All, ভাষা ১৭+All (Multi+Tagalog সহ) */
   const nxR=chips('tune-nx')[0],nxL=chips('tune-nx')[1];
   c=nxR.querySelectorAll('.chip').length===5;A('MovieBox-রেজো-চিপ All+৪ (4K/1080/720/480)',c);
@@ -38,8 +40,8 @@ setTimeout(()=>{try{
   byTxt(chips('tune-mm')[0],'720p').click();
   c=JSON.stringify(C.st.mmq)==='[720]';A('mmq → [720]',c);
   /* Sky Movies: নিজস্ব-রেজো+ভাষা */
-  byTxt(chips('tune-peng')[0],'4K').click();byTxt(chips('tune-peng')[1],'Hindi').click();
-  c=JSON.stringify(C.st.pengq)==='[2160]'&&JSON.stringify(C.st.pengl)==='["hindi"]';A('pengq [2160]+pengl ["hindi"]',c);
+  byTxt(chips('tune-sky')[0],'4K').click();byTxt(chips('tune-sky')[1],'Hindi').click();
+  c=JSON.stringify(C.st.skyq)==='[2160]'&&JSON.stringify(C.st.skyl)==='["hindi"]';A('skyq [2160]+skyl ["hindi"]',c);
   /* লুকানো-ফিল্টার: fzone-ডিফল্টে-লুকানো, Filters-বাটনে-খোলে */
   const disp=e=>w.getComputedStyle(e).display;
   const op=e=>{const v=w.getComputedStyle(e).opacity;return v===''?null:v;};
@@ -100,19 +102,19 @@ setTimeout(()=>{try{
   c=d.querySelectorAll('#tune-nx .fgroup.filtered').length===0&&d.querySelector('#tune-nx .fcnt').textContent==='All';A('Reset → গ্রুপ-গণনা "All"',c);
   c=!d.getElementById('srvCard').classList.contains('open')&&d.getElementById('srvTgl').textContent.indexOf('Show')===0;A('Reset → সার্ভার-কার্ড-গোটানো+লেবেল-সিঙ্ক',c);
   /* v1.15.81: Sky-প্রিভিউ আর Movies4u-র m4ur-দেখায়-না */
-  C.st.m4ur=480;C.st.pengq=[];C.rebuild();
+  C.st.m4ur=480;C.st.skyq=[];C.rebuild();
   c=d.getElementById('pvPq').textContent==='All'&&d.getElementById('pvPh').textContent.indexOf('2160')>0;A('Sky-প্রিভিউ m4ur-মুক্ত (All/2160): '+d.getElementById('pvPq').textContent+' / '+d.getElementById('pvPh').textContent,c);
   C.st.m4ur=0;
   /* rebuild-চুক্তি */
-  const rst=()=>{C.st.q=[];C.st.sub=1;C.st.srv=[];C.st.az=1;C.st.azq=[];C.st.azl=[];C.st.nx=1;C.st.nxq=[];C.st.nxl=[];C.st.rt=1;C.st.rtl=[];C.st.rtq=[];C.st.tw=1;C.st.twq=[];C.st.twl=[];C.st.mm=1;C.st.mmr=0;C.st.mmq=[];C.st.mml=[];C.st.m4u=1;C.st.m4ur=0;C.st.m4uq=[];C.st.m4ul=[];C.st.peng=1;C.st.pengq=[];C.st.pengl=[];C.st.vsp=1;C.st.vspq=[];C.st.vspl=[];C.st.ott=1;C.st.ottq=[];C.st.ottl=[];};
+  const rst=()=>{C.st.q=[];C.st.sub=1;C.st.srv=[];C.st.az=1;C.st.azq=[];C.st.azl=[];C.st.nx=1;C.st.nxq=[];C.st.nxl=[];C.st.rt=1;C.st.rtl=[];C.st.rtq=[];C.st.tw=1;C.st.twq=[];C.st.twl=[];C.st.mm=1;C.st.mmr=0;C.st.mmq=[];C.st.mml=[];C.st.m4u=1;C.st.m4ur=0;C.st.m4uq=[];C.st.m4ul=[];C.st.sky=1;C.st.skyq=[];C.st.skyl=[];C.st.vsp=1;C.st.vspq=[];C.st.vspl=[];C.st.ott=1;C.st.ottq=[];C.st.ottl=[];};
   rst();C.rebuild();
   c=!/\/cfg\//.test(out());A('সব-ডিফল্ট → ব্লব-বিহীন',c);
   C.st.az=0;C.rebuild();o=dec(out());
   c=!!o&&Object.keys(o).length===1&&o.az===0;A('az=0 → {"az":0}: '+JSON.stringify(o),c);
   C.st.az=1;C.st.mm=1;C.st.mmq=[720,2160];C.st.twq=[480];C.rebuild();o=dec(out());
   c=!!o&&JSON.stringify(o.mmq)==='[2160,720]'&&JSON.stringify(o.twq)==='[480]';A('mmq-desc+twq-সহাবস্থান: '+JSON.stringify(o),c);
-  C.st.peng=1;C.st.pengq=[2160];C.st.pengl=['hindi'];C.rebuild();o=dec(out());
-  c=!!o&&JSON.stringify(o.pengq)==='[2160]'&&JSON.stringify(o.pengl)==='["hindi"]';A('pengq+pengl-নির্গমন: '+JSON.stringify(o),c);
+  C.st.sky=1;C.st.skyq=[2160];C.st.skyl=['hindi'];C.rebuild();o=dec(out());
+  c=!!o&&JSON.stringify(o.skyq)==='[2160]'&&JSON.stringify(o.skyl)==='["hindi"]';A('skyq+skyl-নির্গমন: '+JSON.stringify(o),c);
   C.st.srv=C.SRVS.map(s=>s[0]);C.rebuild();o=dec(out());
   c=!!o&&!('srv'in o);A('srv-সব → বাদ',c);
   /* preview-সততা */
@@ -138,13 +140,13 @@ setTimeout(()=>{try{
     A2('hydrate-legacy: twq1080/mmr480/az0',C2.st.twq[0]===1080&&C2.st.mmr===480&&C2.st.az===0);
     const o2=dec(u2);
     A2('legacy-URL-অপরিবর্তিত (mmr-স্থায়ী, mmq-নেই): '+u2,o2&&o2.mmr===480&&!('mmq'in o2)&&o2.az===0&&o2.twq&&o2.twq[0]===1080);
-    const blob3=Buffer.from(JSON.stringify({mmq:[1080,480],pengl:['hindi'],rtq:[2160],rtl:['bengali']})).toString('base64url');
+    const blob3=Buffer.from(JSON.stringify({mmq:[1080,480],skyl:['hindi'],rtq:[2160],rtl:['bengali']})).toString('base64url');
     const d3=new JSDOM(html,{runScripts:'dangerously',url:'http://127.0.0.1:7000/cfg/'+blob3+'/configure',beforeParse(w3){w3.fetch=()=>Promise.resolve({ok:false});}});
     setTimeout(()=>{try{
       const C3=d3.window.__cfg,u3=d3.window.document.getElementById('url').value,o3=dec(u3);
       let b3=0;const A3=(t,cc)=>{if(!cc)b3++;console.log((cc?'✓':'✗')+' '+t);};const A4=A3;let b4=0;
-      A3('hydrate-নতুন: mmq/pengl/rtq/rtl(bengali-লিগ্যাসি)',JSON.stringify(C3.st.mmq)==='[1080,480]'&&C3.st.pengl[0]==='hindi'&&C3.st.rtq[0]===2160&&C3.st.rtl[0]==='bengali');
-      A3('নতুন-URL-রাউন্ডট্রিপ: '+u3,o3&&JSON.stringify(o3.mmq)==='[1080,480]'&&JSON.stringify(o3.pengl)==='["hindi"]'&&o3.rtq[0]===2160&&o3.rtl[0]==='bengali');
+      A3('hydrate-নতুন: mmq/skyl/rtq/rtl(bengali-লিগ্যাসি)',JSON.stringify(C3.st.mmq)==='[1080,480]'&&C3.st.skyl[0]==='hindi'&&C3.st.rtq[0]===2160&&C3.st.rtl[0]==='bengali');
+      A3('নতুন-URL-রাউন্ডট্রিপ: '+u3,o3&&JSON.stringify(o3.mmq)==='[1080,480]'&&JSON.stringify(o3.skyl)==='["hindi"]'&&o3.rtq[0]===2160&&o3.rtl[0]==='bengali');
       /* mmq-নির্বাচিত-হলে-legacy-mmr-পুরোপুরি-বাদ */
       const d4=new JSDOM(html,{runScripts:'dangerously',url:'http://127.0.0.1:7000/cfg/'+Buffer.from(JSON.stringify({mmr:720,m4ur:720})).toString('base64url')+'/configure',beforeParse(w4){w4.fetch=()=>Promise.resolve({ok:false});}});
       setTimeout(()=>{try{

@@ -385,7 +385,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
   var SUBS=[[1,'On'],[0,'No subs']];
 
   /* ─────────── state (server-contract keys) ─────────── */
-  var st={v:1,q:[],sub:1,srv:SRVS.map(function(x){return x[0];}),nx:1,nxq:[],nxl:[],rt:1,rtl:[],rtq:[],tw:1,twq:[],twl:[],mm:1,mmr:0,mmq:[],mml:[],m4u:1,m4ur:0,m4uq:[],m4ul:[],peng:1,pengq:[],pengl:[],vsp:1,vspq:[],vspl:[],ott:1,ottq:[],ottl:[],az:1,azq:[],azl:[],rtsrv:[]}; /* rtsrv: খালি=MQ+Pixeldrain-দুটোই (সার্ভার-চুক্তি: খালি=সব) */
+  var st={v:1,q:[],sub:1,srv:SRVS.map(function(x){return x[0];}),nx:1,nxq:[],nxl:[],rt:1,rtl:[],rtq:[],tw:1,twq:[],twl:[],mm:1,mmr:0,mmq:[],mml:[],m4u:1,m4ur:0,m4uq:[],m4ul:[],sky:1,skyr:0,skyq:[],skyl:[],vsp:1,vspq:[],vspl:[],ott:1,ottq:[],ottl:[],az:1,azq:[],azl:[],rtsrv:[]}; /* rtsrv: খালি=MQ+Pixeldrain-দুটোই (সার্ভার-চুক্তি: খালি=সব) */
 
   /* source definitions: [key, tile, tileBg, tileFg, name, badge, badgeCls, blurb, hasTune] */
   var SRC=[
@@ -395,7 +395,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     ['tw','TW','linear-gradient(135deg,#132b26,#0d1e1b)','#7fe0cc','ToonWorld','Toons · Multi','', 'Multi-audio animation',1],
     ['mm','MM','linear-gradient(135deg,#23172b,#181020)','#d3a3f0','Multimovies','MM-HLS','', 'Bengali/English · fast HLS',1],
     ['m4u','M4U','linear-gradient(135deg,#252012,#19150c)','#e8d48a','Movies4u','MKV · 4K · HDR','', 'HDR10+/DV · Atmos · direct MKV',1],
-    ['peng','SM','linear-gradient(135deg,#12293a,#0c1c28)','#8ac6ff','Sky Movies','Arctic fam','', 'SkymoviesHD family · GDFlix/HubCloud · direct files',1],
+    ['sky','SM','linear-gradient(135deg,#0f2436,#0a1826)','#7fd4ff','Sky Movies','SMHD','', 'SkymoviesHD · GDFlix/HubCloud · direct MKV',1],
     ['vsp','VS','linear-gradient(135deg,#1b2337,#121826)','#a9b8e8','Vidsrc','HLS · Eng','', 'Own relay pool · wide catalog',1],
     ['ott','AT','linear-gradient(135deg,#102a26,#0b1d1a)','#7fe0cc','AsianTV','HLS · K/C/J/Thai','', 'Dramas & movies · embedded subs',1],
     ['az','AZ','linear-gradient(135deg,#221a33,#171122)','#c9b8ff','AniZone','HLS · Anime','new','Anime series & movies · multi-language subs',1]
@@ -443,9 +443,11 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
       if(o.m4ur)st.m4ur=({2160:2160,1080:1080,720:720,480:480})[o.m4ur]||0;
       if(o.m4uq)st.m4uq=numL(o.m4uq,[2160,1080,720,480]);
       if(o.m4ul)st.m4ul=strL(o.m4ul,LK);
-      if(o.peng===0)st.peng=0;
-      if(o.pengq)st.pengq=numL(o.pengq,[2160,1080,720,480]);
-      if(o.pengl)st.pengl=strL(o.pengl,LK);
+      if(o.sky===0)st.sky=0;
+      if(o.skyr)st.skyr=({2160:2160,1080:1080,720:720,480:480})[o.skyr]||0;
+      if(o.skyq)st.skyq=numL(o.skyq,[2160,1080,720,480]);
+      if(o.skyl)st.skyl=strL(o.skyl,LK);
+
       if(o.vsp===0)st.vsp=0;
       if(o.vspq)st.vspq=numL(o.vspq,[2160,1080,720,480,360]);
       if(o.vspl)st.vspl=strL(o.vspl,LK);
@@ -496,10 +498,11 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
       else if(st.m4ur)c.m4ur=st.m4ur;
       if(st.m4ul.length)c.m4ul=st.m4ul.slice();
     }
-    if(st.peng===0)c.peng=0;
+    if(st.sky===0)c.sky=0;
     else{
-      if(st.pengq.length)c.pengq=st.pengq.slice().sort(function(a,b){return b-a;});
-      if(st.pengl.length)c.pengl=st.pengl.slice();
+      if(st.skyq.length)c.skyq=st.skyq.slice().sort(function(a,b){return b-a;});
+      else if(st.skyr)c.skyr=st.skyr;
+      if(st.skyl.length)c.skyl=st.skyl.slice();
     }
     if(st.vsp===0)c.vsp=0;
     else{
@@ -584,7 +587,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     bindSwitch('tw',$('sw-tw'),$('card-tw'));
     bindSwitch('mm',$('sw-mm'),$('card-mm'));
     bindSwitch('m4u',$('sw-m4u'),$('card-m4u'));
-    bindSwitch('peng',$('sw-peng'),$('card-peng'));
+    bindSwitch('sky',$('sw-sky'),$('card-sky'));
     bindSwitch('vsp',$('sw-vsp'),$('card-vsp'));
     bindSwitch('ott',$('sw-ott'),$('card-ott'));
     bindSwitch('az',$('sw-az'),$('card-az'));
@@ -750,9 +753,10 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     chipsInto(o.zone,'Resolutions',st.m4uq,RES,rebuild,'',1);
     chipsInto(o.zone,'Audio languages',st.m4ul,LANGS,rebuild);
     /* Sky Movies (Arctic family) */
-    o=tuneCard('tune-peng','peng','Sky Movies','Arctic family — Pengu + SkymoviesHD scrapers, one slot');h.appendChild(o.card);
-    chipsInto(o.zone,'Resolutions',st.pengq,RES,rebuild,'',1);
-    chipsInto(o.zone,'Audio languages',st.pengl,LANGS,rebuild);
+    /* Sky Movies — v1.15.86: Pengu থেকে আলাদা নিজস্ব সোর্স (নিজস্ব সুইচ/রেজো/কোয়ালিটি/ভাষা) */
+    o=tuneCard('tune-sky','sky','Sky Movies','SkymoviesHD · GDFlix/HubCloud · direct MKV · auto domain');h.appendChild(o.card);
+    chipsInto(o.zone,'Resolutions',st.skyq,RES,rebuild,'',1);
+    chipsInto(o.zone,'Audio languages',st.skyl,LANGS,rebuild);
     /* Vidsrc */
     o=tuneCard('tune-vsp','vsp','Vidsrc','Own relay pool · wide catalog');h.appendChild(o.card);
     chipsInto(o.zone,'Resolutions',st.vspq,RES,rebuild,'',1);
@@ -809,10 +813,10 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     $('pvAh').textContent='\u25a5 '+(st.azq.length?Math.max.apply(null,st.azq):1080)+' \u25a5';
     $('pvAt').textContent='\u29c9 Frieren | 2023 |\n\u29e0 S1E1 \u2022 Episode Title\n\u229e AniZone \u2317 '+(st.azl.length?cap1(st.azl):'Subbed');
     $('pvAq').textContent=qsel(st.azq);
-    $('pvP').style.display=st.peng?'':'none'; /* Sky Movies — Arctic-পরিবার */
-    $('pvPh').textContent='\u25a5 '+(st.pengq.length?Math.max.apply(null,st.pengq):2160)+' \u25a5'; /* v1.15.81: নিজের-ডিফল্ট (আগে ভুলে Movies4u-র-m4ur-দেখাত) */
-    $('pvPt').textContent='\u29c9 Deadpool & Wolverine | 2024 |\n\u29e0 Movie\n\u229e Sky Movies \u00b7 MKV \u2317 '+(st.pengl.length?cap1(st.pengl):'Multi-Audio');
-    $('pvPq').textContent=st.pengq.length?('≤'+Math.max.apply(null,st.pengq)+'p'):'All'; /* v1.15.81: m4ur-লিক-বন্ধ */
+    $('pvP').style.display=st.sky?'':'none'; /* Sky Movies — v1.15.86: নিজস্ব সোর্স (Pengu সরানো) */
+    $('pvPh').textContent='\u25a5 '+(st.skyq.length?Math.max.apply(null,st.skyq):2160)+' \u25a5'; /* v1.15.81: নিজের-ডিফল্ট (আগে ভুলে Movies4u-র-m4ur-দেখাত) */
+    $('pvPt').textContent='\u29c9 Deadpool & Wolverine | 2024 |\n\u29e0 Movie\n\u229e Sky Movies \u00b7 MKV \u2317 '+(st.skyl.length?cap1(st.skyl):'Multi-Audio');
+    $('pvPq').textContent=st.skyq.length?('≤'+Math.max.apply(null,st.skyq)+'p'):'All'; /* v1.15.81: m4ur-লিক-বন্ধ */
   }
 
   /* ─────────── counts + summary ─────────── */
@@ -830,7 +834,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     if(st.tw===1&&(st.twq.length||st.twl.length))f++;
     if(st.mm===1&&(st.mmq.length||st.mml.length||st.mmr))f++;
     if(st.m4u===1&&(st.m4uq.length||st.m4ul.length||st.m4ur))f++;
-    if(st.peng===1&&(st.pengq.length||st.pengl.length))f++;
+    if(st.sky===1&&(st.skyq.length||st.skyl.length))f++;
     if(st.vsp===1&&(st.vspq.length||st.vspl.length))f++;
     if(st.ott===1&&(st.ottq.length||st.ottl.length))f++;
     if(st.az===1&&(st.azq.length||st.azl.length))f++;
@@ -840,8 +844,8 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
   }
   function summary(){
     var s=$('summ');s.innerHTML='';
-    var QK={v:'q',nx:'nxq',rt:'rtq',tw:'twq',mm:'mmq',m4u:'m4uq',peng:'pengq',vsp:'vspq',ott:'ottq',az:'azq'};
-    var LKK={nx:'nxl',rt:'rtl',tw:'twl',mm:'mml',m4u:'m4ul',peng:'pengl',vsp:'vspl',ott:'ottl',az:'azl'};
+    var QK={v:'q',nx:'nxq',rt:'rtq',tw:'twq',mm:'mmq',m4u:'m4uq',sky:'skyq',vsp:'vspq',ott:'ottq',az:'azq'};
+    var LKK={nx:'nxl',rt:'rtl',tw:'twl',mm:'mml',m4u:'m4ul',sky:'skyl',vsp:'vspl',ott:'ottl',az:'azl'};
     SRC.forEach(function(x){
       if(st[x[0]]!==1)return;
       s.appendChild(el('div','chip on',x[4]));
@@ -869,11 +873,11 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     Object.keys(st).forEach(function(k){if(Array.isArray(st[k]))st[k].length=0;});
     st.v=1;st.sub=1;st.srv=SRVS.map(function(x){return x[0];});
     st.nx=1;st.rt=1;st.tw=1;st.mm=1;st.mmr=0;st.m4u=1;st.m4ur=0;
-    st.peng=1;st.vsp=1;st.ott=1;st.az=1;
+    st.sky=1;st.vsp=1;st.ott=1;st.az=1;
     syncAll(true);rebuild();toast('Reset');
   };
   function syncAll(collapse){ /* v1.15.81: collapse=সত্য → প্রসারিত-কার্ড-গুটানো (কেবল Reset) */
-    [['v','card-v'],['nx','card-nx'],['rt','card-rt'],['tw','card-tw'],['mm','card-mm'],['m4u','card-m4u'],['peng','card-peng'],['vsp','card-vsp'],['ott','card-ott'],['az','card-az']].forEach(function(p){
+    [['v','card-v'],['nx','card-nx'],['rt','card-rt'],['tw','card-tw'],['mm','card-mm'],['m4u','card-m4u'],['sky','card-sky'],['vsp','card-vsp'],['ott','card-ott'],['az','card-az']].forEach(function(p){
       var sw=$('sw-'+p[0]);sw.classList.toggle('on',!!st[p[0]]);$(p[1]).classList.toggle('off',!st[p[0]]);
     });
     drawSrv();
