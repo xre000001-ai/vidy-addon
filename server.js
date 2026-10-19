@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.83'; // v1.15.83: সিজন-প্যাক-ফলব্যাক (হুবহু SxxExx-মিল-থাকলে সেটাই; না-থাকলে সিজন-নিশ্চিত 'S01…' প্যাক — লেবেলে "· S1 Pack" + "ⓘ সম্পূর্ণ সিজন (এক-ফাইলে) — Ep 1 থেকে শুরু")। প্রমাণ: Kon Yashwant Pansare (2026) S01 শুধু-প্যাক, 2160p-কপিতে pixeldrain×2+signed-S3×2 (206, সিক-যোগ্য) — আগে হুবহু-শর্তে সম্পূর্ণ বাতিল হত। ভুল-সিজন কখনো নয় (ssn !== SE → বাতিল; S02E01-এ S01-প্যাক যায় না — পরীক্ষিত)  // v1.15.82: Sky + Movies4u সিরিজ-পথ (হাবক্লাউড-পাতার-শিরোনামে SxxExx মিল — প্রতি-এপিসোড; ভুল-এপিসোড-নিষিদ্ধ, সিজন-জিপ-বাদ) + 4K (মৃত-S3/FSL-শাখা-জীবিত → 2160p-কার্ড; ভুল-h4-লেবেলে 4K-মিরর-বাতিল-হত) + hits[0]-অন্ধ-গ্রহণ-বন্ধ (বছর-সচেতন m4uPick — Superman-২০২৫-এ hits[0] ছিল Superman-১৯৭৮ = ভুল-টাইটেল) + m4ur/mmr-ক্যাপে 2160  // কনফিগ-পেজ-বাগ-মেরামত (৫-ট্যাব): সার্ভার-টাইল-বুটে-রিড্র, "None"=ফ্লিট-বন্ধ (খালি=সব-চুক্তি), Reset-এ-চিপ-রিড্র, flab-<em>-আক্ষরিক-লেখা, Jump-টগল+লেবেল, Sky-প্রিভিউ-m4ur-লিক, rtsrv-দুটোই-বাদ-সম্মান // v1.15.80: RT-দ্বিতীয়-সার্ভার (WN/pixeldrain)-পুনরুদ্ধার: é-ডিঅ্যাকসেন্ট+রেস-মার্জ+PD-inline+per-সার্ভার-টগল (rtsrv)
+const VERSION = '1.15.84'; // v1.15.84: workers.dev আর বাদ নয় (পরিমাপিত — সিক-যোগ্য)। প্রমাণ: সরাসরি-ফাইল workers.dev-এ মাঝ-রেঞ্জে HTTP 206, content-type video/x-matroska, ১৭.৫/২৪.৮ GB; টোকেন t=0/60/180/360/600s-এ বহাল। নিরাপত্তা: .m3u8 বাদ (সেকেন্ডেই 404), text/*-কনটেন্ট-টাইপ বাতিল, শুধু মিডিয়া-এক্সটেনশন-যুক্ত ফাইলনাম, রেজো কেবল পরিচিত-সিঁড়ি থেকে (ভুল-লেবেল-নিষিদ্ধ), অন্তর্বর্তী 403-এ একবার পুনঃচেষ্টা। ফল: Sikandar-2025-এ 0→2×2160 (আগে সর্বোচ্চ 1080)  // v1.15.83: সিজন-প্যাক-ফলব্যাক (হুবহু SxxExx-মিল-থাকলে সেটাই; না-থাকলে সিজন-নিশ্চিত 'S01…' প্যাক — লেবেলে "· S1 Pack" + "ⓘ সম্পূর্ণ সিজন (এক-ফাইলে) — Ep 1 থেকে শুরু")। প্রমাণ: Kon Yashwant Pansare (2026) S01 শুধু-প্যাক, 2160p-কপিতে pixeldrain×2+signed-S3×2 (206, সিক-যোগ্য) — আগে হুবহু-শর্তে সম্পূর্ণ বাতিল হত। ভুল-সিজন কখনো নয় (ssn !== SE → বাতিল; S02E01-এ S01-প্যাক যায় না — পরীক্ষিত)  // v1.15.82: Sky + Movies4u সিরিজ-পথ (হাবক্লাউড-পাতার-শিরোনামে SxxExx মিল — প্রতি-এপিসোড; ভুল-এপিসোড-নিষিদ্ধ, সিজন-জিপ-বাদ) + 4K (মৃত-S3/FSL-শাখা-জীবিত → 2160p-কার্ড; ভুল-h4-লেবেলে 4K-মিরর-বাতিল-হত) + hits[0]-অন্ধ-গ্রহণ-বন্ধ (বছর-সচেতন m4uPick — Superman-২০২৫-এ hits[0] ছিল Superman-১৯৭৮ = ভুল-টাইটেল) + m4ur/mmr-ক্যাপে 2160  // কনফিগ-পেজ-বাগ-মেরামত (৫-ট্যাব): সার্ভার-টাইল-বুটে-রিড্র, "None"=ফ্লিট-বন্ধ (খালি=সব-চুক্তি), Reset-এ-চিপ-রিড্র, flab-<em>-আক্ষরিক-লেখা, Jump-টগল+লেবেল, Sky-প্রিভিউ-m4ur-লিক, rtsrv-দুটোই-বাদ-সম্মান // v1.15.80: RT-দ্বিতীয়-সার্ভার (WN/pixeldrain)-পুনরুদ্ধার: é-ডিঅ্যাকসেন্ট+রেস-মার্জ+PD-inline+per-সার্ভার-টগল (rtsrv)
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -1911,6 +1911,52 @@ function m4uAlive(u) { // 2KB-রেঞ্জ-প্রোব — জীবন+�
     } catch { resolve({ alive: false, name: '', total: 0 }); }
   });
 }
+// ─── v1.15.84: workers.dev হেল্পার (পরিমাপ-ভিত্তিক) ───
+// পরিমাপ: সরাসরি-ফাইল workers.dev = video/x-matroska, ১৭.৫/২৪.৮ GB, রেঞ্জ-প্রোব ২০৬;
+// টোকেন t=0/60/180/360/600s-এ বহাল (১০ মিনিট+)। .m3u8-রূপী লিংক = সেকেন্ডেই ৪০৪ → বাদ।
+const LADDER = new Set([2160, 1440, 1080, 720, 540, 480, 360]); // বৈধ-রেজো-সিঁড়ি — এর-বাইরে মান = অবিশ্বস্ত
+function wkOnce(u) { // একক প্রোব — Referer-মুক্ত (403 এড়াতে) + text/* কনটেন্ট-টাইপ বাতিল (৪০৪-পেজ ধরা পড়ে)
+  return new Promise(resolve => {
+    try {
+      const req = https.get(u, { headers: { 'User-Agent': UA, 'Range': 'bytes=0-2047', 'Connection': 'close' }, timeout: 4500 }, res => {
+        const nm = ((res.headers['content-disposition'] || '').match(/filename="?([^"\r\n;]+)/i) || [])[1] || '';
+        const tot = +(((res.headers['content-range'] || '').split('/')[1] || res.headers['content-length'] || '0') + '').replace(/[^0-9]/g, '') || 0;
+        const ct = (res.headers['content-type'] || '').split(';')[0].toLowerCase();
+        res.destroy();
+        const ok = (res.statusCode === 206 || res.statusCode === 200) && !/^text\//.test(ct);
+        resolve({ alive: ok, name: nm, total: tot, ct: ct });
+      });
+      req.on('timeout', () => req.destroy(new Error('timeout')));
+      req.on('error', () => resolve({ alive: false, name: '', total: 0, ct: '' }));
+    } catch { resolve({ alive: false, name: '', total: 0, ct: '' }); }
+  });
+}
+// একবার পুনঃচেষ্টা — পরিমাপে দেখা গেছে workers.dev মাঝে-মাঝে অন্তর্বর্তী 403 দেয় (~১০%), পরের প্রচেষ্টায় ২০৬।
+// পুনঃচেষ্টা না থাকলে বৈধ 4K-কার্ড এলোমেলোভাবে হারিয়ে যায় (Superman-2025-এর ২১৬০ এক রানে ছিল, পরের রানে নেই)।
+async function wkAlive(u) {
+  let r = await wkOnce(u).catch(() => null);
+  if (r && r.alive) return r;
+  await new Promise(z => setTimeout(z, 350));
+  const r2 = await wkOnce(u).catch(() => null);
+  return (r2 && r2.alive) ? r2 : (r2 || r || { alive: false, name: '', total: 0, ct: '' });
+}
+function wkName(u) { return decodeURIComponent((String(u).split('/').pop()) || ''); } // URL-পথের শেষে ফাইলনাম (…2160p….mkv)
+// কার্ড-যোগ্য workers.dev লিংক = পথের শেষে আসল মিডিয়া-ফাইলনাম (.mkv/.mp4/… থাকতে হবে)।
+// বাস্তব-প্রমাণ: Sikandar → "…Sikandar.2025.2160p….mkv" (১৭.৫GB) ও "(Movies4u.Bid).Sikandar…ESUBS.mkv" (১৩.৩GB);
+// Superman-2025 → "…Superman.2025.2160p….mkv" (২৪.৮GB) — সব video/x-matroska।
+// বাদ: (ক) .m3u8 — পরিমাপে সেকেন্ডেই 404; (খ) ".mkv"-হীন আবর্জনা (যেমন "…es4u.Foo).Superman" — পেজের JS-স্ট্রিং)।
+// দ্বিতীয়টি কেবল আবর্জনাই নয় — ধীর প্রোবে ~৯ সেকেন্ড নষ্ট করে বাজেট-গার্ড ট্রিগার করে আসল 4K-মিরর-ই বাদ পড়ত।
+function wkCands(page) {
+  return [...new Set((String(page || '').match(/https:\/\/[^\s"'<>\\]*workers\.dev[^\s"'<>\\]*/g) || []))]
+    .filter(w => /\.(mkv|mp4|m4v|avi|mov|m2ts|ts|webm)$/i.test(wkName(w))) // .m3u8 স্বয়ংক্রিয়ভাবে বাদ
+    .sort((a, b) => resOfName(wkName(b)) - resOfName(wkName(a)));
+}
+// রেজো অবশ্যই আসল-ফাইলনাম (content-disposition বা URL-পথ) থেকে — কখনোই রো-এর h থেকে উত্তরাধিকার-সূত্রে নয়।
+// কারণ: নাম-হীন workers.dev URL-এ ফাইল-কী তা যাচাই করা যায় না → ভুল-টাইটেল-ঝুঁকি (নিষিদ্ধ)। সৎ-শূন্য শ্রেয়।
+function wkReso(svName, url) {
+  const h = resOfName(svName || '') || resOfName(wkName(url)) || 0;
+  return LADDER.has(h) ? h : 0;
+}
 function pdProbe(u) { // 1KB-রেঞ্জ-GET-প্রোব — pixeldrain; CF-ক্যাশে-disposition-লুকাতে-পারে বলে-সাইজ-সহ-ফেরত
   return new Promise(resolve => {
     try {
@@ -2029,7 +2075,13 @@ async function m4uStreams(tmdbId, title, type, s, e, origin, maxh) { // maxh: cf
       if (!gx) return cands;
       const gpage = await m4uText(gx, 'https://hubcloud.ist/', Math.min(4200, left())).catch(() => '');
       // seek-নীতি (ইউজার-নির্দেশ + সাইটের-নিজের-নোট "Resume Not Supported in 10Gbps"):
-      // কার্ড-যোগ্য: pixeldrain → FSL → FSL v2 (যেকোনো-signed-S3)। কখনোই-নয়: 10Gbps(gpdl/pixel.hubcloud→workers), Buzz, Telegram।
+      // কার্ড-যোগ্য: pixeldrain → FSL/FSL v2 (যেকোনো-signed-S3) → workers.dev।
+      //   v1.15.84 (পরিমাপিত, ধারণা-নয়): সরাসরি-ফাইল workers.dev সিক-যোগ্য — Sikandar ১৭.৫GB ও Superman-2025 ২৪.৮GB
+      //   MKV-তে মাঝ-রেঞ্জে HTTP 206 + সঠিক Content-Range, content-type video/x-matroska; টোকেন ৬০০ সেকেন্ডেও বহাল
+      //   (t=0/60/180/360/600s পরিমাপ)। সতর্কতা: (ক) Referer দিলে কোনো কোনো হোস্ট 403 → প্রোব Referer-মুক্ত;
+      //   (খ) .m3u8-রূপী workers.dev লিংক সেকেন্ডেই 404 → বাদ; (গ) text/* কনটেন্ট-টাইপ = 404-পেজ → বাতিল।
+      //   রেজো শুধু পরিচিত-সিঁড়ি (2160/1440/1080/720/540/480/360) থেকে — নইলে কার্ড-ই নয় (ভুল-লেবেল-নিষিদ্ধ)।
+      // কখনোই-নয়: gpdl/pixel.hubcloud → cryptonewz.online-এ বিজ্ঞাপন-রিডাইরেক্ট (ফাইল-ই নয়, সিক-নয় — আলাদা কারণ), Buzz, Telegram।
       const s3s = [...new Set((gpage.match(/https?:\/\/[a-z0-9.-]+\/[^"'\s<>]*X-Amz-Signature=[A-Za-z0-9%]+/g) || []).map(z => z.replace(/&amp;/g, '&')))]; // FSL + FSL v2 — যেকোনো-signed-S3-হোস্ট
       const pdIds = [...new Set((gpage.match(/pixeldrain\.dev\/u\/([A-Za-z0-9]+)/g) || []).map(z => z.split('/u/')[1]))].slice(0, 4); // বাটন+var pxl (DMCA-লুকানো-আসল-লিঙ্ক-সহ)
       let furl = '', fdec = '', fsrc = '';
@@ -2072,6 +2124,23 @@ async function m4uStreams(tmdbId, title, type, s, e, origin, maxh) { // maxh: cf
         if (!(maxh && sh && sh > maxh)) {
           cands.push({ h: sh, url: furl, kind: 'file', spec: snd, aud: '', dv: '' });
           if (DBG) console.error('[m4u] s3-mirror ' + sh + ' "' + snd.slice(0, 52) + '"');
+        }
+      }
+      // ৩) workers.dev (v1.15.84): পরিমাপে সিক-যোগ্য প্রমাণিত — ১৮.৭GB (Sikandar) ও ২৬.৬GB (Superman-2025) ফাইলে
+      //    মাঝ-রেঞ্জে 206 + সঠিক Content-Range। সতর্কতা: Referer পাঠালে কোনো কোনো হোস্ট 403 দেয় —
+      //    m4uAlive কোনো Referer পাঠায় না, তাই পার হয়। gpdl/pixel.hubcloud নয় — ওগুলো cryptonewz.online-এ
+      //    বিজ্ঞাপন-রিডাইরেক্ট (ফাইল নয়)।
+      if (!cands.length && left() > 1500) {
+        for (const w of wkCands(gpage).slice(0, 2)) {
+          if (left() < 700) break;                             // বাজেট — ধীর প্রোব যেন সারা-রিকোয়েস্ট না খায়
+          const sv = await wkAlive(w).catch(() => null);
+          if (!sv || !sv.alive) { if (DBG) console.error('[m4u]   wk dead ' + w.slice(-18)); continue; }
+          const wh = wkReso(sv.name, w);
+          if (!wh) continue;                                   // রেজো-অনিশ্চিত → কার্ড-নয় (ভুল-লেবেল-নিষিদ্ধ)
+          if (maxh && wh > maxh) break;
+          cands.push({ h: wh, url: w, kind: 'file', spec: sv.name || wkName(w), aud: '', dv: '' });
+          if (DBG) console.error('[m4u] workers-mirror h=' + wh + ' ' + (sv.total ? (sv.total / 1073741824).toFixed(1) + 'GB ' : '') + sv.ct);
+          break;
         }
       }
       if (!cands.length) { if (DBG) console.error('[m4u] no-seekable ' + r.id + ' @' + (Date.now() - t3) + 'ms'); return cands; }
@@ -2198,6 +2267,19 @@ async function m4uSeries(tmdbId, title, s, e, origin, maxh) {
           const sv = await m4uAlive(s3).catch(() => null);
           if (!sv || !sv.alive) continue;
           if (!seenU.has(s3)) { seenU.add(s3); out.push({ h: mt.h, url: s3, spec: (sv.name || mt.spec).replace(/\+/g, ' ') }); }
+          break;
+        }
+      }
+      // workers.dev (v1.15.84): সিক-যোগ্য পরিমাপিত — শেষ অবলম্বন (pd/S3 না থাকলে)। Referer নেই (403 এড়াতে)।
+      if (!out.length && left() > 1500) {
+        for (const w of wkCands(gp).slice(0, 2)) {
+          if (left() < 700) break;
+          const sv = await wkAlive(w).catch(() => null);
+          if (!sv || !sv.alive) continue;
+          const wh = wkReso(sv.name, w);
+          if (!wh) continue;                                   // রেজো-অনিশ্চিত → সৎ-বাতিল
+          if (maxh && wh > maxh) break;
+          if (!seenU.has(w)) { seenU.add(w); out.push({ h: wh, url: w, spec: (sv.name || wkName(w) || mt.spec).replace(/\+/g, ' ') }); if (DBG) console.error('[m4us] workers-mirror h=' + wh + ' ' + (sv.total ? (sv.total / 1073741824).toFixed(1) + 'GB' : '')); }
           break;
         }
       }
@@ -2335,7 +2417,9 @@ function seasonOfName(nm) { // '…-S02-Complete…' → 2 (SxxExx-এ-মিল
 }
 function resOfName(nm) { // '2160p' → 2160; শুধু-'4K'/'UHD'-লেখা-থাকলেও 2160 (না-থাকলে 0)
   const n = String(nm || '');
-  const m = n.match(/(?:^|[^0-9])(\d{3,4})\s*[pi]/i);
+  // v1.15.84: শেষে \b — "Superman (2025) IMAX …" তে "2025 I" কে 2025p মনে করত → কার্ডে "2025" লেবেল (ভুল)।
+  // \b দিলে I-এর পর M (word-char) থাকায় বাউন্ডারি পাওয়া যায় না → 2025 বাতিল, সঠিক 2160p ধরা পড়ে।
+  const m = n.match(/(?:^|[^0-9])(\d{3,4})\s*[pi]\b/i);
   if (m) { const h = parseInt(m[1], 10); return (h >= 360 && h <= 2160) ? h : 0; }
   if (/\b(4k|uhd|2160)\b/i.test(n)) return 2160;
   return 0;
@@ -2451,6 +2535,22 @@ async function skyStreams(tmdbId, title, type, s, e, origin, maxh) {
           const fh = fh0;
           if (maxh && fh > maxh) return;
           for (const s3 of s3s.slice(0, 1)) { if (!seenUrl.has(s3)) { seenUrl.add(s3); got.push({ h: fh, url: s3, spec: ttl.replace(/\+/g, ' '), pd: 0, kind: kind }); } }
+          // workers.dev (v1.15.84): সিক-যোগ্য পরিমাপিত — শেষ অবলম্বন (pd/S3 না থাকলে)। Referer নেই (403 এড়াতে)।
+          if (lS() > 1600) {
+            for (const w of wkCands(gp).slice(0, 2)) {
+              const sv = await wkAlive(w).catch(() => null);
+              if (!sv || !sv.alive) continue;
+              const wh = wkReso(sv.name, w);
+              if (!wh) continue;                               // রেজো-অনিশ্চিত → কার্ড-নয়
+              if (maxh && wh > maxh) break;
+              if (!seenUrl.has(w)) {
+                seenUrl.add(w);
+                got.push({ h: wh, url: w, spec: (sv.name || wkName(w) || ttl).replace(/\+/g, ' '), pd: 0, kind: kind });
+                if (DBG) console.error('[sky] workers-mirror h=' + wh);
+              }
+              break;
+            }
+          }
           if (DBG) console.error('[sky] res ' + fh + ' pd=' + pds.length + ' s3=' + s3s.length + ' @' + (Date.now() - tS) + 'ms');
           if (got.length >= 8) return;
         }));
