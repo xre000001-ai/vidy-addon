@@ -423,14 +423,15 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
       if(o.q)st.q=numL(o.q,[2160,1080,720,480,360]);
       if(o.sub===0)st.sub=0;
       if(Array.isArray(o.srv)){var s2=strL(o.srv,SRVS.map(function(x){return x[0];}));if(s2.length)st.srv=s2;}
-      var LK=LANGS.map(function(x){return x[0];}),LK2=LK.concat(['telugu','malayalam','bengali']); /* পুরনো-rtl-মান-সংরক্ষণ */
+      var LK=LANGS.map(function(x){return x[0];});
+      var LK2=LK.concat(['telugu','malayalam','bengali']).filter(function(v,i,a){return a.indexOf(v)===i;}); /* v1.15.81: নকল-মান-বাদ (আগে LK-তেই-থাকা ভাষা দ্বিগুণ হতো) */
       if(o.nx===0)st.nx=0;
       if(o.nxq)st.nxq=numL(o.nxq,[2160,1080,720,480,360]);
       if(o.nxl)st.nxl=strL(o.nxl,LK);
       if(o.rt===0)st.rt=0;
       if(o.rtl)st.rtl=strL(o.rtl,LK2);
       if(o.rtq)st.rtq=numL(o.rtq,[2160,1080,720,480]);
-      if(Array.isArray(o.rtsrv)){var rs2=strL(o.rtsrv,['mq','pd']);if(rs2.length&&rs2.length<2)st.rtsrv=rs2;}
+      if(Array.isArray(o.rtsrv)){var rs2=strL(o.rtsrv,['mq','pd']).slice(0,2);if(rs2.length)st.rtsrv=rs2;} /* v1.15.81: দুটোই-বাদ-সম্মানিত (সার্ভার-ও-এখন-মানে) */
       if(o.tw===0)st.tw=0;
       if(o.twq)st.twq=numL(o.twq,[2160,1080,720,480,360]);
       if(o.twl)st.twl=strL(o.twl,LK);
@@ -476,7 +477,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     else{
       if(st.rtl.length)c.rtl=st.rtl.slice();
       if(st.rtq.length)c.rtq=st.rtq.slice().sort(function(a,b){return b-a;});
-      if(st.rtsrv.length&&st.rtsrv.length<2)c.rtsrv=st.rtsrv.slice(); /* খালি/দুটোই → বাদ (সার্ভার-সব-মানে) */
+      if(st.rtsrv.length)c.rtsrv=st.rtsrv.slice(0,2); /* v1.15.81: খালি=সব; ১ বা ২-বাদ-দুটোই-বৈধ */
     }
     if(st.tw===0)c.tw=0;
     else{
@@ -531,7 +532,14 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     window.scrollTo({top:0,behavior:'smooth'});
   }
   [].forEach.call(document.querySelectorAll('.nv'),function(b){b.onclick=function(){go(b.getAttribute('data-t'));};});
-  function jump(tuneId){go('tune');setTimeout(function(){var e=$(tuneId);if(e){e.classList.add('open');e.scrollIntoView({behavior:'smooth',block:'center'});}},240);}
+  /* v1.15.81: টগল+লেবেল-সিঙ্ক (আগে সবসময় জোরে-খুলত আর "Filters ▾" লেবেল-পুরনো-থাকত) */
+  function jump(tuneId){go('tune');setTimeout(function(){
+    var e=$(tuneId);if(!e)return;
+    var open=!e.classList.contains('open');
+    e.classList.toggle('open',open);
+    var fb=e.querySelector('.fbtn');if(fb)fb.textContent=open?'Filters \u25b4':'Filters \u25be';
+    if(open)e.scrollIntoView({behavior:'smooth',block:'center'});
+  },240);}
 
   /* ─────────── switches + source cards ─────────── */
   var swOf={};
@@ -558,7 +566,10 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     body.appendChild(nm);
     body.appendChild(el('div','s-sub',s[7]));
     hd.appendChild(body);
-    if(s[8])hd.appendChild((function(){var b=el('button','stune','Tune');b.onclick=function(){jump('tune-'+key);};return b;})());
+    if(s[8])hd.appendChild((function(){var b=el('button','stune','Tune');b.onclick=function(){
+      if(st[key]!==1){toast('Turn '+s[4]+' on first');return;} /* v1.15.81: বন্ধ-উৎসে-লুকানো-ফিল্টারে-ঝাঁপ-বন্ধ */
+      jump('tune-'+key);
+    };return b;})());
     var sw=el('div','sw');sw.id='sw-'+key;hd.appendChild(sw);
     card.appendChild(hd);
     return {card:card,sw:sw};
@@ -581,6 +592,12 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
 
   /* ─────────── servers ─────────── */
   var srvDraws=[];
+  function rtSrvText(){ /* v1.15.81: সঠিক-গণনা (আগে rtsrv.length=2-তেও "1 of 2" দেখাত) */
+    var on=2-st.rtsrv.length;
+    if(on>=2)return '2 of 2 servers on — MQ + Pixeldrain';
+    if(on===1)return '1 of 2 servers on — '+(st.rtsrv.indexOf('mq')>=0?'Pixeldrain (WN) only':'MQ only');
+    return '0 of 2 servers on — RareToons will return no streams';
+  }
   (function buildServers(){
     var g=$('srvGrid');
     SRVS.forEach(function(sv){
@@ -613,12 +630,17 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
       t.dataset.k=sv[0];
       rg.appendChild(t);
     });
-    function drawRt(){[].forEach.call(rg.querySelectorAll('.srv'),function(t){t.classList.toggle('on',st.rtsrv.indexOf(t.dataset.k)<0);});var ss=$('rtSum2');if(ss)ss.textContent=(st.rtsrv.length?'1 of 2':'2 of 2')+' servers on — '+(st.rtsrv.length?(st.rtsrv[0]==='mq'?'Pixeldrain only':'MQ only'):'MQ + Pixeldrain');}
+    function drawRt(){[].forEach.call(rg.querySelectorAll('.srv'),function(t){t.classList.toggle('on',st.rtsrv.indexOf(t.dataset.k)<0);});var ss=$('rtSum2');if(ss)ss.textContent=rtSrvText();}
     srvDraws.push(drawRt);
     $('rtTgl').onclick=function(){var c=$('rtCard');c.classList.toggle('open');$('rtTgl').textContent=c.classList.contains('open')?'Hide \u25be':'Show \u25be';};
     $('srvAll').onclick=function(){st.srv=SRVS.map(function(x){return x[0];});drawSrv();rebuild();};
     $('srvPri').onclick=function(){st.srv=SRVS.slice(0,3).map(function(x){return x[0];});drawSrv();rebuild();};
-    $('srvNone').onclick=function(){st.srv=[];drawSrv();rebuild();};
+    /* v1.15.81: "None" আগে st.srv=[] দিত — সার্ভার-চুক্তিতে খালি=সব-১৬ (None আসলে All ছিল)। এখন সত্যিই ফ্লিট-বন্ধ (st.v=0)। */
+    $('srvNone').onclick=function(){
+      if(st.v===0){toast('Fleet already off');return;}
+      if(guardV())return; /* শেষ-উৎস-বন্ধ-রোধ */
+      st.v=0;syncAll();rebuild();toast('Vidy fleet off — re-enable in Sources');
+    };
   })();
   function drawSrv(){srvDraws.forEach(function(f){f();});}
 
@@ -658,7 +680,10 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     hd.appendChild(el('div','tile',s[1])).style.cssText='background:'+s[2]+';color:'+s[3];
     var b=el('div','s-body');b.appendChild(el('div','s-name',title));b.appendChild(el('div','s-sub',hint));hd.appendChild(b);
     var fb=el('button','mini fbtn','Filters \u25be');fb.style.marginLeft='auto';
-    fb.onclick=function(){card.classList.toggle('open');fb.textContent=card.classList.contains('open')?'Filters \u25b4':'Filters \u25be';};
+    fb.onclick=function(){
+      if(srcKey&&!st[srcKey]){toast('Turn '+title+' on first');return;} /* v1.15.81: বন্ধ-উৎসের-লুকানো-জোনে-খোলা-বন্ধ */
+      card.classList.toggle('open');fb.textContent=card.classList.contains('open')?'Filters \u25b4':'Filters \u25be';
+    };
     hd.appendChild(fb);
     card.appendChild(hd);
     var z=el('div','fzone'),zi=el('div','finner');z.appendChild(zi);card.appendChild(z);
@@ -666,7 +691,8 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
   }
   function chipsInto(z,lab,list,SET,onch,emTxt,seg){ /* গ্রুপ-কন্টেইনার+গণনা+এক-ট্যাপ-ক্লিয়ার (ফিল্টার-UX-নিদর্শন) */
     var g=el('div','fgroup'),fh=el('div','fh');
-    fh.appendChild(el('div','flab',lab+(emTxt?' <em>· '+emTxt+'</em>':'')));
+    var fl=el('div','flab');fl.innerHTML=lab+(emTxt?' <em>· '+emTxt+'</em>':''); /* v1.15.81: innerHTML — আগে textContent-এ "<em>" আক্ষরিক-দেখাত */
+    fh.appendChild(fl);
     var cnt=el('span','fcnt','All'),clr=el('button','fclr','Clear');
     fh.appendChild(cnt);fh.appendChild(clr);g.appendChild(fh);
     var cs=el('div','chips'+(seg?' seg':''));g.appendChild(cs);
@@ -675,8 +701,10 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     var draw=chipRow(cs,list,SET,function(){upd();onch();});
     clr.onclick=function(){list.length=0;draw();upd();onch();};
     upd();
+    chipDraws.push(function(){draw();upd();}); /* v1.15.81: Reset-এ চিপ+গণনা+.filtered-সহ সম্পূর্ণ-রিড্র */
     return draw;
   }
+  var chipDraws=[]; /* v1.15.81: সব-চিপ-সারির-redraw-নিবন্ধন (Reset/হাইড্রেট-পরে-দৃশ্য-সিঙ্ক) */
   function singleInto(z,lab,key,SET,onch){
     var g=el('div','fgroup'),fh=el('div','fh');
     fh.appendChild(el('div','flab',lab));
@@ -685,12 +713,14 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     var cs=el('div','chips seg');g.appendChild(cs);
     z.appendChild(g);
     function cur(){for(var i=0;i<SET.length;i++)if(SET[i][0]===st[key])return SET[i][1];return '';}
-    function draw(){cs.innerHTML='';cnt.textContent=cur();SET.forEach(function(l){
-      var c=el('div','chip'+(st[key]===l[0]?' on':'')+(l[0]===0?' all':''),l[1]);
+    function draw(){cs.innerHTML='';cnt.textContent=cur();SET.forEach(function(l,i){
+      var c=el('div','chip'+(st[key]===l[0]?' on':'')+(i===0?' all':''),l[1]); /* v1.15.81: 'all'-অ্যাক্সেন্ট = প্রথম/ডিফল্ট-বিকল্প (আগে "No subs"-ও teal-হত) */
       c.onclick=function(){st[key]=l[0];draw();onch();};
       cs.appendChild(c);
     });}
     draw();
+    chipDraws.push(draw); /* v1.15.81 */
+    return draw;
   }
 
   (function buildTune(){
@@ -749,9 +779,10 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     $('pvNh').textContent='\u25a5 '+nq+' \u25a5';
     $('pvNt').textContent='\u29c9 Demon Slayer | 2019 |\n\u29e0 S1E5 \u2022 Episode Title\n\u229e MovieBox \u2317 '+(st.nxl.length?st.nxl[0].charAt(0).toUpperCase()+st.nxl[0].slice(1):'All audio');
     $('pvNq').textContent=qsel(st.nxq);
-    $('pvR').style.display=st.rt?'':'none';
+    $('pvR').style.display=(st.rt&&st.rtsrv.length<2)?'':'none'; /* v1.15.81: দুটো-সার্ভারই-বাদ → RT-কার্ড-নেই */
     $('pvRh').textContent='\u25a5 1080 \u25a5'; /* RT-কার্ড-সর্বোচ্চ-১০৮০-লেবেল (Auto-নয় — ইউজার-নির্দেশ) */
     var cap1=a=>a.length?a[0].charAt(0).toUpperCase()+a[0].slice(1):'';
+    /* v1.15.81: প্রিভিউ-লেখা = আসল-কার্ড (unifyCards-এ ⊞ RareToons ⌗ Audio — কোনো-হোস্ট-প্রত্যয়-নেই) */
     $('pvRt').textContent='\u29c9 Demon Slayer | 2019 |\n\u29e0 S1E5 \u2022 Episode Title\n\u229e RareToons \u2317 '+(st.rtl.length?cap1(st.rtl):'All dubs');
     $('pvRq').textContent=st.rtq.length?('≤'+Math.max.apply(null,st.rtq)+'p'):(st.rtl.length?(cap1(st.rtl)+(st.rtl.length>1?' +'+(st.rtl.length-1):'')):'All'); /* সংক্ষিপ্ত — ওভারফ্লো-নয় */
     $('pvT').style.display=st.tw?'':'none';
@@ -779,19 +810,21 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     $('pvAt').textContent='\u29c9 Frieren | 2023 |\n\u29e0 S1E1 \u2022 Episode Title\n\u229e AniZone \u2317 '+(st.azl.length?cap1(st.azl):'Subbed');
     $('pvAq').textContent=qsel(st.azq);
     $('pvP').style.display=st.peng?'':'none'; /* Sky Movies — Arctic-পরিবার */
-    $('pvPh').textContent='\u25a5 '+(st.pengq.length?Math.max.apply(null,st.pengq):(st.m4ur||2160))+' \u25a5';
+    $('pvPh').textContent='\u25a5 '+(st.pengq.length?Math.max.apply(null,st.pengq):2160)+' \u25a5'; /* v1.15.81: নিজের-ডিফল্ট (আগে ভুলে Movies4u-র-m4ur-দেখাত) */
     $('pvPt').textContent='\u29c9 Deadpool & Wolverine | 2024 |\n\u29e0 Movie\n\u229e Sky Movies \u00b7 MKV \u2317 '+(st.pengl.length?cap1(st.pengl):'Multi-Audio');
-    $('pvPq').textContent=st.pengq.length?('≤'+Math.max.apply(null,st.pengq)+'p'):(st.m4ur?('cap '+st.m4ur+'p'):'All');
+    $('pvPq').textContent=st.pengq.length?('≤'+Math.max.apply(null,st.pengq)+'p'):'All'; /* v1.15.81: m4ur-লিক-বন্ধ */
   }
 
   /* ─────────── counts + summary ─────────── */
   function counts(){
     var on=SRC.filter(function(s){return st[s[0]]===1;}).length;
     $('bdSrc').textContent=on+'/'+SRC.length;
-    $('bdSrv').textContent=st.v===1?(st.srv.length+'/'+SRVS.length):'off';
-    var ss=$('srvSum2');if(ss)ss.textContent=st.v===1?(st.srv.length+'/'+SRVS.length+' servers on — best picked per title'):'fleet off';
+    var sn=st.srv.length?st.srv.length:SRVS.length; /* v1.15.81: খালি=সব-১৬ (সার্ভার-চুক্তি) — আগে "0/16" দেখাত */
+    $('bdSrv').textContent=st.v===1?(sn+'/'+SRVS.length):'off';
+    var ss=$('srvSum2');if(ss)ss.textContent=st.v===1?(sn+'/'+SRVS.length+' servers on — best picked per title'):'fleet off';
     var f=0;
-    if(st.v===1&&(st.q.length||st.sub===0))f++;
+    if(st.v===1&&(st.q.length||st.sub===0||(st.srv.length&&st.srv.length!==SRVS.length)))f++; /* v1.15.81: সার্ভার-সাবসেট-ও-টিউন */
+    if(st.rt===1&&st.rtsrv.length)f++; /* v1.15.81: RT-সার্ভার-পছন্দ-টিউনে-গণনা */
     if(st.nx===1&&(st.nxq.length||st.nxl.length))f++;
     if(st.rt===1&&(st.rtq.length||st.rtl.length))f++;
     if(st.tw===1&&(st.twq.length||st.twl.length))f++;
@@ -818,7 +851,8 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
       if(ql.length)s.appendChild(el('div','chip',x[4]+' ≤'+Math.max.apply(null,ql)+'p'));
       if(ll.length)s.appendChild(el('div','chip',x[4]+' '+ll.slice(0,2).join('/')+(ll.length>2?'+'+ll.length:'')));
     });
-    if(st.v===1){if(st.q.length)s.appendChild(el('div','chip','fleet ≤ '+Math.max.apply(null,st.q)+'p'));if(st.sub===0)s.appendChild(el('div','chip','no subs'));}
+    if(st.v===1){if(st.q.length)s.appendChild(el('div','chip','fleet ≤ '+Math.max.apply(null,st.q)+'p'));if(st.sub===0)s.appendChild(el('div','chip','no subs'));if(st.srv.length&&st.srv.length!==SRVS.length)s.appendChild(el('div','chip',st.srv.length+' servers'));}
+    if(st.rt===1&&st.rtsrv.length)s.appendChild(el('div','chip','RareToons '+(st.rtsrv.length>=2?'— no server':(st.rtsrv.indexOf('mq')>=0?'Pixeldrain only':'MQ only')))); /* v1.15.81 */
   }
 
   /* ─────────── install actions ─────────── */
@@ -831,19 +865,31 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
   };
   $('mobIns').onclick=function(){location.href=$('inst').href;};
   $('rst').onclick=function(){
-    st.v=1;st.q=[];st.sub=1;st.srv=SRVS.map(function(x){return x[0];});st.rtsrv=[];
-    st.nx=1;st.nxq=[];st.nxl=[];st.rt=1;st.rtl=[];st.tw=1;st.twq=[];st.mm=1;st.mmr=0;st.m4u=1;st.m4ur=0;st.peng=1;st.vsp=1;st.vspq=[];st.ott=1;st.ottq=[];st.az=1;st.azq=[];
-    syncAll();st.rtq=[];st.mmq=[];st.m4uq=[];st.pengq=[];st.twl=[];st.mml=[];st.m4ul=[];st.pengl=[];st.vspl=[];st.ottl=[];st.azl=[];
-    rebuild();toast('Reset');
+    /* v1.15.81: তালিকাগুলো ইন-প্লেস-পরিষ্কার (chipRow-এর-ক্লোজার একই অ্যারে-দেখে — নতুন-অ্যারে-বসালে রিড্র-ও বৃথা) */
+    Object.keys(st).forEach(function(k){if(Array.isArray(st[k]))st[k].length=0;});
+    st.v=1;st.sub=1;st.srv=SRVS.map(function(x){return x[0];});
+    st.nx=1;st.rt=1;st.tw=1;st.mm=1;st.mmr=0;st.m4u=1;st.m4ur=0;
+    st.peng=1;st.vsp=1;st.ott=1;st.az=1;
+    syncAll(true);rebuild();toast('Reset');
   };
-  function syncAll(){
+  function syncAll(collapse){ /* v1.15.81: collapse=সত্য → প্রসারিত-কার্ড-গুটানো (কেবল Reset) */
     [['v','card-v'],['nx','card-nx'],['rt','card-rt'],['tw','card-tw'],['mm','card-mm'],['m4u','card-m4u'],['peng','card-peng'],['vsp','card-vsp'],['ott','card-ott'],['az','card-az']].forEach(function(p){
       var sw=$('sw-'+p[0]);sw.classList.toggle('on',!!st[p[0]]);$(p[1]).classList.toggle('off',!st[p[0]]);
     });
     drawSrv();
+    /* v1.15.81: সব-চিপ-সারি+সেগমেন্ট-রিড্র (Reset-এর-পরে দৃশ্য=স্টেট) */
+    chipDraws.forEach(function(f){try{f();}catch(e){}});
     [].forEach.call(document.querySelectorAll('#tab-tune .card'),function(c){
       var m=c.id && c.id.match(/^tune-(.+)$/);
       if(m&&st[m[1]]!==undefined&&c.querySelector('.fzone'))c.classList.toggle('off',!st[m[1]]);
+    });
+    if(!collapse)return;
+    /* v1.15.81: প্রসারিত-কার্ড-গুটিয়ে-ফেলা + টগল-লেবেল-সিঙ্ক (Reset-এর-পরে-আগের-খোলা-অবস্থা-আটকে-থাকত) */
+    [['srvCard','srvTgl'],['rtCard','rtTgl']].forEach(function(p){
+      var c=$(p[0]),b=$(p[1]);if(c)c.classList.remove('open');if(b)b.textContent='Show \u25be';
+    });
+    [].forEach.call(document.querySelectorAll('#tab-tune .card'),function(c){
+      if(c.classList.contains('open')){c.classList.remove('open');var fb=c.querySelector('.fbtn');if(fb)fb.textContent='Filters \u25be';}
     });
   }
 
@@ -853,6 +899,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
       if(m&&m.version)$('ver').textContent='v'+m.version;
     }).catch(function(){$('ver').textContent='';});
   }catch(e){/* fetch-নেই-এমন-এমবেডেড-কনটেক্সটে-নীরব */}
+  drawSrv(); /* v1.15.81: বুটে-সার্ভার-টাইল + RT-গ্রুপের-সারাংশ-আঁকা (আগে প্রথম-লোডে সব-টাইল-অনির্বাচিত-দেখাত) */
   rebuild();
   window.__cfg={st:st,rebuild:rebuild,preview:preview,SRVS:SRVS}; /* ডিবাগ/সাপোর্ট-হ্যান্ডেল */
 })();

@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.80'; // RT-দ্বিতীয়-সার্ভার (WN/pixeldrain)-পুনরুদ্ধার: é-ডিঅ্যাকসেন্ট+রেস-মার্জ+PD-inline+per-সার্ভার-টগল (rtsrv)
+const VERSION = '1.15.81'; // কনফিগ-পেজ-বাগ-মেরামত (৫-ট্যাব): সার্ভার-টাইল-বুটে-রিড্র, "None"=ফ্লিট-বন্ধ (খালি=সব-চুক্তি), Reset-এ-চিপ-রিড্র, flab-<em>-আক্ষরিক-লেখা, Jump-টগল+লেবেল, Sky-প্রিভিউ-m4ur-লিক, rtsrv-দুটোই-বাদ-সম্মান // v1.15.80: RT-দ্বিতীয়-সার্ভার (WN/pixeldrain)-পুনরুদ্ধার: é-ডিঅ্যাকসেন্ট+রেস-মার্জ+PD-inline+per-সার্ভার-টগল (rtsrv)
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -2289,7 +2289,7 @@ async function withSources(cardsP, srcs, cfg, t0) {
       } else if (live[i].key === 'rt') {
         const rtSel = Array.isArray(cfg && cfg.rtl) ? cfg.rtl : [];
         const rtAllow = qToList(cfg && cfg.rtq); // v1.15.80-wip: RareToons-নিজের-রেজো-সাদৃশ্য (অজানা-উচ্চতা-থাকে)
-        const rtSrv = (Array.isArray(cfg && cfg.rtsrv) && cfg.rtsrv.length && cfg.rtsrv.length < 2) ? cfg.rtsrv : null; // v1.15.80: বাদ-তালিকা (খালি/দুটোই=সব)
+        const rtSrv = (Array.isArray(cfg && cfg.rtsrv) && cfg.rtsrv.length) ? cfg.rtsrv : null; // v1.15.81: বাদ-তালিকা (খালি=সব; দুটোই-বাদ → RT-শূন্য — কনফিগ-টগলের-সাথে-সৎ)
         all = all.concat(v.filter(z => rtLangPass(z, rtSel) && qPass(z, rtAllow)).filter(z => !rtSrv || rtSrv.indexOf(/pixeldrain/.test(String(z.url || '')) ? 'pd' : 'mq') < 0));
       } else if (live[i].key === 'tw') {
         const twAllow = qToList(cfg && cfg.twq); // ToonWorld-নিজের-চিপস — রেজলভারের-আসল-উচ্চতায়
@@ -2669,7 +2669,7 @@ function parseCfgFromObj(o) {
     if (Array.isArray(o.rtl)) c.rtl = o.rtl.map(x => String(x).toLowerCase().replace(/[^a-z]/g, '')).filter(x => x.length >= 2 && x.length <= 12).slice(0, 14); // v1.15.80-wip: RareToons-ভাষা-তালিকা-প্রশস্ত (nxl-মানদণ্ড) — অনুপস্থিত-ভাষা-সৎ-শূন্য
     const wipQ = (key) => { const val = o[key]; if (val !== undefined && val !== null && val !== '') c[key] = qToList(val).filter(x => [2160, 1080, 720, 480].indexOf(x) >= 0).sort((a, b) => b - a).slice(0, 4); }; // v1.15.80-wip
     wipQ('rtq'); wipQ('mmq'); wipQ('m4uq'); wipQ('pengq');
-    if (Array.isArray(o.rtsrv)) { const rs = o.rtsrv.map(x => String(x).toLowerCase()).filter(x => ['mq', 'pd'].indexOf(x) >= 0); if (rs.length && rs.length < 2) c.rtsrv = rs; } // v1.15.80: RT-নিজস্ব-সার্ভার (বাদ-তালিকা)
+    if (Array.isArray(o.rtsrv)) { const rs = o.rtsrv.map(x => String(x).toLowerCase()).filter(x => ['mq', 'pd'].indexOf(x) >= 0).slice(0, 2); if (rs.length) c.rtsrv = rs; } // v1.15.81: RT-নিজস্ব-সার্ভার (বাদ-তালিকা; ১ বা ২ — দুটোই-বাদ-মানে-RT-শূন্য)
     const wipL = (key) => { if (Array.isArray(o[key])) c[key] = o[key].map(x => String(x).toLowerCase().replace(/[^a-z]/g, '')).filter(x => x.length >= 2 && x.length <= 12).slice(0, 14); }; // v1.15.80-wip
     wipL('twl'); wipL('mml'); wipL('m4ul'); wipL('pengl'); wipL('vspl'); wipL('ottl'); wipL('azl');
     if (o.mmr !== undefined && o.mmr !== null && o.mmr !== '') { const mv = parseInt(o.mmr, 10) || 0; if ([0, 480, 720, 1080].indexOf(mv) >= 0) c.mmr = mv; } // v1.15.39: MM-রেজোলিউশন-ছাঁকনি
