@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.82'; // v1.15.82: Sky + Movies4u সিরিজ-পথ (হাবক্লাউড-পাতার-শিরোনামে SxxExx মিল — প্রতি-এপিসোড; ভুল-এপিসোড-নিষিদ্ধ, সিজন-জিপ-বাদ) + 4K (মৃত-S3/FSL-শাখা-জীবিত → 2160p-কার্ড; ভুল-h4-লেবেলে 4K-মিরর-বাতিল-হত) + hits[0]-অন্ধ-গ্রহণ-বন্ধ (বছর-সচেতন m4uPick — Superman-২০২৫-এ hits[0] ছিল Superman-১৯৭৮ = ভুল-টাইটেল) + m4ur/mmr-ক্যাপে 2160  // কনফিগ-পেজ-বাগ-মেরামত (৫-ট্যাব): সার্ভার-টাইল-বুটে-রিড্র, "None"=ফ্লিট-বন্ধ (খালি=সব-চুক্তি), Reset-এ-চিপ-রিড্র, flab-<em>-আক্ষরিক-লেখা, Jump-টগল+লেবেল, Sky-প্রিভিউ-m4ur-লিক, rtsrv-দুটোই-বাদ-সম্মান // v1.15.80: RT-দ্বিতীয়-সার্ভার (WN/pixeldrain)-পুনরুদ্ধার: é-ডিঅ্যাকসেন্ট+রেস-মার্জ+PD-inline+per-সার্ভার-টগল (rtsrv)
+const VERSION = '1.15.83'; // v1.15.83: সিজন-প্যাক-ফলব্যাক (হুবহু SxxExx-মিল-থাকলে সেটাই; না-থাকলে সিজন-নিশ্চিত 'S01…' প্যাক — লেবেলে "· S1 Pack" + "ⓘ সম্পূর্ণ সিজন (এক-ফাইলে) — Ep 1 থেকে শুরু")। প্রমাণ: Kon Yashwant Pansare (2026) S01 শুধু-প্যাক, 2160p-কপিতে pixeldrain×2+signed-S3×2 (206, সিক-যোগ্য) — আগে হুবহু-শর্তে সম্পূর্ণ বাতিল হত। ভুল-সিজন কখনো নয় (ssn !== SE → বাতিল; S02E01-এ S01-প্যাক যায় না — পরীক্ষিত)  // v1.15.82: Sky + Movies4u সিরিজ-পথ (হাবক্লাউড-পাতার-শিরোনামে SxxExx মিল — প্রতি-এপিসোড; ভুল-এপিসোড-নিষিদ্ধ, সিজন-জিপ-বাদ) + 4K (মৃত-S3/FSL-শাখা-জীবিত → 2160p-কার্ড; ভুল-h4-লেবেলে 4K-মিরর-বাতিল-হত) + hits[0]-অন্ধ-গ্রহণ-বন্ধ (বছর-সচেতন m4uPick — Superman-২০২৫-এ hits[0] ছিল Superman-১৯৭৮ = ভুল-টাইটেল) + m4ur/mmr-ক্যাপে 2160  // কনফিগ-পেজ-বাগ-মেরামত (৫-ট্যাব): সার্ভার-টাইল-বুটে-রিড্র, "None"=ফ্লিট-বন্ধ (খালি=সব-চুক্তি), Reset-এ-চিপ-রিড্র, flab-<em>-আক্ষরিক-লেখা, Jump-টগল+লেবেল, Sky-প্রিভিউ-m4ur-লিক, rtsrv-দুটোই-বাদ-সম্মান // v1.15.80: RT-দ্বিতীয়-সার্ভার (WN/pixeldrain)-পুনরুদ্ধার: é-ডিঅ্যাকসেন্ট+রেস-মার্জ+PD-inline+per-সার্ভার-টগল (rtsrv)
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -2132,8 +2132,8 @@ async function m4uSeries(tmdbId, title, s, e, origin, maxh) {
     const nums = [...new Set(post.match(/https?:\/\/m4ulinks\.sbs\/number\/\d+/g) || [])].slice(0, 18); // The Diplomat-এ ১৫-এন্ট্রি (প্রমাণ) — ৮-এ E04-মিস-হত
     if (!nums.length) { if (DBG) console.error('[m4us] no-m4ulinks'); return []; }
     // ধাপ-৩+৪: তরঙ্গে-তরঙ্গে (প্রতি-তরঙ্গে ৬-m4ulinks → তাদের-hubcloud → শিরোনাম-পড়া) — মিল-পেলেই-থামা (সব-একসাথে=বাজেট-কাটে):
-    const mts = []; const seenHc = new Set(); let hcN = 0;
-    for (let w = 0; w < nums.length && !mts.length; w += 6) {
+    let mts = []; const seenHc = new Set(); let hcN = 0;
+    for (let w = 0; w < nums.length && !mts.some(m => m.kind === 'ep'); w += 6) { // v1.15.83: শুধু-হুবহু-এপিসোড-মিলেই-থামা (প্যাক পেলেও আরও-তরঙ্গ দেখা — সেরা-বিকল্প-খোঁজা)
       if (left() < 2600) break;
       const hcSet = new Set();
       await Promise.all(nums.slice(w, w + 6).map(async u => { // m4ulinks → hubcloud-লিংক (সমান্তরাল)
@@ -2149,19 +2149,31 @@ async function m4uSeries(tmdbId, title, s, e, origin, maxh) {
         const ttl = ((pg.match(/<title>([^<]{4,220})</) || [])[1] || '').trim();
         if (!ttl) return null;
         if (/\.zip\b/i.test(ttl)) return null;              // সিজন-জিপ-প্যাক = প্লেয়ারে-চলে-না
-        const ep = epOfName(ttl);
-        if (!ep || ep.s !== SE || ep.e !== EP) return null; // ভুল-এপিসোড-নিষিদ্ধ
+        // v1.15.83: দু-স্তর — (ক) হুবহু SxxExx = সেরা; (খ) কোনো-E-চিহ্ন-নেই কিন্তু সিজন নিশ্চিত ("….S01.2160p…") = সিজন-প্যাক
+        // প্রমাণ: Kon Yashwant Pansare (2026) — পোস্টে শুধু সিজন-প্যাক (length=11770s ≈ ৩ঘ ১৬মি), কিন্তু 2160p-কপিতে
+        // pixeldrain×2 + signed-S3×2 আছে (সিক-যোগ্য, 206)। আগে হুবহু-SxxExx-শর্তে এই 4K পুরোপুরি বাতিল হত।
+        const ep = epOfName(ttl); const ssn = seasonOfName(ttl);
+        let kind = '';
+        if (ep && ep.s === SE && ep.e === EP) kind = 'ep';
+        else if (!ep && ssn === SE) kind = 'pack';           // সিজন নিশ্চিত → ভুল-সিজন-নয়; লেবেলে স্পষ্ট করা হবে
+        else return null;                                    // অন্য-সিজন / অস্পষ্ট → সৎ-বাতিল
         const h2 = resOfName(ttl);
         if (maxh && h2 && h2 > maxh) return null;
         const gx = (pg.match(/https:\/\/gamerxyt\.com\/hubcloud\.php\?[^"']+/) || [])[0];
         if (!gx) return null;
-        if (DBG) console.error('[m4us] EPMATCH "' + ttl.slice(0, 80) + '" h=' + (h2 || 0));
-        return { h: h2 || 0, url: hu, gx: gx.replace(/&amp;/g, '&'), spec: ttl.replace(/\+/g, ' ') };
+        if (DBG) console.error('[m4us] ' + (kind === 'ep' ? 'EPMATCH' : 'PACKMATCH') + ' "' + ttl.slice(0, 76) + '" h=' + (h2 || 0));
+        return { h: h2 || 0, url: hu, gx: gx.replace(/&amp;/g, '&'), spec: ttl.replace(/\+/g, ' '), kind };
       }));
       for (const g of got) if (g) mts.push(g);
       if (DBG) console.error('[m4us] wave' + (w / 6 + 1) + ' hc=' + hcSet.size + ' match=' + mts.length + ' @' + (Date.now() - t3) + 'ms');
     }
     if (!mts.length) { if (DBG) console.error('[m4us] S' + SE + 'E' + EP + ' no-ep-match (hub=' + hcN + ') @' + (Date.now() - t3) + 'ms'); return []; }
+    const exactM = mts.filter(m => m.kind === 'ep'); // v1.15.83: হুবহু-এপিসোড-থাকলে সেটাই; না-থাকলে সিজন-প্যাক (লেবেলে স্পষ্ট)
+    const isPack = !exactM.length;
+    const chosen = isPack ? mts.filter(m => m.kind === 'pack') : exactM;
+    if (!chosen.length) { if (DBG) console.error('[m4us] S' + SE + 'E' + EP + ' no-usable (hub=' + hcN + ') @' + (Date.now() - t3) + 'ms'); return []; }
+    if (DBG) console.error('[m4us] S' + SE + 'E' + EP + ' ' + (isPack ? 'PACK' : 'EPISODE') + ' candidates=' + chosen.length + ' (hub=' + hcN + ') @' + (Date.now() - t3) + 'ms');
+    mts = chosen;
     mts.sort((a, b) => (b.h - a.h) || (b.url < a.url ? 1 : -1)); // 4K→1080→720→480
     // ধাপ-৫: মিল-থাকা-hubcloud → gamerxyt → সরাসরি-ফাইল (pd-মিরর-আগে — unsigned+সিক; তারপর-signed-S3):
     const out = []; const seenU = new Set();
@@ -2198,18 +2210,19 @@ async function m4uSeries(tmdbId, title, s, e, origin, maxh) {
     const epLine = '\u29e0 S' + SE + 'E' + EP;
     return fin.map(x => {
       const q2 = String(x.h || '');
-      const txt = '\u29c9 ' + String(best.post_title || T).split(' Full Movie')[0].slice(0, 80) + '\n' + epLine + '\n\u229e Movies4u \u00b7 MKV';
+      const txt = '\u29c9 ' + String(best.post_title || T).split(' Full Movie')[0].slice(0, 80) + '\n' + epLine + '\n\u229e Movies4u \u00b7 MKV' + (isPack ? ' \u00b7 S' + SE + ' Pack' : '');
       return {
         name: '\u25a5 ' + q2 + ' \u25a5',
         title: txt,
-        description: txt + (x.spec ? '\n' + x.spec.slice(0, 120) : ''),
+        description: txt + (isPack ? '\n\u24d8 \u09b8\u09ae\u09cd\u09aa\u09c2\u09b0\u09cd\u09a3 \u09b8\u09bf\u099c\u09a8 (\u098f\u0995-\u09ab\u09be\u0987\u09b2\u09c7) \u2014 Ep 1 \u09a5\u09c7\u0995\u09c7 \u09b6\u09c1\u09b0\u09c1' : '') + (x.spec ? '\n' + x.spec.slice(0, 120) : ''),
         quality: q2,
         url: x.url,
         behaviorHints: {
           notWebReady: false, isBingeable: true, proxyHeaders: { request: { 'User-Agent': UA } },
           filename: (x.spec.match(/[A-Za-z0-9 ().&+\[\]-]+\.mkv/) || ['movies4u.mkv'])[0]
         },
-        bingeGroup: 'm4u|' + T.toLowerCase() + '::'
+        bingeGroup: 'm4u|' + T.toLowerCase() + '::',
+        _pack: isPack ? SE : 0 // v1.15.83: unifyCards-এর-পরে-ও প্যাক-চিহ্ন টিকবে (title/description সে নতুন করে লেখে)
       };
     });
   } catch (e2) { if (DBG) console.error('[m4us] ERR ' + String(e2 && e2.message).slice(0, 70) + ' @' + (Date.now() - t3) + 'ms'); return []; }
@@ -2410,10 +2423,13 @@ async function skyStreams(tmdbId, title, type, s, e, origin, maxh) {
           if (!hcm) return;
           const hc = await m4uText(hcm[0], 'https://howblogs.xyz/', Math.min(3600, lS())).catch(() => '');
           const ttl = ((hc.match(/<title>([^<]{4,200})</) || [])[1] || '').trim();
-          if (isTv) { // v1.15.82: সিরিজে হুবহু S<SE>E<EP>-ফাইল-ছাড়া-কার্ড-নয় (ভুল-এপিসোড-নিষিদ্ধ; ttl = আসল-ফাইলনাম)
-            const ep = epOfName(ttl);
-            if (!ep || ep.s !== SE || ep.e !== EP) return;
-            if (DBG) console.error('[sky] EPMATCH ttl="' + ttl.slice(0, 90) + '" fhT=' + (resOfName(ttl) || 0) + ' spRh=' + sp.rh);
+          let kind = 'movie'; // v1.15.83: মুভি-পথ অপরিবর্তিত
+          if (isTv) { // সিরিজে (ক) হুবহু SxxExx = সেরা; (খ) E-চিহ্ন-নেই কিন্তু সিজন নিশ্চিত = সিজন-প্যাক (ভুল-সিজন কখনো নয়)
+            const ep = epOfName(ttl); const ssn = seasonOfName(ttl);
+            if (ep && ep.s === SE && ep.e === EP) kind = 'ep';
+            else if (!ep && ssn === SE) kind = 'pack';
+            else return;                                   // অন্য-সিজন / অস্পষ্ট → সৎ-বাতিল
+            if (DBG) console.error('[sky] ' + (kind === 'ep' ? 'EPMATCH' : 'PACKMATCH') + ' ttl="' + ttl.slice(0, 84) + '" fhT=' + (resOfName(ttl) || 0) + ' spRh=' + sp.rh);
           }
           const gx = (hc.match(/https:\/\/gamerxyt\.com\/hubcloud\.php\?[^"']+/) || [])[0];
           if (!gx) return;
@@ -2430,20 +2446,27 @@ async function skyStreams(tmdbId, title, type, s, e, origin, maxh) {
             if (!pv || !pv.alive) { if (DBG) console.error('[sky] pd-dead ' + pdi); continue; }
             const fh = parseInt(((pv.name || '').match(/[\s.\-](\d{3,4})p/i) || [])[1] || '0', 10) || fh0;
             if (maxh && fh > maxh) continue;
-            if (!seenUrl.has(pu)) { seenUrl.add(pu); got.push({ h: fh, url: pu, spec: (pv.name || ttl).replace(/\+/g, ' '), pd: 1 }); }
+            if (!seenUrl.has(pu)) { seenUrl.add(pu); got.push({ h: fh, url: pu, spec: (pv.name || ttl).replace(/\+/g, ' '), pd: 1, kind: kind }); }
           }
           const fh = fh0;
           if (maxh && fh > maxh) return;
-          for (const s3 of s3s.slice(0, 1)) { if (!seenUrl.has(s3)) { seenUrl.add(s3); got.push({ h: fh, url: s3, spec: ttl.replace(/\+/g, ' '), pd: 0 }); } }
+          for (const s3 of s3s.slice(0, 1)) { if (!seenUrl.has(s3)) { seenUrl.add(s3); got.push({ h: fh, url: s3, spec: ttl.replace(/\+/g, ' '), pd: 0, kind: kind }); } }
           if (DBG) console.error('[sky] res ' + fh + ' pd=' + pds.length + ' s3=' + s3s.length + ' @' + (Date.now() - tS) + 'ms');
           if (got.length >= 8) return;
         }));
       } catch { }
     }));
-    if (!got.length) { if (DBG) console.error('[sky] ' + tmdbId + ' 0-cards @' + (Date.now() - tS) + 'ms'); return []; }
+    let pool = got; // v1.15.83: সিরিজে হুবহু-এপিসোড-থাকলে সেটাই; না-থাকলে সিজন-প্যাক (লেবেলে স্পষ্ট)
+    if (isTv && got.length) {
+      const epG = got.filter(x => x.kind === 'ep');
+      pool = epG.length ? epG : got.filter(x => x.kind === 'pack');
+    }
+    const skyPack = isTv && pool.length > 0 && !pool.some(x => x.kind === 'ep');
+    if (!pool.length) { if (DBG) console.error('[sky] ' + tmdbId + ' 0-cards @' + (Date.now() - tS) + 'ms'); return []; }
+    if (skyPack && DBG) console.error('[sky] S' + SE + 'E' + EP + ' → সিজন-প্যাক (কোনো হুবহু-এপিসোড-নেই)');
     if (DBG) console.error('[sky] ' + tmdbId + ' "' + T + '" cards=' + got.length + ' @' + (Date.now() - tS) + 'ms');
     const perRes = new Map(); const fin = [];
-    for (const x of got.sort((a, b) => (b.h - a.h) || (b.pd - a.pd))) { // প্রতি-রেজো-সর্বোচ্চ-২ (pd-আগে), মোট-৫ — রেজো-বৈচিত্র্য-রক্ষা:
+    for (const x of pool.slice().sort((a, b) => (b.h - a.h) || (b.pd - a.pd))) { // প্রতি-রেজো-সর্বোচ্চ-২ (pd-আগে), মোট-৫ — রেজো-বৈচিত্র্য-রক্ষা:
       const cN = perRes.get(x.h) || 0;
       if (cN >= 2) continue;
       perRes.set(x.h, cN + 1);
@@ -2452,15 +2475,16 @@ async function skyStreams(tmdbId, title, type, s, e, origin, maxh) {
     }
     return fin.map(x => {
       const q2 = String(x.h);
-      const txt = '\u29c9 ' + T + '\n' + (isTv ? ('\u29e0 S' + SE + 'E' + EP) : '\u29e0 Movie') + '\n\u229e Sky Movies \u00b7 MKV'; // v1.15.82: সিরিজে SxxExx-লাইন
+      const txt = '\u29c9 ' + T + '\n' + (isTv ? ('\u29e0 S' + SE + 'E' + EP) : '\u29e0 Movie') + '\n\u229e Sky Movies \u00b7 MKV' + (skyPack ? ' \u00b7 S' + SE + ' Pack' : ''); // v1.15.83: প্যাক-চিহ্ন
       return {
         name: '\u25a5 ' + q2 + ' \u25a5',
         title: txt,
-        description: txt + (x.spec ? '\n' + x.spec.slice(0, 120) : ''),
+        description: txt + (skyPack ? '\n\u24d8 \u09b8\u09ae\u09cd\u09aa\u09c2\u09b0\u09cd\u09a3 \u09b8\u09bf\u099c\u09a8 (\u098f\u0995-\u09ab\u09be\u0987\u09b2\u09c7) \u2014 Ep 1 \u09a5\u09c7\u0995\u09c7 \u09b6\u09c1\u09b0\u09c1' : '') + (x.spec ? '\n' + x.spec.slice(0, 120) : ''),
         quality: q2,
         url: x.url, // gamerxyt-মাধ্যমে-সরাসরি-ফাইল — কোনো-টোকেন/রিলে-নয়
         behaviorHints: { notWebReady: false, isBingeable: true, proxyHeaders: { request: { 'User-Agent': UA } } },
-        bingeGroup: 'peng|' + T.toLowerCase() + '::'
+        bingeGroup: 'peng|' + T.toLowerCase() + '::',
+        _pack: skyPack ? SE : 0 // v1.15.83
       };
     });
   } catch (eS) { if (DBG) console.error('[sky] ERR ' + String(eS && eS.message).slice(0, 60)); return []; }
@@ -2949,7 +2973,7 @@ function sendJson(res, code, obj) {
   res.end(b);
 }
 // v1.13.9 স্ট্রিম-উত্তর-ক্যাশ — nethex-v2.4.0-প্যারিটি: TTL-৩০মি + সর্বোচ্চ-৪০০, পুরনো-আগে-বাদ
-const stripCards = cards => (cards || []).map(({ _hq, _lang, quality, headers, subtitles, ...r }) => r); // nethex-প্যারিটি-শেপ: ভেতরে-গাঁথা-সাব+অ-স্পেক-ফিল্ড-ছাঁটা
+const stripCards = cards => (cards || []).map(({ _hq, _lang, _pack, quality, headers, subtitles, ...r }) => r); // v1.15.83: _pack অভ্যন্তরীণ // nethex-প্যারিটি-শেপ: ভেতরে-গাঁথা-সাব+অ-স্পেক-ফিল্ড-ছাঁটা
 // ---------- v1.15.52: সব-সোর্সের-কার্ড-এক-ফরম্যাটে (ইউজার: "প্রতি-সোর্সের-কার্ড-ফরম্যাট-এমনি-চাই") — decorate()-এর-ভিডি-ফরম্যাট:
 // ⧉ Title | Year |  /  ⧠ Movie|SsEe  /  ⊞ Server ⌗ Audio — mbxr-চাইল্ড-ইতিমধ্যে-এই-ফরম্যাটে-প্রমাণিত; বাকি-সোর্স-এখানে-বসে
 const YEAR_CACHE = new Map();
@@ -2975,8 +2999,10 @@ async function unifyCards(cards, meta) { // শুধু-টেক্সট-ব�
     for (const c of tcards) {
       const src = String(c.bingeGroup).split('|')[0];
       const au = (String(c.description || '').split('\u2317')[1] || '').split('\n')[0].trim(); // সোর্সের-সত্য-অডিও-রক্ষা
-      const txt = head + '\n' + epLine + '\n\u229e ' + (UNIFY_SRV[src] || src) + (au ? ' \u2317 ' + au : '');
-      c.title = txt; c.description = txt;
+      const pk = c._pack ? (' \u00b7 S' + c._pack + ' Pack') : ''; // v1.15.83: সিজন-প্যাক — লেবেলে স্পষ্ট (ভুল-কনটেন্ট-নয় বোঝাতে)
+      const txt = head + '\n' + epLine + '\n\u229e ' + (UNIFY_SRV[src] || src) + (au ? ' \u2317 ' + au : '') + pk;
+      c.title = txt;
+      c.description = txt + (pk ? '\n\u24d8 \u09b8\u09ae\u09cd\u09aa\u09c2\u09b0\u09cd\u09a3 \u09b8\u09bf\u099c\u09a8 (\u098f\u0995-\u09ab\u09be\u0987\u09b2\u09c7) \u2014 Ep 1 \u09a5\u09c7\u0995\u09c7 \u09b6\u09c1\u09b0\u09c1' : '');
     }
     return cards;
   } catch { return cards; }
