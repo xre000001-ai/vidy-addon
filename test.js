@@ -193,6 +193,11 @@ async function tap(label, url, checks) {
     if (!az.length) return skip('AniZone E28: no cards this run');
     ok(/S1E28/.test(String(az[0].description || '')), 'AniZone E28: ⧠ S1E28 লাইন');
   });
+  await tap('AniZone সিজন (JJK tmdb95479 S2E9 — আলাদা-২০২৩-এন্ট্রি)', BASE + '/stream/series/tmdb95479%3A2%3A9.json', (s) => {
+    const az = azOf(s);
+    if (!az.length) return skip('AniZone JJK-S2: no cards this run');
+    ok(/S2E9/.test(String(az[0].description || '')), 'AniZone JJK-S2: ⧠ S2E9 লাইন (uuid-প্রমাণ-প্রোবে-আলাদা)'); // সঠিক-সিজন-প্রমাণ = az-uuid == ২০২৩-এন্ট্রি-E9-uuid (azseason-probe)
+  });
 
   await tap('cfg sub=0 (subtitle gate)', cfgUrl({ sub: 0 }, '/stream/movie/tt0468569.json'), (s) => {
     ok(s.length === 0 || s.every(c => !c.subtitles || c.subtitles.length === 0), 'sub=0: zero tracks on cards');

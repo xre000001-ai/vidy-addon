@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.76';
+const VERSION = '1.15.77';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -1697,8 +1697,18 @@ async function ottStreams(tmdbId, type, s, e, ottq) { // সার্চ→ম�
 // ---------- v1.15.76: AniZone (anizone.to) — anime-সোর্স (Eclipsia-নির্দেশিত, নিজস্ব-পুনঃখুঁড়া-চেইন); Livewire-সাইট: পেজ-ভেতরের JSON.parse('…')-লিটারাল-ডিকোড (পূর্ণ-JS-literal-unescape — \\u0022-যুগল-নিরাপদ); watch-URL-সরাসরি /anime/{slug}/{ep} (Livewire-পেজিনেশন-অদরকারী — E27/E28-সরাসরি-player-প্রমাণ); পুল-অনলি (ইউজার-নির্দেশ: anizone-সাইট-এক-সার্ভার-IP-ফ্ল্যাগ-আটকাতে), মিডিয়া/মাস্টার-প্রোব-সরাসরি (vid-cdn — রেফারার-ছাড়াও-200, প্রোব-প্রমাণ) ----------
 const AZ_BASE = 'https://anizone.to';
 const AZ_MEMO = new Map();
+const AZ_CARD = new Map(); // type:tmdb:s:e → {q,url,subs} — কার্ড-লেভেল-মেমো ৩০মিন (প্রথম-ট্যাপে-চেইন-শেষ-হলে-পরের-ট্যাপ-তাৎক্ষণিক — উইন্ডো-কাটা-রক্ষা)
 const AZ_SUBS = new Map(); // type:tmdb:s:e → [{lang,url}] — /subtitles-রিসোর্স-চ্যানেল (stripCards-কার্ড-সাব-ছাঁটে-বাই-ডিজাইন)
-setInterval(() => { const now = Date.now(); for (const [k, v] of AZ_MEMO) if (now - v.ts > 1800000) AZ_MEMO.delete(k); for (const [k, v] of AZ_SUBS) if (now - v.ts > 1800000) AZ_SUBS.delete(k); }, 900000).unref();
+setInterval(() => { const now = Date.now(); for (const [k, v] of AZ_MEMO) if (now - v.ts > 1800000) AZ_MEMO.delete(k); for (const [k, v] of AZ_CARD) if (now - v.ts > 1800000) AZ_CARD.delete(k); for (const [k, v] of AZ_SUBS) if (now - v.ts > 1800000) AZ_SUBS.delete(k); }, 900000).unref();
+const AZ_SY = new Map(); // tv:tmdbId:s → air-year (স্থায়ী — সিজন-বছর-বদলায়-না)
+function seasonYearForTmdb(tmdbId, sn) { // TMDB-সিজন-বছর — anizone-সিজন-এন্ট্রি-বছর-প্রত্যয়ের-সাথে-মিলান (JJK-S2='(2023)'; en-টাইটেলে-'season 2'-শব্দ-নেই — প্রোব-প্রমাণ)
+  const k = 'tv:' + tmdbId + ':' + sn;
+  if (AZ_SY.has(k)) return Promise.resolve(AZ_SY.get(k));
+  return tmdbGet('/tv/' + tmdbId + '/season/' + sn, 8000).then(b => {
+    let y = 0; try { y = parseInt(((JSON.parse(b).air_date) || '').slice(0, 4), 10) || 0; } catch { }
+    AZ_SY.set(k, y); return y;
+  }).catch(() => { AZ_SY.set(k, 0); return 0; });
+}
 function azUnesc(r) { // JS-literal→মান: \uXXXX/\xXX→অক্ষর, \\→\, \n\t\r→নিয়ন্ত্রণ — এস্কেপ-জোড়া-আগে-খাওয়ায় \\u0022-সঠিকভাবে-টেক্সট-\u0022-হয় (JSON.parse-নিজেই-বাকি-খায়)
   return String(r).replace(/\\(u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2}|[\s\S])/g, (m0, g) => {
     if (g[0] === 'u' || g[0] === 'x') return String.fromCharCode(parseInt(g.slice(1), 16));
@@ -1753,10 +1763,10 @@ function azQueries(T0) { // anizone-সার্চ-আক্ষরিক-সা
   if (one.length >= 3 && qs.indexOf(one) < 0) qs.push(one); // ১ম-শব্দ — সংক্ষিপ্ত-কোয়েরি-সবচেয়ে-নির্ভরযোগ্য
   return qs.slice(0, 4);
 }
-async function azGet(u, mkey, mttl) { // পুল-অনলি-রেস (সরাসরি-নিষেধ: anizone-সাইট-সার্ভার-IP-ফ্ল্যাগ — ইউজার-নির্দেশ); ৬-প্রক্সি-সমান্তরাল-রেস (সাইট-রেপুটেশন-ব্লক-আছে-কিছু-IP — ম্যাট্রিক্স-প্রোব-প্রমাণ; 403/টাইমআউট-রেসে-হার-জুড়ে-pxRec-নিজে-দণ্ডিত-করে), মেমো-১০-৩০মিনিট
+async function azGet(u, mkey, mttl, tmo) { // পুল-অনলি-রেস (সরাসরি-নিষেধ: anizone-সাইট-সার্ভার-IP-ফ্ল্যাগ — ইউজার-নির্দেশ); ৬-প্রক্সি-সমান্তরাল-রেস (সাইট-রেপুটেশন-ব্লক-আছে-কিছু-IP — ম্যাট্রিক্স-প্রোব-প্রমাণ; 403/টাইমআউট-রেসে-হার-জুড়ে-pxRec-নিজে-দণ্ডিত-করে), মেমো-১০-৩০মিনিট
   if (mkey) { const m = AZ_MEMO.get(mkey); if (m && Date.now() - m.ts < (mttl || 600000)) return m.v; }
   let t = '';
-  try { const r = await racePool(u, 6, 9500); t = (r && r.body) || ''; if (t && DBG) console.error('[az] রেস ✓ ' + String(r.px).slice(0, 22) + ' ' + u.slice(21, 48)); }
+  try { const r = await racePool(u, 6, tmo || 9500); t = (r && r.body) || ''; if (t && DBG) console.error('[az] রেস ✓ ' + String(r.px).slice(0, 22) + ' ' + u.slice(21, 48)); }
   catch (e3) { if (DBG) console.error('[az] রেস-ব্যর্থ (' + String(e3 && e3.message).slice(0, 30) + ') → শূন্য (সরাসরি-নিষেধ: IP-ফ্ল্যাগ)'); }
   if (!t) return null;
   if (mkey && t.length > 120) AZ_MEMO.set(mkey, { ts: Date.now(), v: t }); // খাঁটি-উত্তর-ই-ক্যাশ (চ্যালেঞ্জ/খালি-পাতা-নয়)
@@ -1769,19 +1779,32 @@ function azSubsFor(pType, idStr) { // '/subtitles/series/tmdb209867:1:1' → [{i
   const hit = AZ_SUBS.get(k);
   return hit ? hit.v.map(x => ({ id: x.lang, url: x.url, lang: x.lang })) : [];
 }
-async function azStreams(tmdbId, type, s, e, azq) { // সার্চ→বছর-সচেতন-ম্যাচ→watch-পাতা→vidstack-HLS→কার্ড (মাত্র-২-পুল-কল)
+async function azStreams(tmdbId, type, s, e, azq) { // সার্চ→সিজন/বছর-সচেতন-ম্যাচ→watch-পাতা→vidstack-HLS→কার্ড (মাত্র-২-পুল-কল; কার্ড-মেমো ৩০মিন)
   const t3 = Date.now();
   try {
+    const isTv0 = type === 'series' || type === 'tv';
+    const ckey = (isTv0 ? 'tv' : 'mv') + ':' + tmdbId + ':' + (isTv0 ? (s || 1) + 'x' + (e || 1) : 'm');
+    const ch = AZ_CARD.get(ckey); // তাৎক্ষণিক-রিপ্লে — চেইন-পুনরায়-নয় (উইন্ডো-কাটা-জাতীয়-অস্থিরতা-নির্মূল)
+    if (ch && Date.now() - ch.ts < 1800000) {
+      if (Array.isArray(azq) && azq.length && azq.indexOf(ch.q) < 0) { if (DBG) console.error('[az] মেমো q=' + ch.q + ' ছাঁকা'); return []; }
+      if (Array.isArray(ch.subs) && ch.subs.length) AZ_SUBS.set((isTv0 ? 'series' : 'movie') + ':' + tmdbId + ':' + (isTv0 ? (s || 1) + 'x' + Number(e || 1) : 'm'), { ts: Date.now(), v: ch.subs });
+      if (DBG) console.error('[az] মেমো-হিট ' + ckey + ' q=' + ch.q);
+      const txt0 = (ch.txt || '');
+      return [{ name: '▥ ' + ch.q + ' ▥', quality: String(ch.q), url: ch.url, title: txt0, description: txt0, behaviorHints: { filename: 'anizone.m3u8' }, bingeGroup: 'az|' + (ch.title0 || '') + '::' }];
+    }
     const T0 = await nameForTmdb(tmdbId, type).catch(() => '');
     if (!T0) return [];
     const isTv = type === 'series' || type === 'tv';
     const nt = azNorm(T0);
     const Y0 = await yearForTmdb(tmdbId, type).catch(() => 0);
     let list = [];
-    for (const q of azQueries(T0)) { // ক্রমহ্রাস-কোয়েরি — প্রথম-ফলদায়ক-প্রশ্নে-থামে (প্রতিটা-নিজস্ব-মেমো)
-      const pg = await azGet(AZ_BASE + '/anime?search=' + encodeURIComponent(q), 's:' + azNorm(q), 1800000);
-      list = pg ? azItems(pg) : [];
-      if (list.length) { if (DBG) console.error('[az] ' + T0 + ' সার্চ ✓ q="' + q + '" → ' + list.length + '-প্রার্থী'); break; }
+    { // v1.15.77: সব-কোয়েরি-সমান্তরাল (আগে-পরপর-ল্যাডার — q1-টাইমআউট-হলে-q2-আরো-৭.৫সে-খেত; উইন্ডো-কাটার-মূল-কারণ) + ফল-ইউনিয়ন (সংক্ষিপ্ত-কোয়েরি-বেশি-প্রার্থী-দেয় — সিজন-এন্ট্রি-ঢাকার-সুযোগ-বাড়ে; বাছাই-স্কোরারের)
+      const qs = azQueries(T0);
+      const rws = await Promise.all(qs.map(q => azGet(AZ_BASE + '/anime?search=' + encodeURIComponent(q), 's:' + azNorm(q), 1800000, 7500).catch(() => null)));
+      const seen = new Map();
+      rws.forEach((pg, i) => { const l2 = pg ? azItems(pg) : []; if (DBG) console.error('[az] q[' + i + ']="' + qs[i] + '" → ' + l2.length); for (const it of l2) if (!seen.has(it.slug)) seen.set(it.slug, it); });
+      list = [...seen.values()];
+      if (DBG && list.length) console.error('[az] ' + T0 + ' সার্চ ✓ ইউনিয়ন ' + list.length + '-প্রার্থী');
     }
     if (!list.length) { if (DBG) console.error('[az] ' + T0 + ' সার্চ-শূন্য (সব-কোয়েরি)'); return []; }
     const scored = list.map(x => {
@@ -1793,10 +1816,31 @@ async function azStreams(tmdbId, type, s, e, azq) { // সার্চ→বছ�
       return { x, sc };
     }).filter(z => z.sc < 90).sort((a, b) => a.sc - b.sc);
     if (!scored.length) { if (DBG) console.error('[az] ' + T0 + ' মেলেনি (' + list.length + '-প্রার্থী)'); return []; }
-    const hit = scored[0].x;
+    let pool2 = scored;
+    if (isTv && Number(s || 1) >= 2) { // v1.15.77: সিজন-সচেতন (JJK-S2E9-প্রেরণা: 'Jujutsu Kaisen (2023)'/'(Saison 2)'-আলাদা-এন্ট্রি — না-ছাঁকলে-S1-এর-E9-যেত)
+      const sn2 = Number(s || 1);
+      const word = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth', 'ninth', 'tenth'][sn2 - 1] || '';
+      const pat = new RegExp('(?:season|saison|temporada|part|parte)\\s*0*' + sn2 + '\\b|\\b0*' + sn2 + '(?:st|nd|rd|th)\\s+season\\b' + (word ? '|\\b' + word + '\\s+season\\b' : ''), 'i');
+      const ses = pool2.filter(z => azVariants(z.x).some(v => pat.test(v)));
+      if (ses.length) { pool2 = ses; if (DBG) console.error('[az] সিজন-প্যাটার্ন-পুল s=' + sn2 + ' → ' + ses.length + '-এন্ট্রি'); }
+      else { // বছর-পথ: TMDB-সিজন-বছর == প্রার্থীর-start_year (±১) + বর্ষ-খোলা-পরিষ্কার-টাইটেল-মূল-টাইটেলের-অন্তর্ভুক্ত ('Jujutsu Kaisen (2023)'→'jujutsukaisen')
+        const Ys = await seasonYearForTmdb(tmdbId, sn2).catch(() => 0);
+        if (Ys) {
+          const byr = pool2.filter(z => {
+            const vy = parseInt(z.x.start_year, 10) || 0;
+            if (!vy || Math.abs(vy - Ys) > 1) return false;
+            const clean = azNorm(String(z.x.main_title || '').replace(/\(\d{4}\)/g, ''));
+            return clean === nt || clean.indexOf(nt) > -1;
+          });
+          if (byr.length) { pool2 = byr; if (DBG) console.error('[az] সিজন-বছর-পুল s=' + sn2 + ' Y=' + Ys + ' → ' + byr.length + '-এন্ট্রি'); }
+        }
+      }
+    }
+    pool2.sort((a, b) => a.sc - b.sc);
+    const hit = pool2[0].x;
     const ep = isTv ? Number(e || 1) : 1;
     if (isTv && Number(hit.episode_count || 0) > 0 && ep > Number(hit.episode_count)) { if (DBG) console.error('[az] ' + T0 + ' E' + ep + ' > episode_count=' + hit.episode_count); return []; } // সত্যিই-নেই → সৎ-শূন্য
-    const wp = await azGet(AZ_BASE + '/anime/' + hit.slug + '/' + ep, 'w:' + hit.slug + '#' + ep, 600000);
+    const wp = await azGet(AZ_BASE + '/anime/' + hit.slug + '/' + ep, 'w:' + hit.slug + '#' + ep, 600000, 6500);
     const pl = wp ? azPlayer(wp) : null;
     if (!pl) { if (DBG) console.error('[az] ' + T0 + ' E' + ep + ' player-নেই (' + hit.slug + ')'); return []; }
     let q = 0;
@@ -1812,6 +1856,7 @@ async function azStreams(tmdbId, type, s, e, azq) { // সার্চ→বছ�
     const subs = (Array.isArray(pl.subtitles) ? pl.subtitles : []).filter(t4 => t4 && /^https?:/.test(t4.file || '')).map(t4 => ({ lang: String(t4.language || t4.lang || 'en').toLowerCase().slice(0, 2), url: t4.file, fmt: String(t4.format || '').toLowerCase() })).filter(t4 => { if (seenL.has(t4.lang)) return false; seenL.add(t4.lang); return true; }).sort((a, b) => (/^(srt|vtt)$/.test(a.fmt) ? 0 : 1) - (/^(srt|vtt)$/.test(b.fmt) ? 0 : 1)).slice(0, 4).map(t4 => ({ lang: t4.lang, url: t4.url })); // ভাষা-প্রতি-এক-ট্র্যাক; SRT/VTT-আগে (অ্যাপ-সামঞ্জস্য)
     if (subs.length) AZ_SUBS.set((isTv ? 'series' : 'movie') + ':' + tmdbId + ':' + (isTv ? (s || 1) + 'x' + ep : 'm'), { ts: Date.now(), v: subs }); // /subtitles-রিসোর্স-চ্যানেল
     if (DBG) console.error('[az] ' + type + ':' + tmdbId + ' কার্ড=১ q=' + q + ' slug=' + hit.slug + ' subs=' + subs.length + ' @' + (Date.now() - t3) + 'ms');
+    AZ_CARD.set(ckey, { ts: Date.now(), q, url: pl.src, subs, title0: T0.toLowerCase(), txt });
     return [{ name: '\u25a5 ' + q + ' \u25a5', quality: String(q), url: pl.src, title: txt, description: txt, behaviorHints: { filename: 'anizone.m3u8' }, bingeGroup: 'az|' + T0.toLowerCase() + '::' }];
   } catch (e2) { if (DBG) console.error('[az] ' + tmdbId + ' ERR ' + String(e2 && e2.message).slice(0, 60) + ' @' + (Date.now() - t3) + 'ms'); return []; }
 }
