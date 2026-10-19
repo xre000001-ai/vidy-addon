@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.79';
+const VERSION = '1.15.80'; // RT-দ্বিতীয়-সার্ভার (WN/pixeldrain)-পুনরুদ্ধার: é-ডিঅ্যাকসেন্ট+রেস-মার্জ+PD-inline+per-সার্ভার-টগল (rtsrv)
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -985,15 +985,17 @@ function showCore(t) { // v1.15.4 সর্বজনীন-টাইটেল: '
   c2 = c2.replace(/\s+/g, ' ').replace(/^[\s\-_:.,]+|[\s\-_:.,]+$/g, '').trim();
   return c2.length >= 2 ? c2 : (before || String(t || ''));
 }
+function deacc(t) { return String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, ''); } // v1.15.80-wip: é→e — রেজলভার-সাইট-সার্চ+গেট-দুটোতেই-অ্যাকসেন্ট-কার্ড-হারায় (Pokémon Concierge-প্রমাণিত)
 async function twrStreams(base, tag, title, type, s, e, pre) {
   if (!base || !title) return [];
   const tRaw = String(title);
   const tCore = showCore(tRaw); // v1.15.4: যেকোনো-আকৃতি → ক্যানোনিকাল-শো-নাম — সন্ধান/সিজন-ভ্যারিয়েন্ট/alt/গেট/ক্যাশ-সব-কোরে-চলে; কার্ড-লেখা-ইউজারের-মূল-নামে-ই
   // v1.15.8: কোনো-twr-ক্যাশ-নেই — প্রতি-ট্যাপ-রেজলভারে-তাজা-কোয়েরি (মিস-কখনো-পিন-হয়-না); prewarm-রেজলভার-উষ্ণ-রাখে-বলে-গতি-সুরক্ষিত
   const t3 = Date.now();
-  const tries = [tCore]; // v1.15.4: ক্যানোনিকাল-আগে (খাঁটি-নামে-কোর===মূল — আচরণ-অপরিবর্তিত)
+  const dRaw = deacc(tRaw); // v1.15.80-wip: অ্যাকসেন্টহীন-ভ্যারিয়েন্ট-প্রথম ('Pokémon'→'Pokemon' — সাইট-সার্চ-অ্যাকসেন্টে-MQ/PD-কার্ড-হারায়, প্রমাণিত)
+  const tries = dRaw.toLowerCase() !== tRaw.toLowerCase() ? [dRaw, tCore] : [tCore]; // v1.15.4: ক্যানোনিকাল-পরের (খাঁটি-নামে-কোর===মূল — আচরণ-অপরিবর্তিত)
   if (tCore.toLowerCase() !== tRaw.toLowerCase()) tries.push(tRaw); // বিকৃত-আকৃতি-হলে-মূলটাও-১ম-ঢেউয়ে-সমান্তরালে
-  const sq = tRaw.replace(/[^A-Za-z0-9\u0900-\u097F\u0980-\u09FF\u0B80-\u0BFF]/g, ''); // স্পেস/বিরামচিহ্ন-স্কোয়াশ ফলব্যাক
+  const sq = deacc(tRaw).replace(/[^A-Za-z0-9\u0900-\u097F\u0980-\u09FF\u0B80-\u0BFF]/g, ''); // স্পেস/বিরামচিহ্ন-স্কোয়াশ ফলব্যাক
   if (sq && !tries.some(t2 => t2.toLowerCase() === sq.toLowerCase())) tries.push(sq);
   // v1.15.3: Season-যোগ্য-ভ্যারিয়েন্ট-১ম-ঢেউয়েই-সমান্তরালে (আগে-সিকোয়েন্সিয়াল-ফলব্যাকে-৫+৬=১১সে > ৯.৩সে-জানালা → One-Piece-জাতীয়-কাটা-পড়ত);
   // ম্যাস-টেস্ট-প্রমাণ: সমান্তরালে-চালালে-কোনো-শোর-ক্ষতি-নেই — যে-আকৃতি-আগে-ফল-দেয়-সেটাই-জেতে (Naruto=সাধারণ, One Piece/JJK=Season-আকৃতি)
@@ -1013,12 +1015,18 @@ async function twrStreams(base, tag, title, type, s, e, pre) {
     used = await Promise.race([anyHit, allDone]);
   }
   let r0 = used >= 0 ? await w1[used] : [];
+  if (r0.length && !r0.some(z => /pixeldrain/.test(String(z && z.url || '')))) { // v1.15.80-wip: WN-pixeldrain-বোনাস-কার্ড — ভাই-কোয়েরিতে-থাকলে-যোগ; ১.৪সে-বাজেট (MQ-জয়-নষ্ট-হয়-না, ঢিলা-অপেক্ষা-নয়)
+    const tM = Date.now();
+    const left = () => Math.max(0, 1400 - (Date.now() - tM));
+    const others = await Promise.all(w1.map((p1, i1) => i1 === used ? Promise.resolve([]) : Promise.race([p1.catch(() => []), new Promise(r => setTimeout(() => r([]), left()))])));
+    for (const ov of others) for (const z of (ov || [])) if (/pixeldrain/.test(String(z && z.url || '')) && !r0.some(z2 => String(z2.url) === String(z.url))) r0.push(z);
+  }
   if (!r0.length) { // শেষ-ফলব্যাক: Season-যোগ্য-টাইটেল + TMDB-বিকল্প-টাইটেল — সব-একসাথে, অগ্রাধিকার-ক্রমে-প্রথম-জয়ী
     // v1.15.2 ম্যাস-টেস্ট-প্রমাণ: TW-ক্যাটালগ-ম্যাচ-কোয়েরি-আকৃতি-নির্ভর — One Piece/Jujutsu Kaisen 'X Season N'-এ-৩-ফল (সাধারণ-টাইটেলে-০);
     // Naruto-উল্টো (সাধারণ=৩, season=০) — তাই-সিজন-ভ্যারিয়েন্ট-শুধু-ফলব্যাকে (১ম-ধাপ-সাধারণ-টাইটেল-ই-জেতে-যেখানে-জেতা-হয়)
-    const tSq = tCore.toLowerCase().replace(/[^a-z0-9\u0900-\u097F\u0980-\u09FF\u0B80-\u0BFF]/g, '');
+    const tSq = deacc(tCore).toLowerCase().replace(/[^a-z0-9\u0900-\u097F\u0980-\u09FF\u0B80-\u0BFF]/g, '');
     const lcs4 = a => { // স্কোয়াশড-দুই-টাইটেলের-সাধারণ-খণ্ড ≥৪ — না-থাকলে-অনুবাদ/সংক্ষেপ-জাত-অর্থহীন-alt
-      const aSq = String(a).toLowerCase().replace(/[^a-z0-9\u0900-\u097F\u0980-\u09FF\u0B80-\u0BFF]/g, '');
+      const aSq = deacc(a).toLowerCase().replace(/[^a-z0-9\u0900-\u097F\u0980-\u09FF\u0B80-\u0BFF]/g, '');
       for (let i = 0; i + 4 <= aSq.length; i++) if (tSq.indexOf(aSq.slice(i, i + 4)) >= 0) return true; // aSq-এর-যেকোনো-৪-অক্ষর-খণ্ড tSq-তে-আছে-কি
       return false;
     };
@@ -1068,8 +1076,8 @@ async function tmdbAltTitles(name) {
 }
 
 function twTitleOk(title, fn) { // v1.13.5 ভুল-টাইটেল-বাধা: রেজলভারের-টোকেন-গেট-ছলে-যায় ("Breaking Bad"→"The Bad Guys Breaking In") — নামের-ভেতরে-সব-শব্দ-ক্রমে-থাকা-বাধ্যতামূলক (বা স্কোয়াশ-ফ্রেজ-মিল)
-  const c = String(fn || '').replace(/^\[[^\]]*\]\s*/, '').replace(/[\u2018\u2019\u02BC']/g, '').toLowerCase(); // v1.15.11c: অ্যাপস্ট্রফি-মুছে-এক-টোকেন (I'll→ill দুই-পাশে-এক — slug-এ-"ill", কোয়েরিতে-"i ll" ভেঙে-ক্রম-আটকাত)
-  const q = String(title || '').toLowerCase().replace(/[\u2018\u2019\u02BC']/g, '').replace(/[^a-z0-9\u0900-\u097F\u0980-\u09FF\u0B80-\u0BFF]+/g, ' ').trim();
+  const c = deacc(String(fn || '').replace(/^\[[^\]]*\]\s*/, '').replace(/[\u2018\u2019\u02BC']/g, '')).toLowerCase(); // v1.15.80-wip: ডিঅ্যাকসেন্ট-আগে (Pokémon≡pokemon গেটে) // v1.15.11c: অ্যাপস্ট্রফি-মুছে-এক-টোকেন (I'll→ill দুই-পাশে-এক — slug-এ-"ill", কোয়েরিতে-"i ll" ভেঙে-ক্রম-আটকাত)
+  const q = deacc(String(title || '')).toLowerCase().replace(/[\u2018\u2019\u02BC']/g, '').replace(/[^a-z0-9\u0900-\u097F\u0980-\u09FF\u0B80-\u0BFF]+/g, ' ').trim(); // v1.15.80-wip: ডিঅ্যাকসেন্ট
   if (!c || !q) return true; // বিচার-অসম্ভব → থাকুক
   const qt = q.split(' ');
   const cts = c.replace(/[^a-z0-9\u0900-\u097F\u0980-\u09FF\u0B80-\u0BFF]+/g, ' ').trim().split(' ');
@@ -1106,7 +1114,8 @@ async function twrFetch(base, tag, title, type, s, e, t3) {
       const audio = lang || (/\b(multi|dual)\b/i.test(fn) ? 'Multi Audio' : 'Hindi Audio');
       const epLine = type === 'series' ? ('\u29e0 S' + (s || 1) + 'E' + (e || 1) + ((x.ep_title || '') ? ' \u2022 ' + x.ep_title : '')) : '\u29e0 Movie';
       const lbl = tag === 'toonworld' ? 'ToonWorld' : 'RareToons';
-      const hu = String(x.url || '');
+      let hu = String(x.url || '');
+      if (/pixeldrain/.test(hu)) hu = hu.replace(/\?download.*$/, ''); // v1.15.80-wip: ?download→attachment = প্লেয়ার-ডাউনলোড-জোর; inline (peng-প্যাটার্ন) = সিক-বান্ধব
       const host = /pixeldrain/.test(hu) ? 'Pixeldrain' : (x.kind === 'hls' || /\/hls\//.test(hu)) ? 'MQ' : /hubcloud|yournewdomain/.test(hu) ? 'HubCloud' : 'Direct';
       const txt = '\u29c9 ' + String(title) + '\n' + epLine + '\n\u229e ' + lbl + ' \u00b7 ' + host + ' \u2317 ' + audio;
       return {
@@ -1116,7 +1125,7 @@ async function twrFetch(base, tag, title, type, s, e, t3) {
         quality: q2,
         _hq: hq,
         _lang: lang,
-        url: String(x.url),
+        url: hu, // v1.15.80-wip: পরিষ্কার-hu (?download-বাদ)
         behaviorHints: { notWebReady: false, isBingeable: true, filename: fn || (tag === 'toonworld' ? 'toonworld.mkv' : 'raretoons.mkv') },
         bingeGroup: (tag === 'toonworld' ? 'tw|' : 'rt|') + String(title).toLowerCase() + '::|' + (lang || 'Hindi')
       };
@@ -2121,7 +2130,7 @@ async function penguStreams(tmdbId, title, type, s, e, origin, maxh) {
     if (DBG) console.error('[peng] ' + tmdbId + ' cards=' + out.length + '/' + cs.length + ' @' + (Date.now() - t9) + 'ms');
     return out.map(x => {
       const q2 = String(x.h);
-      const txt = '\u29c9 ' + T + '\n\u29e0 Movie\n\u229e Arctic \u00b7 ' + (x.dv ? x.dv + ' \u00b7 ' : '') + 'MKV' + (x.aud ? ' \u2317 ' + x.aud : '');
+      const txt = '\u29c9 ' + T + '\n\u29e0 Movie\n\u229e Sky Movies \u00b7 ' + (x.dv ? x.dv + ' \u00b7 ' : '') + 'MKV' + (x.aud ? ' \u2317 ' + x.aud : '');
       return {
         name: '\u25a5 ' + q2 + ' \u25a5',
         title: txt,
@@ -2228,7 +2237,7 @@ async function skyStreams(tmdbId, title, type, s, e, origin, maxh) {
     }
     return fin.map(x => {
       const q2 = String(x.h);
-      const txt = '\u29c9 ' + T + '\n\u29e0 Movie\n\u229e Arctic \u00b7 MKV';
+      const txt = '\u29c9 ' + T + '\n\u29e0 Movie\n\u229e Sky Movies \u00b7 MKV';
       return {
         name: '\u25a5 ' + q2 + ' \u25a5',
         title: txt,
@@ -2279,17 +2288,32 @@ async function withSources(cardsP, srcs, cfg, t0) {
         }
       } else if (live[i].key === 'rt') {
         const rtSel = Array.isArray(cfg && cfg.rtl) ? cfg.rtl : [];
-        all = all.concat(v.filter(z => rtLangPass(z, rtSel)));
+        const rtAllow = qToList(cfg && cfg.rtq); // v1.15.80-wip: RareToons-নিজের-রেজো-সাদৃশ্য (অজানা-উচ্চতা-থাকে)
+        const rtSrv = (Array.isArray(cfg && cfg.rtsrv) && cfg.rtsrv.length && cfg.rtsrv.length < 2) ? cfg.rtsrv : null; // v1.15.80: বাদ-তালিকা (খালি/দুটোই=সব)
+        all = all.concat(v.filter(z => rtLangPass(z, rtSel) && qPass(z, rtAllow)).filter(z => !rtSrv || rtSrv.indexOf(/pixeldrain/.test(String(z.url || '')) ? 'pd' : 'mq') < 0));
       } else if (live[i].key === 'tw') {
         const twAllow = qToList(cfg && cfg.twq); // ToonWorld-নিজের-চিপস — রেজলভারের-আসল-উচ্চতায়
-        all = all.concat(twAllow.length ? v.filter(z => !z._hq || twAllow.indexOf(z._hq) >= 0) : v);
+        const twSel = Array.isArray(cfg && cfg.twl) ? cfg.twl : []; // v1.15.80-wip: ToonWorld-ভাষা-সাদৃশ্য
+        const twBase = twAllow.length ? v.filter(z => !z._hq || twAllow.indexOf(z._hq) >= 0) : v;
+        all = all.concat(twSel.length ? twBase.filter(z => rtLangPass(z, twSel)) : twBase);
+      } else if (live[i].key === 'mm') { // v1.15.80-wip: MM-নিজের-রেজো-সাদৃশ্য (mmq) + ভাষা-সাদৃশ্য (mml)
+        const mmAllow = qToList(cfg && cfg.mmq);
+        const mmSel = Array.isArray(cfg && cfg.mml) ? cfg.mml : [];
+        all = all.concat(v.filter(z => qPass(z, mmAllow) && rtLangPass(z, mmSel)));
       } else if (live[i].key === 'peng' || live[i].key === 'sky' || live[i].key === 'm4u') { // v1.15.50: Arctic-সোর্সগুলোর-মধ্যে-একই-ফাইল-ডুপ-কাটা (একই-path ভিন্ন-সিগনেচার-ও-ডুপ-ই):
-        for (const c2 of v) {
+        const famKey = live[i].key === 'm4u' ? 'm4u' : 'peng'; // v1.15.80-wip: Sky Movies-পরিবার=pengq/pengl; Movies4u=m4uq/m4ul
+        const famAllow = qToList(cfg && cfg[famKey + 'q']);
+        const famSel = Array.isArray(cfg && cfg[famKey + 'l']) ? cfg[famKey + 'l'] : [];
+        const vf = v.filter(z => qPass(z, famAllow) && rtLangPass(z, famSel));
+        for (const c2 of vf) {
           const k2 = String(c2.url || '').split('?')[0];
           if (k2 && seenFileU.has(k2)) continue;
           if (k2) seenFileU.add(k2);
           all.push(c2);
         }
+      } else if (live[i].key === 'vsp' || live[i].key === 'ott' || live[i].key === 'az') { // v1.15.80-wip: এই-তিনের-রেজো-ছাঁকনি-নিজস্ব-fn-এ; ভাষা-সাদৃশ্য-এখানে
+        const lSel = Array.isArray(cfg && cfg[live[i].key + 'l']) ? cfg[live[i].key + 'l'] : [];
+        all = all.concat(lSel.length ? v.filter(z => rtLangPass(z, lSel)) : v);
       } else all = all.concat(v);
     }
     if (DBG) console.error('[srcdbg] withSources el=' + el + 'ms uniLeft=' + uniLeft + 'ms → ' + all.length + ' কার্ড (partial=' + !!all.$partial + ') সোর্স=' + live.map((x2, i2) => x2.key + ':' + (outs[i2] ? outs[i2].length : 'কাটা')).join(','));
@@ -2623,7 +2647,7 @@ function qToList(q) { // মাল্টি-রেজোলিউশন: অ্�
   const n = Math.min(2160, Math.max(0, Number(q) || 0));
   return n ? QH.filter(h => h <= n) : [];
 }
-const DEFAULT_CFG = { q: 0, sub: 1, cat: 'kd,mv', lang: '', sort: 'pop', era: '', g: [], srv: [], v: 1, nx: 1, nxq: 0, nxl: [], tw: 1, rt: 1, twq: [], rtl: [], mmr: 0, m4u: 1, m4ur: 0, peng: 1, mm: 1, mmrelay: 0, vsp: 1, vspq: 0, ott: 1, ottq: 0, az: 1, azq: 0 }; // v1.15.71: vsp=Vidsrc-মাস্টার-সুইচ, vspq=Vidsrc-নিজের-মান-ছাঁকনি (0=সব) // v1.15.54: mmrelay=1 → MM-মিনি-মিডিয়া-আমাদের-সার্ভার-রিলে (ব্যবহারকারীর-IP-CDN-আটকালে) // mmr = Multimovies-রেজোলিউশন-ছাঁকনি (0=সব) // v/nx/tw/rt/mm/m4u/peng = per-source master switches (tw=ToonWorld, rt=RareToons; mm v1.15.67-ফিক্স) // v/nx = per-source master switches; nxq/nxl = NetHex's OWN quality/audio-language filters (independent of the vidy-side q)
+const DEFAULT_CFG = { q: 0, sub: 1, cat: 'kd,mv', lang: '', sort: 'pop', era: '', g: [], srv: [], v: 1, nx: 1, nxq: 0, nxl: [], tw: 1, rt: 1, twq: [], rtl: [], mmr: 0, m4u: 1, m4ur: 0, peng: 1, mm: 1, mmrelay: 0, vsp: 1, vspq: 0, ott: 1, ottq: 0, az: 1, azq: 0, rtsrv: [], rtq: [], mmq: [], m4uq: [], pengq: [], twl: [], mml: [], m4ul: [], pengl: [], vspl: [], ottl: [], azl: [] } // v1.15.80-wip: সর্ব-উৎস-রেজো-সাদৃশ্য (rtq/mmq/m4uq/pengq) + সর্ব-উৎস-ভাষা-সাদৃশ্য (twl…azl); // v1.15.71: vsp=Vidsrc-মাস্টার-সুইচ, vspq=Vidsrc-নিজের-মান-ছাঁকনি (0=সব) // v1.15.54: mmrelay=1 → MM-মিনি-মিডিয়া-আমাদের-সার্ভার-রিলে (ব্যবহারকারীর-IP-CDN-আটকালে) // mmr = Multimovies-রেজোলিউশন-ছাঁকনি (0=সব) // v/nx/tw/rt/mm/m4u/peng = per-source master switches (tw=ToonWorld, rt=RareToons; mm v1.15.67-ফিক্স) // v/nx = per-source master switches; nxq/nxl = NetHex's OWN quality/audio-language filters (independent of the vidy-side q)
 function parseCfgFromObj(o) {
   const c = Object.assign({}, DEFAULT_CFG, { g: [] });
   if (o) {
@@ -2642,7 +2666,12 @@ function parseCfgFromObj(o) {
     if (o.rt === 0 || o.rt === '0') c.rt = 0;
     if (o.nxq !== undefined && o.nxq !== null && o.nxq !== '') c.nxq = qToList(o.nxq);
     if (Array.isArray(o.nxl)) c.nxl = o.nxl.map(x => String(x).toLowerCase().replace(/[^a-z]/g, '')).filter(x => x.length >= 2 && x.length <= 12).slice(0, 12);
-    if (Array.isArray(o.rtl)) c.rtl = o.rtl.map(x => String(x).toLowerCase().replace(/[^a-z]/g, '')).filter(x => ['hindi', 'tamil', 'telugu', 'malayalam', 'bengali'].indexOf(x) >= 0).slice(0, 5); // RareToons-নিজের-অডিও-ভাষা-ফিল্টার
+    if (Array.isArray(o.rtl)) c.rtl = o.rtl.map(x => String(x).toLowerCase().replace(/[^a-z]/g, '')).filter(x => x.length >= 2 && x.length <= 12).slice(0, 14); // v1.15.80-wip: RareToons-ভাষা-তালিকা-প্রশস্ত (nxl-মানদণ্ড) — অনুপস্থিত-ভাষা-সৎ-শূন্য
+    const wipQ = (key) => { const val = o[key]; if (val !== undefined && val !== null && val !== '') c[key] = qToList(val).filter(x => [2160, 1080, 720, 480].indexOf(x) >= 0).sort((a, b) => b - a).slice(0, 4); }; // v1.15.80-wip
+    wipQ('rtq'); wipQ('mmq'); wipQ('m4uq'); wipQ('pengq');
+    if (Array.isArray(o.rtsrv)) { const rs = o.rtsrv.map(x => String(x).toLowerCase()).filter(x => ['mq', 'pd'].indexOf(x) >= 0); if (rs.length && rs.length < 2) c.rtsrv = rs; } // v1.15.80: RT-নিজস্ব-সার্ভার (বাদ-তালিকা)
+    const wipL = (key) => { if (Array.isArray(o[key])) c[key] = o[key].map(x => String(x).toLowerCase().replace(/[^a-z]/g, '')).filter(x => x.length >= 2 && x.length <= 12).slice(0, 14); }; // v1.15.80-wip
+    wipL('twl'); wipL('mml'); wipL('m4ul'); wipL('pengl'); wipL('vspl'); wipL('ottl'); wipL('azl');
     if (o.mmr !== undefined && o.mmr !== null && o.mmr !== '') { const mv = parseInt(o.mmr, 10) || 0; if ([0, 480, 720, 1080].indexOf(mv) >= 0) c.mmr = mv; } // v1.15.39: MM-রেজোলিউশন-ছাঁকনি
     if (o.m4u === 0 || o.m4u === '0') c.m4u = 0; // v1.15.42: Movies4u-মাস্টার-সুইচ
     if (o.m4ur !== undefined && o.m4ur !== null && o.m4ur !== '') { const m4v = parseInt(o.m4ur, 10) || 0; if ([0, 480, 720, 1080].indexOf(m4v) >= 0) c.m4ur = m4v; } // v1.15.42: Movies4u-নিজের-রেজোলিউশন-ছাঁকনি (MM-থেকে-স্বাধীন)
@@ -2717,7 +2746,7 @@ function yearForTmdb(tmdbId, type) { // মুভি=release_date, সিরি�
     YEAR_CACHE.set(k, y); return y;
   }).catch(() => { YEAR_CACHE.set(k, 0); return 0; });
 }
-const UNIFY_SRV = { peng: 'Arctic', sky: 'Arctic', m4u: 'Movies4u', mm: 'Multimovies', tw: 'ToonWorld', rt: 'RareToons', vsp: 'Vidsrc', ott: 'AsianTV', az: 'AniZone' };
+const UNIFY_SRV = { peng: 'Sky Movies', sky: 'Sky Movies', m4u: 'Movies4u', mm: 'Multimovies', tw: 'ToonWorld', rt: 'RareToons', vsp: 'Vidsrc', ott: 'AsianTV', az: 'AniZone' };
 async function unifyCards(cards, meta) { // শুধু-টেক্সট-বদলায়: name/quality/url/bingeGroup/_lang/_hq/সাব — সব-অস্পৃশ্য (ফিল্টার-নিরাপদ)
   try {
     if (!cards || !cards.length || !meta || !meta.tmdbId) return cards;
@@ -2764,7 +2793,7 @@ const server = http.createServer((req, res) => {
     if (cm2) { cfg = decodeCfg(cm2[1]); p = cm2[2]; cfgged = true; }
     else {
       const qs = new URL(req.url, 'http://x').searchParams;
-      if ([...qs.keys()].length) cfg = parseCfgFromObj({ q: qs.get('q') || qs.get('maxq'), sub: qs.get('sub') === '0' ? 0 : 1, cat: qs.get('cat') || '', lang: qs.get('lang') || '', sort: qs.get('sort') || '', era: qs.get('era') || '', g: (qs.get('g') || '').split(',').filter(Boolean), srv: (qs.get('srv') || '').split(',').filter(Boolean), v: qs.get('v') === '0' ? 0 : undefined, nx: qs.get('nx') === '0' ? 0 : undefined, tw: qs.get('tw') === '0' ? 0 : undefined, rt: qs.get('rt') === '0' ? 0 : undefined, m4u: qs.get('m4u') === '0' ? 0 : undefined, m4ur: qs.get('m4ur') || undefined, peng: qs.get('peng') === '0' ? 0 : undefined, mm: qs.get('mm') === '0' ? 0 : undefined, mmrelay: qs.get('mmrelay') === '1' ? 1 : undefined, vsp: qs.get('vsp') === '0' ? 0 : undefined, vspq: qs.get('vspq') || undefined, ott: qs.get('ott') === '0' ? 0 : undefined, ottq: qs.get('ottq') || undefined, az: qs.get('az') === '0' ? 0 : undefined, azq: qs.get('azq') || undefined, rtl: qs.get('rtl') ? qs.get('rtl').split(',') : undefined, nxq: qs.get('nxq') || undefined, nxl: qs.get('nxl') ? qs.get('nxl').split(',') : undefined });
+      if ([...qs.keys()].length) cfg = parseCfgFromObj({ q: qs.get('q') || qs.get('maxq'), sub: qs.get('sub') === '0' ? 0 : 1, cat: qs.get('cat') || '', lang: qs.get('lang') || '', sort: qs.get('sort') || '', era: qs.get('era') || '', g: (qs.get('g') || '').split(',').filter(Boolean), srv: (qs.get('srv') || '').split(',').filter(Boolean), v: qs.get('v') === '0' ? 0 : undefined, nx: qs.get('nx') === '0' ? 0 : undefined, tw: qs.get('tw') === '0' ? 0 : undefined, rt: qs.get('rt') === '0' ? 0 : undefined, m4u: qs.get('m4u') === '0' ? 0 : undefined, m4ur: qs.get('m4ur') || undefined, peng: qs.get('peng') === '0' ? 0 : undefined, mm: qs.get('mm') === '0' ? 0 : undefined, mmrelay: qs.get('mmrelay') === '1' ? 1 : undefined, vsp: qs.get('vsp') === '0' ? 0 : undefined, vspq: qs.get('vspq') || undefined, ott: qs.get('ott') === '0' ? 0 : undefined, ottq: qs.get('ottq') || undefined, az: qs.get('az') === '0' ? 0 : undefined, azq: qs.get('azq') || undefined, rtl: qs.get('rtl') ? qs.get('rtl').split(',') : undefined, nxq: qs.get('nxq') || undefined, nxl: qs.get('nxl') ? qs.get('nxl').split(',') : undefined, rtq: qs.get('rtq') || undefined, mmq: qs.get('mmq') || undefined, m4uq: qs.get('m4uq') || undefined, pengq: qs.get('pengq') || undefined, twl: qs.get('twl') ? qs.get('twl').split(',') : undefined, mml: qs.get('mml') ? qs.get('mml').split(',') : undefined, m4ul: qs.get('m4ul') ? qs.get('m4ul').split(',') : undefined, pengl: qs.get('pengl') ? qs.get('pengl').split(',') : undefined, vspl: qs.get('vspl') ? qs.get('vspl').split(',') : undefined, ottl: qs.get('ottl') ? qs.get('ottl').split(',') : undefined, azl: qs.get('azl') ? qs.get('azl').split(',') : undefined });
     }
     if (!cfg) cfg = Object.assign({}, DEFAULT_CFG, { g: [], srv: [] });
     VSP_PUB = originOf(req) || VSP_PUB; // v1.15.71: রিলে-বেস (x-forwarded-host-সচেতন)

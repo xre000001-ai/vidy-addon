@@ -69,7 +69,7 @@ async function tap(label, url, checks) {
     const html = await (await fetch(BASE + '/configure')).text();
     ok(!/nethex/i.test(html), 'configure: no legacy "nethex" text');
     ok(html.includes('MovieBox'), 'configure: MovieBox named');
-    ok(html.includes('pvVh') && html.includes('srvSum'), 'configure: preview headers + collapsed servers');
+    ok(html.includes('pvVh') && html.includes('srvGrid'), 'configure: preview headers + servers grid (v2 tabbed page)');
   } catch (e) { ok(false, 'configure fetch: ' + e.message); }
 
   // ── 1) English movie: resolution resolved (no Auto), audio = English, MB original present ──
