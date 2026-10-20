@@ -3050,7 +3050,7 @@ async function m4uSeries(tmdbId, title, s, e, origin, maxh) {
         title: txt,
         description: txt + (isPack ? '\n\u24d8 Full season in one file \u2014 starts at Ep 1' : '') + (x.spec ? '\n' + x.spec.slice(0, 120) : ''),
         quality: q2,
-        url: x.url,
+        url: m4hWrap(x.url, origin), // v1.15.92: সিরিজেও একই সিক-সংস্কার (আগে শুধু মুভি-পথে ছিল — সিরিজ সরাসরি MKV পাঠাত)
         behaviorHints: {
           notWebReady: false, isBingeable: true, proxyHeaders: { request: { 'User-Agent': UA } },
           filename: (x.spec.match(/[A-Za-z0-9 ().&+\[\]-]+\.mkv/) || ['movies4u.mkv'])[0]
