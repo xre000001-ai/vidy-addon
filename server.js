@@ -3918,7 +3918,10 @@ const server = http.createServer((req, res) => {
         }
         const total = g.total;
         let a = 0, b2 = total - 1, isR = false;
-        const mr = /bytes=(\d*)-(\d*)/.exec(String(req.headers.range || ''));
+        let rngRaw = String(req.headers.range || '');
+        const qrb = /[?&]rb=(\d+)-(\d+)/.exec(String(p)); if (!rngRaw && qrb) rngRaw = 'bytes=' + qrb[1] + '-' + qrb[2]; // v1.15.91: প্রান্তিক-প্রক্সি Range খুলে ফেললে ?rb= ফলব্যাক
+        const seenRng = rngRaw || 'none';
+        const mr = /bytes=(\d*)-(\d*)/.exec(rngRaw);
         if (mr) {
           isR = true;
           if (mr[1] === '') { const ln = parseInt(mr[2] || '0', 10) || 0; a = Math.max(0, total - ln); b2 = total - 1; }
@@ -3934,6 +3937,7 @@ const server = http.createServer((req, res) => {
           'content-length': String(b2 - a + 1)
         };
         if (isR) hh['content-range'] = 'bytes ' + a + '-' + b2 + '/' + total;
+        hh['x-m4p-rng'] = seenRng; // নিদান: ক্লায়েন্টের Range আমাদের কাছে পৌঁছায় কি
         try { res.writeHead(isR ? 206 : 200, hh); } catch { }
         if (req.method === 'HEAD') return res.end();
         const cut = g.cut, dl = g.delta;
