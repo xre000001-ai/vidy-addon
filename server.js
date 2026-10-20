@@ -431,7 +431,7 @@ function mmScore(px, bootMs) { // v1.15.29 revise: the MM pool's OWN score (mmSc
   sc += h.fail * 400 - Math.min(h.ok, 8) * 120;
   return sc;
 }
-function mmRacePool(url, n, timeoutMs, hdrs) { // v1.15.94: hdrs = ঐচ্ছিক অতিরিক্ত হেডার // racePool's twin over the multimovies pool (bench gate = vidbolt-reachable)
+function mmRacePool(url, n, timeoutMs) { // racePool's twin over the multimovies pool (bench gate = vidbolt-reachable)
   const srt = MM_POOL.slice().sort((a, b) => mmScore(a.px, a.ms) - mmScore(b.px, b.ms));
   const alive = srt.filter(c => { const h = MM_RUN.get(c.px); return !h || h.ok > 0 || h.fail < 3; });
   const good = alive.filter(c => MM_SITE.has(c.px));
@@ -445,7 +445,7 @@ function mmRacePool(url, n, timeoutMs, hdrs) { // v1.15.94: hdrs = ঐচ্ছ�
     let fails = 0;
     for (const c of cands) {
       const tP = Date.now();
-      proxiedGet(c.px, url, timeoutMs, hdrs).then(body => { pxRecMM(c.px, true, Date.now() - tP); if (done) return; done = true; clearTimeout(to); resolve({ body, px: c.px }); })
+      proxiedGet(c.px, url, timeoutMs).then(body => { pxRecMM(c.px, true, Date.now() - tP); if (done) return; done = true; clearTimeout(to); resolve({ body, px: c.px }); })
         .catch(() => { pxRecMM(c.px, false, 0); if (++fails === cands.length && !done) { done = true; clearTimeout(to); reject(new Error('mm-pool-exhausted')); } });
     }
   });
@@ -602,7 +602,7 @@ function dechunk(buf) {
   }
   return Buffer.concat(out);
 }
-function proxiedGet(px, url, timeoutMs, hdrs) { // v1.15.94: hdrs = ঐচ্ছিক অতিরিক্ত হেডার (যেমন Referer/Range) — কল-সাইট না দিলে আগের মতোই
+function proxiedGet(px, url, timeoutMs) {
   return new Promise((resolve, reject) => {
     const u = new URL(url);
     const ci = px.indexOf(':');
@@ -621,10 +621,7 @@ function proxiedGet(px, url, timeoutMs, hdrs) { // v1.15.94: hdrs = ঐচ্ছ
       const head = buf.slice(0, i).toString('latin1');
       if (!/^HTTP\/1\.[01] 200/.test(head)) return bail(new Error('proxy-refused'));
       const tl = tls.connect({ socket: sock, servername: u.hostname, rejectUnauthorized: false }, () => {
-        let rq = 'GET ' + (u.pathname + u.search) + ' HTTP/1.1\r\nHost: ' + u.hostname + '\r\nUser-Agent: ' + UA + '\r\nAccept: */*\r\n';
-        if (hdrs) for (const k in hdrs) rq += k + ': ' + hdrs[k] + '\r\n'; // v1.15.94
-        rq += 'Connection: close\r\n\r\n';
-        tl.write(rq);
+        tl.write('GET ' + (u.pathname + u.search) + ' HTTP/1.1\r\nHost: ' + u.hostname + '\r\nUser-Agent: ' + UA + '\r\nAccept: */*\r\nConnection: close\r\n\r\n');
         const chunks = [buf.slice(i + 4)];
         let headTxt = '';
         let hdrDone = false;
@@ -1317,12 +1314,14 @@ function woHasAudioGrp(pl) { return /#EXT-X-MEDIA:TYPE=AUDIO/i.test(String(pl ||
 // প্রমাণ: Demon Slayer .urlset মাস্টারে ৫ ট্র্যাক (hi/en/ja/te/ta) — সবই HTTP ২০০ (জীবিত);
 // The Runner-এর rousav মাস্টারে ২০ ট্র্যাক — **সব ৪০৪ (মৃত)**। তাই ট্র্যাক-থাকা ≠ বাজানো-যাওয়া।
 function mmAbsUri(uri, base) { // v1.15.94: আপেক্ষিক URI → পরম, **মূল-কুয়েরি (api_key) বহন করে**
-  // আগে ছিল `new URL(t.uri, base).href` — URL-রিজলিউশন ভিত্তির কুয়েরি **ফেলে দেয়**,
-  // তাই `track_english.m3u8` → `…/track_english.m3u8` (api_key নেই) → **৪০৪** → ট্র্যাক "মৃত" গণ্য।
-  // প্রমাণ: rousav-এর ৯টি ট্র্যাক-প্লেলিস্ট সব ৪০৪ (api_key ছাড়া), কিন্তু /mma/ দিয়ে keyed করলে সব ২০০।
-  // ফলে per-ভাষা single-audio কার্ড বনাতে পারতাম না → শুধু একটা "N Audio" মাল্টি-কার্ড দিতাম
-  // (পরিমাপ: Spider-Man Brand New Day-এ ৩৩-এর বদলে ৭ কার্ড)।
-  // সমাধান-ধাঁচা কোডের অন্য ৮ জায়গাতেই আছে (195/213/233/253/285/307/308/361) — এ দুটোতেই ছিল না।
+  // আগে ছিল `new URL(t.uri, base).href` — URL-রিজলিউশন ভিত্তির কুয়েরি **ফেলে দেয়**
+  // (`track_english.m3u8` → `…/track_english.m3u8`, api_key বিলুপ্ত)। এটি ঠিক করছি কারণ
+  // কোডের অন্য ৮ জায়গায় (195/213/233/253/285/307/308/361) এই ধাঁচাই আছে — এ দুটোতেই ছিল না।
+  //
+  // ⚠️ সততা-নোট (v1.15.94): আমার নিজের A/B-তে (Spider-Man 969681, স্থানীয়) এই সংশোধনে
+  // **কার্ড-সংখ্যা বদলায়নি** (সহ ও বিহীন — দুই ক্ষেত্রেই ৭)। তাই এটি "মূল কারণ" নয়;
+  // এটি একটি ধারাবাহিকতা-সংশোধন যা rousav-এর মতো keyed-CDN-এ প্রযোজ্য। পরিমাপের
+  // সময় আমার আইপি ইতিমধ্যে ব্লক হয়ে গিয়েছিল, ফলে কার্ড-গণনা তখন নির্ভরযোগ্য ছিল না।
   let out = String(uri || '');
   try {
     const a = new URL(out, base);
@@ -1462,22 +1461,7 @@ async function mmTrkProbe(u, ref, ms) {
       return /#EXTM/i.test(tx); // v1.15.88: বাস্তব HLS-টেক্সট বাধ্যতামূলক — ২০৬/২০০ + HTML (নরম-৪০৪) প্রত্যাখ্যান
     } catch { return false; }
   };
-  // v1.15.94: **প্রক্সি-উদ্ধার** — সরাসরি পথ বন্ধ/রেট-লিমিটেড হলে MM-পুল দিয়ে একবার চেষ্টা।
-  // অসমতা (মূল কারণ): `/mma/` (v1.15.90, প্লেব্যাক) `mmPoolText` ব্যবহার করে — যার **প্রক্সি-পতন আছে**;
-  // কিন্তু `mmTrkProbe` (জীবিত-কি-না গেট) সরাসরি `fetch` — কোনো প্রক্সি নেই। ফলে আমাদের নিজস্ব
-  // এক্সিট-আইপি একবার ব্লক/রেট-লিমিটেড হলে **সব ট্র্যাক "মৃত"** → per-ভাষা কার্ডই তৈরি হয় না
-  // (প্রমাণ: `[mmtrk] rousav 9 স্ক্যান → জীবিত 0`) — অথচ ওই একই ট্র্যাক /mma/ দিয়ে বাজত।
-  // খরচ-সীমা: দ্বৈত-নিশ্চিতকরণ `probe()` কে **দুইবার** ডাকে — তাই প্রক্সি-রেস প্রতি ট্র্যাকে **একবারই**
-  // (মেমোইজড)। নাহলে ২৪ ট্র্যাক × ২ বার × ৩ প্রক্সি = ১৪৪ সংযোগ, যা ৯সে WOB-বাজেটই শেষ করে দিত
-  // → উল্টো আরও কম কার্ড (উদ্দেশ্যই নষ্ট)।
-  let poolSeen = null;
-  const viaPool = async () => {
-    if (poolSeen !== null) return poolSeen;
-    try { const r = await mmRacePool(u, 2, T + 900, { Referer: ref || WO_REF }); poolSeen = /#EXTM/i.test(String((r && r.body) || '')); }
-    catch { poolSeen = false; }
-    return poolSeen;
-  };
-  const probe = async () => (await once(true)) || (await once(false)) || (await viaPool()); // Range → কাঁচা GET → প্রক্সি
+  const probe = async () => (await once(true)) || (await once(false)); // v1.15.94: Range → কাঁচা GET-এ পতন
   if (!await probe()) return false; // প্রথমেই মৃত → আর ডাকা নয় (গতি রক্ষা)
   return await probe();             // জীবিত → দ্বিতীয় বারে নিশ্চিত
 }
