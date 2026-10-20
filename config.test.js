@@ -11,7 +11,8 @@ setTimeout(()=>{try{
   const C=w.__cfg;let bad=0;const A=(t,c)=>{if(!c)bad++;console.log((c?'✓':'✗')+' '+t);};
   const out=()=>d.getElementById('url').value;
   const chips=id=>[...d.querySelectorAll('#'+id+' .chips')];
-  const byTxt=(row,txt)=>[...row.querySelectorAll('.chip')].find(c=>c.textContent===txt);
+  /* v1.15.93: চিপে এখন পতাকা-ব্যাজের কোডও textContent-এ থাকে — তাই data-label দিয়ে মিলাই */
+  const byTxt=(row,txt)=>[...row.querySelectorAll('.chip')].find(c=>(c.getAttribute('data-label')||c.textContent)===txt);
   let c,o;
   /* সোর্স */
   // v1.15.86: Pengu-সোর্স সম্পূর্ণ সরানো, Sky Movies নিজস্ব সোর্স ⇒ মোট ১০ কার্ড (peng-কার্ড আর নেই)
@@ -21,14 +22,14 @@ setTimeout(()=>{try{
   /* MovieBox: রেজো ৪+All, ভাষা ১৭+All (Multi+Tagalog সহ) */
   const nxR=chips('tune-nx')[0],nxL=chips('tune-nx')[1];
   c=nxR.querySelectorAll('.chip').length===5;A('MovieBox-রেজো-চিপ All+৪ (4K/1080/720/480)',c);
-  c=nxL.querySelectorAll('.chip').length===18;A('MovieBox-ভাষা-চিপ All+১৭',c);
+  c=nxL.querySelectorAll('.chip').length===40;A('MovieBox-ভাষা-চিপ All+৩৯ (ভারতীয়+বাংলা-সহ)',c);
   c=!!byTxt(nxL,'Multi')&&!!byTxt(nxL,'Tagalog');A('Multi+Tagalog-চিপ-আছে',c);
   byTxt(nxL,'Hindi').click();
   c=C.st.nxl.length===1&&C.st.nxl[0]==='hindi'&&byTxt(nxL,'Hindi').classList.contains('on');A('Hindi-টগল → nxl ["hindi"]+.on',c);
   byTxt(nxL,'Hindi').click();c=C.st.nxl.length===0;A('আবার-টগল → []',c);
   /* RareToons: এখন-রেজো+বিশাল-ভাষা-দুই-সারি */
   const rtR=chips('tune-rt')[0],rtL=chips('tune-rt')[1];
-  c=rtR.querySelectorAll('.chip').length===5&&rtL.querySelectorAll('.chip').length===18;A('RareToons-রেজো All+৪ + ভাষা All+১৭',c);
+  c=rtR.querySelectorAll('.chip').length===5&&rtL.querySelectorAll('.chip').length===40;A('RareToons-রেজো All+৪ + ভাষা All+১৭',c);
   byTxt(rtL,'Tamil').click();c=C.st.rtl.length===1&&C.st.rtl[0]==='tamil';A('rtl → ["tamil"]',c);
   /* ToonWorld: 4K-সহ */
   const twR=chips('tune-tw')[0];
