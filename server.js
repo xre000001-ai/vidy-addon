@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.90'; // v1.15.90: Multimovies **অডিও-ভাষা সংস্কার** (ইউজার: "Eta toh Chinese audio howar Kotha but Hindi audio dei … etar English ta o Hindi audio set Kore, Greek, German e Kono audio nai")। তিনটি স্বতন্ত্র ত্রুটি, প্রতিটি PMT-প্রমাণিত: (ক) **ভাষা-ভিত্তিক মাক্সড ভ্যারিয়েন্ট বাছাই হয় না** — .urlset/CDN ভ্যারিয়েন্ট-নামেই ভাষা এনকোড করে (`index-f3-v1-a1`=हिन्दी, `a2`=English, `a3`=日本語, `a4`=తెలుగు, `a5`=தமிழ்)। প্রমাণ: ৫টি ভ্যারিয়েন্টের AAC-PID(257)-হ্যাশ **৫/৫ ভিন্ন**। কিন্তু আমরা সব কার্ডে একই `a1` পাঠাচ্ছিলাম → প্রতিটি ভাষার কার্ডেই हिन्दी বাজত। নতুন `mmPickVarLang(pl, base, wantH, alang)`: মাস্টারের অডিও-তালিকায় ভাষার ক্রমিক N বের করে `-a1`→`-aN` করে (HTTP ২০০ যাচাইসহ)। (খ) **`#EXT-X-MEDIA` MEDIA-প্লেলিস্টে অর্থহীন** — rousav-এর ভিডিওতে কোনো অডিও নেই (PMT = `[0x1b]`), অডিও আলাদা `track_*.m3u8`-এ; কিন্তু আমরা ইনলাইন MEDIA-প্লেলিস্টে TYPE=AUDIO ট্যাগ লিখছিলাম, যা প্লেয়ার **সম্পূর্ণ উপেক্ষা করে** → নিঃশব্দ। নতুন `mmMasterForm()`: ভিডিও মাক্সড না হলে সঠিক এক-ভ্যারিয়েন্ট MASTER-প্লেলিস্ট (AUDIO="a0" দ্বারা যুক্ত)। (গ) **অডিও-সেগমেন্টে api_key পৌঁছায় না** — track_*.m3u8-এর সেগমেন্ট আপেক্ষিক (`track_czech/00000.png`) আর api_key শুধু প্লেলিস্ট-ইউআরএলে → প্লেয়ারের রিজলভ করা সেগমেন্ট **৪০৪** (পরীক্ষায় ৬/৬ ভাষাতেই)। নতুন `/mma/<b64>/a.m3u8` ইনলাইনার: absolute + keyed সেগমেন্ট (আর প্রয়োজনে Referer-রিলে)। সংশোধিত ভিত্তি: `mmTsHasAudio` ছিল ত্রুটিপূর্ণ — PMT-পিআইডি PAT থেকে না বের করে "যেকোনো PUSI = PMT" ধরত, আর 0x06 (প্রাইভেট-ডেটা) কে অডিও গণ্য করত; তাই অডিওবিহীন rousav-কেও "মাক্সড" দাবি করা হতো। `mmVarProbe` শুধু **প্রথম** সেগমেন্ট দেখত — কিন্তু অনেক উৎসের ০-নম্বর সেগমেন্ট lead-in (PMT `[0x1b,0x0f]`, কিন্তু বাস্তবে কোনো অডিও নেই; The Runner seg 0 বনাম seg 1..10); এখন ৩টি নমুনা। যাচাই: Demon Slayer ৫ ভাষায় ৫/৫ স্বতন্ত্র মাক্সড অডিও; rousav-সব কার্ডে PMT=0xf অডিও (৫-৬/৬ সেগমেন্ট); test.js ২০/৪৩; config.test.js সব-সবুজ; বাংলা=০ //  // v1.15.89: Multimovies **দ্বিতীয় গভীর-নিরীক্ষা** — ইউজার: "video length dekhai 10s, sese hoi abar por theke 10s suru kore … aje maje audio o thake na"। তিনটি স্বতন্ত্র ত্রুটি, প্রতিটি প্রমাণ-সহ: (ক) **#EXTM3U প্রথম লাইনে ছিল না** — HLS-স্পেসিফিকেশনে #EXTM3U অবশ্যই প্রথম লাইন; আমরা মাস্টারের ট্যাগ-ব্লক (TYPE=AUDIO / I-FRAME-STREAM-INF) তার **আগে** জুড়ে দিচ্ছিলাম। পরীক্ষায় ১৬/১৬ MM-কার্ডেই #EXTM3U ৪ নম্বর (Demon Slayer) থেকে ৩৮ নম্বর (The Runner) লাইনে — প্লেয়ার প্লেলিস্ট অগ্রাহ্য/অডিও-ট্র্যাক হারাতো। আগের যাচাইয়ে ধরা পড়েনি কারণ সেখানে শুধু "#EXTM3U আছে কি" দেখা হতো, **কোন লাইনে** তা নয়। নতুন `mmM3UJoin(tags, body)` ট্যাগ-ব্লক #EXTM3U-এর পরে বসায়; `mmMiniBuild`-এর মাস্টার-আউটপুটেও #EXTM3U যোগ (আগে সেটিতে #EXTM3U-ই ছিল না)। (খ) **CDN Referer দাবি করে, প্লেয়ার পাঠায় না** — dd2stliwt0bc.homechefrecipes.sbs (.urlset): Referer ছাড়া **০/২০** ৪০৪, Referer সহ **২০/২০** ২০০; img.rousav.tech Referer ছাড়াই ১০/১০। নতুন `mmNeedsRef(u)` হোস্ট-ভিত্তিক (৩০মিন ক্যাশ) সনাক্তকরণ → প্রয়োজনীয় হোস্টের মিডিয়া আমাদের /mmr/ রিলে দিয়ে (রিলে সবসময় সঠিক Referer যোগ করে), প্রয়োজন না হলে সরাসরি CDN — কোনো অতিরিক্ত ব্যান্ডউইথ-খরচ নেই। যাচাই: Demon Slayer-এর ৪টি .urlset কার্ড রিলে-কৃত, rousav কার্ড ও The Runner সরাসরি। (গ) **বেস৬৪-প্যাডিং ('=') রেগেক্সে ছিল না** → কপি/পেস্টে প্যাডিং যোগ হলে ২০০-এর বদলে ৪০৪ (প্রমাণ: ইউজারের ইউআরএল "…8amE=/mini.m3u8" → ৮/৮ বার ৪০৪; '=' বাদ দিলেই ২০০)। /mm/ ও /mmr/ দুটোতেই '=' এখন বৈধ। যাচাই: ৩৮/৩৮ কার্ডে #EXTM3U প্রথম লাইনে; ENDLIST শেষ লাইনে; রিলে-কৃত সেগমেন্ট ৬/৬ HTTP ২০৬/২০০ video/mp2t মাক্সড-অডিও; অডিও-প্লেলিস্ট HTTP ২০০ (৯৩০ EXTINF); test.js ২০/৪৩ বেসলাইন; config.test.js সব-সবুজ; বাংলা=০ //  // v1.15.88: Multimovies গভীর-নিরীক্ষা + **single-audio সংস্কার** (ইউজার: "Demob slayer infinity castle … fast hls gulo pelam na, the runner e single audio fast hls gulo pelam na, multi audio play problem hoi")। (ক) **নকল কোয়ালিটি-কার্ড বন্ধ**: `woHasAudioGrp` শাখা প্রতি কোয়ালিটিতে একটি করে কার্ড দিত, কিন্তু সবার `url` একই (পুরো মাস্টার) — প্রমাণ: Demon Slayer ১৩১১০৩১-এ ৩টি কার্ড (1080/720/480) যাদের URL **হুবহু অভিন্ন** (`…v51t5m9qymh5_,l,n,h,.urlset/master.txt`)। (খ) **মাল্টি-অডিও সমস্যার মূল**: rousav মাস্টার ১৬-২০টি আলাদা অডিও-ট্র্যাক ঘোষণা করে, কিন্তু প্লেয়ারকে সেগুলো আলাদাভাবে টানতে হয় — আর The Runner-এর track_english/spa/fra/pol/por/tam/tel/tha/tur **৪০৪**; Demon Slayer .urlset-এর ভিডিও-ভ্যারিয়েন্ট আসলে **মাক্সড** (H.264+AAC একই TS-এ — PMT-স্ক্যানে প্রমাণিত)। এখন **প্রতি কোয়ালিটি × প্রতি ভাষা = একটি single-audio কার্ড** (mini + `alang`-পিন: মাস্টারে শুধু ওই একটি অডিও-ট্র্যাক থাকে)। (গ) **প্রোব-ভিত্তিক সততা**: `mmVarProbe` (ভ্যারিয়েন্ট জীবিত + TS-এ অডিও মাক্সড কি — ৪KB রেঞ্জ-ফেচ) ও `mmTrkProbe` (অডিও-ট্র্যাক জীবিত), দুটোতেই **দ্বৈত-নিশ্চিতকরণ** — rousav/CDN-এর 'নোড-লটারি'তে ভাগ্যবান-নোড মিথ্যা-জীবিত দেখায় (প্রমাণ: track_english একবার ২০০, পরের ১৫ বার ৪০৪)। মিথ্যা-মাল্টি-অডিও মাস্টারে আর 'N Audio' দাবি নেই; মাক্সড ভ্যারিয়েন্ট থাকলে সরাসরি সেটিই (দ্রুততম), নইলে সৎ শূন্য। (ঘ) **অন্যান্য**: ডিডুপ-কী'তে `alang` (নাহলে ৬ ভাষা-কার্ড অভিন্ন-কী হয়ে ৫টি বাদ পড়ত — প্রমাণ `[mmvbd] out=6` → `variants=1`); `_lang`-এ ISO-কোড→ইংরেজি-নাম ম্যাপার (`mmLangBlob`) — mml=['hindi'] আগে ০ কার্ড দিত, এখন ৩; MM কার্ড-ক্যাপ ১৬→২০; decodeURIComponent-সহ কোনো মিড-লাইন কমেন্ট নেই। যাচাই: test.js ২০/৪৩ (বেসলাইন), config.test.js সব-সবুজ, বাংলা=০, Demon Slayer ২০ কার্ড (হিন্দি/ইংলিশ/জাপানি/তেলুগু/তামিল × ১০৮০/৭২০/৪৮০), The Runner ০→৬ (চেক/জার্মান/হিন্দি/হাঙ্গেরিয়ান/ইতালিয়ান/জাপানি — সব জীবিত), প্রতি কার্ডে অডিও-ট্র্যাক=১, সেগমেন্ট HTTP ২০৬ video/mp2t মাক্সড-অডিও //  // v1.15.87: স্কাইমুভিজ-সাইট গভীর-নিরীক্ষা + স্কোরার-মেরামত। (ক) **'/movie/'-প্রিফিক্স-বাগ (বড়)**: skyStreams-এ posts = "/movie/Slug-…", কিন্তু স্কোরার সরাসরি nrm(p) করত → n = "movie jaws 1975 …" → `n === Tn` ও `n.startsWith(Tn+' ')` দুটোই **মৃত কোড** (n কখনোই টাইটেল দিয়ে শুরু হয় না)। বহু-শব্দ-টাইটেল বেঁচেছিল শুধু `n.includes(' '+Tn+' ')` (১১০) শাখায়; **এক-শব্দ-টাইটেলের (Jaws/Rocky/Alien/Chernobyl/Lucifer) কোনো শাখাই থাকত না → sc=0 → সব সময় ০ কার্ড**। প্রমাণ: Jaws(৫৭৮) → no-match posts=6 (সাইটে ৪× Jaws-1975 থেকেও); এখন ১× Jaws.1975 720p, Rocky(১৩৬৬) ০→৪ (Rocky.1976.*), Alien(৩৪৮) ০→৪ (Alien.1979.*)। (খ) **বছর-রেজেক্সে 19xx** (আগে শুধু 20xx) — Godfather-সার্চে Part II(1974)/Part III(1990)-এর বছর-যাচাই-ই হত না; এখন সঠিক ১৯৭২ +৪০, ভুল ১৯৭৪/১৯৯০ −৩০। সিরিজে বছর-দণ্ড **নেই** (প্রমাণ: স্লাগের বছর = সিজন-বছর — Breaking Bad S01=(2008)…S05=(2012), first_air_date নয়)। (গ) **এক-শব্দ-টাইটেলে দ্বৈত-নিশ্চিতকরণ** (প্রিফিক্স-মিল এখন সক্রিয়, তাই ভুল-টাইটেল-ঝুঁকি নতুন) — টাইটেলের ঠিক-পরের টোকেন হতে হবে ৪-অঙ্কের-বছর | সিজন-চিহ্ন | রেজোলিউশন | স্ট্রিং-শেষ, **এবং** মুভি=বছর-মিল / সিরিজ=সিজন-মিল। প্রমাণ (পরের-টোকেন): সঠিক → Jaws→1975, Alien→1979, Rocky→1976, Chernobyl→2019, Lucifer→2016/2017/2018; ভুল → Dark→"fantasies"(Dark-Fantasies-2010), Rocky→"handsome"/"mental", Alien→"predator", Jaws→"3d"(Jaws-3D-1983)। ফল: Dark S01E01 আগে দিত **ভুল** Dark.Hole.S01.COMPLETE → এখন ০ (সৎ শূন্য)। (ঘ) decodeURIComponent try/catch (lone '%'-স্লাগে URIError → সোর্স-মৃত্যু ঠেকানো)। পরীক্ষিত: test.js ২০/৪৩ (বেসলাইন), config.test.js সব-সবুজ, স্বাধীনতা-ম্যাট্রিক্স v1.15.86-এর সাথে হুবহু মিল (ডিফল্ট Sky[1080,720,720,480]/M4u[2160,1080,1080,720,720,720]; sky=0→Sky[]; skyr=720→Sky[720,720,480]; m4ur=720→M4u[720,720,480,720]; m4u=0→M4u[]; Pengu=0) //  // v1.15.86: (ক) **Pengu-সোর্স সম্পূর্ণ সরানো** (ইউজার: "No pengu please") — penguStreams/pengResolve/PENGU_BASE/PENGU_CFG কোড-থেকেই মুছে ফেলা, সাথে cfg-কী peng/pengr/pengq/pengl, কনফিগ-পেজের Pengu-কার্ড ও UNIFY_SRV-এন্ট্রি। (খ) **Sky Movies = আসল SkymoviesHD, এখন সম্পূর্ণ স্বাধীন সোর্স** — নিজস্ব মাস্টার-সুইচ (sky), নিজস্ব রেজো-ক্যাপ (skyr), নিজস্ব কোয়ালিটি/ভাষা-ফিল্টার (skyq/skyl), নিজস্ব bingeGroup 'sky|'। আগে Sky-কে Pengu-সুইচ ও **m4ur** (মুভিজ4ইউ-এর সেটিং) দিয়ে চালানো হত — এবং skyStreams-এর bingeGroup ছিল 'peng|' (পেঙ্গু-এর সাথে হুবহু একই), ফলে স্কাই-কার্ড 'Pengu' লেবেল পেত। প্রমাণ: sky=0 → শুধু স্কাই বন্ধ; skyr=720 → শুধু স্কাই ক্যাপ (মুভিজ4ইউ-এর 2160 অক্ষুণ্ণ); m4ur=720 → শুধু মুভিজ4ইউ ক্যাপ (স্কাই-এর 1080 অক্ষুণ্ণ)। (গ) **SkymoviesHD ডোমেইন-আপডেটার** — সাইট বারবার ডোমেইন বদলায়; ঘোষক-পাতা skybap.site (প্রমাণিত: সেখান থেকে new1.skymovieshd.clinic লিংক) থেকে প্রার্থী-ডোমেইন নিয়ে **যাচাই** (search.php + /movie/*.html) করে SKY_BASE বসানো হয়; বুটে + প্রতি-৬ঘণ্টায় রিফ্রেশ, সার্চ-ব্যর্থ হলে জোর-রিফ্রেশ-পুনঃচেষ্টা। যাচাই বাধ্যতামূলক — ঘোষক-পাতার টেক্সটে পুরনো মৃত ডোমেইন (skymovieshd.in/.com) থাকে, সেগুলো সঠিকভাবে বাতিল হয় (প্রমাণিত)  // v1.15.85: (ক) কার্ড-টেক্সট থেকে বাংলা সম্পূর্ণ সরানো — "ⓘ সম্পূর্ণ সিজন (এক-ফাইলে) — Ep 1 থেকে শুরু" → "ⓘ Full season in one file — starts at Ep 1" (Movies4u/Sky/unifyCards — ৩ জায়গা)। (খ) Sky-মিরর-ডুপ্লিকেট বন্ধ: একই হাবে pixeldrain যে-রেজো দিয়েছে, সেই রেজোতে signed-S3/workers-মিরর আর ঢোকে না। প্রমাণ: Shawshank-এ ৬ কার্ডের ২ জোড়া ছিল **হুবহু একই ফাইল** (pd ২.৬১GB = S3 ২.৬১GB, ৪৮০-তেও তাই) — অথচ ৬টির কার্ড-টেক্সট অভিন্ন, ব্যবহারকারী পার্থক্য বুঝতেই পারত না → ৬→৪। (গ) Sky-সার্চ/স্কোরার-এ অ্যাপোস্ট্রোফি-স্বাভাবিকীকরণ: "Schindler's List" সার্চে ০ পোস্ট, "Schindlers List"-এ ১ — অ্যাপোস্ট্রোফি সার্চ ভেঙে দিত; স্কোরারেও অতিরিক্ত-টোকেন-দণ্ডে স্কোর ৩৩ (<৬০, বাতিল) → এখন ১২০ (মিল)। (ঘ) S3/ফলব্যাক-রেজো এখন স্লাগ-লেবেল নয়, আসল ফাইলনাম থেকে — প্রমাণ: Godfather-স্লাগ "720p" কিন্তু ফাইল 1080p/৩.৪২GB (আগে 720 ভুল-লেবেল)  // v1.15.84: workers.dev আর বাদ নয় (পরিমাপিত — সিক-যোগ্য)। প্রমাণ: সরাসরি-ফাইল workers.dev-এ মাঝ-রেঞ্জে HTTP 206, content-type video/x-matroska, ১৭.৫/২৪.৮ GB; টোকেন t=0/60/180/360/600s-এ বহাল। নিরাপত্তা: .m3u8 বাদ (সেকেন্ডেই 404), text/*-কনটেন্ট-টাইপ বাতিল, শুধু মিডিয়া-এক্সটেনশন-যুক্ত ফাইলনাম, রেজো কেবল পরিচিত-সিঁড়ি থেকে (ভুল-লেবেল-নিষিদ্ধ), অন্তর্বর্তী 403-এ একবার পুনঃচেষ্টা। ফল: Sikandar-2025-এ 0→2×2160 (আগে সর্বোচ্চ 1080)  // v1.15.83: সিজন-প্যাক-ফলব্যাক (হুবহু SxxExx-মিল-থাকলে সেটাই; না-থাকলে সিজন-নিশ্চিত 'S01…' প্যাক — লেবেলে "· S1 Pack" + "ⓘ সম্পূর্ণ সিজন (এক-ফাইলে) — Ep 1 থেকে শুরু")। প্রমাণ: Kon Yashwant Pansare (2026) S01 শুধু-প্যাক, 2160p-কপিতে pixeldrain×2+signed-S3×2 (206, সিক-যোগ্য) — আগে হুবহু-শর্তে সম্পূর্ণ বাতিল হত। ভুল-সিজন কখনো নয় (ssn !== SE → বাতিল; S02E01-এ S01-প্যাক যায় না — পরীক্ষিত)  // v1.15.82: Sky + Movies4u সিরিজ-পথ (হাবক্লাউড-পাতার-শিরোনামে SxxExx মিল — প্রতি-এপিসোড; ভুল-এপিসোড-নিষিদ্ধ, সিজন-জিপ-বাদ) + 4K (মৃত-S3/FSL-শাখা-জীবিত → 2160p-কার্ড; ভুল-h4-লেবেলে 4K-মিরর-বাতিল-হত) + hits[0]-অন্ধ-গ্রহণ-বন্ধ (বছর-সচেতন m4uPick — Superman-২০২৫-এ hits[0] ছিল Superman-১৯৭৮ = ভুল-টাইটেল) + m4ur/mmr-ক্যাপে 2160  // কনফিগ-পেজ-বাগ-মেরামত (৫-ট্যাব): সার্ভার-টাইল-বুটে-রিড্র, "None"=ফ্লিট-বন্ধ (খালি=সব-চুক্তি), Reset-এ-চিপ-রিড্র, flab-<em>-আক্ষরিক-লেখা, Jump-টগল+লেবেল, Sky-প্রিভিউ-m4ur-লিক, rtsrv-দুটোই-বাদ-সম্মান // v1.15.80: RT-দ্বিতীয়-সার্ভার (WN/pixeldrain)-পুনরুদ্ধার: é-ডিঅ্যাকসেন্ট+রেস-মার্জ+PD-inline+per-সার্ভার-টগল (rtsrv)
+const VERSION = '1.15.91'; // v1.15.91: দুটি ইউজার-রিপোর্ট — (ক) **Movies4u ExoPlayer-সিক মৃত** ("Movies4u does not work seek when it plays on exo player", libmpv-তে ঠিকই চলে)। মূল কারণ ExoPlayer-এর MatroskaExtractor: `case ID_CLUSTER: if (!sentSeekMap) { if (seekForCuesEnabled && …) seekForCues = true; else extractorOutput.seekMap(new SeekMap.Unseekable(durationUs)); }` — অর্থাৎ **প্রথম Cluster-এ পৌঁছানোর আগেই Cues পড়া না থাকলে** ExoPlayer "অসিক-যোগ্য" ঘোষণা করে, আর ProgressiveMediaPeriod.seekToUs()-এ `positionUs = seekMap.isSeekable() ? positionUs : 0` → **প্রতি সিক ০:০০-এ ফেরত যায়**। Cues সবসময় ফাইলের একদম **শেষে** (পরিমাপ: Cues@18,120,319,734 / 16.88GB) — mpv/FFmpeg তা পড়তে পারে, ExoPlayer পারে না (FLAG_DISABLE_SEEK_FOR_CUES)। মাপকাঠি: যে-সব উৎস ExoPlayer-এ সিক চলে (Multimovies, Miami) সবাই **HLS**; Movies4u-ই একমাত্র প্রগতিশীল-MKV সোর্স — নিদর্শন মিলে গেল। সমাধান (`/m4p/`): Cues-এলিমেন্ট হেডারের পরে, প্রথম Cluster-এর **আগে** সরানো, আর সব CueClusterPosition + delta (নাহলে সিক ভুল অবস্থানে যায়)। Segment-আকার প্যাচ + রেঞ্জ-সচেতন স্ট্রিমিং (prefix / Cues / লেজ—তিন-খণ্ড)। যাচাই (৩টি ফাইল, ০.৪৩/০.৮৬/০.৯৬ GB): উপরের-স্তর `SeekHead, Info, Tracks, **Cues**, Cluster…`; Cues@33146 বনাম প্রথম-Cluster@84656; **CuePoint ১২/১২ আসল Cluster-এ পয়েন্ট করে** (HTTP ২০৬ + 0x1F43B675)। HLS-কার্ড অস্পৃষ্ট (শুধু kind==='file' রূপান্তরিত)। (খ) **Multimovies ভাষা-কার্ড কম দেখানো** ("multimovies has a more lot of audio varients, please show them all") — পরিমাপ: Demon Slayer rousav মাস্টার **১৬** অডিও-ট্র্যাক ঘোষণা করে, **১৩টি জীবিত**; কিন্তু ক্যাপ MM_MAXLANG=৬ / MM_SCANTRK=১২ → মাত্র ৬টি দেখানো হতো (Greek/Italian/Polish/Portuguese/Russian/Tamil/Telugu কখনোই আসত না)। ক্যাপ ৬→২৪, ১২→২৪, ভ্যারিয়েন্ট ২০→৬০। ফল: Demon Slayer ২০→**৫৪** কার্ড/১৭ ভাষা, The Runner ১৮→**৩৬-৩৯**/১২ ভাষা (Kannada/Malayalam/Hungarian/Arabic নতুন)। যাচাই: test.js ২০/৪৩, config.test.js সব-সবুজ, বাংলা=০/১৮২, #EXTM3U প্রথম লাইনে ৯৩/৯৩ //  // v1.15.90: Multimovies **অডিও-ভাষা সংস্কার** (ইউজার: "Eta toh Chinese audio howar Kotha but Hindi audio dei … etar English ta o Hindi audio set Kore, Greek, German e Kono audio nai")। তিনটি স্বতন্ত্র ত্রুটি, প্রতিটি PMT-প্রমাণিত: (ক) **ভাষা-ভিত্তিক মাক্সড ভ্যারিয়েন্ট বাছাই হয় না** — .urlset/CDN ভ্যারিয়েন্ট-নামেই ভাষা এনকোড করে (`index-f3-v1-a1`=हिन्दी, `a2`=English, `a3`=日本語, `a4`=తెలుగు, `a5`=தமிழ்)। প্রমাণ: ৫টি ভ্যারিয়েন্টের AAC-PID(257)-হ্যাশ **৫/৫ ভিন্ন**। কিন্তু আমরা সব কার্ডে একই `a1` পাঠাচ্ছিলাম → প্রতিটি ভাষার কার্ডেই हिन्दी বাজত। নতুন `mmPickVarLang(pl, base, wantH, alang)`: মাস্টারের অডিও-তালিকায় ভাষার ক্রমিক N বের করে `-a1`→`-aN` করে (HTTP ২০০ যাচাইসহ)। (খ) **`#EXT-X-MEDIA` MEDIA-প্লেলিস্টে অর্থহীন** — rousav-এর ভিডিওতে কোনো অডিও নেই (PMT = `[0x1b]`), অডিও আলাদা `track_*.m3u8`-এ; কিন্তু আমরা ইনলাইন MEDIA-প্লেলিস্টে TYPE=AUDIO ট্যাগ লিখছিলাম, যা প্লেয়ার **সম্পূর্ণ উপেক্ষা করে** → নিঃশব্দ। নতুন `mmMasterForm()`: ভিডিও মাক্সড না হলে সঠিক এক-ভ্যারিয়েন্ট MASTER-প্লেলিস্ট (AUDIO="a0" দ্বারা যুক্ত)। (গ) **অডিও-সেগমেন্টে api_key পৌঁছায় না** — track_*.m3u8-এর সেগমেন্ট আপেক্ষিক (`track_czech/00000.png`) আর api_key শুধু প্লেলিস্ট-ইউআরএলে → প্লেয়ারের রিজলভ করা সেগমেন্ট **৪০৪** (পরীক্ষায় ৬/৬ ভাষাতেই)। নতুন `/mma/<b64>/a.m3u8` ইনলাইনার: absolute + keyed সেগমেন্ট (আর প্রয়োজনে Referer-রিলে)। সংশোধিত ভিত্তি: `mmTsHasAudio` ছিল ত্রুটিপূর্ণ — PMT-পিআইডি PAT থেকে না বের করে "যেকোনো PUSI = PMT" ধরত, আর 0x06 (প্রাইভেট-ডেটা) কে অডিও গণ্য করত; তাই অডিওবিহীন rousav-কেও "মাক্সড" দাবি করা হতো। `mmVarProbe` শুধু **প্রথম** সেগমেন্ট দেখত — কিন্তু অনেক উৎসের ০-নম্বর সেগমেন্ট lead-in (PMT `[0x1b,0x0f]`, কিন্তু বাস্তবে কোনো অডিও নেই; The Runner seg 0 বনাম seg 1..10); এখন ৩টি নমুনা। যাচাই: Demon Slayer ৫ ভাষায় ৫/৫ স্বতন্ত্র মাক্সড অডিও; rousav-সব কার্ডে PMT=0xf অডিও (৫-৬/৬ সেগমেন্ট); test.js ২০/৪৩; config.test.js সব-সবুজ; বাংলা=০ //  // v1.15.89: Multimovies **দ্বিতীয় গভীর-নিরীক্ষা** — ইউজার: "video length dekhai 10s, sese hoi abar por theke 10s suru kore … aje maje audio o thake na"। তিনটি স্বতন্ত্র ত্রুটি, প্রতিটি প্রমাণ-সহ: (ক) **#EXTM3U প্রথম লাইনে ছিল না** — HLS-স্পেসিফিকেশনে #EXTM3U অবশ্যই প্রথম লাইন; আমরা মাস্টারের ট্যাগ-ব্লক (TYPE=AUDIO / I-FRAME-STREAM-INF) তার **আগে** জুড়ে দিচ্ছিলাম। পরীক্ষায় ১৬/১৬ MM-কার্ডেই #EXTM3U ৪ নম্বর (Demon Slayer) থেকে ৩৮ নম্বর (The Runner) লাইনে — প্লেয়ার প্লেলিস্ট অগ্রাহ্য/অডিও-ট্র্যাক হারাতো। আগের যাচাইয়ে ধরা পড়েনি কারণ সেখানে শুধু "#EXTM3U আছে কি" দেখা হতো, **কোন লাইনে** তা নয়। নতুন `mmM3UJoin(tags, body)` ট্যাগ-ব্লক #EXTM3U-এর পরে বসায়; `mmMiniBuild`-এর মাস্টার-আউটপুটেও #EXTM3U যোগ (আগে সেটিতে #EXTM3U-ই ছিল না)। (খ) **CDN Referer দাবি করে, প্লেয়ার পাঠায় না** — dd2stliwt0bc.homechefrecipes.sbs (.urlset): Referer ছাড়া **০/২০** ৪০৪, Referer সহ **২০/২০** ২০০; img.rousav.tech Referer ছাড়াই ১০/১০। নতুন `mmNeedsRef(u)` হোস্ট-ভিত্তিক (৩০মিন ক্যাশ) সনাক্তকরণ → প্রয়োজনীয় হোস্টের মিডিয়া আমাদের /mmr/ রিলে দিয়ে (রিলে সবসময় সঠিক Referer যোগ করে), প্রয়োজন না হলে সরাসরি CDN — কোনো অতিরিক্ত ব্যান্ডউইথ-খরচ নেই। যাচাই: Demon Slayer-এর ৪টি .urlset কার্ড রিলে-কৃত, rousav কার্ড ও The Runner সরাসরি। (গ) **বেস৬৪-প্যাডিং ('=') রেগেক্সে ছিল না** → কপি/পেস্টে প্যাডিং যোগ হলে ২০০-এর বদলে ৪০৪ (প্রমাণ: ইউজারের ইউআরএল "…8amE=/mini.m3u8" → ৮/৮ বার ৪০৪; '=' বাদ দিলেই ২০০)। /mm/ ও /mmr/ দুটোতেই '=' এখন বৈধ। যাচাই: ৩৮/৩৮ কার্ডে #EXTM3U প্রথম লাইনে; ENDLIST শেষ লাইনে; রিলে-কৃত সেগমেন্ট ৬/৬ HTTP ২০৬/২০০ video/mp2t মাক্সড-অডিও; অডিও-প্লেলিস্ট HTTP ২০০ (৯৩০ EXTINF); test.js ২০/৪৩ বেসলাইন; config.test.js সব-সবুজ; বাংলা=০ //  // v1.15.88: Multimovies গভীর-নিরীক্ষা + **single-audio সংস্কার** (ইউজার: "Demob slayer infinity castle … fast hls gulo pelam na, the runner e single audio fast hls gulo pelam na, multi audio play problem hoi")। (ক) **নকল কোয়ালিটি-কার্ড বন্ধ**: `woHasAudioGrp` শাখা প্রতি কোয়ালিটিতে একটি করে কার্ড দিত, কিন্তু সবার `url` একই (পুরো মাস্টার) — প্রমাণ: Demon Slayer ১৩১১০৩১-এ ৩টি কার্ড (1080/720/480) যাদের URL **হুবহু অভিন্ন** (`…v51t5m9qymh5_,l,n,h,.urlset/master.txt`)। (খ) **মাল্টি-অডিও সমস্যার মূল**: rousav মাস্টার ১৬-২০টি আলাদা অডিও-ট্র্যাক ঘোষণা করে, কিন্তু প্লেয়ারকে সেগুলো আলাদাভাবে টানতে হয় — আর The Runner-এর track_english/spa/fra/pol/por/tam/tel/tha/tur **৪০৪**; Demon Slayer .urlset-এর ভিডিও-ভ্যারিয়েন্ট আসলে **মাক্সড** (H.264+AAC একই TS-এ — PMT-স্ক্যানে প্রমাণিত)। এখন **প্রতি কোয়ালিটি × প্রতি ভাষা = একটি single-audio কার্ড** (mini + `alang`-পিন: মাস্টারে শুধু ওই একটি অডিও-ট্র্যাক থাকে)। (গ) **প্রোব-ভিত্তিক সততা**: `mmVarProbe` (ভ্যারিয়েন্ট জীবিত + TS-এ অডিও মাক্সড কি — ৪KB রেঞ্জ-ফেচ) ও `mmTrkProbe` (অডিও-ট্র্যাক জীবিত), দুটোতেই **দ্বৈত-নিশ্চিতকরণ** — rousav/CDN-এর 'নোড-লটারি'তে ভাগ্যবান-নোড মিথ্যা-জীবিত দেখায় (প্রমাণ: track_english একবার ২০০, পরের ১৫ বার ৪০৪)। মিথ্যা-মাল্টি-অডিও মাস্টারে আর 'N Audio' দাবি নেই; মাক্সড ভ্যারিয়েন্ট থাকলে সরাসরি সেটিই (দ্রুততম), নইলে সৎ শূন্য। (ঘ) **অন্যান্য**: ডিডুপ-কী'তে `alang` (নাহলে ৬ ভাষা-কার্ড অভিন্ন-কী হয়ে ৫টি বাদ পড়ত — প্রমাণ `[mmvbd] out=6` → `variants=1`); `_lang`-এ ISO-কোড→ইংরেজি-নাম ম্যাপার (`mmLangBlob`) — mml=['hindi'] আগে ০ কার্ড দিত, এখন ৩; MM কার্ড-ক্যাপ ১৬→২০; decodeURIComponent-সহ কোনো মিড-লাইন কমেন্ট নেই। যাচাই: test.js ২০/৪৩ (বেসলাইন), config.test.js সব-সবুজ, বাংলা=০, Demon Slayer ২০ কার্ড (হিন্দি/ইংলিশ/জাপানি/তেলুগু/তামিল × ১০৮০/৭২০/৪৮০), The Runner ০→৬ (চেক/জার্মান/হিন্দি/হাঙ্গেরিয়ান/ইতালিয়ান/জাপানি — সব জীবিত), প্রতি কার্ডে অডিও-ট্র্যাক=১, সেগমেন্ট HTTP ২০৬ video/mp2t মাক্সড-অডিও //  // v1.15.87: স্কাইমুভিজ-সাইট গভীর-নিরীক্ষা + স্কোরার-মেরামত। (ক) **'/movie/'-প্রিফিক্স-বাগ (বড়)**: skyStreams-এ posts = "/movie/Slug-…", কিন্তু স্কোরার সরাসরি nrm(p) করত → n = "movie jaws 1975 …" → `n === Tn` ও `n.startsWith(Tn+' ')` দুটোই **মৃত কোড** (n কখনোই টাইটেল দিয়ে শুরু হয় না)। বহু-শব্দ-টাইটেল বেঁচেছিল শুধু `n.includes(' '+Tn+' ')` (১১০) শাখায়; **এক-শব্দ-টাইটেলের (Jaws/Rocky/Alien/Chernobyl/Lucifer) কোনো শাখাই থাকত না → sc=0 → সব সময় ০ কার্ড**। প্রমাণ: Jaws(৫৭৮) → no-match posts=6 (সাইটে ৪× Jaws-1975 থেকেও); এখন ১× Jaws.1975 720p, Rocky(১৩৬৬) ০→৪ (Rocky.1976.*), Alien(৩৪৮) ০→৪ (Alien.1979.*)। (খ) **বছর-রেজেক্সে 19xx** (আগে শুধু 20xx) — Godfather-সার্চে Part II(1974)/Part III(1990)-এর বছর-যাচাই-ই হত না; এখন সঠিক ১৯৭২ +৪০, ভুল ১৯৭৪/১৯৯০ −৩০। সিরিজে বছর-দণ্ড **নেই** (প্রমাণ: স্লাগের বছর = সিজন-বছর — Breaking Bad S01=(2008)…S05=(2012), first_air_date নয়)। (গ) **এক-শব্দ-টাইটেলে দ্বৈত-নিশ্চিতকরণ** (প্রিফিক্স-মিল এখন সক্রিয়, তাই ভুল-টাইটেল-ঝুঁকি নতুন) — টাইটেলের ঠিক-পরের টোকেন হতে হবে ৪-অঙ্কের-বছর | সিজন-চিহ্ন | রেজোলিউশন | স্ট্রিং-শেষ, **এবং** মুভি=বছর-মিল / সিরিজ=সিজন-মিল। প্রমাণ (পরের-টোকেন): সঠিক → Jaws→1975, Alien→1979, Rocky→1976, Chernobyl→2019, Lucifer→2016/2017/2018; ভুল → Dark→"fantasies"(Dark-Fantasies-2010), Rocky→"handsome"/"mental", Alien→"predator", Jaws→"3d"(Jaws-3D-1983)। ফল: Dark S01E01 আগে দিত **ভুল** Dark.Hole.S01.COMPLETE → এখন ০ (সৎ শূন্য)। (ঘ) decodeURIComponent try/catch (lone '%'-স্লাগে URIError → সোর্স-মৃত্যু ঠেকানো)। পরীক্ষিত: test.js ২০/৪৩ (বেসলাইন), config.test.js সব-সবুজ, স্বাধীনতা-ম্যাট্রিক্স v1.15.86-এর সাথে হুবহু মিল (ডিফল্ট Sky[1080,720,720,480]/M4u[2160,1080,1080,720,720,720]; sky=0→Sky[]; skyr=720→Sky[720,720,480]; m4ur=720→M4u[720,720,480,720]; m4u=0→M4u[]; Pengu=0) //  // v1.15.86: (ক) **Pengu-সোর্স সম্পূর্ণ সরানো** (ইউজার: "No pengu please") — penguStreams/pengResolve/PENGU_BASE/PENGU_CFG কোড-থেকেই মুছে ফেলা, সাথে cfg-কী peng/pengr/pengq/pengl, কনফিগ-পেজের Pengu-কার্ড ও UNIFY_SRV-এন্ট্রি। (খ) **Sky Movies = আসল SkymoviesHD, এখন সম্পূর্ণ স্বাধীন সোর্স** — নিজস্ব মাস্টার-সুইচ (sky), নিজস্ব রেজো-ক্যাপ (skyr), নিজস্ব কোয়ালিটি/ভাষা-ফিল্টার (skyq/skyl), নিজস্ব bingeGroup 'sky|'। আগে Sky-কে Pengu-সুইচ ও **m4ur** (মুভিজ4ইউ-এর সেটিং) দিয়ে চালানো হত — এবং skyStreams-এর bingeGroup ছিল 'peng|' (পেঙ্গু-এর সাথে হুবহু একই), ফলে স্কাই-কার্ড 'Pengu' লেবেল পেত। প্রমাণ: sky=0 → শুধু স্কাই বন্ধ; skyr=720 → শুধু স্কাই ক্যাপ (মুভিজ4ইউ-এর 2160 অক্ষুণ্ণ); m4ur=720 → শুধু মুভিজ4ইউ ক্যাপ (স্কাই-এর 1080 অক্ষুণ্ণ)। (গ) **SkymoviesHD ডোমেইন-আপডেটার** — সাইট বারবার ডোমেইন বদলায়; ঘোষক-পাতা skybap.site (প্রমাণিত: সেখান থেকে new1.skymovieshd.clinic লিংক) থেকে প্রার্থী-ডোমেইন নিয়ে **যাচাই** (search.php + /movie/*.html) করে SKY_BASE বসানো হয়; বুটে + প্রতি-৬ঘণ্টায় রিফ্রেশ, সার্চ-ব্যর্থ হলে জোর-রিফ্রেশ-পুনঃচেষ্টা। যাচাই বাধ্যতামূলক — ঘোষক-পাতার টেক্সটে পুরনো মৃত ডোমেইন (skymovieshd.in/.com) থাকে, সেগুলো সঠিকভাবে বাতিল হয় (প্রমাণিত)  // v1.15.85: (ক) কার্ড-টেক্সট থেকে বাংলা সম্পূর্ণ সরানো — "ⓘ সম্পূর্ণ সিজন (এক-ফাইলে) — Ep 1 থেকে শুরু" → "ⓘ Full season in one file — starts at Ep 1" (Movies4u/Sky/unifyCards — ৩ জায়গা)। (খ) Sky-মিরর-ডুপ্লিকেট বন্ধ: একই হাবে pixeldrain যে-রেজো দিয়েছে, সেই রেজোতে signed-S3/workers-মিরর আর ঢোকে না। প্রমাণ: Shawshank-এ ৬ কার্ডের ২ জোড়া ছিল **হুবহু একই ফাইল** (pd ২.৬১GB = S3 ২.৬১GB, ৪৮০-তেও তাই) — অথচ ৬টির কার্ড-টেক্সট অভিন্ন, ব্যবহারকারী পার্থক্য বুঝতেই পারত না → ৬→৪। (গ) Sky-সার্চ/স্কোরার-এ অ্যাপোস্ট্রোফি-স্বাভাবিকীকরণ: "Schindler's List" সার্চে ০ পোস্ট, "Schindlers List"-এ ১ — অ্যাপোস্ট্রোফি সার্চ ভেঙে দিত; স্কোরারেও অতিরিক্ত-টোকেন-দণ্ডে স্কোর ৩৩ (<৬০, বাতিল) → এখন ১২০ (মিল)। (ঘ) S3/ফলব্যাক-রেজো এখন স্লাগ-লেবেল নয়, আসল ফাইলনাম থেকে — প্রমাণ: Godfather-স্লাগ "720p" কিন্তু ফাইল 1080p/৩.৪২GB (আগে 720 ভুল-লেবেল)  // v1.15.84: workers.dev আর বাদ নয় (পরিমাপিত — সিক-যোগ্য)। প্রমাণ: সরাসরি-ফাইল workers.dev-এ মাঝ-রেঞ্জে HTTP 206, content-type video/x-matroska, ১৭.৫/২৪.৮ GB; টোকেন t=0/60/180/360/600s-এ বহাল। নিরাপত্তা: .m3u8 বাদ (সেকেন্ডেই 404), text/*-কনটেন্ট-টাইপ বাতিল, শুধু মিডিয়া-এক্সটেনশন-যুক্ত ফাইলনাম, রেজো কেবল পরিচিত-সিঁড়ি থেকে (ভুল-লেবেল-নিষিদ্ধ), অন্তর্বর্তী 403-এ একবার পুনঃচেষ্টা। ফল: Sikandar-2025-এ 0→2×2160 (আগে সর্বোচ্চ 1080)  // v1.15.83: সিজন-প্যাক-ফলব্যাক (হুবহু SxxExx-মিল-থাকলে সেটাই; না-থাকলে সিজন-নিশ্চিত 'S01…' প্যাক — লেবেলে "· S1 Pack" + "ⓘ সম্পূর্ণ সিজন (এক-ফাইলে) — Ep 1 থেকে শুরু")। প্রমাণ: Kon Yashwant Pansare (2026) S01 শুধু-প্যাক, 2160p-কপিতে pixeldrain×2+signed-S3×2 (206, সিক-যোগ্য) — আগে হুবহু-শর্তে সম্পূর্ণ বাতিল হত। ভুল-সিজন কখনো নয় (ssn !== SE → বাতিল; S02E01-এ S01-প্যাক যায় না — পরীক্ষিত)  // v1.15.82: Sky + Movies4u সিরিজ-পথ (হাবক্লাউড-পাতার-শিরোনামে SxxExx মিল — প্রতি-এপিসোড; ভুল-এপিসোড-নিষিদ্ধ, সিজন-জিপ-বাদ) + 4K (মৃত-S3/FSL-শাখা-জীবিত → 2160p-কার্ড; ভুল-h4-লেবেলে 4K-মিরর-বাতিল-হত) + hits[0]-অন্ধ-গ্রহণ-বন্ধ (বছর-সচেতন m4uPick — Superman-২০২৫-এ hits[0] ছিল Superman-১৯৭৮ = ভুল-টাইটেল) + m4ur/mmr-ক্যাপে 2160  // কনফিগ-পেজ-বাগ-মেরামত (৫-ট্যাব): সার্ভার-টাইল-বুটে-রিড্র, "None"=ফ্লিট-বন্ধ (খালি=সব-চুক্তি), Reset-এ-চিপ-রিড্র, flab-<em>-আক্ষরিক-লেখা, Jump-টগল+লেবেল, Sky-প্রিভিউ-m4ur-লিক, rtsrv-দুটোই-বাদ-সম্মান // v1.15.80: RT-দ্বিতীয়-সার্ভার (WN/pixeldrain)-পুনরুদ্ধার: é-ডিঅ্যাকসেন্ট+রেস-মার্জ+PD-inline+per-সার্ভার-টগল (rtsrv)
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -156,8 +156,8 @@ function mmLangBlob(t) { // mml/rtLangPass-যোগ্য ব্লব: দে�
   const code = String(t.key || t.lang || '').toLowerCase();
   return (String(t.name || '') + ' ' + code + ' ' + (MM_LNAME[code] || '')).trim().toLowerCase();
 }
-const MM_MAXLANG = 6; // v1.15.88: প্রতি-মাস্টারে সর্বোচ্চ কতগুলো ভাষায় single-audio **কার্ড** (কার্ড-বিস্ফোরণ-ঠেকা; mml-ফিল্টার পরে আরও ছাঁকে)
-const MM_SCANTRK = 12; // v1.15.88: কতগুলো অডিও-ট্র্যাক **স্ক্যান** করা হবে (কার্ড-সংখ্যা নয়) — বেশি স্ক্যান = বেশি জীবিত-ভাষা খোঁজা
+const MM_MAXLANG = 24; // v1.15.88: প্রতি-মাস্টারে সর্বোচ্চ কতগুলো ভাষায় single-audio **কার্ড** // v1.15.91: ৬ → ২৪ (ইউজার: "multimovies has a more lot of audio varients, please show them all")। পরিমাপ: Demon Slayer rousav মাস্টার **১৬** অডিও-ট্র্যাক ঘোষণা করে, তার **১৩টি জীবিত** (HTTP ২০০) — অথচ ৬-এর ক্যাপে Catalan/German/Greek/French/Hindi বাদে Italian/Polish/Portuguese/Russian/Tamil/Telugu **কখনো দেখানোই হতো না**।
+const MM_SCANTRK = 24; // v1.15.88: কতগুলো অডিও-ট্র্যাক **স্ক্যান** করা হবে (কার্ড-সংখ্যা নয়) — বেশি স্ক্যান = বেশি জীবিত-ভাষা খোঁজা // v1.15.91: ১২ → ২৪ (১৬-এর বেশি ট্র্যাক-ঘোষিত মাস্টারে ১৩তম+ ভাষা বাদ পড়ত)
 // প্রমাণ (The Runner rousav, ৫ বার করে): track_czech ২০০✓, track_hindi ২০০✓, track_japanese ২০০✓,
 // কিন্তু track_arabic ৪০৪✕, track_english ৪০৪✕। অর্থাৎ "সব-ট্র্যাক মৃত" নয় — **ট্র্যাক-ভেদে জীবিত/মৃত**।
 // তাই প্রথম ৬-এর মধ্যে সীমাবদ্ধ থাকলে হিন্দি/জাপানি (৯ম/১১শ) ধরা পড়ত না → ভাষা-কভারেজ কমে যেত।
@@ -1741,7 +1741,7 @@ async function mmStreams(tmdbId, title, type, s, e, origin, maxh, rel) { // v1.1
     try { const vbl = await vbP; for (const v of (vbl || [])) { if (!v || !v.url) continue; const vk2 = v.url + '|' + (v.h | 0) + (v.mini ? 'm' : '') + '|' + (v.alang || ''); if (seen.has(vk2)) continue; seen.add(vk2); raws.push(v); } } catch { } // vidbolt merge — dedup per url+height so per-quality minis all survive
     if (DBG) console.error('[mm] ' + tmdbId + '/' + (isSeries ? 'S' + (s || 1) + 'E' + (e || 1) : 'movie') + ' servers=' + servers.length + ' variants=' + raws.length + ' @' + (Date.now() - t3) + 'ms');
     const fvars = maxh ? raws.filter(x => !x.h || x.h <= maxh) : raws; // v1.15.39: config-রেজোলিউশন-ফিল্টার — অজানা-উচ্চতা (0) সবসময়-থাকে
-    const vars = fvars.slice().sort((a, b) => b.h - a.h).slice(0, 20); // v1.15.51: 12→16 // v1.15.88: 16→20 (কোয়ালিটি×ভাষা মেট্রিক্স — ১৬-এ ৪৮০p-সারি কেটে যেত)
+    const vars = fvars.slice().sort((a, b) => b.h - a.h).slice(0, 60); // v1.15.51: 12→16 // v1.15.88: 16→20 (কোয়ালিটি×ভাষা মেট্রিক্স — ১৬-এ ৪৮০p-সারি কেটে যেত) // v1.15.91: ২০ → ৬০ (১৩ ভাষা × ৩-৪ কোয়ালিটি = ৩৯-৫২ কার্ড ধরা পড়ুক)
     if (!vars.length) return [];
     const subs = await woSubs(tmdbId, type, s, e, left()).catch(() => []);
     const T = String(title || 'Multimovies');
@@ -2355,6 +2355,210 @@ function pdProbe(u) { // 1KB-রেঞ্জ-GET-প্রোব — pixeldrain;
     } catch { resolve({ alive: false, name: '', total: 0 }); }
   });
 }
+// ─── v1.15.91: Movies4u MKV **সিক-সংস্কার** — Cues-স্থানান্তর প্রক্সি (/m4p/) ───
+// সমস্যা (ইউজার: "Movies4u does not work seek when it plays on exo player" — কিন্তু libmpv-তে চলে):
+//   ExoPlayer-এর MatroskaExtractor **প্রগতিশীল MKV-কে সাধারণত "অসিক-যোগ্য" ঘোষণা করে**। কারণ:
+//     case ID_CLUSTER:
+//       if (!sentSeekMap) {
+//         if (seekForCuesEnabled && cuesContentPosition != C.POSITION_UNSET) seekForCues = true;
+//         else { extractorOutput.seekMap(new SeekMap.Unseekable(durationUs)); sentSeekMap = true; }
+//       }
+//   অর্থাৎ প্রথম Cluster-এ পৌঁছানোর **আগেই** Cues পড়া না থাকলে ExoPlayer "Unseekable" SeekMap প্রকাশ করে →
+//   ProgressiveMediaPeriod.seekToUs()-এ `positionUs = seekMap.isSeekable() ? positionUs : 0` → **প্রতি সিক শুরুতে ফেরত যায়**।
+//   আর Cues সবসময় **ফাইলের একদম শেষে** থাকে (পরিমাপ: Rocky 2160p-তে Cues@18,120,319,734 / 16.88GB)।
+//   mpv/FFmpeg শেষের Cues পড়তে পারে — ExoPlayer পারে না (FLAG_DISABLE_SEEK_FOR_CUES বা সাধারণ নীতি)।
+// সমাধান: Cues-এলিমেন্টটিকে **হেডারের ঠিক পরে, প্রথম Cluster-এর আগে** সরিয়ে দেওয়া। তখন ExoPlayer
+//   Cluster-এ পৌঁছানোর আগেই Cues পড়ে → sentSeekMap=true → সঠিক সিক-মানচিত্র → **সিক চলে**।
+//   স্থানান্তরে সব CueClusterPosition + delta (সন্নিবেশিত বাইট) — নাহলে সিক ভুল অবস্থানে যায়।
+const M4P_HEADCAP = 24 * 1024 * 1024; // হেডার-স্ক্যান সর্বোচ্চ (Chapters বড় হলে)
+const M4P_GEO = new Map();            // url -> geo (ক্যাশ)
+const M4P_ID_SEG = 0x18538067, M4P_ID_SH = 0x114D9B74, M4P_ID_SEEK = 0x4DBB,
+  M4P_ID_SEEKID = 0x53AB, M4P_ID_SEEKPOS = 0x53AC,
+  M4P_ID_CUES = 0x1C53BB6B, M4P_ID_CUEPOINT = 0xBB, M4P_ID_CUETRACKPOS = 0xB7,
+  M4P_ID_CUECLUSTERPOS = 0xF1, M4P_ID_CUEREF = 0xDB, M4P_ID_CLUSTER = 0x1F43B675;
+const M4P_MASTERS = {}; M4P_MASTERS[M4P_ID_CUES] = 1; M4P_MASTERS[M4P_ID_CUEPOINT] = 1; M4P_MASTERS[M4P_ID_CUETRACKPOS] = 1; M4P_MASTERS[M4P_ID_CUEREF] = 1;
+// EBML VINT: আইডি মার্কার-বিট **ধরে রাখে**, আকার মার্কার-বিট বাদ দেয়।
+function m4pVint(b, p, keep) {
+  if (p < 0 || p >= b.length) return null;
+  const n = b[p]; let len = 0;
+  for (let k = 7; k >= 0; k--) if (n & (1 << k)) { len = 8 - k; break; }
+  if (!len) return null;
+  if (p + len > b.length) return null;
+  let v = keep ? n : (n & ((1 << (8 - len)) - 1));
+  for (let i = 1; i < len; i++) v = v * 256 + b[p + i];
+  return { v: v, len: len, allFF: !keep && (v === Math.pow(2, 7 * len) - 1) };
+}
+function m4pEncId(id) { // মিনিমাল-প্রস্থ — মূল এনকোডিং-এর সাথে হুবহু মেলে
+  if (id <= 0xff) return Buffer.from([id]);
+  if (id <= 0xffff) return Buffer.from([(id >> 8) & 0xff, id & 0xff]);
+  if (id <= 0xffffff) return Buffer.from([(id >> 16) & 0xff, (id >> 8) & 0xff, id & 0xff]);
+  return Buffer.from([(id >>> 24) & 0xff, (id >> 16) & 0xff, (id >> 8) & 0xff, id & 0xff]);
+}
+function m4pEncSize(v) {
+  for (let len = 1; len <= 8; len++) {
+    const mx = Math.pow(2, 7 * len) - 1;
+    if (v < mx) { // mx নিজেই "অজানা-আকার" (reserved) — কখনো লিখব না
+      const o = Buffer.alloc(len); let x = v;
+      for (let i = len - 1; i >= 1; i--) { o[i] = x & 0xff; x = Math.floor(x / 256); }
+      o[0] = (0x80 >> (len - 1)) | x; return o;
+    }
+  }
+  return null;
+}
+function m4pEncUint(v) {
+  let len = 1; while (v >= Math.pow(256, len)) len++;
+  const o = Buffer.alloc(len); let x = v;
+  for (let i = len - 1; i >= 0; i--) { o[i] = x & 0xff; x = Math.floor(x / 256); }
+  return o;
+}
+function m4pParse(b, start, end) { // শ্যালো পার্স — {id,hdr,size,end,raw,start}
+  const out = []; let p = start;
+  while (p + 2 <= end) {
+    const idv = m4pVint(b, p, true); if (!idv) break;
+    const sz = m4pVint(b, p + idv.len, false); if (!sz) break;
+    const hdr = p + idv.len + sz.len;
+    if (sz.allFF) { out.push({ id: idv.v, hdr: hdr, size: -1, end: end, raw: true, start: p }); break; }
+    const pe = hdr + sz.v;
+    if (pe > end) { out.push({ id: idv.v, hdr: hdr, size: sz.v, end: end, raw: true, start: p }); break; }
+    out.push({ id: idv.v, hdr: hdr, size: sz.v, end: pe, raw: false, start: p });
+    p = pe;
+  }
+  return out;
+}
+function m4pBuild(nodes, b, delta) { // CueClusterPosition-এ +delta; বাকি অক্ষত
+  const parts = [];
+  for (const nd of nodes) {
+    if (nd.raw) { parts.push(b.slice(nd.start, nd.end)); continue; }
+    if (nd.id === M4P_ID_CUECLUSTERPOS) {
+      let v = 0; for (let i = nd.hdr; i < nd.end; i++) v = v * 256 + b[i];
+      const nb = m4pEncUint(v + delta);
+      const s2 = m4pEncSize(nb.length);
+      parts.push(Buffer.concat([m4pEncId(nd.id), s2, nb]));
+    } else if (M4P_MASTERS[nd.id]) {
+      const inner = m4pBuild(m4pParse(b, nd.hdr, nd.end), b, delta);
+      const s2 = m4pEncSize(inner.length);
+      parts.push(Buffer.concat([m4pEncId(nd.id), s2, inner]));
+    } else {
+      parts.push(b.slice(nd.start, nd.end));
+    }
+  }
+  return Buffer.concat(parts);
+}
+function m4pRebuildCues(b, cueNode, delta) {
+  const inner = m4pBuild(m4pParse(b, cueNode.hdr, cueNode.end), b, delta);
+  const s2 = m4pEncSize(inner.length);
+  return Buffer.concat([m4pEncId(M4P_ID_CUES), s2, inner]);
+}
+function m4pAnalyze(head) { // হেডার-বাফার → জ্যামিতি
+  let segOff = -1;
+  for (let q = 0; q + 4 <= head.length; q++) { if (head.readUInt32BE(q) === M4P_ID_SEG) { segOff = q; break; } }
+  if (segOff < 0) return null;
+  const szv = m4pVint(head, segOff + 4, false); if (!szv) return null;
+  const segContentStart = segOff + 4 + szv.len;
+  const tops = m4pParse(head, segContentStart, head.length);
+  let firstClusterOff = -1, shNode = null, cuesNode = null;
+  for (const t of tops) {
+    if (t.id === M4P_ID_CLUSTER && firstClusterOff < 0) firstClusterOff = t.start;
+    if (t.id === M4P_ID_SH && !shNode) shNode = t;
+    if (t.id === M4P_ID_CUES && !cuesNode) cuesNode = t;
+  }
+  if (firstClusterOff < 0) return { need: head.length, segContentStart: segContentStart, tops: tops.length };
+  let cuesOff = -1, cuesSize = 0;
+  if (shNode && !shNode.raw) {
+    for (const sk of m4pParse(head, shNode.hdr, shNode.end)) {
+      if (sk.id !== M4P_ID_SEEK || sk.raw) continue;
+      let sid = null, spos = null;
+      for (const f of m4pParse(head, sk.hdr, sk.end)) {
+        if (f.raw) continue;
+        if (f.id === M4P_ID_SEEKID) { sid = head[f.hdr]; for (let i = f.hdr + 1; i < f.end; i++) sid = sid * 256 + head[i]; }
+        if (f.id === M4P_ID_SEEKPOS) { spos = 0; for (let i = f.hdr; i < f.end; i++) spos = spos * 256 + head[i]; }
+      }
+      if (sid === M4P_ID_CUES && spos != null) cuesOff = segContentStart + spos; // SeekPosition = সেগমেন্ট-আপেক্ষিক
+    }
+  }
+  if (cuesNode && cuesOff < 0) cuesOff = cuesNode.start; // SeekHead-এ নেই কিন্তু হেডারেই আছে
+  return {
+    segOff: segOff, segSizeKnown: !szv.allFF, segSize: szv.v, segSizeLen: szv.len,
+    segSizeOff: segOff + 4, segContentStart: segContentStart,
+    firstClusterOff: firstClusterOff, cuesOff: cuesOff, cuesSize: cuesSize,
+    tops: tops.length, inHeader: !!(cuesNode && cuesNode.start < firstClusterOff)
+  };
+}
+async function m4pFetchRange(u, hd, a, b) { // [a,b] সহ — বাফার ফেরত
+  const r = await fetch(u, { headers: Object.assign({}, hd, { Range: 'bytes=' + a + '-' + b }), signal: AbortSignal.timeout(60000) });
+  if (!r.ok && r.status !== 206) throw new Error('m4p-range-' + r.status);
+  return Buffer.from(await r.arrayBuffer().catch(() => new ArrayBuffer(0)));
+}
+async function m4pGeo(u, ref) { // ক্যাশ-সহ জ্যামিতি + পুনর্গঠিত Cues
+  const now = Date.now();
+  const c = M4P_GEO.get(u); if (c && now - c.ts < 30 * 60 * 1000) return c;
+  const hd = { 'User-Agent': UA }; if (ref) hd.Referer = ref;
+  let fileSize = 0, ct = 'video/x-matroska';
+  try {
+    const r0 = await fetch(u, { headers: Object.assign({}, hd, { Range: 'bytes=0-0' }), signal: AbortSignal.timeout(25000) });
+    const cr = String(r0.headers.get('content-range') || '');
+    const mm = /\/(\d+)\s*$/.exec(cr.trim()); if (mm) fileSize = +mm[1];
+    if (r0.headers.get('content-type')) ct = String(r0.headers.get('content-type')).split(';')[0].trim();
+    try { r0.body.cancel(); } catch { }
+  } catch { return null; }
+  if (!fileSize) return null;
+  let want = Math.min(fileSize, 1024 * 1024), headBuf = null, an = null;
+  for (let round = 0; round < 5; round++) {
+    try { headBuf = await m4pFetchRange(u, hd, 0, Math.min(fileSize, want) - 1); } catch { return null; }
+    an = m4pAnalyze(headBuf);
+    if (an && an.firstClusterOff > 0 && an.firstClusterOff <= headBuf.length) break;
+    want *= 4; if (want > M4P_HEADCAP) break;
+    an = null;
+  }
+  if (!an || !an.firstClusterOff || an.firstClusterOff > (headBuf ? headBuf.length : 0)) return null;
+  if (an.inHeader) { const g = { noop: 1, fileSize: fileSize, ct: ct, ts: now }; M4P_GEO.set(u, g); return g; } // Cues আগেই সামনে — কিছুই করতে নেই
+  if (!(an.cuesOff > 0)) { const g = { noop: 1, fileSize: fileSize, ct: ct, ts: now }; M4P_GEO.set(u, g); return g; }
+  let cbuf = null;
+  try { cbuf = await m4pFetchRange(u, hd, an.cuesOff, Math.min(fileSize - 1, an.cuesOff + 8 * 1024 * 1024 - 1)); } catch { return null; }
+  const cnode = m4pParse(cbuf, 0, cbuf.length).filter(x => x.id === M4P_ID_CUES)[0];
+  if (!cnode || cnode.raw) return null;
+  let newCues = m4pRebuildCues(cbuf, cnode, 0), delta = newCues.length;
+  for (let it = 0; it < 4; it++) { // আকার স্থিতিশীল না হওয়া পর্যন্ত (delta বাড়লে এনকোডিং-প্রস্থ বাড়তে পারে)
+    const nc = m4pRebuildCues(cbuf, cnode, delta);
+    if (nc.length === delta) { newCues = nc; break; }
+    newCues = nc; delta = nc.length;
+  }
+  // Segment-আকার প্যাচ (জানা থাকলে) — নাহলে ExoPlayer শেষের delta বাইট কেটে দেয়
+  if (an.segSizeKnown) {
+    try {
+      const ns = an.segSize + delta;
+      const fits = ns < Math.pow(2, 7 * an.segSizeLen) - 1;
+      const o = Buffer.alloc(an.segSizeLen);
+      if (fits) {
+        let x = ns;
+        for (let i = an.segSizeLen - 1; i >= 1; i--) { o[i] = x & 0xff; x = Math.floor(x / 256); }
+        o[0] = (0x80 >> (an.segSizeLen - 1)) | x;
+      } else { for (let i = 0; i < an.segSizeLen; i++) o[i] = 0xff; } // "অজানা-আকার" — নিরাপদ
+      o.copy(headBuf, an.segSizeOff);
+    } catch { }
+  }
+  const g = {
+    noop: 0, fileSize: fileSize, ct: ct, ts: now,
+    prefix: headBuf.slice(0, an.firstClusterOff), cues: newCues, delta: delta,
+    cut: an.firstClusterOff, total: fileSize + delta
+  };
+  if (M4P_GEO.size > 24) { // মেমোরি-সীমা: প্রিফিক্স+Cues প্রতি-ইউআরএলে কয়েক MB হতে পারে
+    let oldest = null, ots = Infinity;
+    for (const [k2, v2] of M4P_GEO) if (v2.ts < ots) { ots = v2.ts; oldest = k2; }
+    if (oldest) M4P_GEO.delete(oldest);
+  }
+  M4P_GEO.set(u, g);
+  return g;
+}
+function m4pWrap(u, origin) { // কার্ড-ইউআরএল → আমাদের /m4p/ (সিক-সংস্কার)
+  try {
+    if (!/^https?:\/\//i.test(u)) return u;
+    if (!/\.(mkv|mp4|m4v|webm)(\?|$)/i.test(u) && !/pixeldrain|r2\.cloudflarestorage|workers\.dev|hubcloud/i.test(u)) return u;
+    if (/\.m3u8(\?|$)/i.test(u)) return u;
+    return (origin || '') + '/m4p/' + Buffer.from(u).toString('base64url') + '/v.mkv';
+  } catch { return u; }
+}
+
 async function m4uStreams(tmdbId, title, type, s, e, origin, maxh) { // maxh: cfg.m4ur রেজো-ছাঁকনি (0=সব); HLS-সিক-প্রথম + সরাসরি-MKV
   if (!tmdbId) return []; // v1.15.82: মুভি + সিরিজ (আগে type!=='movie'-তে সিরিজ-শূন্য ছিল)
   if (type === 'series') return m4uSeries(tmdbId, title, s, e, origin, maxh); // সিরিজ = নিজস্ব-পথ (মুভি-কোড-অস্পৃষ্ট — ভাঙার-ঝুঁকি-না)
@@ -2556,7 +2760,7 @@ async function m4uStreams(tmdbId, title, type, s, e, origin, maxh) { // maxh: cf
         title: txt,
         description: txt,
         quality: q2,
-        url: x.url, // v1.15.40: সরাসরি-মূল-মাস্টার (r173) — কোনো-রিলে/টোকেন/মিনি-নয়
+        url: x.kind === 'hls' ? x.url : m4pWrap(x.url, origin), // v1.15.91: MKV-কার্ড /m4p/ দিয়ে (ExoPlayer-সিক — Cues সামনে); HLS অক্ষত
         behaviorHints: Object.assign({ notWebReady: false, isBingeable: true, proxyHeaders: { request: { 'User-Agent': UA } } }, x.kind === 'file' ? { filename: (x.spec.match(/[A-Za-z0-9 ().&+\[\]-]+\.mkv/) || ['movies4u.mkv'])[0] } : {}),
         bingeGroup: 'm4u|' + T.toLowerCase() + '::'
       };
@@ -3695,6 +3899,67 @@ const server = http.createServer((req, res) => {
         rr2.on('error', () => { try { res.end(); } catch { } });
         return rr2.pipe(res);
       } catch { try { res.writeHead(502); res.end('relay'); } catch { } }
+    })();
+
+    // v1.15.91: **Movies4u MKV সিক-সংস্কার** — /m4p/<b64url(মূল-ফাইল)>/v.mkv
+    // ExoPlayer-এর MatroskaExtractor Cues **প্রথম Cluster-এর আগে** না পেলে SeekMap.Unseekable প্রকাশ করে
+    // (ফলে প্রতি সিক ০:০০-এ ফেরত যায়)। এখানে Cues-কে হেডারের পরে সরিয়ে (CueClusterPosition + delta) পরিবেশন করা হয়।
+    // বিন্যাস: [0,cut) প্রিফিক্স + [cut,cut+delta) স্থানান্তরিত Cues + [cut+delta,...) মূল ফাইলের [cut,...)
+    const m4pR = p.match(/^\/m4p\/([A-Za-z0-9_=-]{8,3000})\/v\.mkv$/);
+    if (m4pR) return (async () => {
+      let tgt = '';
+      try { tgt = Buffer.from(m4pR[1], 'base64url').toString('utf8'); } catch { }
+      if (!/^https?:\/\//i.test(tgt)) { try { res.writeHead(400); } catch { } return res.end('bad'); }
+      try {
+        const g = await m4pGeo(tgt, ''); // Referer **না** — কোনো কোনো হোস্ট Referer পেলে ৪০৩ দেয় (m4uAlive-এর অভিজ্ঞতা)
+        if (!g) { try { res.writeHead(502, { 'content-type': 'text/plain' }); } catch { } return res.end('geo'); }
+        if (g.noop) { // Cues ইতিমধ্যেই Cluster-এর আগে — আমাদের কিছু করার নেই, সরাসরি CDN
+          try { res.writeHead(302, { location: tgt, 'cache-control': 'no-store' }); } catch { } return res.end();
+        }
+        const total = g.total;
+        let a = 0, b2 = total - 1, isR = false;
+        const mr = /bytes=(\d*)-(\d*)/.exec(String(req.headers.range || ''));
+        if (mr) {
+          isR = true;
+          if (mr[1] === '') { const ln = parseInt(mr[2] || '0', 10) || 0; a = Math.max(0, total - ln); b2 = total - 1; }
+          else { a = parseInt(mr[1], 10); b2 = (mr[2] === '' ? total - 1 : Math.min(parseInt(mr[2], 10), total - 1)); }
+          if (!(a >= 0 && b2 >= a && a < total)) {
+            try { res.writeHead(416, { 'content-range': 'bytes */' + total, 'accept-ranges': 'bytes' }); } catch { }
+            return res.end();
+          }
+        }
+        const hh = {
+          'content-type': g.ct || 'video/x-matroska', 'accept-ranges': 'bytes',
+          'cache-control': 'no-store', 'access-control-allow-origin': '*',
+          'content-length': String(b2 - a + 1)
+        };
+        if (isR) hh['content-range'] = 'bytes ' + a + '-' + b2 + '/' + total;
+        try { res.writeHead(isR ? 206 : 200, hh); } catch { }
+        if (req.method === 'HEAD') return res.end();
+        const cut = g.cut, dl = g.delta;
+        // ১) প্রিফিক্স
+        const p1e = Math.min(b2 + 1, cut);
+        if (a < p1e) res.write(g.prefix.slice(a, p1e));
+        // ২) স্থানান্তরিত Cues
+        const p2s = Math.max(a, cut), p2e = Math.min(b2 + 1, cut + dl);
+        if (p2e > p2s) res.write(g.cues.slice(p2s - cut, p2e - cut));
+        // ৩) লেজ → আপস্ট্রিম (delta বিয়োগ করে)
+        const p3s = Math.max(a, cut + dl), p3e = b2 + 1;
+        if (p3e > p3s) {
+          const ua = p3s - dl, ub = p3e - dl - 1;
+          try {
+            const up = await fetch(tgt, {
+              headers: { 'User-Agent': UA, Accept: '*/*', Range: 'bytes=' + ua + '-' + ub },
+              signal: AbortSignal.timeout(180000)
+            });
+            if (!up.ok && up.status !== 206) { try { res.end(); } catch { } return; }
+            const rr = require('stream').Readable.fromWeb(up.body);
+            await new Promise(r2 => { rr.on('error', () => r2()); rr.on('end', () => r2()); rr.pipe(res, { end: true }); });
+            return;
+          } catch { try { res.end(); } catch { } return; }
+        }
+        return res.end();
+      } catch { try { res.writeHead(502); } catch { } return res.end('m4p'); }
     })();
 
     let m;
