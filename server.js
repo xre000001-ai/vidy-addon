@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.88'; // v1.15.88: Multimovies গভীর-নিরীক্ষা + **single-audio সংস্কার** (ইউজার: "Demob slayer infinity castle … fast hls gulo pelam na, the runner e single audio fast hls gulo pelam na, multi audio play problem hoi")। (ক) **নকল কোয়ালিটি-কার্ড বন্ধ**: `woHasAudioGrp` শাখা প্রতি কোয়ালিটিতে একটি করে কার্ড দিত, কিন্তু সবার `url` একই (পুরো মাস্টার) — প্রমাণ: Demon Slayer ১৩১১০৩১-এ ৩টি কার্ড (1080/720/480) যাদের URL **হুবহু অভিন্ন** (`…v51t5m9qymh5_,l,n,h,.urlset/master.txt`)। (খ) **মাল্টি-অডিও সমস্যার মূল**: rousav মাস্টার ১৬-২০টি আলাদা অডিও-ট্র্যাক ঘোষণা করে, কিন্তু প্লেয়ারকে সেগুলো আলাদাভাবে টানতে হয় — আর The Runner-এর track_english/spa/fra/pol/por/tam/tel/tha/tur **৪০৪**; Demon Slayer .urlset-এর ভিডিও-ভ্যারিয়েন্ট আসলে **মাক্সড** (H.264+AAC একই TS-এ — PMT-স্ক্যানে প্রমাণিত)। এখন **প্রতি কোয়ালিটি × প্রতি ভাষা = একটি single-audio কার্ড** (mini + `alang`-পিন: মাস্টারে শুধু ওই একটি অডিও-ট্র্যাক থাকে)। (গ) **প্রোব-ভিত্তিক সততা**: `mmVarProbe` (ভ্যারিয়েন্ট জীবিত + TS-এ অডিও মাক্সড কি — ৪KB রেঞ্জ-ফেচ) ও `mmTrkProbe` (অডিও-ট্র্যাক জীবিত), দুটোতেই **দ্বৈত-নিশ্চিতকরণ** — rousav/CDN-এর 'নোড-লটারি'তে ভাগ্যবান-নোড মিথ্যা-জীবিত দেখায় (প্রমাণ: track_english একবার ২০০, পরের ১৫ বার ৪০৪)। মিথ্যা-মাল্টি-অডিও মাস্টারে আর 'N Audio' দাবি নেই; মাক্সড ভ্যারিয়েন্ট থাকলে সরাসরি সেটিই (দ্রুততম), নইলে সৎ শূন্য। (ঘ) **অন্যান্য**: ডিডুপ-কী'তে `alang` (নাহলে ৬ ভাষা-কার্ড অভিন্ন-কী হয়ে ৫টি বাদ পড়ত — প্রমাণ `[mmvbd] out=6` → `variants=1`); `_lang`-এ ISO-কোড→ইংরেজি-নাম ম্যাপার (`mmLangBlob`) — mml=['hindi'] আগে ০ কার্ড দিত, এখন ৩; MM কার্ড-ক্যাপ ১৬→২০; decodeURIComponent-সহ কোনো মিড-লাইন কমেন্ট নেই। যাচাই: test.js ২০/৪৩ (বেসলাইন), config.test.js সব-সবুজ, বাংলা=০, Demon Slayer ২০ কার্ড (হিন্দি/ইংলিশ/জাপানি/তেলুগু/তামিল × ১০৮০/৭২০/৪৮০), The Runner ০→৬ (চেক/জার্মান/হিন্দি/হাঙ্গেরিয়ান/ইতালিয়ান/জাপানি — সব জীবিত), প্রতি কার্ডে অডিও-ট্র্যাক=১, সেগমেন্ট HTTP ২০৬ video/mp2t মাক্সড-অডিও //  // v1.15.87: স্কাইমুভিজ-সাইট গভীর-নিরীক্ষা + স্কোরার-মেরামত। (ক) **'/movie/'-প্রিফিক্স-বাগ (বড়)**: skyStreams-এ posts = "/movie/Slug-…", কিন্তু স্কোরার সরাসরি nrm(p) করত → n = "movie jaws 1975 …" → `n === Tn` ও `n.startsWith(Tn+' ')` দুটোই **মৃত কোড** (n কখনোই টাইটেল দিয়ে শুরু হয় না)। বহু-শব্দ-টাইটেল বেঁচেছিল শুধু `n.includes(' '+Tn+' ')` (১১০) শাখায়; **এক-শব্দ-টাইটেলের (Jaws/Rocky/Alien/Chernobyl/Lucifer) কোনো শাখাই থাকত না → sc=0 → সব সময় ০ কার্ড**। প্রমাণ: Jaws(৫৭৮) → no-match posts=6 (সাইটে ৪× Jaws-1975 থেকেও); এখন ১× Jaws.1975 720p, Rocky(১৩৬৬) ০→৪ (Rocky.1976.*), Alien(৩৪৮) ০→৪ (Alien.1979.*)। (খ) **বছর-রেজেক্সে 19xx** (আগে শুধু 20xx) — Godfather-সার্চে Part II(1974)/Part III(1990)-এর বছর-যাচাই-ই হত না; এখন সঠিক ১৯৭২ +৪০, ভুল ১৯৭৪/১৯৯০ −৩০। সিরিজে বছর-দণ্ড **নেই** (প্রমাণ: স্লাগের বছর = সিজন-বছর — Breaking Bad S01=(2008)…S05=(2012), first_air_date নয়)। (গ) **এক-শব্দ-টাইটেলে দ্বৈত-নিশ্চিতকরণ** (প্রিফিক্স-মিল এখন সক্রিয়, তাই ভুল-টাইটেল-ঝুঁকি নতুন) — টাইটেলের ঠিক-পরের টোকেন হতে হবে ৪-অঙ্কের-বছর | সিজন-চিহ্ন | রেজোলিউশন | স্ট্রিং-শেষ, **এবং** মুভি=বছর-মিল / সিরিজ=সিজন-মিল। প্রমাণ (পরের-টোকেন): সঠিক → Jaws→1975, Alien→1979, Rocky→1976, Chernobyl→2019, Lucifer→2016/2017/2018; ভুল → Dark→"fantasies"(Dark-Fantasies-2010), Rocky→"handsome"/"mental", Alien→"predator", Jaws→"3d"(Jaws-3D-1983)। ফল: Dark S01E01 আগে দিত **ভুল** Dark.Hole.S01.COMPLETE → এখন ০ (সৎ শূন্য)। (ঘ) decodeURIComponent try/catch (lone '%'-স্লাগে URIError → সোর্স-মৃত্যু ঠেকানো)। পরীক্ষিত: test.js ২০/৪৩ (বেসলাইন), config.test.js সব-সবুজ, স্বাধীনতা-ম্যাট্রিক্স v1.15.86-এর সাথে হুবহু মিল (ডিফল্ট Sky[1080,720,720,480]/M4u[2160,1080,1080,720,720,720]; sky=0→Sky[]; skyr=720→Sky[720,720,480]; m4ur=720→M4u[720,720,480,720]; m4u=0→M4u[]; Pengu=0) //  // v1.15.86: (ক) **Pengu-সোর্স সম্পূর্ণ সরানো** (ইউজার: "No pengu please") — penguStreams/pengResolve/PENGU_BASE/PENGU_CFG কোড-থেকেই মুছে ফেলা, সাথে cfg-কী peng/pengr/pengq/pengl, কনফিগ-পেজের Pengu-কার্ড ও UNIFY_SRV-এন্ট্রি। (খ) **Sky Movies = আসল SkymoviesHD, এখন সম্পূর্ণ স্বাধীন সোর্স** — নিজস্ব মাস্টার-সুইচ (sky), নিজস্ব রেজো-ক্যাপ (skyr), নিজস্ব কোয়ালিটি/ভাষা-ফিল্টার (skyq/skyl), নিজস্ব bingeGroup 'sky|'। আগে Sky-কে Pengu-সুইচ ও **m4ur** (মুভিজ4ইউ-এর সেটিং) দিয়ে চালানো হত — এবং skyStreams-এর bingeGroup ছিল 'peng|' (পেঙ্গু-এর সাথে হুবহু একই), ফলে স্কাই-কার্ড 'Pengu' লেবেল পেত। প্রমাণ: sky=0 → শুধু স্কাই বন্ধ; skyr=720 → শুধু স্কাই ক্যাপ (মুভিজ4ইউ-এর 2160 অক্ষুণ্ণ); m4ur=720 → শুধু মুভিজ4ইউ ক্যাপ (স্কাই-এর 1080 অক্ষুণ্ণ)। (গ) **SkymoviesHD ডোমেইন-আপডেটার** — সাইট বারবার ডোমেইন বদলায়; ঘোষক-পাতা skybap.site (প্রমাণিত: সেখান থেকে new1.skymovieshd.clinic লিংক) থেকে প্রার্থী-ডোমেইন নিয়ে **যাচাই** (search.php + /movie/*.html) করে SKY_BASE বসানো হয়; বুটে + প্রতি-৬ঘণ্টায় রিফ্রেশ, সার্চ-ব্যর্থ হলে জোর-রিফ্রেশ-পুনঃচেষ্টা। যাচাই বাধ্যতামূলক — ঘোষক-পাতার টেক্সটে পুরনো মৃত ডোমেইন (skymovieshd.in/.com) থাকে, সেগুলো সঠিকভাবে বাতিল হয় (প্রমাণিত)  // v1.15.85: (ক) কার্ড-টেক্সট থেকে বাংলা সম্পূর্ণ সরানো — "ⓘ সম্পূর্ণ সিজন (এক-ফাইলে) — Ep 1 থেকে শুরু" → "ⓘ Full season in one file — starts at Ep 1" (Movies4u/Sky/unifyCards — ৩ জায়গা)। (খ) Sky-মিরর-ডুপ্লিকেট বন্ধ: একই হাবে pixeldrain যে-রেজো দিয়েছে, সেই রেজোতে signed-S3/workers-মিরর আর ঢোকে না। প্রমাণ: Shawshank-এ ৬ কার্ডের ২ জোড়া ছিল **হুবহু একই ফাইল** (pd ২.৬১GB = S3 ২.৬১GB, ৪৮০-তেও তাই) — অথচ ৬টির কার্ড-টেক্সট অভিন্ন, ব্যবহারকারী পার্থক্য বুঝতেই পারত না → ৬→৪। (গ) Sky-সার্চ/স্কোরার-এ অ্যাপোস্ট্রোফি-স্বাভাবিকীকরণ: "Schindler's List" সার্চে ০ পোস্ট, "Schindlers List"-এ ১ — অ্যাপোস্ট্রোফি সার্চ ভেঙে দিত; স্কোরারেও অতিরিক্ত-টোকেন-দণ্ডে স্কোর ৩৩ (<৬০, বাতিল) → এখন ১২০ (মিল)। (ঘ) S3/ফলব্যাক-রেজো এখন স্লাগ-লেবেল নয়, আসল ফাইলনাম থেকে — প্রমাণ: Godfather-স্লাগ "720p" কিন্তু ফাইল 1080p/৩.৪২GB (আগে 720 ভুল-লেবেল)  // v1.15.84: workers.dev আর বাদ নয় (পরিমাপিত — সিক-যোগ্য)। প্রমাণ: সরাসরি-ফাইল workers.dev-এ মাঝ-রেঞ্জে HTTP 206, content-type video/x-matroska, ১৭.৫/২৪.৮ GB; টোকেন t=0/60/180/360/600s-এ বহাল। নিরাপত্তা: .m3u8 বাদ (সেকেন্ডেই 404), text/*-কনটেন্ট-টাইপ বাতিল, শুধু মিডিয়া-এক্সটেনশন-যুক্ত ফাইলনাম, রেজো কেবল পরিচিত-সিঁড়ি থেকে (ভুল-লেবেল-নিষিদ্ধ), অন্তর্বর্তী 403-এ একবার পুনঃচেষ্টা। ফল: Sikandar-2025-এ 0→2×2160 (আগে সর্বোচ্চ 1080)  // v1.15.83: সিজন-প্যাক-ফলব্যাক (হুবহু SxxExx-মিল-থাকলে সেটাই; না-থাকলে সিজন-নিশ্চিত 'S01…' প্যাক — লেবেলে "· S1 Pack" + "ⓘ সম্পূর্ণ সিজন (এক-ফাইলে) — Ep 1 থেকে শুরু")। প্রমাণ: Kon Yashwant Pansare (2026) S01 শুধু-প্যাক, 2160p-কপিতে pixeldrain×2+signed-S3×2 (206, সিক-যোগ্য) — আগে হুবহু-শর্তে সম্পূর্ণ বাতিল হত। ভুল-সিজন কখনো নয় (ssn !== SE → বাতিল; S02E01-এ S01-প্যাক যায় না — পরীক্ষিত)  // v1.15.82: Sky + Movies4u সিরিজ-পথ (হাবক্লাউড-পাতার-শিরোনামে SxxExx মিল — প্রতি-এপিসোড; ভুল-এপিসোড-নিষিদ্ধ, সিজন-জিপ-বাদ) + 4K (মৃত-S3/FSL-শাখা-জীবিত → 2160p-কার্ড; ভুল-h4-লেবেলে 4K-মিরর-বাতিল-হত) + hits[0]-অন্ধ-গ্রহণ-বন্ধ (বছর-সচেতন m4uPick — Superman-২০২৫-এ hits[0] ছিল Superman-১৯৭৮ = ভুল-টাইটেল) + m4ur/mmr-ক্যাপে 2160  // কনফিগ-পেজ-বাগ-মেরামত (৫-ট্যাব): সার্ভার-টাইল-বুটে-রিড্র, "None"=ফ্লিট-বন্ধ (খালি=সব-চুক্তি), Reset-এ-চিপ-রিড্র, flab-<em>-আক্ষরিক-লেখা, Jump-টগল+লেবেল, Sky-প্রিভিউ-m4ur-লিক, rtsrv-দুটোই-বাদ-সম্মান // v1.15.80: RT-দ্বিতীয়-সার্ভার (WN/pixeldrain)-পুনরুদ্ধার: é-ডিঅ্যাকসেন্ট+রেস-মার্জ+PD-inline+per-সার্ভার-টগল (rtsrv)
+const VERSION = '1.15.89'; // v1.15.89: Multimovies **দ্বিতীয় গভীর-নিরীক্ষা** — ইউজার: "video length dekhai 10s, sese hoi abar por theke 10s suru kore … aje maje audio o thake na"। তিনটি স্বতন্ত্র ত্রুটি, প্রতিটি প্রমাণ-সহ: (ক) **#EXTM3U প্রথম লাইনে ছিল না** — HLS-স্পেসিফিকেশনে #EXTM3U অবশ্যই প্রথম লাইন; আমরা মাস্টারের ট্যাগ-ব্লক (TYPE=AUDIO / I-FRAME-STREAM-INF) তার **আগে** জুড়ে দিচ্ছিলাম। পরীক্ষায় ১৬/১৬ MM-কার্ডেই #EXTM3U ৪ নম্বর (Demon Slayer) থেকে ৩৮ নম্বর (The Runner) লাইনে — প্লেয়ার প্লেলিস্ট অগ্রাহ্য/অডিও-ট্র্যাক হারাতো। আগের যাচাইয়ে ধরা পড়েনি কারণ সেখানে শুধু "#EXTM3U আছে কি" দেখা হতো, **কোন লাইনে** তা নয়। নতুন `mmM3UJoin(tags, body)` ট্যাগ-ব্লক #EXTM3U-এর পরে বসায়; `mmMiniBuild`-এর মাস্টার-আউটপুটেও #EXTM3U যোগ (আগে সেটিতে #EXTM3U-ই ছিল না)। (খ) **CDN Referer দাবি করে, প্লেয়ার পাঠায় না** — dd2stliwt0bc.homechefrecipes.sbs (.urlset): Referer ছাড়া **০/২০** ৪০৪, Referer সহ **২০/২০** ২০০; img.rousav.tech Referer ছাড়াই ১০/১০। নতুন `mmNeedsRef(u)` হোস্ট-ভিত্তিক (৩০মিন ক্যাশ) সনাক্তকরণ → প্রয়োজনীয় হোস্টের মিডিয়া আমাদের /mmr/ রিলে দিয়ে (রিলে সবসময় সঠিক Referer যোগ করে), প্রয়োজন না হলে সরাসরি CDN — কোনো অতিরিক্ত ব্যান্ডউইথ-খরচ নেই। যাচাই: Demon Slayer-এর ৪টি .urlset কার্ড রিলে-কৃত, rousav কার্ড ও The Runner সরাসরি। (গ) **বেস৬৪-প্যাডিং ('=') রেগেক্সে ছিল না** → কপি/পেস্টে প্যাডিং যোগ হলে ২০০-এর বদলে ৪০৪ (প্রমাণ: ইউজারের ইউআরএল "…8amE=/mini.m3u8" → ৮/৮ বার ৪০৪; '=' বাদ দিলেই ২০০)। /mm/ ও /mmr/ দুটোতেই '=' এখন বৈধ। যাচাই: ৩৮/৩৮ কার্ডে #EXTM3U প্রথম লাইনে; ENDLIST শেষ লাইনে; রিলে-কৃত সেগমেন্ট ৬/৬ HTTP ২০৬/২০০ video/mp2t মাক্সড-অডিও; অডিও-প্লেলিস্ট HTTP ২০০ (৯৩০ EXTINF); test.js ২০/৪৩ বেসলাইন; config.test.js সব-সবুজ; বাংলা=০ //  // v1.15.88: Multimovies গভীর-নিরীক্ষা + **single-audio সংস্কার** (ইউজার: "Demob slayer infinity castle … fast hls gulo pelam na, the runner e single audio fast hls gulo pelam na, multi audio play problem hoi")। (ক) **নকল কোয়ালিটি-কার্ড বন্ধ**: `woHasAudioGrp` শাখা প্রতি কোয়ালিটিতে একটি করে কার্ড দিত, কিন্তু সবার `url` একই (পুরো মাস্টার) — প্রমাণ: Demon Slayer ১৩১১০৩১-এ ৩টি কার্ড (1080/720/480) যাদের URL **হুবহু অভিন্ন** (`…v51t5m9qymh5_,l,n,h,.urlset/master.txt`)। (খ) **মাল্টি-অডিও সমস্যার মূল**: rousav মাস্টার ১৬-২০টি আলাদা অডিও-ট্র্যাক ঘোষণা করে, কিন্তু প্লেয়ারকে সেগুলো আলাদাভাবে টানতে হয় — আর The Runner-এর track_english/spa/fra/pol/por/tam/tel/tha/tur **৪০৪**; Demon Slayer .urlset-এর ভিডিও-ভ্যারিয়েন্ট আসলে **মাক্সড** (H.264+AAC একই TS-এ — PMT-স্ক্যানে প্রমাণিত)। এখন **প্রতি কোয়ালিটি × প্রতি ভাষা = একটি single-audio কার্ড** (mini + `alang`-পিন: মাস্টারে শুধু ওই একটি অডিও-ট্র্যাক থাকে)। (গ) **প্রোব-ভিত্তিক সততা**: `mmVarProbe` (ভ্যারিয়েন্ট জীবিত + TS-এ অডিও মাক্সড কি — ৪KB রেঞ্জ-ফেচ) ও `mmTrkProbe` (অডিও-ট্র্যাক জীবিত), দুটোতেই **দ্বৈত-নিশ্চিতকরণ** — rousav/CDN-এর 'নোড-লটারি'তে ভাগ্যবান-নোড মিথ্যা-জীবিত দেখায় (প্রমাণ: track_english একবার ২০০, পরের ১৫ বার ৪০৪)। মিথ্যা-মাল্টি-অডিও মাস্টারে আর 'N Audio' দাবি নেই; মাক্সড ভ্যারিয়েন্ট থাকলে সরাসরি সেটিই (দ্রুততম), নইলে সৎ শূন্য। (ঘ) **অন্যান্য**: ডিডুপ-কী'তে `alang` (নাহলে ৬ ভাষা-কার্ড অভিন্ন-কী হয়ে ৫টি বাদ পড়ত — প্রমাণ `[mmvbd] out=6` → `variants=1`); `_lang`-এ ISO-কোড→ইংরেজি-নাম ম্যাপার (`mmLangBlob`) — mml=['hindi'] আগে ০ কার্ড দিত, এখন ৩; MM কার্ড-ক্যাপ ১৬→২০; decodeURIComponent-সহ কোনো মিড-লাইন কমেন্ট নেই। যাচাই: test.js ২০/৪৩ (বেসলাইন), config.test.js সব-সবুজ, বাংলা=০, Demon Slayer ২০ কার্ড (হিন্দি/ইংলিশ/জাপানি/তেলুগু/তামিল × ১০৮০/৭২০/৪৮০), The Runner ০→৬ (চেক/জার্মান/হিন্দি/হাঙ্গেরিয়ান/ইতালিয়ান/জাপানি — সব জীবিত), প্রতি কার্ডে অডিও-ট্র্যাক=১, সেগমেন্ট HTTP ২০৬ video/mp2t মাক্সড-অডিও //  // v1.15.87: স্কাইমুভিজ-সাইট গভীর-নিরীক্ষা + স্কোরার-মেরামত। (ক) **'/movie/'-প্রিফিক্স-বাগ (বড়)**: skyStreams-এ posts = "/movie/Slug-…", কিন্তু স্কোরার সরাসরি nrm(p) করত → n = "movie jaws 1975 …" → `n === Tn` ও `n.startsWith(Tn+' ')` দুটোই **মৃত কোড** (n কখনোই টাইটেল দিয়ে শুরু হয় না)। বহু-শব্দ-টাইটেল বেঁচেছিল শুধু `n.includes(' '+Tn+' ')` (১১০) শাখায়; **এক-শব্দ-টাইটেলের (Jaws/Rocky/Alien/Chernobyl/Lucifer) কোনো শাখাই থাকত না → sc=0 → সব সময় ০ কার্ড**। প্রমাণ: Jaws(৫৭৮) → no-match posts=6 (সাইটে ৪× Jaws-1975 থেকেও); এখন ১× Jaws.1975 720p, Rocky(১৩৬৬) ০→৪ (Rocky.1976.*), Alien(৩৪৮) ০→৪ (Alien.1979.*)। (খ) **বছর-রেজেক্সে 19xx** (আগে শুধু 20xx) — Godfather-সার্চে Part II(1974)/Part III(1990)-এর বছর-যাচাই-ই হত না; এখন সঠিক ১৯৭২ +৪০, ভুল ১৯৭৪/১৯৯০ −৩০। সিরিজে বছর-দণ্ড **নেই** (প্রমাণ: স্লাগের বছর = সিজন-বছর — Breaking Bad S01=(2008)…S05=(2012), first_air_date নয়)। (গ) **এক-শব্দ-টাইটেলে দ্বৈত-নিশ্চিতকরণ** (প্রিফিক্স-মিল এখন সক্রিয়, তাই ভুল-টাইটেল-ঝুঁকি নতুন) — টাইটেলের ঠিক-পরের টোকেন হতে হবে ৪-অঙ্কের-বছর | সিজন-চিহ্ন | রেজোলিউশন | স্ট্রিং-শেষ, **এবং** মুভি=বছর-মিল / সিরিজ=সিজন-মিল। প্রমাণ (পরের-টোকেন): সঠিক → Jaws→1975, Alien→1979, Rocky→1976, Chernobyl→2019, Lucifer→2016/2017/2018; ভুল → Dark→"fantasies"(Dark-Fantasies-2010), Rocky→"handsome"/"mental", Alien→"predator", Jaws→"3d"(Jaws-3D-1983)। ফল: Dark S01E01 আগে দিত **ভুল** Dark.Hole.S01.COMPLETE → এখন ০ (সৎ শূন্য)। (ঘ) decodeURIComponent try/catch (lone '%'-স্লাগে URIError → সোর্স-মৃত্যু ঠেকানো)। পরীক্ষিত: test.js ২০/৪৩ (বেসলাইন), config.test.js সব-সবুজ, স্বাধীনতা-ম্যাট্রিক্স v1.15.86-এর সাথে হুবহু মিল (ডিফল্ট Sky[1080,720,720,480]/M4u[2160,1080,1080,720,720,720]; sky=0→Sky[]; skyr=720→Sky[720,720,480]; m4ur=720→M4u[720,720,480,720]; m4u=0→M4u[]; Pengu=0) //  // v1.15.86: (ক) **Pengu-সোর্স সম্পূর্ণ সরানো** (ইউজার: "No pengu please") — penguStreams/pengResolve/PENGU_BASE/PENGU_CFG কোড-থেকেই মুছে ফেলা, সাথে cfg-কী peng/pengr/pengq/pengl, কনফিগ-পেজের Pengu-কার্ড ও UNIFY_SRV-এন্ট্রি। (খ) **Sky Movies = আসল SkymoviesHD, এখন সম্পূর্ণ স্বাধীন সোর্স** — নিজস্ব মাস্টার-সুইচ (sky), নিজস্ব রেজো-ক্যাপ (skyr), নিজস্ব কোয়ালিটি/ভাষা-ফিল্টার (skyq/skyl), নিজস্ব bingeGroup 'sky|'। আগে Sky-কে Pengu-সুইচ ও **m4ur** (মুভিজ4ইউ-এর সেটিং) দিয়ে চালানো হত — এবং skyStreams-এর bingeGroup ছিল 'peng|' (পেঙ্গু-এর সাথে হুবহু একই), ফলে স্কাই-কার্ড 'Pengu' লেবেল পেত। প্রমাণ: sky=0 → শুধু স্কাই বন্ধ; skyr=720 → শুধু স্কাই ক্যাপ (মুভিজ4ইউ-এর 2160 অক্ষুণ্ণ); m4ur=720 → শুধু মুভিজ4ইউ ক্যাপ (স্কাই-এর 1080 অক্ষুণ্ণ)। (গ) **SkymoviesHD ডোমেইন-আপডেটার** — সাইট বারবার ডোমেইন বদলায়; ঘোষক-পাতা skybap.site (প্রমাণিত: সেখান থেকে new1.skymovieshd.clinic লিংক) থেকে প্রার্থী-ডোমেইন নিয়ে **যাচাই** (search.php + /movie/*.html) করে SKY_BASE বসানো হয়; বুটে + প্রতি-৬ঘণ্টায় রিফ্রেশ, সার্চ-ব্যর্থ হলে জোর-রিফ্রেশ-পুনঃচেষ্টা। যাচাই বাধ্যতামূলক — ঘোষক-পাতার টেক্সটে পুরনো মৃত ডোমেইন (skymovieshd.in/.com) থাকে, সেগুলো সঠিকভাবে বাতিল হয় (প্রমাণিত)  // v1.15.85: (ক) কার্ড-টেক্সট থেকে বাংলা সম্পূর্ণ সরানো — "ⓘ সম্পূর্ণ সিজন (এক-ফাইলে) — Ep 1 থেকে শুরু" → "ⓘ Full season in one file — starts at Ep 1" (Movies4u/Sky/unifyCards — ৩ জায়গা)। (খ) Sky-মিরর-ডুপ্লিকেট বন্ধ: একই হাবে pixeldrain যে-রেজো দিয়েছে, সেই রেজোতে signed-S3/workers-মিরর আর ঢোকে না। প্রমাণ: Shawshank-এ ৬ কার্ডের ২ জোড়া ছিল **হুবহু একই ফাইল** (pd ২.৬১GB = S3 ২.৬১GB, ৪৮০-তেও তাই) — অথচ ৬টির কার্ড-টেক্সট অভিন্ন, ব্যবহারকারী পার্থক্য বুঝতেই পারত না → ৬→৪। (গ) Sky-সার্চ/স্কোরার-এ অ্যাপোস্ট্রোফি-স্বাভাবিকীকরণ: "Schindler's List" সার্চে ০ পোস্ট, "Schindlers List"-এ ১ — অ্যাপোস্ট্রোফি সার্চ ভেঙে দিত; স্কোরারেও অতিরিক্ত-টোকেন-দণ্ডে স্কোর ৩৩ (<৬০, বাতিল) → এখন ১২০ (মিল)। (ঘ) S3/ফলব্যাক-রেজো এখন স্লাগ-লেবেল নয়, আসল ফাইলনাম থেকে — প্রমাণ: Godfather-স্লাগ "720p" কিন্তু ফাইল 1080p/৩.৪২GB (আগে 720 ভুল-লেবেল)  // v1.15.84: workers.dev আর বাদ নয় (পরিমাপিত — সিক-যোগ্য)। প্রমাণ: সরাসরি-ফাইল workers.dev-এ মাঝ-রেঞ্জে HTTP 206, content-type video/x-matroska, ১৭.৫/২৪.৮ GB; টোকেন t=0/60/180/360/600s-এ বহাল। নিরাপত্তা: .m3u8 বাদ (সেকেন্ডেই 404), text/*-কনটেন্ট-টাইপ বাতিল, শুধু মিডিয়া-এক্সটেনশন-যুক্ত ফাইলনাম, রেজো কেবল পরিচিত-সিঁড়ি থেকে (ভুল-লেবেল-নিষিদ্ধ), অন্তর্বর্তী 403-এ একবার পুনঃচেষ্টা। ফল: Sikandar-2025-এ 0→2×2160 (আগে সর্বোচ্চ 1080)  // v1.15.83: সিজন-প্যাক-ফলব্যাক (হুবহু SxxExx-মিল-থাকলে সেটাই; না-থাকলে সিজন-নিশ্চিত 'S01…' প্যাক — লেবেলে "· S1 Pack" + "ⓘ সম্পূর্ণ সিজন (এক-ফাইলে) — Ep 1 থেকে শুরু")। প্রমাণ: Kon Yashwant Pansare (2026) S01 শুধু-প্যাক, 2160p-কপিতে pixeldrain×2+signed-S3×2 (206, সিক-যোগ্য) — আগে হুবহু-শর্তে সম্পূর্ণ বাতিল হত। ভুল-সিজন কখনো নয় (ssn !== SE → বাতিল; S02E01-এ S01-প্যাক যায় না — পরীক্ষিত)  // v1.15.82: Sky + Movies4u সিরিজ-পথ (হাবক্লাউড-পাতার-শিরোনামে SxxExx মিল — প্রতি-এপিসোড; ভুল-এপিসোড-নিষিদ্ধ, সিজন-জিপ-বাদ) + 4K (মৃত-S3/FSL-শাখা-জীবিত → 2160p-কার্ড; ভুল-h4-লেবেলে 4K-মিরর-বাতিল-হত) + hits[0]-অন্ধ-গ্রহণ-বন্ধ (বছর-সচেতন m4uPick — Superman-২০২৫-এ hits[0] ছিল Superman-১৯৭৮ = ভুল-টাইটেল) + m4ur/mmr-ক্যাপে 2160  // কনফিগ-পেজ-বাগ-মেরামত (৫-ট্যাব): সার্ভার-টাইল-বুটে-রিড্র, "None"=ফ্লিট-বন্ধ (খালি=সব-চুক্তি), Reset-এ-চিপ-রিড্র, flab-<em>-আক্ষরিক-লেখা, Jump-টগল+লেবেল, Sky-প্রিভিউ-m4ur-লিক, rtsrv-দুটোই-বাদ-সম্মান // v1.15.80: RT-দ্বিতীয়-সার্ভার (WN/pixeldrain)-পুনরুদ্ধার: é-ডিঅ্যাকসেন্ট+রেস-মার্জ+PD-inline+per-সার্ভার-টগল (rtsrv)
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 const VIDY_REFERER = 'https://www.vidy.st/';
 const API = 'https://api.wecollege.net';
@@ -217,6 +217,19 @@ function mmMasterTags(pl, base) { // the master's MEDIA/KEY/SESSION tag lines, a
   }
   return out.join('\n');
 }
+// v1.15.89: HLS-স্পেসিফিকেশন — #EXTM3U অবশ্যই প্লেলিস্টের **প্রথম লাইন**। ট্যাগ-ব্লক (TYPE=AUDIO / I-FRAME-STREAM-INF / KEY)
+// তার আগে বসালে প্লেয়ার প্লেলিস্টটি অগ্রাহ্য করে বা অডিও-ট্র্যাক হারিয়ে ফেলে।
+// প্রমাণ (ইউজার: "video length dekhai 10s, sese hoi abar 10s theke suru kore … aje maje audio o thake na"):
+// পরীক্ষায় ১৬/১৬ MM-কার্ডেই #EXTM3U ৪ নম্বর (Demon Slayer) থেকে ৩৮ নম্বর (The Runner) লাইনে ছিল —
+// অর্থাৎ সবসময়ই ট্যাগ-ব্লক আগে। আগের যাচাইয়ে ধরা পড়েনি কারণ সেখানে শুধু "#EXTM3U আছে কি" দেখা হতো, **কোন লাইনে** তা নয়।
+function mmM3UJoin(tags, body) {
+  const t = tags ? String(tags) : '';
+  const b = body ? String(body) : '';
+  if (!t) return /^#EXTM3U/.test(b) ? b : '#EXTM3U\n' + b;
+  const i = b.indexOf('#EXTM3U');
+  if (i < 0) return '#EXTM3U\n' + t + '\n' + b;
+  return b.slice(0, i + 7) + '\n' + t + b.slice(i + 7);
+}
 function mmVarInline(varUrl, vraw) { // a variant playlist with EVERY segment URI absolute + keyed — the player pulls them straight from the CDN (no media byte ever passes through us)
   let bq = ''; try { bq = new URL(varUrl).search; } catch { }
   const L = String(vraw).split('\n'); const out = [];
@@ -303,7 +316,7 @@ function mmMiniBuild(masterUrl, wantH, raw, langLabel, alang) { // all qualities
   const seenK = new Set(); const out = tags.slice();
   for (const v of vars.slice(0, 6)) { if (seenK.has(v.uri)) continue; seenK.add(v.uri); out.push(v.ln, v.uri); }
   if (!vars.length) return null; // no variants -> caller falls back to raw
-  return out.join('\n');
+  return mmM3UJoin('', out.join('\n')); // v1.15.89: মাস্টার-আউটপুটেও #EXTM3U প্রথম লাইনে (আগে ট্যাগ দিয়েই শুরু হতো → অবৈধ মাস্টার)
 }
 let mmChkBusy = false;
 function mmSave() { try { fs.writeFileSync(MM_FILE, JSON.stringify(MM_POOL)); } catch (e) { } }
@@ -1181,6 +1194,39 @@ function mmPoolText(url, ms) { // v1.15.28: direct first; the multimovies OWN po
     if (t) return t;
     return mmRacePool(url, 4, Math.ceil(T * 0.4)).then(r => String(r.body || '')).catch(() => '');
   });
+}
+// v1.15.89: হোস্ট-ভিত্তিক **Referer-প্রয়োজনীয়তা** সনাক্তকরণ (৩০ মিনিট ক্যাশ)।
+// প্রমাণ (ইউজার: "video length dekhai 10s, sese hoi abar 10s theke suru kore … aje maje audio o thake na"):
+//   dd2stliwt0bc.homechefrecipes.sbs (.urlset) → Referer ছাড়া ০/২০, Referer সহ ২০/২০
+//   img.rousav.tech                            → Referer ছাড়াই ১০/১০ (তাই রিলে লাগবে না)
+// প্লেয়ার (ExoPlayer/libmpv/VLC) সাধারণত Referer পাঠায় না → সেগমেন্ট ৪০৪ → ১০ সেকেন্ড চলেই থেমে যায়,
+// আর আলাদা অডিও-প্লেলিস্ট ৪০৪ হলে নিঃশব্দ। সমাধান: প্রয়োজনীয় হোস্টের মিডিয়া আমাদের /mmr/ রিলে দিয়ে
+// (রিলে সবসময় সঠিক Referer যোগ করে — পরীক্ষিত: HTTP ২০০)। প্রয়োজন না হলে সরাসরি CDN — কোনো অতিরিক্ত খরচ নেই।
+const MM_REF = new Map();
+async function mmNeedsRef(u) {
+  try {
+    const h = new URL(u).hostname;
+    const c = MM_REF.get(h);
+    if (c && Date.now() - c.ts < 1800000) return c.req;
+    const shot = async ref => {
+      try {
+        const hd = { 'User-Agent': UA, Range: 'bytes=0-1023' };
+        if (ref) hd.Referer = ref;
+        const r = await fetch(u, { headers: hd, signal: AbortSignal.timeout(6000) });
+        const st = r.status;
+        try { if (r.body) await r.body.cancel(); } catch { }
+        return st;
+      } catch { return 0; }
+    };
+    const without = await shot(null);
+    const withR = await shot(VB_REF);
+    // ২০০ বা **২০৬** দুটোই সফল (Range দিলে CDN ২০৬ দেয় — পরীক্ষিত: "Referer সহ, Range সহ → ২০৬")।
+    // আগে শুধু ২০০ চেক করায় রিলে কখনোই চালু হতো না (প্রমাণ: প্রথম রানে রিলে-কৃত=০)।
+    const ok = s => s === 200 || s === 206;
+    const req = (!ok(without) && ok(withR)) ? 1 : 0;
+    MM_REF.set(h, { req: req, ts: Date.now() });
+    return req;
+  } catch { return 0; }
 }
 function woAudioTag(pl) { // truthful audio claim — EXT-X-MEDIA:TYPE=AUDIO declaration in the master playlist
   if (!pl) return '';
@@ -3407,7 +3453,9 @@ const server = http.createServer((req, res) => {
     if (p === '/_log') return sendJson(res, 200, reqLog.slice(-40).reverse());
     if (p === '/_servers') return sendJson(res, 200, { order: srvOrder(), scores: SRV_SCORE }); // কনফিগ-পেজের-লাইভ-হেলথ
     if (VSP_PUB && p.indexOf('/vsp/') === 0) return void vspRelay(req, res, p); // v1.15.71: Vidsrc-রিলে (/vsp/t|c|s)
-    const mmR = p.match(/^\/mm\/([A-Za-z0-9_-]{8,2400})\/mini\.m3u8$/); // v1.15.30: signed bridge master keys run ~1400 chars
+    // v1.15.89: '=' (বেস৬৪-প্যাডিং) অনুমোদিত — কপি/পেস্ট বা মেসেঞ্জারে প্যাডিং যোগ হয়ে গেলে আগে রেগেক্স মেলত না → ২০০-এর বদলে ৪০৪
+    // (প্রমাণ: ইউজারের পাঠানো mini-ইউআরএল "...8amE=/mini.m3u8" → ৮/৮ বার HTTP ৪০৪ {"error":"not found"}; '=' বাদ দিলেই ২০০)
+    const mmR = p.match(/^\/mm\/([A-Za-z0-9_=-]{8,2400})\/mini\.m3u8$/); // v1.15.30: signed bridge master keys run ~1400 chars
     const rel = !!(cfg && cfg.mmrelay === 1) || /[?&]r=1/.test(req.url); const origin2 = originOf(req); // v1.15.54: cfg-বা-মিনি-ইউআরএলে ?r=1
     if (mmR) return (async () => { // mini-master — resolution pinned + audio intact; fresh fetch per request (not the stream-result cache)
       const ent = mmMiniOpen(mmR[1]); // the key knows everything — no memory needed; a real key never dies
@@ -3450,14 +3498,21 @@ const server = http.createServer((req, res) => {
                 tg = tg.replace(/(#EXT-X-MEDIA:TYPE=AUDIO[^\n]*?NAME=")(?!Hindi|Japanese|English|French|Arabic|Spanish|Russian|Indonesian|Tagalog|Portuguese|German|Tamil|Telugu|Korean|Chinese|Italian|Bengali|Turkish)([^"]*)(")/i, '$1' + String(ent.lang).replace(/"/g, '') + '$3');
               }
               const inl = mmVarInline(top, vbest);
-              if (inl) mini = (tg ? tg + '\n' : '') + inl;
+              if (inl) mini = mmM3UJoin(tg, inl); // v1.15.89: ট্যাগ-ব্লক #EXTM3U-এর **পরে** (আগে আগে বসত → প্লেয়ার অডিও হারাতো)
             }
           }
         }
         // v1.15.54 (ইউজার: "beamup-সার্ভার-রিলে-করো; free-proxy-টোকেনে-ডাইরেক্ট-CDN-দাও"): cfg.mmrelay=1 → মিডিয়া-আমাদের-থেকে
         // (CloudFront-signed-URL-আমাদের-IP-থেকে-সবসময়-বৈধ; রিলে-মাত্র-মিডিয়া-বাইট — মাস্টার-নয়); mmrelay=0 (ডিফল্ট) → ডাইরেক্ট-CDN (আগের-মতো):
+        // v1.15.89: Referer-প্রয়োজনীয় হোস্ট হলে **কনফিগ নির্বিশেষে** রিলে চালু (নাহলে প্লেয়ারের সব সেগমেন্ট ৪০৪)।
+        // শুধু ওই হোস্টের মিডিয়াই আমাদের সার্ভার দিয়ে যায়; বাকি সব সরাসরি CDN (কোনো ব্যান্ডউইথ-খরচ নেই)।
+        let relOn = rel;
+        if (!relOn) {
+          const fs0 = (mini.match(/^https?:\/\/\S+$/gm) || []).find(u2 => !/\.m3u8(\?|$)/i.test(u2));
+          if (fs0) { try { if (await mmNeedsRef(fs0)) relOn = 1; } catch { } }
+        }
         let miniOut = mini;
-        if (rel) {
+        if (relOn) {
           const rw = u2 => String(u2).replace(/https?:\/\/[^\s"<>]+/g, uu => {
             if (/\.m3u8(\?|$)/.test(uu)) return origin2 + '/mmr/' + Buffer.from(uu).toString('base64url') + '/p.m3u8';
             return origin2 + '/mmr/' + Buffer.from(uu).toString('base64url') + '/s.m4s';
@@ -3469,7 +3524,7 @@ const server = http.createServer((req, res) => {
       } catch { res.writeHead(502, { 'content-type': 'text/plain' }); return res.end('upstream-err'); }
     })();
     // v1.15.54: MM-মিডিয়া-রিলে — /mmr/<b64url(টার্গেট)>/<name> → আমাদের-IP-থেকে-ফেচ-করে-স্ট্রিম (শুধু-রিলে, কোনো-রূপান্তর-নয়):
-    const mmRel = p.match(/^\/mmr\/([A-Za-z0-9_-]+)\/(?:p\.m3u8|s\.m4s)$/);
+    const mmRel = p.match(/^\/mmr\/([A-Za-z0-9_=-]+)\/(?:p\.m3u8|s\.m4s)$/); // v1.15.89: '=' প্যাডিং সহ্য
     if (mmRel) return (async () => {
       let tgt = '';
       try { tgt = Buffer.from(mmRel[1], 'base64url').toString('utf8'); } catch { }
