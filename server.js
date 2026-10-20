@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.98'; // v1.15.98: **MM প্লেব্যাক বাফারিং ও 'একটু পর পর ইন্টারনেট ছেড়ে দেয়' সমস্যার স্থায়ী সমাধান** — সরাসরি ও প্রড পরিমাপে ৩টি মূল কারণ ধরা পড়েছে: (ক) `contentpublishing.site`-এ প্রতি ~৮-১০ সেগমেন্টে একটি `cf=MISS` কানেকশন অরিজিন-থ্রটলিংয়ে (`২৩–৬৮ KB/s`, ৪৫–৬৯ সেকেন্ড!) আটকে যায় অথবা মাঝপথে (`got=37KB/1360KB`) সকেট বন্ধ করে দেয়; আগে `up.pipe(res)`-এ `'close'` হ্যান্ডলার বা Range-রিজিউম না থাকায় ক্লায়েন্টের সংযোগ ০ KB/s-এ ঝুলে থাকত। (খ) স্ট্রিমিং চলাকালীন প্রতি ৮–১৮ সেকেন্ডে পটভূমির `pxCheckerWave` (৮৪ সকেট) + `mmCheckerWave` (৮৪ সকেট) + `enrichPool` (১২০ সকেট + ৪টি প্রক্সি-তালিকা ডাউনলোড + `fs.writeFileSync`) কন্টেইনারের সিপিইউ ও নেটওয়ার্ক জ্যাম করত। (গ) প্লেয়ার সেগমেন্ট চাওয়ার পর ফেচ শুরু হওয়ায় অরিজিনের ধীরগতি সরাসরি ইউজারের ফোনে পৌঁছাত। সমাধান: (১) **ইন-মেমরি লুকঅ্যাহেড প্রিফেচ (`MMR_MEM`, পরবর্তী ৩টি সেগমেন্ট = ৩০ সেকেন্ড ভিডিও Beamup RAM-এ অগ্রীম লোড)** + **স্ট্যাগার্ড Cloudflare এজ-ওয়ার্মার (`mmWarmEdge`, পরবর্তী ৪..৬ সেগমেন্টে ১-বাইট `Range: bytes=0-0` পাঠিয়ে আগেভাগেই `cf=HIT` করা)** — পরীক্ষায় ২১/২১ সেগমেন্টের ১৯টিই প্লেয়ার চাওয়ার আগে ১০০% RAM-এ প্রস্তুত (`playerWait=0ms`, `cf=HIT` গতি `২৫–৭৫ MB/s`); (২) **স্মার্ট স্টল-রিজিউমিং পাম্প**: কোনো সেগমেন্টে ডেটা-গ্যাপ (`>2.4s`), ধীরগতি (`<110 KB/s`), বা অসম্পূর্ণ ক্লোজ (`received < total`) ঘটলে সাথে সাথে নতুন সকেটে `Range: bytes=${received}-` দিয়ে বাকি অংশ নিরবচ্ছিন্নভাবে জোড়া লাগানো; (৩) **অ্যাক্টিভ-স্ট্রিমিং গার্ড (`MMR_ACTIVE_UNTIL`)**: প্লেব্যাক চলাকালীন পটভূমির প্রক্সি-চেকার ও এনরিচ-ওয়েভ স্থগিত এবং অ্যাসিঙ্ক ফাইল-রাইট। // v1.15.93: (ক) **Movies4u আগের মতোই সরাসরি** — ইউজার: "Movies4u age jemon chilo direct temon e valo chilo, oita oi file er problem ager motoi kore daw"। v1.15.91/92-এর /m4h/ + /m4i/ (init-এ Cues) রাউটিং সরিয়ে মুভি ও সিরিজ দুই পথেই `url: x.url` ফিরিয়ে আনা হলো। /m4h/ ও /m4i/ এন্ডপয়েন্ট দুটো কোডে রয়ে গেছে (অব্যবহৃত) — ভবিষ্যতে প্রয়োজনে সক্রিয় করা যাবে। (খ) **কনফিগ-পেজ: ভাষা-ছাঁকনিতে দেশের-পতাকা ব্যাজ + ওপরে সংক্ষিপ্ত-কোড** — ইউজার: "country er flag tar upore short name"; "Indiar Hindi, Tamil, telugu, malayam joto language ase India er flag er upore short code alada alada"; "Bangladesh er Bangla obossoi attach korba"। ভাষা ১৭ → **৩৯**; ভারতীয় ৬ ভাষা (HIN/TAM/TEL/MAL/KAN/MAR) একই ভারতীয় পতাকা ভাগ করে, কোড আলাদা; বাংলাদেশের বাংলা = BAN (বাংলাদেশ-পতাকা)। আরবি/মাল্টি/অরিজিনাল = নিরপেক্ষ ব্যাজ (কোনো একক দেশের পতাকা নেই)। সব পতাকা **ইনলাইন SVG** (কোনো বাহ্যিক-ছবি/নেটওয়ার্ক নেই — স্যান্ডবক্স-প্রিভিউতেও দেখা যাবে)। সার্ভারে MM_LNAME প্রসারিত (marathi/sindhi/nepali/sinhala/punjabi/gujarati/odia/assamese/bhojpuri) যাতে নতুন কী-গুলো আসলেই ছাঁকনি-কাজ করে। যাচাই: ৩৯/৩৯ বৈধ পতাকা-এসভিজি, কোড সব অনন্য, config.test.js সব-সবুজ //  // v1.15.92: Movies4u **সিক-সংস্কার ৩** (ইউজার: "Na exo teh seek hocche na") — v1.15.91-এর /m4h/ কেন কাজ করেনি: `#EXT-X-MAP` এ ছিল শুধু MKV-হেডার [0,cut) — **Cues ছিল না**। ফলে MatroskaExtractor কোনো সিক-সূচকই পায়নি → আগের মতোই `SeekMap.Unseekable` → প্রতি সিক ০:০০-এ। এখন নতুন `/m4i/`: init = [0,cut) **+ Cues-এর একটি কপি**, আর ক্লাস্টার-অফসেট **অপরিবর্তিত** (ফাইলে কিছুই সরানো হয়নি — তাই অফসেট-সংশোধনের প্রয়োজন নেই)। ExoPlayer init পড়ার সময়েই Cues পেয়ে যায় → প্রথম Cluster-এর **আগেই** সঠিক সিক-মানচিত্র → সিক চলে। Segment-আকারও প্যাচ করা হয় (init-এ Cues যোগ হওয়ায় ঘোষিত আকার বাড়ে)। সুবিধা: সেগমেন্টগুলো `#EXT-X-BYTERANGE`-এ সরাসরি CDN-এ → আমাদের **ভিডিও-ব্যান্ডউইথ শূন্য**, আর v1.15.91-এ ধরা-পড়া প্রান্তিক-প্রক্সির Range-খোঁয়ানো সমস্যা এড়ানো যায়। যাচাই (২ ফাইল): init-এর উপরের-স্তর `SeekHead, Info, Tracks, **Cues**` (init-এ কোনো Cluster নেই), **CuePoint ৬/৬ আসল Cluster-এ পয়েন্ট করে** (HTTP ২০৬ + 0x1F43B675), সেগমেন্ট-রেঞ্জও Cluster-এ শুরু। পাশাপাশি ইউজার-প্রশ্ন "libmpv-এ চালানো যায়?"-এর উত্তর তদন্ত করে জানা গেল: Nuvio-তে প্লেয়ার-ইঞ্জিন **ইউজার-সেটিং** (ExoPlayer / Libmpv / Auto) এবং Auto হলে **কনটেন্ট** দিয়ে ঠিক হয় (-anime→libmpv, HDR/DV→ExoPlayer, বাকি সব→ExoPlayer) — অ্যাডন থেকে `behaviorHints` দিয়ে এটি বদলানো যায় না (প্রমাণ: nuvio.wiki/settings/player + NuvioMobile PR#2192)। তাই সমাধান হলো ExoPlayer-এই সিক চালানো // 
+const VERSION = '1.15.99'; // v1.15.99: **rousav (`Greek`, `Spanish`, `German` ইত্যাদি) ও `callisto` বহু-ভাষা প্লেব্যাক সংস্কার** — ইউজার: "Hindi, English, Tamil, Telugu runs smoothly, but Greek, Spanish, German etc wasn't though it seems ok now. But check again and revise carefully"। সরাসরি পরিমাপে ৬টি নির্দিষ্ট ত্রুটি ধরা পড়েছে: (১) **Cloudflare `404 cf=HIT` ক্যাশ-পয়জনিং ও `Origin`-উদ্ধার**: `img.rousav.tech`-এ `Range: bytes=0-1023` দিয়ে `.m3u8` প্রোব করলে বা অরিজিন-গ্লিচে Cloudflare সেই `404` কে `cf=HIT (age=94693s)` হিসেবে ক্যাশ করে রাখে (`track_german.m3u8`, `track_spanish.m3u8`, `track_polish/portuguese/tamil/telugu/turkish.m3u8`, এবং `00000.png`); কিন্তু `Origin: https://vidbolt.xyz` (ও ব্যর্থ হলে `Origin: https://r1.vidbolt.xyz`) দিলে নতুন ক্যাশ-কী দিয়ে তাৎক্ষণিক `200 OK` পাওয়া যায়। (২) **প্রোব-কালে প্লেলিস্ট `MM_WC`-তে ক্যাশ না করা**: `/stream`-এ `mmTrkProbe` ও `mmVarProbe` ৭৫–১০০KB প্লেলিস্ট ডাউনলোড করেও ফেলে দিত, ফলে ইউজার কার্ডে চাপলে `/mm/` ও `/mma/`-তে আবার ১.৫–৪.৬ সেকেন্ড লাগত। (৩) **`/mm/`-এ অপ্রয়োজনীয় `vbest` + `mmVarProbe` অপেক্ষা**: `knownExtAud` হলে `/mm/` এখন ০-১ms-এ `mmMasterForm` রিটার্ন করে এবং পটভূমিতে ভিডিও+অডিও উভয় প্লেলিস্ট ও সেগমেন্ট প্রি-ওয়ার্ম করে (`MM_WC_INFLIGHT` ডিডুপসহ)। (৪) **rousav সেগমেন্টগুলো `/mmr/` লুকঅ্যাহেড প্রিফেচ ও রিলেতে যুক্ত করা (`#EXT-X-MAP` `init.mp4` সহ)**: যাতে ইউজার কখনোই ৪–১৬ সেকেন্ডের `cf=MISS` স্টল বা `00000.png` ৪০৪-এ না পড়েন। (৫) **ডুয়াল-স্ট্রিম (`mmMasterForm` ভিডিও+অডিও) লুকঅ্যাহেড সংঘর্ষ ও ছোট সেগমেন্ট ওয়াচডগ**: `bgInflight` ৬→১২ (যাতে অডিও প্রিফেচ ভিডিও প্রিফেচকে বাতিল না করে) এবং `kbps < 110` চেক শুধু `>600KB` সেগমেন্টে `headersAt` থেকে গণনা (যাতে ৪৫–৮৮KB অডিও সেগমেন্ট কখনোই ভুলবশত কিল না হয়)। (৬) **Vidbolt `callisto` (`dash-hls-bridge.johndoes*.workers.dev`) ৪২৯ ও `NAME="Audio"` বাগ**: ৪২৯ ওয়ার্কারগুলো সচল `johndoesdmc`-তে নরমালাইজ এবং `NAME="Audio"` থাকলে সোর্সের আসল ভাষা (`Arabic`, `Hindi`, `English` ইত্যাদি) বসানো। // v1.15.98: **MM প্লেব্যাক বাফারিং ও 'একটু পর পর ইন্টারনেট ছেড়ে দেয়' সমস্যার স্থায়ী সমাধান** — সরাসরি ও প্রড পরিমাপে ৩টি মূল কারণ ধরা পড়েছে: (ক) `contentpublishing.site`-এ প্রতি ~৮-১০ সেগমেন্টে একটি `cf=MISS` কানেকশন অরিজিন-থ্রটলিংয়ে (`২৩–৬৮ KB/s`, ৪৫–৬৯ সেকেন্ড!) আটকে যায় অথবা মাঝপথে (`got=37KB/1360KB`) সকেট বন্ধ করে দেয়; আগে `up.pipe(res)`-এ `'close'` হ্যান্ডলার বা Range-রিজিউম না থাকায় ক্লায়েন্টের সংযোগ ০ KB/s-এ ঝুলে থাকত। (খ) স্ট্রিমিং চলাকালীন প্রতি ৮–১৮ সেকেন্ডে পটভূমির `pxCheckerWave` (৮৪ সকেট) + `mmCheckerWave` (৮৪ সকেট) + `enrichPool` (১২০ সকেট + ৪টি প্রক্সি-তালিকা ডাউনলোড + `fs.writeFileSync`) কন্টেইনারের সিপিইউ ও নেটওয়ার্ক জ্যাম করত। (গ) প্লেয়ার সেগমেন্ট চাওয়ার পর ফেচ শুরু হওয়ায় অরিজিনের ধীরগতি সরাসরি ইউজারের ফোনে পৌঁছাত। সমাধান: (১) **ইন-মেমরি লুকঅ্যাহেড প্রিফেচ (`MMR_MEM`, পরবর্তী ৩টি সেগমেন্ট = ৩০ সেকেন্ড ভিডিও Beamup RAM-এ অগ্রীম লোড)** + **স্ট্যাগার্ড Cloudflare এজ-ওয়ার্মার (`mmWarmEdge`, পরবর্তী ৪..৬ সেগমেন্টে ১-বাইট `Range: bytes=0-0` পাঠিয়ে আগেভাগেই `cf=HIT` করা)** — পরীক্ষায় ২১/২১ সেগমেন্টের ১৯টিই প্লেয়ার চাওয়ার আগে ১০০% RAM-এ প্রস্তুত (`playerWait=0ms`, `cf=HIT` গতি `২৫–৭৫ MB/s`); (২) **স্মার্ট স্টল-রিজিউমিং পাম্প**: কোনো সেগমেন্টে ডেটা-গ্যাপ (`>2.4s`), ধীরগতি (`<110 KB/s`), বা অসম্পূর্ণ ক্লোজ (`received < total`) ঘটলে সাথে সাথে নতুন সকেটে `Range: bytes=${received}-` দিয়ে বাকি অংশ নিরবচ্ছিন্নভাবে জোড়া লাগানো; (৩) **অ্যাক্টিভ-স্ট্রিমিং গার্ড (`MMR_ACTIVE_UNTIL`)**: প্লেব্যাক চলাকালীন পটভূমির প্রক্সি-চেকার ও এনরিচ-ওয়েভ স্থগিত এবং অ্যাসিঙ্ক ফাইল-রাইট। // v1.15.93: (ক) **Movies4u আগের মতোই সরাসরি** — ইউজার: "Movies4u age jemon chilo direct temon e valo chilo, oita oi file er problem ager motoi kore daw"। v1.15.91/92-এর /m4h/ + /m4i/ (init-এ Cues) রাউটিং সরিয়ে মুভি ও সিরিজ দুই পথেই `url: x.url` ফিরিয়ে আনা হলো। /m4h/ ও /m4i/ এন্ডপয়েন্ট দুটো কোডে রয়ে গেছে (অব্যবহৃত) — ভবিষ্যতে প্রয়োজনে সক্রিয় করা যাবে। (খ) **কনফিগ-পেজ: ভাষা-ছাঁকনিতে দেশের-পতাকা ব্যাজ + ওপরে সংক্ষিপ্ত-কোড** — ইউজার: "country er flag tar upore short name"; "Indiar Hindi, Tamil, telugu, malayam joto language ase India er flag er upore short code alada alada"; "Bangladesh er Bangla obossoi attach korba"। ভাষা ১৭ → **৩৯**; ভারতীয় ৬ ভাষা (HIN/TAM/TEL/MAL/KAN/MAR) একই ভারতীয় পতাকা ভাগ করে, কোড আলাদা; বাংলাদেশের বাংলা = BAN (বাংলাদেশ-পতাকা)। আরবি/মাল্টি/অরিজিনাল = নিরপেক্ষ ব্যাজ (কোনো একক দেশের পতাকা নেই)। সব পতাকা **ইনলাইন SVG** (কোনো বাহ্যিক-ছবি/নেটওয়ার্ক নেই — স্যান্ডবক্স-প্রিভিউতেও দেখা যাবে)। সার্ভারে MM_LNAME প্রসারিত (marathi/sindhi/nepali/sinhala/punjabi/gujarati/odia/assamese/bhojpuri) যাতে নতুন কী-গুলো আসলেই ছাঁকনি-কাজ করে। যাচাই: ৩৯/৩৯ বৈধ পতাকা-এসভিজি, কোড সব অনন্য, config.test.js সব-সবুজ //  // v1.15.92: Movies4u **সিক-সংস্কার ৩** (ইউজার: "Na exo teh seek hocche na") — v1.15.91-এর /m4h/ কেন কাজ করেনি: `#EXT-X-MAP` এ ছিল শুধু MKV-হেডার [0,cut) — **Cues ছিল না**। ফলে MatroskaExtractor কোনো সিক-সূচকই পায়নি → আগের মতোই `SeekMap.Unseekable` → প্রতি সিক ০:০০-এ। এখন নতুন `/m4i/`: init = [0,cut) **+ Cues-এর একটি কপি**, আর ক্লাস্টার-অফসেট **অপরিবর্তিত** (ফাইলে কিছুই সরানো হয়নি — তাই অফসেট-সংশোধনের প্রয়োজন নেই)। ExoPlayer init পড়ার সময়েই Cues পেয়ে যায় → প্রথম Cluster-এর **আগেই** সঠিক সিক-মানচিত্র → সিক চলে। Segment-আকারও প্যাচ করা হয় (init-এ Cues যোগ হওয়ায় ঘোষিত আকার বাড়ে)। সুবিধা: সেগমেন্টগুলো `#EXT-X-BYTERANGE`-এ সরাসরি CDN-এ → আমাদের **ভিডিও-ব্যান্ডউইথ শূন্য**, আর v1.15.91-এ ধরা-পড়া প্রান্তিক-প্রক্সির Range-খোঁয়ানো সমস্যা এড়ানো যায়। যাচাই (২ ফাইল): init-এর উপরের-স্তর `SeekHead, Info, Tracks, **Cues**` (init-এ কোনো Cluster নেই), **CuePoint ৬/৬ আসল Cluster-এ পয়েন্ট করে** (HTTP ২০৬ + 0x1F43B675), সেগমেন্ট-রেঞ্জও Cluster-এ শুরু। পাশাপাশি ইউজার-প্রশ্ন "libmpv-এ চালানো যায়?"-এর উত্তর তদন্ত করে জানা গেল: Nuvio-তে প্লেয়ার-ইঞ্জিন **ইউজার-সেটিং** (ExoPlayer / Libmpv / Auto) এবং Auto হলে **কনটেন্ট** দিয়ে ঠিক হয় (-anime→libmpv, HDR/DV→ExoPlayer, বাকি সব→ExoPlayer) — অ্যাডন থেকে `behaviorHints` দিয়ে এটি বদলানো যায় না (প্রমাণ: nuvio.wiki/settings/player + NuvioMobile PR#2192)। তাই সমাধান হলো ExoPlayer-এই সিক চালানো // 
 // v1.15.91-বি: v1.15.91-বি: **প্রক্সি পথ প্রড-এ কাজ করে না** — প্রান্তিক-প্রক্সি Range হেডার খুলে ফেলে (নিদান: `curl -H "Range: bytes=100000-100999"` → `HTTP/2 200` + `x-m4p-rng: none`; HTTP/1.1-তেও একই)। তাই আমাদের সার্ভার দিয়ে প্রক্সি করলে ক্লায়েন্টের কোনো রেঞ্জ-অনুরোধই টিকে না → /m4p/ দিয়ে সিক অসম্ভব। চূড়ান্ত সমাধান **/m4h/**: আমরা শুধু একটি ছোট HLS প্লেলিস্ট দিই, সেগমেন্টগুলো `#EXT-X-BYTERANGE`-এ **সরাসরি CDN-এ** পয়েন্ট করে — ExoPlayer নিজেই CDN-এ রেঞ্জ পাঠায় (সেখানে ২০৬ চলে)। ফলে আমাদের ব্যান্ডউইথ **শূন্য** এবং Range-খোঁয়ানো প্রান্তিক-প্রক্সি কোনো সমস্যা করে না। `#EXT-X-MAP` = MKV-হেডার [0,cut) (Tracks/CodecPrivate), প্রতি সেগমেন্ট = CuePoint-এর Cluster-সীমানা (কী-ফ্রেম → স্বাধীনভাবে ডিকোড-যোগ্য); CuePoint একত্রীকরণ ≈৬ সে/সেগমেন্ট। যাচাই (২ ফাইল): ৮০৩/৭৯৯ সেগমেন্ট, #EXTM3U প্রথম লাইনে, VOD+ENDLIST+MAP; MAP-রেঞ্জ HTTP ২০৬ হুবহু আকার EBML✅ Tracks✅; **সেগমেন্ট-সীমানা ৬/৬ আসল Cluster** (HTTP ২০৬ + 0x1F43B675); `cut + ΣBYTERANGE = ৪৬,২৫৩,৪০৭৮` = সঠিক ফাইল-আকার (কোনো ফাঁক/ওভারল্যাপ নেই)
 // v1.15.91: v1.15.91: দুটি ইউজার-রিপোর্ট — (ক) **Movies4u ExoPlayer-সিক মৃত** ("Movies4u does not work seek when it plays on exo player", libmpv-তে ঠিকই চলে)। মূল কারণ ExoPlayer-এর MatroskaExtractor: `case ID_CLUSTER: if (!sentSeekMap) { if (seekForCuesEnabled && …) seekForCues = true; else extractorOutput.seekMap(new SeekMap.Unseekable(durationUs)); }` — অর্থাৎ **প্রথম Cluster-এ পৌঁছানোর আগেই Cues পড়া না থাকলে** ExoPlayer "অসিক-যোগ্য" ঘোষণা করে, আর ProgressiveMediaPeriod.seekToUs()-এ `positionUs = seekMap.isSeekable() ? positionUs : 0` → **প্রতি সিক ০:০০-এ ফেরত যায়**। Cues সবসময় ফাইলের একদম **শেষে** (পরিমাপ: Cues@18,120,319,734 / 16.88GB) — mpv/FFmpeg তা পড়তে পারে, ExoPlayer পারে না (FLAG_DISABLE_SEEK_FOR_CUES)। মাপকাঠি: যে-সব উৎস ExoPlayer-এ সিক চলে (Multimovies, Miami) সবাই **HLS**; Movies4u-ই একমাত্র প্রগতিশীল-MKV সোর্স — নিদর্শন মিলে গেল। সমাধান (`/m4p/`): Cues-এলিমেন্ট হেডারের পরে, প্রথম Cluster-এর **আগে** সরানো, আর সব CueClusterPosition + delta (নাহলে সিক ভুল অবস্থানে যায়)। Segment-আকার প্যাচ + রেঞ্জ-সচেতন স্ট্রিমিং (prefix / Cues / লেজ—তিন-খণ্ড)। যাচাই (৩টি ফাইল, ০.৪৩/০.৮৬/০.৯৬ GB): উপরের-স্তর `SeekHead, Info, Tracks, **Cues**, Cluster…`; Cues@33146 বনাম প্রথম-Cluster@84656; **CuePoint ১২/১২ আসল Cluster-এ পয়েন্ট করে** (HTTP ২০৬ + 0x1F43B675)। HLS-কার্ড অস্পৃষ্ট (শুধু kind==='file' রূপান্তরিত)। (খ) **Multimovies ভাষা-কার্ড কম দেখানো** ("multimovies has a more lot of audio varients, please show them all") — পরিমাপ: Demon Slayer rousav মাস্টার **১৬** অডিও-ট্র্যাক ঘোষণা করে, **১৩টি জীবিত**; কিন্তু ক্যাপ MM_MAXLANG=৬ / MM_SCANTRK=১২ → মাত্র ৬টি দেখানো হতো (Greek/Italian/Polish/Portuguese/Russian/Tamil/Telugu কখনোই আসত না)। ক্যাপ ৬→২৪, ১২→২৪, ভ্যারিয়েন্ট ২০→৬০। ফল: Demon Slayer ২০→**৫৪** কার্ড/১৭ ভাষা, The Runner ১৮→**৩৬-৩৯**/১২ ভাষা (Kannada/Malayalam/Hungarian/Arabic নতুন)। যাচাই: test.js ২০/৪৩, config.test.js সব-সবুজ, বাংলা=০/১৮২, #EXTM3U প্রথম লাইনে ৯৩/৯৩ //  // v1.15.90: Multimovies **অডিও-ভাষা সংস্কার** (ইউজার: "Eta toh Chinese audio howar Kotha but Hindi audio dei … etar English ta o Hindi audio set Kore, Greek, German e Kono audio nai")। তিনটি স্বতন্ত্র ত্রুটি, প্রতিটি PMT-প্রমাণিত: (ক) **ভাষা-ভিত্তিক মাক্সড ভ্যারিয়েন্ট বাছাই হয় না** — .urlset/CDN ভ্যারিয়েন্ট-নামেই ভাষা এনকোড করে (`index-f3-v1-a1`=हिन्दी, `a2`=English, `a3`=日本語, `a4`=తెలుగు, `a5`=தமிழ்)। প্রমাণ: ৫টি ভ্যারিয়েন্টের AAC-PID(257)-হ্যাশ **৫/৫ ভিন্ন**। কিন্তু আমরা সব কার্ডে একই `a1` পাঠাচ্ছিলাম → প্রতিটি ভাষার কার্ডেই हिन्दी বাজত। নতুন `mmPickVarLang(pl, base, wantH, alang)`: মাস্টারের অডিও-তালিকায় ভাষার ক্রমিক N বের করে `-a1`→`-aN` করে (HTTP ২০০ যাচাইসহ)। (খ) **`#EXT-X-MEDIA` MEDIA-প্লেলিস্টে অর্থহীন** — rousav-এর ভিডিওতে কোনো অডিও নেই (PMT = `[0x1b]`), অডিও আলাদা `track_*.m3u8`-এ; কিন্তু আমরা ইনলাইন MEDIA-প্লেলিস্টে TYPE=AUDIO ট্যাগ লিখছিলাম, যা প্লেয়ার **সম্পূর্ণ উপেক্ষা করে** → নিঃশব্দ। নতুন `mmMasterForm()`: ভিডিও মাক্সড না হলে সঠিক এক-ভ্যারিয়েন্ট MASTER-প্লেলিস্ট (AUDIO="a0" দ্বারা যুক্ত)। (গ) **অডিও-সেগমেন্টে api_key পৌঁছায় না** — track_*.m3u8-এর সেগমেন্ট আপেক্ষিক (`track_czech/00000.png`) আর api_key শুধু প্লেলিস্ট-ইউআরএলে → প্লেয়ারের রিজলভ করা সেগমেন্ট **৪০৪** (পরীক্ষায় ৬/৬ ভাষাতেই)। নতুন `/mma/<b64>/a.m3u8` ইনলাইনার: absolute + keyed সেগমেন্ট (আর প্রয়োজনে Referer-রিলে)। সংশোধিত ভিত্তি: `mmTsHasAudio` ছিল ত্রুটিপূর্ণ — PMT-পিআইডি PAT থেকে না বের করে "যেকোনো PUSI = PMT" ধরত, আর 0x06 (প্রাইভেট-ডেটা) কে অডিও গণ্য করত; তাই অডিওবিহীন rousav-কেও "মাক্সড" দাবি করা হতো। `mmVarProbe` শুধু **প্রথম** সেগমেন্ট দেখত — কিন্তু অনেক উৎসের ০-নম্বর সেগমেন্ট lead-in (PMT `[0x1b,0x0f]`, কিন্তু বাস্তবে কোনো অডিও নেই; The Runner seg 0 বনাম seg 1..10); এখন ৩টি নমুনা। যাচাই: Demon Slayer ৫ ভাষায় ৫/৫ স্বতন্ত্র মাক্সড অডিও; rousav-সব কার্ডে PMT=0xf অডিও (৫-৬/৬ সেগমেন্ট); test.js ২০/৪৩; config.test.js সব-সবুজ; বাংলা=০ //  // v1.15.89: Multimovies **দ্বিতীয় গভীর-নিরীক্ষা** — ইউজার: "video length dekhai 10s, sese hoi abar por theke 10s suru kore … aje maje audio o thake na"। তিনটি স্বতন্ত্র ত্রুটি, প্রতিটি প্রমাণ-সহ: (ক) **#EXTM3U প্রথম লাইনে ছিল না** — HLS-স্পেসিফিকেশনে #EXTM3U অবশ্যই প্রথম লাইন; আমরা মাস্টারের ট্যাগ-ব্লক (TYPE=AUDIO / I-FRAME-STREAM-INF) তার **আগে** জুড়ে দিচ্ছিলাম। পরীক্ষায় ১৬/১৬ MM-কার্ডেই #EXTM3U ৪ নম্বর (Demon Slayer) থেকে ৩৮ নম্বর (The Runner) লাইনে — প্লেয়ার প্লেলিস্ট অগ্রাহ্য/অডিও-ট্র্যাক হারাতো। আগের যাচাইয়ে ধরা পড়েনি কারণ সেখানে শুধু "#EXTM3U আছে কি" দেখা হতো, **কোন লাইনে** তা নয়। নতুন `mmM3UJoin(tags, body)` ট্যাগ-ব্লক #EXTM3U-এর পরে বসায়; `mmMiniBuild`-এর মাস্টার-আউটপুটেও #EXTM3U যোগ (আগে সেটিতে #EXTM3U-ই ছিল না)। (খ) **CDN Referer দাবি করে, প্লেয়ার পাঠায় না** — dd2stliwt0bc.homechefrecipes.sbs (.urlset): Referer ছাড়া **০/২০** ৪০৪, Referer সহ **২০/২০** ২০০; img.rousav.tech Referer ছাড়াই ১০/১০। নতুন `mmNeedsRef(u)` হোস্ট-ভিত্তিক (৩০মিন ক্যাশ) সনাক্তকরণ → প্রয়োজনীয় হোস্টের মিডিয়া আমাদের /mmr/ রিলে দিয়ে (রিলে সবসময় সঠিক Referer যোগ করে), প্রয়োজন না হলে সরাসরি CDN — কোনো অতিরিক্ত ব্যান্ডউইথ-খরচ নেই। যাচাই: Demon Slayer-এর ৪টি .urlset কার্ড রিলে-কৃত, rousav কার্ড ও The Runner সরাসরি। (গ) **বেস৬৪-প্যাডিং ('=') রেগেক্সে ছিল না** → কপি/পেস্টে প্যাডিং যোগ হলে ২০০-এর বদলে ৪০৪ (প্রমাণ: ইউজারের ইউআরএল "…8amE=/mini.m3u8" → ৮/৮ বার ৪০৪; '=' বাদ দিলেই ২০০)। /mm/ ও /mmr/ দুটোতেই '=' এখন বৈধ। যাচাই: ৩৮/৩৮ কার্ডে #EXTM3U প্রথম লাইনে; ENDLIST শেষ লাইনে; রিলে-কৃত সেগমেন্ট ৬/৬ HTTP ২০৬/২০০ video/mp2t মাক্সড-অডিও; অডিও-প্লেলিস্ট HTTP ২০০ (৯৩০ EXTINF); test.js ২০/৪৩ বেসলাইন; config.test.js সব-সবুজ; বাংলা=০ //  // v1.15.88: Multimovies গভীর-নিরীক্ষা + **single-audio সংস্কার** (ইউজার: "Demob slayer infinity castle … fast hls gulo pelam na, the runner e single audio fast hls gulo pelam na, multi audio play problem hoi")। (ক) **নকল কোয়ালিটি-কার্ড বন্ধ**: `woHasAudioGrp` শাখা প্রতি কোয়ালিটিতে একটি করে কার্ড দিত, কিন্তু সবার `url` একই (পুরো মাস্টার) — প্রমাণ: Demon Slayer ১৩১১০৩১-এ ৩টি কার্ড (1080/720/480) যাদের URL **হুবহু অভিন্ন** (`…v51t5m9qymh5_,l,n,h,.urlset/master.txt`)। (খ) **মাল্টি-অডিও সমস্যার মূল**: rousav মাস্টার ১৬-২০টি আলাদা অডিও-ট্র্যাক ঘোষণা করে, কিন্তু প্লেয়ারকে সেগুলো আলাদাভাবে টানতে হয় — আর The Runner-এর track_english/spa/fra/pol/por/tam/tel/tha/tur **৪০৪**; Demon Slayer .urlset-এর ভিডিও-ভ্যারিয়েন্ট আসলে **মাক্সড** (H.264+AAC একই TS-এ — PMT-স্ক্যানে প্রমাণিত)। এখন **প্রতি কোয়ালিটি × প্রতি ভাষা = একটি single-audio কার্ড** (mini + `alang`-পিন: মাস্টারে শুধু ওই একটি অডিও-ট্র্যাক থাকে)। (গ) **প্রোব-ভিত্তিক সততা**: `mmVarProbe` (ভ্যারিয়েন্ট জীবিত + TS-এ অডিও মাক্সড কি — ৪KB রেঞ্জ-ফেচ) ও `mmTrkProbe` (অডিও-ট্র্যাক জীবিত), দুটোতেই **দ্বৈত-নিশ্চিতকরণ** — rousav/CDN-এর 'নোড-লটারি'তে ভাগ্যবান-নোড মিথ্যা-জীবিত দেখায় (প্রমাণ: track_english একবার ২০০, পরের ১৫ বার ৪০৪)। মিথ্যা-মাল্টি-অডিও মাস্টারে আর 'N Audio' দাবি নেই; মাক্সড ভ্যারিয়েন্ট থাকলে সরাসরি সেটিই (দ্রুততম), নইলে সৎ শূন্য। (ঘ) **অন্যান্য**: ডিডুপ-কী'তে `alang` (নাহলে ৬ ভাষা-কার্ড অভিন্ন-কী হয়ে ৫টি বাদ পড়ত — প্রমাণ `[mmvbd] out=6` → `variants=1`); `_lang`-এ ISO-কোড→ইংরেজি-নাম ম্যাপার (`mmLangBlob`) — mml=['hindi'] আগে ০ কার্ড দিত, এখন ৩; MM কার্ড-ক্যাপ ১৬→২০; decodeURIComponent-সহ কোনো মিড-লাইন কমেন্ট নেই। যাচাই: test.js ২০/৪৩ (বেসলাইন), config.test.js সব-সবুজ, বাংলা=০, Demon Slayer ২০ কার্ড (হিন্দি/ইংলিশ/জাপানি/তেলুগু/তামিল × ১০৮০/৭২০/৪৮০), The Runner ০→৬ (চেক/জার্মান/হিন্দি/হাঙ্গেরিয়ান/ইতালিয়ান/জাপানি — সব জীবিত), প্রতি কার্ডে অডিও-ট্র্যাক=১, সেগমেন্ট HTTP ২০৬ video/mp2t মাক্সড-অডিও //  // v1.15.87: স্কাইমুভিজ-সাইট গভীর-নিরীক্ষা + স্কোরার-মেরামত। (ক) **'/movie/'-প্রিফিক্স-বাগ (বড়)**: skyStreams-এ posts = "/movie/Slug-…", কিন্তু স্কোরার সরাসরি nrm(p) করত → n = "movie jaws 1975 …" → `n === Tn` ও `n.startsWith(Tn+' ')` দুটোই **মৃত কোড** (n কখনোই টাইটেল দিয়ে শুরু হয় না)। বহু-শব্দ-টাইটেল বেঁচেছিল শুধু `n.includes(' '+Tn+' ')` (১১০) শাখায়; **এক-শব্দ-টাইটেলের (Jaws/Rocky/Alien/Chernobyl/Lucifer) কোনো শাখাই থাকত না → sc=0 → সব সময় ০ কার্ড**। প্রমাণ: Jaws(৫৭৮) → no-match posts=6 (সাইটে ৪× Jaws-1975 থেকেও); এখন ১× Jaws.1975 720p, Rocky(১৩৬৬) ০→৪ (Rocky.1976.*), Alien(৩৪৮) ০→৪ (Alien.1979.*)। (খ) **বছর-রেজেক্সে 19xx** (আগে শুধু 20xx) — Godfather-সার্চে Part II(1974)/Part III(1990)-এর বছর-যাচাই-ই হত না; এখন সঠিক ১৯৭২ +৪০, ভুল ১৯৭৪/১৯৯০ −৩০। সিরিজে বছর-দণ্ড **নেই** (প্রমাণ: স্লাগের বছর = সিজন-বছর — Breaking Bad S01=(2008)…S05=(2012), first_air_date নয়)। (গ) **এক-শব্দ-টাইটেলে দ্বৈত-নিশ্চিতকরণ** (প্রিফিক্স-মিল এখন সক্রিয়, তাই ভুল-টাইটেল-ঝুঁকি নতুন) — টাইটেলের ঠিক-পরের টোকেন হতে হবে ৪-অঙ্কের-বছর | সিজন-চিহ্ন | রেজোলিউশন | স্ট্রিং-শেষ, **এবং** মুভি=বছর-মিল / সিরিজ=সিজন-মিল। প্রমাণ (পরের-টোকেন): সঠিক → Jaws→1975, Alien→1979, Rocky→1976, Chernobyl→2019, Lucifer→2016/2017/2018; ভুল → Dark→"fantasies"(Dark-Fantasies-2010), Rocky→"handsome"/"mental", Alien→"predator", Jaws→"3d"(Jaws-3D-1983)। ফল: Dark S01E01 আগে দিত **ভুল** Dark.Hole.S01.COMPLETE → এখন ০ (সৎ শূন্য)। (ঘ) decodeURIComponent try/catch (lone '%'-স্লাগে URIError → সোর্স-মৃত্যু ঠেকানো)। পরীক্ষিত: test.js ২০/৪৩ (বেসলাইন), config.test.js সব-সবুজ, স্বাধীনতা-ম্যাট্রিক্স v1.15.86-এর সাথে হুবহু মিল (ডিফল্ট Sky[1080,720,720,480]/M4u[2160,1080,1080,720,720,720]; sky=0→Sky[]; skyr=720→Sky[720,720,480]; m4ur=720→M4u[720,720,480,720]; m4u=0→M4u[]; Pengu=0) //  // v1.15.86: (ক) **Pengu-সোর্স সম্পূর্ণ সরানো** (ইউজার: "No pengu please") — penguStreams/pengResolve/PENGU_BASE/PENGU_CFG কোড-থেকেই মুছে ফেলা, সাথে cfg-কী peng/pengr/pengq/pengl, কনফিগ-পেজের Pengu-কার্ড ও UNIFY_SRV-এন্ট্রি। (খ) **Sky Movies = আসল SkymoviesHD, এখন সম্পূর্ণ স্বাধীন সোর্স** — নিজস্ব মাস্টার-সুইচ (sky), নিজস্ব রেজো-ক্যাপ (skyr), নিজস্ব কোয়ালিটি/ভাষা-ফিল্টার (skyq/skyl), নিজস্ব bingeGroup 'sky|'। আগে Sky-কে Pengu-সুইচ ও **m4ur** (মুভিজ4ইউ-এর সেটিং) দিয়ে চালানো হত — এবং skyStreams-এর bingeGroup ছিল 'peng|' (পেঙ্গু-এর সাথে হুবহু একই), ফলে স্কাই-কার্ড 'Pengu' লেবেল পেত। প্রমাণ: sky=0 → শুধু স্কাই বন্ধ; skyr=720 → শুধু স্কাই ক্যাপ (মুভিজ4ইউ-এর 2160 অক্ষুণ্ণ); m4ur=720 → শুধু মুভিজ4ইউ ক্যাপ (স্কাই-এর 1080 অক্ষুণ্ণ)। (গ) **SkymoviesHD ডোমেইন-আপডেটার** — সাইট বারবার ডোমেইন বদলায়; ঘোষক-পাতা skybap.site (প্রমাণিত: সেখান থেকে new1.skymovieshd.clinic লিংক) থেকে প্রার্থী-ডোমেইন নিয়ে **যাচাই** (search.php + /movie/*.html) করে SKY_BASE বসানো হয়; বুটে + প্রতি-৬ঘণ্টায় রিফ্রেশ, সার্চ-ব্যর্থ হলে জোর-রিফ্রেশ-পুনঃচেষ্টা। যাচাই বাধ্যতামূলক — ঘোষক-পাতার টেক্সটে পুরনো মৃত ডোমেইন (skymovieshd.in/.com) থাকে, সেগুলো সঠিকভাবে বাতিল হয় (প্রমাণিত)  // v1.15.85: (ক) কার্ড-টেক্সট থেকে বাংলা সম্পূর্ণ সরানো — "ⓘ সম্পূর্ণ সিজন (এক-ফাইলে) — Ep 1 থেকে শুরু" → "ⓘ Full season in one file — starts at Ep 1" (Movies4u/Sky/unifyCards — ৩ জায়গা)। (খ) Sky-মিরর-ডুপ্লিকেট বন্ধ: একই হাবে pixeldrain যে-রেজো দিয়েছে, সেই রেজোতে signed-S3/workers-মিরর আর ঢোকে না। প্রমাণ: Shawshank-এ ৬ কার্ডের ২ জোড়া ছিল **হুবহু একই ফাইল** (pd ২.৬১GB = S3 ২.৬১GB, ৪৮০-তেও তাই) — অথচ ৬টির কার্ড-টেক্সট অভিন্ন, ব্যবহারকারী পার্থক্য বুঝতেই পারত না → ৬→৪। (গ) Sky-সার্চ/স্কোরার-এ অ্যাপোস্ট্রোফি-স্বাভাবিকীকরণ: "Schindler's List" সার্চে ০ পোস্ট, "Schindlers List"-এ ১ — অ্যাপোস্ট্রোফি সার্চ ভেঙে দিত; স্কোরারেও অতিরিক্ত-টোকেন-দণ্ডে স্কোর ৩৩ (<৬০, বাতিল) → এখন ১২০ (মিল)। (ঘ) S3/ফলব্যাক-রেজো এখন স্লাগ-লেবেল নয়, আসল ফাইলনাম থেকে — প্রমাণ: Godfather-স্লাগ "720p" কিন্তু ফাইল 1080p/৩.৪২GB (আগে 720 ভুল-লেবেল)  // v1.15.84: workers.dev আর বাদ নয় (পরিমাপিত — সিক-যোগ্য)। প্রমাণ: সরাসরি-ফাইল workers.dev-এ মাঝ-রেঞ্জে HTTP 206, content-type video/x-matroska, ১৭.৫/২৪.৮ GB; টোকেন t=0/60/180/360/600s-এ বহাল। নিরাপত্তা: .m3u8 বাদ (সেকেন্ডেই 404), text/*-কনটেন্ট-টাইপ বাতিল, শুধু মিডিয়া-এক্সটেনশন-যুক্ত ফাইলনাম, রেজো কেবল পরিচিত-সিঁড়ি থেকে (ভুল-লেবেল-নিষিদ্ধ), অন্তর্বর্তী 403-এ একবার পুনঃচেষ্টা। ফল: Sikandar-2025-এ 0→2×2160 (আগে সর্বোচ্চ 1080)  // v1.15.83: সিজন-প্যাক-ফলব্যাক (হুবহু SxxExx-মিল-থাকলে সেটাই; না-থাকলে সিজন-নিশ্চিত 'S01…' প্যাক — লেবেলে "· S1 Pack" + "ⓘ সম্পূর্ণ সিজন (এক-ফাইলে) — Ep 1 থেকে শুরু")। প্রমাণ: Kon Yashwant Pansare (2026) S01 শুধু-প্যাক, 2160p-কপিতে pixeldrain×2+signed-S3×2 (206, সিক-যোগ্য) — আগে হুবহু-শর্তে সম্পূর্ণ বাতিল হত। ভুল-সিজন কখনো নয় (ssn !== SE → বাতিল; S02E01-এ S01-প্যাক যায় না — পরীক্ষিত)  // v1.15.82: Sky + Movies4u সিরিজ-পথ (হাবক্লাউড-পাতার-শিরোনামে SxxExx মিল — প্রতি-এপিসোড; ভুল-এপিসোড-নিষিদ্ধ, সিজন-জিপ-বাদ) + 4K (মৃত-S3/FSL-শাখা-জীবিত → 2160p-কার্ড; ভুল-h4-লেবেলে 4K-মিরর-বাতিল-হত) + hits[0]-অন্ধ-গ্রহণ-বন্ধ (বছর-সচেতন m4uPick — Superman-২০২৫-এ hits[0] ছিল Superman-১৯৭৮ = ভুল-টাইটেল) + m4ur/mmr-ক্যাপে 2160  // কনফিগ-পেজ-বাগ-মেরামত (৫-ট্যাব): সার্ভার-টাইল-বুটে-রিড্র, "None"=ফ্লিট-বন্ধ (খালি=সব-চুক্তি), Reset-এ-চিপ-রিড্র, flab-<em>-আক্ষরিক-লেখা, Jump-টগল+লেবেল, Sky-প্রিভিউ-m4ur-লিক, rtsrv-দুটোই-বাদ-সম্মান // v1.15.80: RT-দ্বিতীয়-সার্ভার (WN/pixeldrain)-পুনরুদ্ধার: é-ডিঅ্যাকসেন্ট+রেস-মার্জ+PD-inline+per-সার্ভার-টগল (rtsrv)
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
@@ -330,11 +330,23 @@ function mmLooksReel(tx) { // short total + ENDLIST = a stub listing (the reel's
   const d4 = String(tx).split('\n').reduce((a4, l4) => { const m4 = l4.match(/^#EXTINF:([\d.]+)/); return m4 ? a4 + parseFloat(m4[1]) : a4; }, 0);
   return d4 > 0 && d4 < 900;
 }
-async function mmReelCheck(v1, vLeft) { // v1.15.97: প্রথম ব্যর্থতায় থামা (৩×২.৫সে = ৭.৫সে বাজেট-ক্ষয় রোধ) + পূর্ণ প্লেলিস্ট MM_WC-তে সংরক্ষণ
+async function mmReelCheck(v1, vLeft) { // v1.15.97+99: প্রথম ব্যর্থতায় থামা + Origin ক্যাশ-কী উদ্ধার + পূর্ণ প্লেলিস্ট MM_WC-তে সংরক্ষণ
   const rc0 = Date.now(); let stubs = 0, hits = 0, efirst = '';
+  const isR = mmRousav(v1);
   for (let q5 = 0; q5 < 3; q5++) {
     const tmo = Math.max(900, Math.min(2800, vLeft ? vLeft(3200) : 2500));
-    let vt = ''; try { const rr5 = await fetch(v1, { headers: { 'User-Agent': UA, Referer: VB_REF }, signal: AbortSignal.timeout(tmo) }); vt = rr5.ok ? await rr5.text() : ''; if (!rr5.ok && !efirst) efirst = 'HTTP' + rr5.status; } catch (e6) { if (!efirst) efirst = (e6 && e6.message || 'err'); }
+    let vt = '';
+    try {
+      const hd5 = { 'User-Agent': UA, Referer: VB_REF };
+      if (isR) hd5.Origin = 'https://vidbolt.xyz';
+      let rr5 = await fetch(v1, { headers: hd5, signal: AbortSignal.timeout(tmo) });
+      if (!rr5.ok && isR && rr5.status === 404) {
+        hd5.Origin = 'https://r1.vidbolt.xyz';
+        rr5 = await fetch(v1, { headers: hd5, signal: AbortSignal.timeout(tmo) });
+      }
+      vt = rr5.ok ? await rr5.text() : '';
+      if (!rr5.ok && !efirst) efirst = 'HTTP' + rr5.status;
+    } catch (e6) { if (!efirst) efirst = (e6 && e6.message || 'err'); }
     if (!vt || vt.indexOf('#EXTM') < 0) { if (DBG) console.error('[reelchk] non-m3u8 body: ' + JSON.stringify(vt.slice(0, 60)) + ' len=' + vt.length); break; }
     hits++;
     if (!mmLooksReel(vt)) { mmPut(MM_WC, v1, vt); if (DBG) console.error('[reelchk] FULL el=' + (Date.now() - rc0) + 'ms'); return 'real'; }
@@ -1276,15 +1288,31 @@ async function twrFetch(base, tag, title, type, s, e, t3) {
 function woFetch(url, ms) { // v1.15.28: multimovies CDN fetch — the WO_REF Referer is the key
   return fetch(url, { headers: { 'User-Agent': UA, Referer: WO_REF, Accept: '*/*' }, signal: AbortSignal.timeout(ms || 7000) });
 }
-function mmPoolText(url, ms) { // v1.15.97: সরাসরি ফেচে ৪০৪/৪১০ এলে ফাইলই নেই — ৪টি ফ্রি-প্রক্সিতে ৩-৪ সেকেন্ড নষ্ট করা বন্ধ
+function mmNormBridgeUrl(url) { // v1.15.99: callisto dash-hls-bridge ওয়ার্কারগুলোর বেশিরভাগই ফ্রি-টিয়ার ৪২৯-এ থাকে; johndoesdmc সচল (২০০ OK)
+  return String(url || '').replace(/^(https?:\/\/)dash-hls-bridge\.johndoes[a-z0-9]*\.workers\.dev\b/i, '$1dash-hls-bridge.johndoesdmc.workers.dev');
+}
+function mmPoolText(url, ms) { // v1.15.97+99: rousav-এ Origin হেডার (Cloudflare 404 cf=HIT পয়জনিং বাইপাস) + সরাসরি ৪০৪/৪১০ হলে প্রক্সি-রেস বর্জন
   const T = ms || 7000;
-  return fetch(url, { headers: { 'User-Agent': UA, Referer: VB_REF }, signal: AbortSignal.timeout(Math.ceil(T * 0.55)) }).then(async x => {
+  const u0 = mmNormBridgeUrl(url);
+  const isR = mmRousav(u0);
+  const hd = { 'User-Agent': UA, Referer: VB_REF };
+  if (isR) hd.Origin = 'https://vidbolt.xyz';
+  return fetch(u0, { headers: hd, signal: AbortSignal.timeout(Math.ceil(T * 0.55)) }).then(async x => {
     if (x.ok) return { t: await x.text().catch(() => ''), st: x.status };
     return { t: '', st: x.status || 0 };
-  }).catch(() => ({ t: '', st: 0 })).then(r => {
-    if (r.t) return r.t;
+  }).catch(() => ({ t: '', st: 0 })).then(async r => {
+    if (r.t && (!isR || r.t.indexOf('#EXTM') >= 0 || r.t.charAt(0) === '{')) return r.t;
+    if (isR && (r.st === 404 || (r.t && /^\s*<(!doctype|html)/i.test(r.t)))) {
+      try {
+        const x2 = await fetch(u0, { headers: { 'User-Agent': UA, Referer: VB_REF, Origin: 'https://r1.vidbolt.xyz' }, signal: AbortSignal.timeout(Math.ceil(T * 0.45)) });
+        if (x2.ok) {
+          const t2 = await x2.text().catch(() => '');
+          if (t2 && t2.indexOf('#EXTM') >= 0) return t2;
+        } else if (x2.status === 404 || x2.status === 410) return '';
+      } catch { }
+    }
     if (r.st === 404 || r.st === 410) return '';
-    return mmRacePool(url, 4, Math.ceil(T * 0.4)).then(r2 => String(r2.body || '')).catch(() => '');
+    return mmRacePool(u0, 4, Math.ceil(T * 0.4)).then(r2 => String(r2.body || '')).catch(() => '');
   });
 }
 // v1.15.89: হোস্ট-ভিত্তিক **Referer-প্রয়োজনীয়তা** সনাক্তকরণ (৩০ মিনিট ক্যাশ)।
@@ -1296,16 +1324,40 @@ function mmPoolText(url, ms) { // v1.15.97: সরাসরি ফেচে ৪�
 // (রিলে সবসময় সঠিক Referer যোগ করে — পরীক্ষিত: HTTP ২০০)। প্রয়োজন না হলে সরাসরি CDN — কোনো অতিরিক্ত খরচ নেই।
 const MM_MUX = new Map(); // v1.15.90: ভ্যারিয়েন্ট-ইউআরএল → মাক্সড-অডিও আছে কি (1/0) — বারবার PMT-স্ক্যান এড়াতে
 const MM_REF = new Map();
+const MM_WC_INFLIGHT = new Map(); // v1.15.99: ইন-ফ্লাইট প্লেলিস্ট ফেচ ডিডুপ্লিকেশন (/mm/ প্রি-ওয়ার্ম ও /mma/ যেন একই প্লেলিস্ট দুবার না টানে)
+async function mmGetOrFetchPlaylist(u, ms) {
+  const u0 = mmNormBridgeUrl(u);
+  let tx = mmGet(MM_WC, u0, 1800000) || mmGet(MM_WC, u, 1800000) || '';
+  if (tx === '__404__') return '';
+  if (tx && tx.indexOf('#EXTM') >= 0) return tx;
+  let p = MM_WC_INFLIGHT.get(u0);
+  if (!p) {
+    p = (async () => {
+      let resTx = '';
+      for (let a4 = 0; a4 < 2 && (!resTx || resTx.indexOf('#EXTM') < 0); a4++) {
+        resTx = await mmPoolText(u0, ms || 6000);
+      }
+      if (resTx && resTx.indexOf('#EXTM') >= 0) {
+        mmPut(MM_WC, u0, resTx);
+        if (u !== u0) mmPut(MM_WC, u, resTx);
+      }
+      return resTx || '';
+    })().finally(() => { MM_WC_INFLIGHT.delete(u0); });
+    MM_WC_INFLIGHT.set(u0, p);
+  }
+  return p;
+}
 async function mmNeedsRef(u) {
   try {
     const h = new URL(u).hostname;
+    if (/contentpublishing\.site$/i.test(h)) return 1; // v1.15.99: contentpublishing সবসময় Referer + /mmr/ রিলে চায় (০ms, ECONNRESET-নিরাপদ)
     const c = MM_REF.get(h);
     if (c && Date.now() - c.ts < 1800000) return c.req;
     const shot = async ref => {
       try {
         const hd = { 'User-Agent': UA, Range: 'bytes=0-1023' };
         if (ref) hd.Referer = ref;
-        const r = await fetch(u, { headers: hd, signal: AbortSignal.timeout(6000) });
+        const r = await fetch(u, { headers: hd, signal: AbortSignal.timeout(4000) });
         const st = r.status;
         try { if (r.body) await r.body.cancel(); } catch { }
         return st;
@@ -1315,18 +1367,18 @@ async function mmNeedsRef(u) {
     // ২০০ বা **২০৬** দুটোই সফল (Range দিলে CDN ২০৬ দেয় — পরীক্ষিত: "Referer সহ, Range সহ → ২০৬")।
     // আগে শুধু ২০০ চেক করায় রিলে কখনোই চালু হতো না (প্রমাণ: প্রথম রানে রিলে-কৃত=০)।
     const ok = s => s === 200 || s === 206;
-    const req = (!ok(without) && ok(withR)) ? 1 : 0;
-    MM_REF.set(h, { req: req, ts: Date.now() });
+    const req = (!ok(without) && (ok(withR) || without === 403 || without === 401)) ? 1 : 0;
+    if (without > 0 || withR > 0) MM_REF.set(h, { req: req, ts: Date.now() });
     return req;
   } catch { return 0; }
 }
 
-// ---------- v1.15.98: ইন-মেমরি লুকঅ্যাহেড প্রিফেচ + স্ট্যাগার্ড এজ-ওয়ার্মার + স্টল-রিজিউমিং পাম্প ----------
+// ---------- v1.15.98+99: ইন-মেমরি লুকঅ্যাহেড প্রিফেচ + স্ট্যাগার্ড এজ-ওয়ার্মার + স্টল-রিজিউমিং পাম্প ----------
 const MMR_HAGENT = new http.Agent({ keepAlive: true, keepAliveMsecs: 15000, maxSockets: 32, maxFreeSockets: 16 });
 const MMR_SAGENT = new https.Agent({ keepAlive: true, keepAliveMsecs: 15000, maxSockets: 32, maxFreeSockets: 16 });
 const MMR_MEM = new Map(); // url → ent
 const MMR_WARMED = new Set();
-const MMR_MAX_MEM_BYTES = 28 * 1024 * 1024; // সর্বোচ্চ ২৮MB RAM বাফার (~৮-১২টি সেগমেন্ট)
+const MMR_MAX_MEM_BYTES = 40 * 1024 * 1024; // সর্বোচ্চ ৪০MB RAM বাফার (ডুয়াল ভিডিও+অডিও সেগমেন্টের জন্য পর্যাপ্ত)
 const MMR_MAX_SEG_BYTES = 10 * 1024 * 1024; // ১০MB-এর নিচের সেগমেন্টগুলো RAM-এ ক্যাশ হবে
 let mmrMemBytes = 0;
 
@@ -1355,16 +1407,16 @@ function mmEvictMem() {
     mmrMemBytes = Math.max(0, mmrMemBytes - (old ? (old.memTracked || 0) : 0));
     MMR_MEM.delete(victim);
   }
-  // ইন-ফ্লাইট পটভূমি প্রিফেচ ৬টির বেশি হলে সবচেয়ে পুরনোটি বাতিল (সিক করলে নতুন পজিশন অগ্রাধিকার পাবে)
+  // v1.15.99: ইন-ফ্লাইট পটভূমি প্রিফেচ ক্যাপ ৬ → ১২ (mmMasterForm-এ ভিডিও ও অডিও দুটি ধারা একসাথে প্রিফেচ হয়; ৬ থাকলে অডিও প্রিফেচ ভিডিওকে কিল করত)
   let bgInflight = 0;
   for (const [, v] of MMR_MEM) if (!v.done && !v.failed && v.waiters.size === 0) bgInflight++;
-  if (bgInflight > 6) {
+  if (bgInflight > 12) {
     for (const [k, v] of MMR_MEM) {
       if (!v.done && !v.failed && v.waiters.size === 0) {
         if (v.abort) try { v.abort(); } catch { }
         mmrMemBytes = Math.max(0, mmrMemBytes - (v.memTracked || 0));
         MMR_MEM.delete(k);
-        if (--bgInflight <= 6) break;
+        if (--bgInflight <= 12) break;
       }
     }
   }
@@ -1379,9 +1431,11 @@ function mmWarmEdge(u, delayMs) {
     try {
       const pu = new URL(u);
       const mod = pu.protocol === 'http:' ? http : https;
+      const hd = { 'User-Agent': UA, 'Referer': VB_REF, 'Accept': '*/*', 'Range': 'bytes=0-0' };
+      if (mmRousav(u)) hd.Origin = 'https://vidbolt.xyz'; // v1.15.99: mmEnsureFetch-এর সাথে একই Cloudflare ক্যাশ-কী
       const req = mod.get(u, {
         agent: pu.protocol === 'http:' ? MMR_HAGENT : MMR_SAGENT,
-        headers: { 'User-Agent': UA, 'Referer': VB_REF, 'Accept': '*/*', 'Range': 'bytes=0-0' },
+        headers: hd,
         timeout: 10000
       }, res => { res.resume(); });
       req.on('timeout', () => req.destroy());
@@ -1449,20 +1503,24 @@ function mmEnsureFetch(tgt) {
     }
   }
 
+  let useAltOrigin = false;
   function pump(attempt, hop) {
     if (aborted || ent.done || ent.failed) return;
     let u;
     try { u = new URL(curTgt); } catch {
       ent.failed = true; ent.errCode = 400; MMR_MEM.delete(tgt); return notify();
     }
+    const isR = mmRousav(curTgt);
     const mod = u.protocol === 'http:' ? http : https;
     const attemptStart = Date.now();
+    let headersAt = 0;
     let attemptBytes = 0;
     let lastDataAt = Date.now();
     let gotHeaders = false;
     let closed = false;
 
     const upH = { 'User-Agent': UA, 'Referer': VB_REF, 'Accept': '*/*' };
+    if (isR) upH.Origin = useAltOrigin ? 'https://r1.vidbolt.xyz' : 'https://vidbolt.xyz';
     if (ent.received > 0) upH.Range = 'bytes=' + ent.received + '-';
 
     const upReq = mod.get(curTgt, {
@@ -1472,7 +1530,8 @@ function mmEnsureFetch(tgt) {
     }, up => {
       if (aborted || closed) { up.resume(); return; }
       gotHeaders = true;
-      lastDataAt = Date.now();
+      headersAt = Date.now();
+      lastDataAt = headersAt;
       if (up.statusCode >= 300 && up.statusCode < 400 && up.headers.location && (hop || 0) < 3) {
         closed = true; clearInterval(wd); up.resume();
         try { curTgt = new URL(up.headers.location, curTgt).toString(); } catch { }
@@ -1481,6 +1540,10 @@ function mmEnsureFetch(tgt) {
       if (up.statusCode !== 200 && up.statusCode !== 206) {
         closed = true; clearInterval(wd); up.resume();
         ent.errCode = up.statusCode || 502;
+        if (isR && up.statusCode === 404 && !useAltOrigin && ent.received === 0) {
+          useAltOrigin = true;
+          return retry(); // v1.15.99: শুধুমাত্র ৪০৪ পয়জনড ক্যাশেই বিকল্প Origin ব্যবহার
+        }
         if (up.statusCode === 404 || up.statusCode === 410 || up.statusCode === 403) {
           ent.failed = true; MMR_MEM.delete(tgt); return notify();
         }
@@ -1530,20 +1593,22 @@ function mmEnsureFetch(tgt) {
     });
     activeReq = upReq;
 
+    const ttfbCap = isR ? 4800 : 2400; // v1.15.99: rousav cf=MISS অরিজিন-ফিলে ১.৫-৪.০সে TTFB লাগে
+    const stallCap = isR ? 4500 : 2600;
     const wd = setInterval(() => {
       if (aborted || ent.done || ent.failed || closed) { clearInterval(wd); return; }
       const now = Date.now();
-      if (!gotHeaders && now - attemptStart > 2200) {
+      if (!gotHeaders && now - attemptStart > ttfbCap) {
         closed = true; clearInterval(wd); upReq.destroy();
         return retry();
       }
-      if (gotHeaders && now - lastDataAt > 2400) {
+      if (gotHeaders && now - lastDataAt > stallCap) {
         closed = true; clearInterval(wd); upReq.destroy();
         return retry();
       }
-      const el = now - attemptStart;
-      if (gotHeaders && el > 2800) {
-        const kbps = (attemptBytes / 1024) / (el / 1000);
+      const bodyEl = headersAt ? (now - headersAt) : 0;
+      if (!isR && gotHeaders && bodyEl > 2800 && (ent.total === 0 || ent.total > 600 * 1024)) {
+        const kbps = (attemptBytes / 1024) / (bodyEl / 1000);
         if (kbps < 110) {
           closed = true; clearInterval(wd); upReq.destroy();
           return retry();
@@ -1597,13 +1662,17 @@ function mmEnsureFetch(tgt) {
 function mmPrewarmPlaylistSegs(plText) {
   if (!plText) return;
   MMR_ACTIVE_UNTIL = Date.now() + 25000;
-  const segs = (String(plText).match(/^https?:\/\/\S+$/gm) || [])
+  const s = String(plText);
+  // v1.15.99: fMP4 স্ট্রিমে (#EXT-X-MAP:URI=".../init.mp4") প্লেয়ার সবার আগে init সেগমেন্ট চায় — সেটিও প্রিফেচ করা
+  const mapM = s.match(/#EXT-X-MAP:[^\n]*URI="(https?:\/\/[^"]+)"/i);
+  if (mapM && mapM[1] && !/\/mmr\//i.test(mapM[1])) mmEnsureFetch(mapM[1]);
+  const segs = (s.match(/^https?:\/\/\S+$/gm) || [])
     .filter(u2 => !/\.m3u8(\?|$)/i.test(u2) && !/\/mmr\//i.test(u2));
   if (!segs.length) return;
   mmEnsureFetch(segs[0]);
-  if (segs[1]) setTimeout(() => mmEnsureFetch(segs[1]), 220).unref();
-  if (segs[2]) setTimeout(() => mmEnsureFetch(segs[2]), 500).unref();
-  for (let k = 3; k < Math.min(6, segs.length); k++) mmWarmEdge(segs[k], k * 320);
+  if (segs[1]) setTimeout(() => mmEnsureFetch(segs[1]), 180).unref();
+  if (segs[2]) setTimeout(() => mmEnsureFetch(segs[2]), 420).unref();
+  for (let k = 3; k < Math.min(6, segs.length); k++) mmWarmEdge(segs[k], k * 300);
 }
 
 function mmServeRangeDirect(req, res, tgt, startByte, endStr) {
@@ -1620,6 +1689,7 @@ function mmServeRangeDirect(req, res, tgt, startByte, endStr) {
       'User-Agent': UA, 'Referer': VB_REF, 'Accept': '*/*',
       'Range': 'bytes=' + (startByte + sentBytes) + '-' + (endStr || '')
     };
+    if (mmRousav(curTgt)) upH.Origin = attempt === 0 ? 'https://vidbolt.xyz' : ('https://r' + attempt + '.vidbolt.xyz');
     const upReq = mod.get(curTgt, {
       agent: attempt === 0 ? (u.protocol === 'http:' ? MMR_HAGENT : MMR_SAGENT) : false,
       headers: upH,
@@ -1840,6 +1910,7 @@ function resoRung(w, h) {
   h = parseInt(h, 10) || 0; w = parseInt(w, 10) || 0;
   if (!h) return 0;
   for (let i = 0; i < RESO_W.length; i++) if (RESO_W[i][1] === h) return h; // আদর্শ — অস্পৃশ্য
+  if (w >= 700 && w < 1050 && h >= 380 && h < 600) return 480; // v1.15.99: rousav video_480p.m3u8 (704x396) → 480 সিঁড়ি
   if (!w) return h;
   let best = 0, bd = Infinity;
   for (let i = 0; i < RESO_W.length; i++) { const d = Math.abs(RESO_W[i][0] - w); if (d < bd) { bd = d; best = RESO_W[i][1]; } }
@@ -1872,7 +1943,8 @@ function mmAudTracks(pl) {
     const def = /DEFAULT=YES/i.test(ln);
     if (!uri) continue;
     const key = (lang || name).toLowerCase();
-    if (out.some(x => x.key === key)) continue;
+    const prev = out.find(x => x.key === key);
+    if (prev) { if (!prev.altUri && uri !== prev.uri) prev.altUri = uri; continue; } // v1.15.99: বিকল্প ট্র্যাক URI সংরক্ষণ (যেমন track_spanish2.m3u8)
     out.push({ key: key, lang: (lang || name), name: name, uri: uri, def: def });
   }
   return out;
@@ -1926,29 +1998,92 @@ function mmTsHasAudio(b) { // v1.15.90: **নির্ভুল** MPEG-TS বি
   } catch { }
   return false;
 }
-// v1.15.88: একটি ভ্যারিয়েন্ট জীবিত + (মাক্সড কি না) — ২টি ক্ষুদ্র রেঞ্জ-ফেচ (২KB প্লেলিস্ট + ৪KB সেগমেন্ট)।
-// প্রমাণ (The Runner rousav): video_720p.m3u8 → **৪০৪**, video_480p.m3u8 → **৪০৪**, tiles.m3u8 → ২০০ (মাক্সড)।
-// আগে এই মৃত ভ্যারিয়েন্টগুলোতেও কার্ড তৈরি হত → ব্যবহারকারী ৭২০p চাপলে প্লেয়ার ফাঁকা।
-async function mmVarProbe(vUri, ref, ms) {
+// v1.15.88+99: একটি ভ্যারিয়েন্ট জীবিত + (মাক্সড কি না)।
+// v1.15.99 সংস্কার: (ক) rousav প্লেলিস্টে `Range: bytes=0-2047` পাঠালে অরিজিন ৪০৪ দেয় ও Cloudflare ক্যাশ বিষাক্ত করে (`404 cf=HIT`),
+// তাই rousav-এ `Range` ছাড়া এবং `Origin: https://vidbolt.xyz` সহ ফেচ করে সম্পূর্ণ প্লেলিস্ট `MM_WC`-তে সংরক্ষণ (যাতে প্লেব্যাকে ০ms লাগে!)।
+// (খ) যখন মাস্টারে বাহ্যিক অডিও-ট্র্যাক (`skipPmt=true`) জীবিত থাকে বা fMP4 (`#EXT-X-MAP`) হয়, তখন অযথা ৩টি আনক্যাশড সেগমেন্ট টেনে ৪.৫ সেকেন্ড নষ্ট না করা।
+async function mmVarProbe(vUri, ref, ms, skipPmt) {
   const T = Math.max(400, Math.min(ms || 2600, 3000));
+  const u0 = mmNormBridgeUrl(vUri);
+  const isR = mmRousav(u0);
   try {
-    const hd = { 'User-Agent': UA, Referer: ref || WO_REF, Range: 'bytes=0-2047' };
-    const r1 = await fetch(vUri, { headers: hd, signal: AbortSignal.timeout(Math.ceil(T * 0.6)) });
-    if (!r1.ok && r1.status !== 206) return null;
-    const tx = await r1.text().catch(() => '');
-    if (/^\s*<(!doctype|html)/i.test(tx)) return null; // v1.15.88: নরম-৪০৪ (HTML শরীর) — নোড-লটারি-প্রতিরোধ
-    if (!/#EXTM/i.test(tx)) return null;                // v1.15.88: বাস্তব HLS-টেক্সট নয় → ভ্যারিয়েন্ট নেই
-    // v1.15.88: দ্বৈত-নিশ্চিতকরণ — একই ভ্যারিয়েন্ট আবার জিজ্ঞাসা (নোড-লটারিতে ভাগ্যবান-নোড-জনিত মিথ্যা-জীবিত ঠেকা)
-    try {
-      const r1b = await fetch(vUri, { headers: hd, signal: AbortSignal.timeout(Math.ceil(T * 0.5)) });
-      if (!r1b.ok && r1b.status !== 206) return null;
-      const tx2 = await r1b.text().catch(() => '');
-      if (!/#EXTM/i.test(tx2) || /^\s*<(!doctype|html)/i.test(tx2)) return null;
-    } catch { return null; }
-    // v1.15.90: শুধু **প্রথম** সেগমেন্ট দেখলে ভুল সিদ্ধান্ত হয় — অনেক উৎসের ০-নম্বর সেগমেন্ট একটি "lead-in",
-    // যার PMT-তে অডিও ঘোষিত থাকে (0x1b,0x0f) কিন্তু বাস্তবে কোনো অডিও আসে না।
-    // প্রমাণ (The Runner, rousav tiles): seg 0 → [0x1b,0x0f]  কিন্তু  seg 1,2,3,5,10 → [0x1b] (কোনো অডিও নেই)।
-    // তাই এখন তিনটি সেগমেন্ট (মাঝখান থেকে) নমুনা নিয়ে **সংখ্যাগরিষ্ঠ**-ভিত্তিতে সিদ্ধান্ত।
+    let tx = mmGet(MM_WC, u0, 1800000) || mmGet(MM_WC, vUri, 1800000) || '';
+    if (tx === '__404__') tx = '';
+    if (!tx || !/#EXTM/i.test(tx)) {
+      if (isR) {
+        const fetchR = async orig => {
+          const r = await fetch(u0, { headers: { 'User-Agent': UA, Referer: ref || WO_REF, Origin: orig }, signal: AbortSignal.timeout(Math.ceil(T * 0.75)) });
+          if (!r.ok && r.status !== 206) return { ok: false, st: r.status, t: '' };
+          const t = await r.text().catch(() => '');
+          if (!/#EXTM/i.test(t) || /^\s*<(!doctype|html)/i.test(t)) return { ok: false, st: r.status, t: '' };
+          return { ok: true, st: r.status, t };
+        };
+        let z1 = await fetchR('https://vidbolt.xyz');
+        if (!z1.ok) z1 = await fetchR('https://r1.vidbolt.xyz');
+        if (!z1.ok) return null;
+        tx = z1.t;
+        const extCount = (tx.match(/#EXTINF:/g) || []).length;
+        if (extCount < 15) {
+          const z2 = await fetchR('https://vidbolt.xyz');
+          if (!z2.ok) return null;
+        }
+        if (!mmLooksReel(tx) && tx.length < 450000) {
+          mmPut(MM_WC, u0, tx);
+          if (vUri !== u0) mmPut(MM_WC, vUri, tx);
+        }
+      } else if (/dash-hls-bridge\.johndoes/i.test(u0)) {
+        // v1.15.99: callisto ব্রিজ মাস্টার ইতিমধ্যে বৈধ হলে এর v0/v1/v2.m3u8 ভ্যারিয়েন্টও একই MPD থেকে তৈরি (০ms ফাস্ট-পাথ);
+        // অন্যথায় স্ট্রিমিং রিডারে প্রথম ৪KB পড়েই যাচাই ও সংযোগ বিচ্ছিন্ন (৪.৫MB ডাউনলোড রোধ)
+        if (skipPmt) {
+          MM_MUX.set(vUri, 0);
+          return { alive: true, muxed: false };
+        }
+        const ac = new AbortController();
+        const tm = setTimeout(() => ac.abort(), Math.ceil(T * 0.7));
+        let headTx = '';
+        try {
+          const r1 = await fetch(u0, { headers: { 'User-Agent': UA, Referer: ref || WO_REF }, signal: ac.signal });
+          if (!r1.ok && r1.status !== 206) { clearTimeout(tm); return null; }
+          if (r1.body && r1.body.getReader) {
+            const rdr = r1.body.getReader();
+            const dec = new TextDecoder();
+            while (headTx.length < 4096) {
+              const { done, value } = await rdr.read();
+              if (done) break;
+              if (value) headTx += dec.decode(value, { stream: true });
+            }
+            try { await rdr.cancel(); } catch { }
+          } else {
+            headTx = await r1.text().catch(() => '');
+          }
+        } catch { }
+        clearTimeout(tm);
+        if (!/#EXTM/i.test(headTx) || /^\s*<(!doctype|html)/i.test(headTx)) return null;
+        MM_MUX.set(vUri, 0);
+        return { alive: true, muxed: false };
+      } else {
+        const hd = { 'User-Agent': UA, Referer: ref || WO_REF, Range: 'bytes=0-2047' };
+        const r1 = await fetch(u0, { headers: hd, signal: AbortSignal.timeout(Math.ceil(T * 0.6)) });
+        if (!r1.ok && r1.status !== 206) return null;
+        tx = await r1.text().catch(() => '');
+        if (/^\s*<(!doctype|html)/i.test(tx) || !/#EXTM/i.test(tx)) return null;
+        if ((tx.match(/#EXTINF:/g) || []).length < 15) {
+          try {
+            const r1b = await fetch(u0, { headers: hd, signal: AbortSignal.timeout(Math.ceil(T * 0.5)) });
+            if (!r1b.ok && r1b.status !== 206) return null;
+            const tx2 = await r1b.text().catch(() => '');
+            if (!/#EXTM/i.test(tx2) || /^\s*<(!doctype|html)/i.test(tx2)) return null;
+          } catch { return null; }
+        }
+        if (r1.status === 200 && /#EXT-X-ENDLIST/i.test(tx) && tx.length < 450000) {
+          mmPut(MM_WC, u0, tx);
+          if (vUri !== u0) mmPut(MM_WC, vUri, tx);
+        }
+      }
+    }
+    if (MM_MUX.has(vUri)) return { alive: true, muxed: !!MM_MUX.get(vUri) };
+    if (/#EXT-X-MAP:/i.test(tx)) { MM_MUX.set(vUri, 0); return { alive: true, muxed: false }; }
+    if (skipPmt) return { alive: true, muxed: false };
     const segs = String(tx).split('\n').map(z => z.trim()).filter(z => z && z.charAt(0) !== '#');
     if (!segs.length) return { alive: true, muxed: false }; // সেগমেন্ট-না-পাওয়া = অনির্ণীত
     const pick = [];
@@ -1958,9 +2093,11 @@ async function mmVarProbe(vUri, ref, ms) {
     if (!pick.length) pick.push(segs[0]);
     let withAud = 0, probed = 0;
     for (const seg of pick) {
-      const segAbs = mmAbsUri(seg, vUri); // v1.15.97: api_key বহন
+      const segAbs = mmAbsUri(seg, u0); // v1.15.97: api_key বহন
       try {
-        const r2 = await fetch(segAbs, { headers: { 'User-Agent': UA, Referer: ref || WO_REF, Range: 'bytes=0-4095' }, signal: AbortSignal.timeout(Math.ceil(T * 0.6)) });
+        const sHd = { 'User-Agent': UA, Referer: ref || WO_REF, Range: 'bytes=0-4095' };
+        if (isR) sHd.Origin = 'https://vidbolt.xyz';
+        const r2 = await fetch(segAbs, { headers: sHd, signal: AbortSignal.timeout(Math.ceil(T * 0.6)) });
         if (!r2.ok && r2.status !== 206) continue;
         const bb = Buffer.from(await r2.arrayBuffer().catch(() => new ArrayBuffer(0)));
         if (!bb.length) continue;
@@ -1973,34 +2110,57 @@ async function mmVarProbe(vUri, ref, ms) {
     return { alive: true, muxed: isMux };
   } catch { return null; }
 }
-// v1.15.88: একটি অডিও-ট্র্যাক জীবিত কি — ২KB রেঞ্জ-ফেচ (মিডিয়া-বাইট নয়, শুধু প্লেলিস্ট-টেক্সট)।
-// প্রমাণ: The Runner rousav-এর ২০টি track_*.m3u8 **সব ৪০৪** — মাস্টারের "২০ অডিও" দাবি মিথ্যা।
+// v1.15.88+99: একটি অডিও-ট্র্যাক জীবিত কি + প্লেলিস্ট MM_WC-তে ক্যাশ করা।
+// v1.15.99: (ক) rousav-এ `Range: bytes=0-1023` পাঠালে ৪০৪ আসে ও Cloudflare সেই ৪০৪ ক্যাশ করে ফেলে (`404 cf=HIT`),
+// তাই rousav-এ কখনোই `Range` পাঠানো হবে না; (খ) `Origin: https://vidbolt.xyz` (ও ব্যর্থ হলে `r1.vidbolt.xyz`) দিয়ে
+// বিষাক্ত ক্যাশ-কী বাইপাস; (গ) পূর্ণ ট্র্যাক প্লেলিস্ট (`>= 10` `#EXTINF`) পেলে সাথে সাথে `MM_WC`-তে ক্যাশ (দ্বিতীয়বার ৭৬KB ডাউনলোড বর্জন)।
 async function mmTrkProbe(u, ref, ms) {
-  // v1.15.88: **দুই-বার-নিশ্চিত** — rousav/CDN-এর "নোড-লটারি": একই track_english.m3u8 কখনো
-  // HTTP ২০০ (ভাগ্যবান নোড), কখনো ৪০৪। প্রমাণ (পরপর ৩×৫ বার): bytes=0-1023-এ একবার ২০০,
-  // পরের ১৫ বারই ৪০৪। একক-প্রোব → মিথ্যা-জীবিত → ভাঙা single-audio কার্ড (ইউজার-অভিযোগের মূল)।
-  const T = Math.max(400, Math.min(ms || 1800, 2200));
-  // v1.15.94: **Range-পতন** — rousav ট্র্যাক-প্লেলিস্ট `Range: bytes=0-1023`-এ **৪০৪** দেয়,
-  // কিন্তু একই URL সাধারণ GET-এ **২০০** (পরিমাপ: ৯ ট্র্যাকের ৬টি Range-সহ ৪০৪ / Range-ছাড়া ২০০)।
-  // আগে এই Range-এর জন্যই সব ট্র্যাক "মৃত" গণ্য হতো → rousav-শাখায় single-audio কার্ডই তৈরি হতো না
-  // (`[mmtrk] rousav 9 স্ক্যান → জীবিত 0`)। এবার Range ব্যর্থ হলে **একবার Range ছাড়া** চেষ্টা।
-  const once = async (useRange) => {
+  const u0 = mmNormBridgeUrl(u);
+  const cached = mmGet(MM_WC, u0, 1800000) || mmGet(MM_WC, u, 1800000);
+  if (cached) return cached !== '__404__' && /#EXTM/i.test(cached);
+  const isR = mmRousav(u0);
+  const T = Math.max(400, Math.min(ms || (isR ? 3200 : 1800), isR ? 3200 : 2400));
+  if (/dash-hls-bridge\.johndoes/i.test(u0)) return true; // v1.15.99: callisto মাস্টার বৈধ হলে এর v3.m3u8 অডিও-ও একই MPD থেকে তৈরি (৬২১KB ডাউনলোড রোধ)
+  const once = async (useRange, orig) => {
     try {
       const h = { 'User-Agent': UA, Referer: ref || WO_REF };
-      if (useRange) h.Range = 'bytes=0-1023';
-      const r = await fetch(u, { headers: h, signal: AbortSignal.timeout(T) });
-      if (!(r.ok || r.status === 206)) return false;
+      if (useRange && !isR) h.Range = 'bytes=0-1023';
+      if (orig) h.Origin = orig;
+      const r = await fetch(u0, { headers: h, signal: AbortSignal.timeout(T) });
+      const cf = String(r.headers.get('cf-cache-status') || '');
+      if (!(r.ok || r.status === 206)) return { v: '', st: r.status, cf };
       const tx = await r.text().catch(() => '');
-      return /#EXTM/i.test(tx); // v1.15.88: বাস্তব HLS-টেক্সট বাধ্যতামূলক — ২০৬/২০০ + HTML (নরম-৪০৪) প্রত্যাখ্যান
-    } catch { return false; }
+      if (!/#EXTM/i.test(tx) || /^\s*<(!doctype|html)/i.test(tx)) return { v: '', st: r.status, cf };
+      if ((!useRange || isR || r.status === 200) && /#EXT-X-ENDLIST/i.test(tx) && tx.length < 450000) {
+        mmPut(MM_WC, u0, tx);
+        if (u !== u0) mmPut(MM_WC, u, tx);
+      }
+      return { v: (tx.match(/#EXTINF:/g) || []).length >= 10 ? 'full' : 'short', st: r.status, cf };
+    } catch { return { v: '', st: 0, cf: '' }; }
   };
-  const probe = async () => (await once(true)) || (await once(false)); // v1.15.94: Range → কাঁচা GET-এ পতন
-  if (!await probe()) return false; // প্রথমেই মৃত → আর ডাকা নয় (গতি রক্ষা)
-  return await probe();             // জীবিত → দ্বিতীয় বারে নিশ্চিত
+  if (isR) {
+    let r1 = await once(false, 'https://vidbolt.xyz');
+    if (!r1.v && r1.st === 404 && /hit/i.test(r1.cf)) r1 = await once(false, 'https://r1.vidbolt.xyz');
+    if (!r1.v) {
+      if (r1.st === 404 && !/hit/i.test(r1.cf)) mmPut(MM_WC, u0, '__404__');
+      return false;
+    }
+    if (r1.v === 'full') return true;
+    const r2 = await once(false, 'https://vidbolt.xyz');
+    return !!r2.v;
+  }
+  const probe = async () => {
+    const a = await once(true, '');
+    if (a.v) return a.v;
+    const b = await once(false, '');
+    return b.v;
+  };
+  const first = await probe();
+  if (!first) return false;
+  if (first === 'full') return true;
+  return !!(await probe());
 }
-// v1.15.88: single-audio পিন — ট্যাগ-তালিকায় **শুধু alang-এর অডিও-ট্র্যাক** রাখা (বাকি অডিও বাদ)।
-// mmMiniBuild ও মিনি-এন্ডপয়েন্ট **দুই জায়গায়** ব্যবহৃত — দুটোতেই একই ফলাফল, নাহলে শেষ-আউটপুটে
-// ফিল্টার এড়িয়ে যায় (প্রমাণ: শুধু mmMiniBuild-এ রাখলে /mini.m3u8-এর আউটপুটে সব ৫ অডিও ফিরে আসত)।
+// v1.15.88+99: single-audio পিন — ট্যাগ-তালিকায় **শুধু alang-এর অডিও-ট্র্যাক** রাখা (বাকি অডিও বাদ)।
 function mmPinAud(tags, alang) {
   if (!alang) return tags;
   const want = String(alang).toLowerCase();
@@ -2008,8 +2168,10 @@ function mmPinAud(tags, alang) {
   for (const tg of tags) {
     if (!/TYPE=AUDIO/i.test(tg)) { kept.push(tg); continue; } // অডিও-নয় (subs/key/map) — অক্ষত
     const lg = ((tg.match(/LANGUAGE="([^"]+)"/i) || [])[1] || '').toLowerCase();
-    const nm = ((tg.match(/NAME="([^"]+)"/i) || [])[1] || '').toLowerCase();
-    if (lg !== want && nm !== want) continue; // অন্য ভাষা → বাদ
+    const nmRaw = ((tg.match(/NAME="([^"]+)"/i) || [])[1] || '');
+    const nm = nmRaw.toLowerCase();
+    const nmClean = nmRaw.replace(/^\s*[\[(]?\d+[\]).]?\s*/, '').trim().toLowerCase();
+    if (lg !== want && nm !== want && nmClean !== want) continue; // অন্য ভাষা → বাদ
     kept.push(tg.replace(/DEFAULT=NO/i, 'DEFAULT=YES').replace(/AUTOSELECT=NO/i, 'AUTOSELECT=YES')
       + (/DEFAULT=/i.test(tg) ? '' : ',DEFAULT=YES'));
   }
@@ -2049,7 +2211,7 @@ async function mmVidbolt(tmdbId, isSeries, s, e, ms) { // v1.15.28: the vidbolt 
       let j = null;
       const jtxt = await mmPoolText('https://vidbolt.xyz/api/resolve?' + q, vLeft(6500));
       try { j = jtxt ? JSON.parse(jtxt) : null; } catch { }
-      const srcs = (j && j.stream && Array.isArray(j.stream.sources) ? j.stream.sources : []).slice(0, 8);
+      const srcs = (j && j.stream && Array.isArray(j.stream.sources) ? j.stream.sources : []).slice(0, MM_MAXLANG); // v1.15.99: ৮ → MM_MAXLANG (callisto-তে ১০-১২ ভাষা থাকে)
       if (!srcs.length) { // v1.15.31: rotation gap — a remembered master (sticky resolve memory) still emits one card; playback proves it
         const cm = mmGet(MM_VC, q, 1800000);
         if (cm && !MM_TILE.has(cm)) { push(0, cm, VB_REF, 0, '', '', 0, 'mem'); break; } // v1.15.38: DIRECT
@@ -2062,7 +2224,12 @@ async function mmVidbolt(tmdbId, isSeries, s, e, ms) { // v1.15.28: the vidbolt 
       // from the resolve labels — the player's mini-master pull rebuilds per-quality anyway.
       // MP4 cards (proxy.vidbolt.xyz — a different host, not the worker) unchanged.
       const hlsS = [], mp4S = [];
-      for (const sc of srcs) { if (!sc || !sc.url || !/^https?:/.test(sc.url)) continue; const isM = String(sc.kind || '').toLowerCase() === 'mp4' || /\.mp4($|\?)/i.test(sc.url); (isM ? mp4S : hlsS).push(sc); }
+      for (const sc of srcs) {
+        if (!sc || !sc.url || !/^https?:/.test(sc.url)) continue;
+        sc.url = mmNormBridgeUrl(sc.url); // v1.15.99: ৪২৯ ব্রিজ ওয়ার্কার নরমালাইজেশন
+        const isM = String(sc.kind || '').toLowerCase() === 'mp4' || /\.mp4($|\?)/i.test(sc.url);
+        (isM ? mp4S : hlsS).push(sc);
+      }
       const h0 = hlsS[0];
       if (h0 && /api_key=(&|$)/.test(h0.url)) { // v1.15.38: a resolve fetched through a flagged IP comes back soft-blocked with an EMPTY api_key — a keyless rousav master is dead weight; discard the draw
         if (DBG) console.error('[vbd] empty-key resolve, draw ' + draw + ' discarded');
@@ -2084,9 +2251,23 @@ async function mmVidbolt(tmdbId, isSeries, s, e, ms) { // v1.15.28: the vidbolt 
         // v1.15.56: প্রমাণ=কার্ডে-ঘোষিত-হেডার-ই (UA+Referer — notWebReady:true-তে-Stremio-ঠিক-এগুলোই-পাঠায়); em-ক্যাশ-বিশ্বাস-নয়
         // টাটকা-mmPoolText-ফেচ-থাকলে-সেটাই-প্রমাণ; না-হলে ২.৫সে+pool-rescue-প্রোব (worker-সহনশীল — ১.৬সে-এক-নিক্সে-COTE-ব্ল্যাঙ্ক-হয়েছিল)
         let h0Live = false;
+        let reelChecked = false;
         if (h0) {
           if (fresh0) h0Live = pl.indexOf('#EXTM') >= 0;
-          else { let t0 = ''; try { t0 = await mmPoolText(h0.url, 2500); } catch { } h0Live = t0.indexOf('#EXTM') >= 0; }
+          else if (em.indexOf('#EXTM') >= 0 && mmRousav(h0.url) && !mmIsTile(pl)) {
+            const hq0p = parseInt(String(h0.quality || ''), 10) || 0;
+            const v1p = mmPickVar(pl, h0.url, hq0p);
+            if (v1p) {
+              const vd0 = await mmReelCheck(v1p, vLeft);
+              reelChecked = true;
+              if (vd0 === 'real') { h0Live = true; MM_TILE.delete(h0.url); }
+              else if (vd0 === 'reel') { MM_TILE.add(h0.url); h0Live = false; }
+            }
+          }
+          if (!h0Live && !MM_TILE.has(h0.url) && !fresh0) {
+            let t0 = ''; try { t0 = await mmPoolText(h0.url, 2200); } catch { }
+            h0Live = t0.indexOf('#EXTM') >= 0;
+          }
           if (DBG && !h0Live) console.error('[vbd3] প্লেয়ার-অনাগাল-মাস্টার-বাদ: …' + String(h0.url).slice(-40));
         }
         if (h0Live && pl && pl.indexOf('#EXTM') >= 0) {
@@ -2106,7 +2287,7 @@ async function mmVidbolt(tmdbId, isSeries, s, e, ms) { // v1.15.28: the vidbolt 
         }
         let tileImg = false;
         if (mmIsTile(pl)) { const fs0 = mmFirstSeg(pl, sc0.url); tileImg = fs0 ? await mmProbeImg(fs0) : true; } // extension gate, then one magic-byte peek
-        if (!tileImg && !MM_TILE.has(sc0.url) && mmRousav(sc0.url)) {
+        if (!tileImg && !reelChecked && !MM_TILE.has(sc0.url) && mmRousav(sc0.url)) {
           const v1 = mmPickVar(pl, sc0.url, hq0);
           if (DBG) console.error('[vbd3] base-tail=…' + String(sc0.url).slice(-30) + ' | v1-tail=…' + String(v1).slice(-30));
           if (v1) { const vd = await mmReelCheck(v1, vLeft); if (vd === 'reel') tileImg = true; }
@@ -2121,36 +2302,49 @@ async function mmVidbolt(tmdbId, isSeries, s, e, ms) { // v1.15.28: the vidbolt 
             // প্লেয়ার ডিফল্ট-ট্র্যাক খুঁজে না-পেয়ে থেমে যায়/নিঃশব্দ চলে। তাই এখন **প্রতি ভাষা × কোয়ালিটি
             // single-audio কার্ড** (mini + alang-পিন) — প্লেয়ারের কোনো সিদ্ধান্ত নেই, একটিই অডিও-ট্র্যাক।
             const trks2 = mmAudTracks(pl);
+            if (trks2.length === 1 && /^audio$/i.test(trks2[0].name) && lang0) { // v1.15.99: callisto মাস্টারে NAME="Audio" থাকে, আসল ভাষা sc0.language-এ
+              trks2[0].name = lang0;
+              trks2[0].lang = lang0;
+            }
             const vls2 = mmVarList(pl, sc0.url);
             const vm2 = new Map();
             for (const v of vls2) if (!vm2.has(v.h)) vm2.set(v.h, v.uri);
             const cnd2 = [...vm2.entries()].sort((a, b) => b[0] - a[0]).slice(0, 4);
-            const pr2 = cnd2.length ? await Promise.all(cnd2.map(async cv => {
-              const q = await mmVarProbe(cv[1], VB_REF, Math.min(2600, vLeft(3000)));
-              return { h: cv[0], uri: cv[1], pr: q };
-            })) : [];
+            const skipPmt2 = trks2.length > 0 && cnd2.length > 0 && !/-a\d+\.(m3u8|txt)/i.test(cnd2[0][1]);
+            const chk2 = trks2.slice(0, MM_SCANTRK);
+            const [pr2, rs2] = await Promise.all([
+              cnd2.length ? Promise.all(cnd2.map(async cv => {
+                const q2 = await mmVarProbe(cv[1], VB_REF, Math.min(2600, Math.max(2000, vLeft(3000))), skipPmt2);
+                return { h: cv[0], uri: cv[1], pr: q2 };
+              })) : Promise.resolve([]),
+              chk2.length ? Promise.all(chk2.map(async t => {
+                let au = mmAbsUri(t.uri, sc0.url); // v1.15.94: api_key বহন করবে
+                let ok = await mmTrkProbe(au, VB_REF, 3200);
+                if (!ok && t.altUri) {
+                  const au2 = mmAbsUri(t.altUri, sc0.url);
+                  if (await mmTrkProbe(au2, VB_REF, 2200)) { t.uri = t.altUri; ok = true; }
+                }
+                return { t: t, ok: ok };
+              })) : Promise.resolve([])
+            ]);
             const live2 = pr2.filter(x => x.pr && x.pr.alive);
             const trkLive2 = [];
             let trkAllFail2 = false; // v1.15.96 (falcon-নীতি — ওপরে ইনডেক্স-শাখার ব্যাখ্যা দেখুন)
             if (trks2.length) {
-              const chk2 = trks2.slice(0, MM_SCANTRK); // v1.15.88: ৬ → ১২
-              const rs2 = await Promise.all(chk2.map(async t => {
-                let au = mmAbsUri(t.uri, sc0.url); // v1.15.94: api_key বহন করবে (আগে ৪০৪ → ট্র্যাক 'মৃত')
-                return { t: t, ok: await mmTrkProbe(au, VB_REF, 1800) };
-              }));
               for (const z of rs2) if (z.ok) trkLive2.push(z.t);
-              // v1.15.96: সব প্রোব ব্যর্থ → আমাদের আইপি ব্লক/রেট-লিমিটেড হতে পারে — ট্র্যাক মৃত নয়।
-              // (rousav-এ নিজে দেখেছি: ৬/৯ জীবিত → পরে ০/৯, আইপি ব্লক হওয়ায়। ডিভাইসে তখনও চলত।)
               trkAllFail2 = rs2.length > 0 && trkLive2.length === 0;
               if (DBG) console.error('[mmtrk] rousav ' + rs2.length + ' স্ক্যান → জীবিত ' + trkLive2.length + (trkAllFail2 ? ' — সব ব্যর্থ, আইপি-ব্লক ধরে **মাস্টার-বিশ্বাস**' : '') + ' [' + trkLive2.map(z2 => z2.lang).join(',') + ']');
               if (DBG) console.error('[mmtrk] live2=' + live2.length + ' [' + live2.map(z2 => z2.h + (z2.pr && z2.pr.muxed ? ':mux' : '')) + ']');
             }
             const trkUse2 = trkLive2.length ? trkLive2 : (trkAllFail2 ? trks2.slice(0, MM_MAXLANG) : []); // v1.15.96
+            if (trkUse2.length && skipPmt2) {
+              for (const v of live2) if (!MM_MUX.has(v.uri)) MM_MUX.set(v.uri, 0);
+            }
             let pcount = 0;
             for (const v of live2) {
               if (trkUse2.length) { // v1.15.96: জীবিত, নাহলে আইপি-ব্লকে মাস্টার-বিশ্বাস
                 for (const t of trkUse2.slice(0, MM_MAXLANG)) {
-                  push(v.h, sc0.url, VB_REF, 0, t.name, '', 1, 'sa' + t.key + 'h' + v.h, t.key, mmLangBlob(t));
+                  push(v.h, sc0.url, VB_REF, 0, t.name, '', 1, 'sa' + (t.key === 'audio' ? lang0.toLowerCase() : t.key) + 'h' + v.h, t.key, mmLangBlob(t));
                   pcount++;
                 }
               } else if (v.pr.muxed) { // অডিও-গ্রুপ মৃত, ভ্যারিয়েন্ট মাক্সড → সরাসরি ভ্যারিয়েন্ট (দ্রুততম)
@@ -2181,13 +2375,14 @@ async function mmVidbolt(tmdbId, isSeries, s, e, ms) { // v1.15.28: the vidbolt 
         // stream-টাইমে শূন্য worker-হিট — r1.15.31-রেট-লিমিট-নিরাপদ; tile-প্রোটেক্টেড):
         // v1.15.56 (ইউজার: Lanterns-এ-MM "slow/চলেই না" — রোগ: মৃত-মাস্টারের-কার্ড, যেমন discountcouponfinds=404; শুধু-MM-স্কোপ):
         // প্রতি-ইউনিক-মাস্টার-একবার-সমান্তরাল-প্রমাণ (~1.6s-বাজেট): #EXTM-না-এলে মৃত → কার্ড-নেই; লাইভ-মাস্টার-আগে-সাজানো-তাই-লাইভ-আগে-কার্ড
-        const langSeen = new Map(); const mmAlive = new Map();
-        if (h0Live && hlsS[0]) mmAlive.set(hlsS[0].url, true); // sc0-টাটকা-প্রমাণিত — পুনঃপ্রোব-নয়
+        const langSeen = new Map(); const mmAlive = new Map(); const mmBody = new Map();
+        if (h0Live && hlsS[0]) { mmAlive.set(hlsS[0].url, true); if (pl) mmBody.set(hlsS[0].url, pl); } // sc0-টাটকা-প্রমাণিত — পুনঃপ্রোব-নয়
         const mmU = [...new Set(hlsS.map(x => x && x.url).filter(Boolean))].filter(u2 => !mmAlive.has(u2));
         await Promise.all(mmU.map(async u2 => {
           let t2 = ''; try { t2 = await mmPoolText(u2, 2500); } catch { }
           const ok2 = t2.indexOf('#EXTM') >= 0;
           mmAlive.set(u2, ok2);
+          if (ok2) { mmPut(MM_MC, u2, t2); mmBody.set(u2, t2); }
           if (!ok2 && DBG) console.error('[vbd3] মৃত-মাস্টার-বাদ: …' + String(u2).slice(-40));
         }));
         for (let i2 = 0; i2 < hlsS.length; i2++) {
@@ -2199,7 +2394,20 @@ async function mmVidbolt(tmdbId, isSeries, s, e, ms) { // v1.15.28: the vidbolt 
           langSeen.set(lang2, (langSeen.get(lang2) || 0) + 1);
           const hq2 = parseInt(String(sc2.quality || ''), 10) || hq0 || 0;
           if (i2 === 0 && pl && pl.indexOf('#EXTM') >= 0) continue; // sc0-প্রমাণ-পাস → ওর-কার্ড উপরেই-গেছে (whole/variants)
-          push(hq2, sc2.url, VB_REF, 0, lang2, '', 0); // v1.15.55: DIRECT (beamup-মিনি-হপ-বাদ; লেবেল=কার্ড-টেক্সটে)
+          const b2 = mmBody.get(sc2.url) || '';
+          const vlsB = b2 ? mmVarList(b2, sc2.url) : [];
+          if (b2 && woHasAudioGrp(b2) && vlsB.length) {
+            const trksB = mmAudTracks(b2);
+            const aKeyB = (trksB[0] && trksB[0].key) || 'audio';
+            const vmB = new Map();
+            for (const vB of vlsB) if (!vmB.has(vB.h)) vmB.set(vB.h, vB.uri);
+            for (const [hB, uB] of [...vmB.entries()].sort((a, b) => b[0] - a[0]).slice(0, 4)) {
+              if (!MM_MUX.has(uB)) MM_MUX.set(uB, 0);
+              push(hB, sc2.url, VB_REF, 0, lang2, '', 1, 'sa2_' + i2 + '_' + hB, aKeyB, mmLangBlob({ key: lang2.toLowerCase(), lang: lang2, name: lang2 }));
+            }
+          } else {
+            push(hq2, sc2.url, VB_REF, 0, lang2, '', 0); // v1.15.55: DIRECT (beamup-মিনি-হপ-বাদ; লেবেল=কার্ড-টেক্সটে)
+          }
         }
       }
       break; // a productive draw is enough
@@ -2215,6 +2423,7 @@ async function mmStreams(tmdbId, title, type, s, e, origin, maxh, rel) { // v1.1
     const isSeries = type === 'series';
     const u = isSeries ? (WOBASE + '/hls/tv/' + tmdbId + '/S' + (parseInt(s, 10) || 1) + '.json') : (WOBASE + '/hls/movie/' + tmdbId);
     const vbP = mmVidbolt(tmdbId, isSeries, s, e, left()).catch(() => []); // parallel — index present or not
+    const subsP = woSubs(tmdbId, type, s, e, 2500).catch(() => []); // v1.15.99: সমান্তরালে সাবটাইটেল ফেচ (শেষে ব্লক না করা)
     const idxRes = await woFetch(u, left()).catch(() => null);
     const idxTxt = idxRes && idxRes.ok ? await idxRes.text().catch(() => '') : '';
     let servers = [];
@@ -2245,35 +2454,37 @@ async function mmStreams(tmdbId, title, type, s, e, origin, maxh, rel) { // v1.1
         const vmap = new Map(); // প্রতি-উচ্চতায় একটি করে ভ্যারিয়েন্ট (ডুপ-বাদ)
         for (const v of vls) if (!vmap.has(v.h)) vmap.set(v.h, v.uri);
         const cands = [...vmap.entries()].sort((a, b) => b[0] - a[0]).slice(0, 4);
-        // সমান্তরাল প্রোব: কোন ভ্যারিয়েন্ট সত্যিই জীবিত + তার TS-এ অডিও মাক্সড কি
-        const probed = cands.length ? await Promise.all(cands.map(async cv => {
-          const pr = await mmVarProbe(cv[1], WO_REF, Math.min(2600, left()));
-          return { h: cv[0], uri: cv[1], pr: pr };
-        })) : [];
+        const skipPmt = trks.length > 0 && cands.length > 0 && !/-a\d+\.(m3u8|txt)/i.test(cands[0][1]);
+        const chk = trks.slice(0, MM_SCANTRK);
+        // সমান্তরাল প্রোব: ভ্যারিয়েন্ট ও অডিও-ট্র্যাক একই সাথে যাচাই (২× দ্রুত)
+        const [probed, rs] = await Promise.all([
+          cands.length ? Promise.all(cands.map(async cv => {
+            const pr = await mmVarProbe(cv[1], WO_REF, Math.min(2600, left()), skipPmt);
+            return { h: cv[0], uri: cv[1], pr: pr };
+          })) : Promise.resolve([]),
+          chk.length ? Promise.all(chk.map(async t => {
+            let au = mmAbsUri(t.uri, base); // v1.15.94: api_key বহন করবে
+            let ok = await mmTrkProbe(au, WO_REF, 1800);
+            if (!ok && t.altUri) {
+              const au2 = mmAbsUri(t.altUri, base);
+              if (await mmTrkProbe(au2, WO_REF, 1800)) { t.uri = t.altUri; ok = true; }
+            }
+            return { t: t, ok: ok };
+          })) : Promise.resolve([])
+        ]);
         const liveV = probed.filter(x => x.pr && x.pr.alive);
         // অডিও-ট্র্যাক জীবিত? (মাস্টার ঘোষণা ≠ বাজানো-যাওয়া — The Runner-এর ২০ ট্র্যাকই ৪০৪)
         const trkLive = [];
         let trkAllFail = false; // v1.15.96
         if (trks.length) {
-          const chk = trks.slice(0, MM_SCANTRK); // v1.15.88: ৬ নয় — ১২ স্ক্যান (The Runner-এর হিন্দি/জাপানি ৯ম/১১শ)
-          const rs = await Promise.all(chk.map(async t => {
-            let au = mmAbsUri(t.uri, base); // v1.15.94: api_key বহন করবে (আগে ৪০৪ → ট্র্যাক 'মৃত')
-            return { t: t, ok: await mmTrkProbe(au, WO_REF, 1800) };
-          }));
           for (const z of rs) if (z.ok) trkLive.push(z.t);
-          // v1.15.96 — **falcon-নীতি** (xre000001-ai/falcon, public/netflix.js:328):
-          //   "মাস্টার-বৈধ-ই-যথেষ্ট: ভ্যারিয়েন্ট-প্রিচেক-বাদ (গতি + ডিভাইস-সত্য —
-          //    সার্ভার-IP-ব্লক-তবু-ডিভাইসে-চলে)"
-          // আমরা **নিজেদের সার্ভারের আইপি** থেকে প্রোব করি, কিন্তু বাজানো হয় **ইউজারের ডিভাইস** থেকে।
-          // তাই "সব প্রোব ব্যর্থ" মানে ট্র্যাক মৃত নয় — অনেক সময় মানে **আমাদের আইপি ব্লক/রেট-লিমিটেড**
-          // (নিজেই দেখেছি: rousav-এ প্রথমে ৬/৯ জীবিত, কিছুক্ষণেই ০/৯ — আইপি ব্লক হওয়ায়)।
-          // আগে এই অবস্থায় per-ভাষা কার্ডই বাদ পড়ত → "৫-৬ ভাষা" অভিযোগের মূল।
-          // এখন: সব ব্যর্থ + মাস্টার ঘোষণা করেছে → **মাস্টার-বিশ্বাস** (ঘোষিত ট্র্যাক দিয়েই কার্ড)।
-          // কোনোটা সত্যিই মৃত হলেও ক্ষতি নেই — বর্তমান ফলব্যাক (হোল-মাস্টার) তার চেয়ে ভালো নয়।
           trkAllFail = rs.length > 0 && trkLive.length === 0;
           if (DBG) console.error('[mmtrk] index ' + rs.length + ' স্ক্যান → জীবিত ' + trkLive.length + (trkAllFail ? ' — সব ব্যর্থ, আইপি-ব্লক ধরে **মাস্টার-বিশ্বাস**' : '') + ' [' + trkLive.map(z2 => z2.lang).join(',') + ']');
         }
         const trkUse = trkLive.length ? trkLive : (trkAllFail ? trks.slice(0, MM_MAXLANG) : []); // v1.15.96
+        if (trkUse.length && skipPmt) {
+          for (const v of liveV) if (!MM_MUX.has(v.uri)) MM_MUX.set(v.uri, 0);
+        }
         let pcount = 0;
         for (const v of liveV) {
           if (trkUse.length) { // জীবিত অডিও-গ্রুপ (বা আইপি-ব্লকে মাস্টার-বিশ্বাস) → প্রতি ভাষায় single-audio (alang-পিন)
@@ -2325,7 +2536,7 @@ async function mmStreams(tmdbId, title, type, s, e, origin, maxh, rel) { // v1.1
     const fvars = maxh ? raws.filter(x => !x.h || x.h <= maxh) : raws; // v1.15.39: config-রেজোলিউশন-ফিল্টার — অজানা-উচ্চতা (0) সবসময়-থাকে
     const vars = fvars.slice().sort((a, b) => b.h - a.h).slice(0, 60); // v1.15.51: 12→16 // v1.15.88: 16→20 (কোয়ালিটি×ভাষা মেট্রিক্স — ১৬-এ ৪৮০p-সারি কেটে যেত) // v1.15.91: ২০ → ৬০ (১৩ ভাষা × ৩-৪ কোয়ালিটি = ৩৯-৫২ কার্ড ধরা পড়ুক)
     if (!vars.length) return [];
-    const subs = await woSubs(tmdbId, type, s, e, left()).catch(() => []);
+    const subs = await subsP;
     const T = String(title || 'Multimovies');
     const epLine = isSeries ? ('\u29e0 S' + (parseInt(s, 10) || 1) + 'E' + (parseInt(e, 10) || 1)) : '\u29e0 Movie';
     return vars.map(x => {
@@ -4546,7 +4757,7 @@ const server = http.createServer((req, res) => {
           const audN = mmAudIdx(raw, ent.alang);
           let usedLangVar = false;
           // v1.15.90+97: ভাষা-মেলানো মাক্সড ভ্যারিয়েন্ট (-aN) থাকলে সেটিই ব্যবহার; ৪০৪ হলে '__404__' নেগেটিভ-ক্যাশ
-          if (ent.alang && top && audN > 1) {
+          if (ent.alang && top && audN > 1 && /-a1\.(m3u8|txt)/i.test(top)) {
             const tL = mmPickVarLang(raw, ent.m, ent.h, ent.alang);
             if (tL) {
               try {
@@ -4560,63 +4771,85 @@ const server = http.createServer((req, res) => {
             }
           }
           if (top) {
-            let vbest = mmGet(MM_WC, top, 1800000) || '';
-            if (vbest === '__404__') vbest = '';
-            if (!vbest) {
-              for (let a3 = 0; a3 < 3; a3++) { try { const vt3 = await mmPoolText(top, 5500); if (vt3 && vt3.indexOf('#EXTM') >= 0 && vt3.length > vbest.length) vbest = vt3; } catch { } if (vbest.length > 20000) break; }
-              if (vbest) mmPut(MM_WC, top, vbest);
+            let tgRaw = mmMasterTags(raw, ent.m);
+            let tg = ent.alang ? mmPinAud(String(tgRaw).split('\n'), ent.alang).join('\n') : tgRaw;
+            if (ent.lang && tg) {
+              tg = tg.replace(/(#EXT-X-MEDIA:TYPE=AUDIO[^\n]*?NAME=")(?!Hindi|Japanese|English|French|Arabic|Spanish|Russian|Indonesian|Tagalog|Portuguese|German|Tamil|Telugu|Korean|Chinese|Italian|Bengali|Turkish)([^"]*)(")/i, '$1' + String(ent.lang).replace(/"/g, '') + '$3');
             }
-            if (vbest) {
-              let tgRaw = mmMasterTags(raw, ent.m);
-              let tg = ent.alang ? mmPinAud(String(tgRaw).split('\n'), ent.alang).join('\n') : tgRaw;
-              if (ent.lang && tg) {
-                tg = tg.replace(/(#EXT-X-MEDIA:TYPE=AUDIO[^\n]*?NAME=")(?!Hindi|Japanese|English|French|Arabic|Spanish|Russian|Indonesian|Tagalog|Portuguese|German|Tamil|Telugu|Korean|Chinese|Italian|Bengali|Turkish)([^"]*)(")/i, '$1' + String(ent.lang).replace(/"/g, '') + '$3');
-              }
-              let muxv = MM_MUX.get(top);
-              if (muxv === undefined) {
-                let muxOK = false;
-                try { const pr = await mmVarProbe(top, ent.ref || VB_REF, 2200); muxOK = !!(pr && pr.muxed); } catch { }
-                MM_MUX.set(top, muxOK ? 1 : 0);
-                muxv = muxOK ? 1 : 0;
-              }
-              const inl = mmVarInline(top, vbest);
-              // v1.15.97: যদি ভ্যারিয়েন্টে শুধু ১ম ভাষা (a1) মাক্সড থাকে কিন্তু ইউজার ২য়..N-তম ভাষা চেয়েছেন এবং -aN ভ্যারিয়েন্ট নেই
-              // (যেমন Spider-Man contentpublishing-এ हिन्दी/தமிழ்/తెలుగు/ಕನ್ನಡ/മലയാളം আলাদা index-a2..a6.txt-এ),
-              // তবে অবশ্যই mmMasterForm ব্যবহার করতে হবে — নাহলে সব কার্ডেই English বাজবে!
-              const needExtAud = (muxv !== 1) || (audN > 1 && !usedLangVar);
-              if (needExtAud) {
-                const mf = mmMasterForm(raw, ent.m, top, tg, origin2, qsTail);
-                if (mf) {
-                  mini = mf; isMasterForm = true;
-                  if (!mmDirect) {
-                    const auTagUri = ((String(tg || '').match(/URI="([^"]+)"/i)) || [])[1] || '';
-                    setImmediate(async () => {
-                      try {
-                        if (inl) {
-                          const vfs = (inl.match(/^https?:\/\/\S+$/gm) || []).find(u2 => !/\.m3u8(\?|$)/i.test(u2));
-                          if (rel || (vfs && await mmNeedsRef(vfs))) mmPrewarmPlaylistSegs(inl);
-                        }
-                        if (/^https?:/i.test(auTagUri)) {
-                          let atx = mmGet(MM_WC, auTagUri, 1800000) || '';
-                          if (!atx || atx === '__404__' || atx.indexOf('#EXTM') < 0) {
-                            atx = await mmPoolText(auTagUri, 5000);
-                            if (atx && atx.indexOf('#EXTM') >= 0) mmPut(MM_WC, auTagUri, atx);
-                          }
-                          if (atx && atx.indexOf('#EXTM') >= 0) {
-                            const ainl = mmVarInline(auTagUri, atx);
-                            const afs = (ainl.match(/^https?:\/\/\S+$/gm) || []).find(u2 => !/\.m3u8(\?|$)/i.test(u2));
-                            if (rel || (afs && await mmNeedsRef(afs))) mmPrewarmPlaylistSegs(ainl);
-                          }
-                        }
-                      } catch { }
-                    });
-                  }
+            const hasExtAudUri = /#EXT-X-MEDIA:[^\n]*TYPE=AUDIO[^\n]*URI="/i.test(raw);
+            const isMuxedCand = /-a\d+\.(m3u8|txt)/i.test(top || '');
+            const knownExtAud = (audN > 1 && !usedLangVar) || MM_MUX.get(top) === 0 || (hasExtAudUri && !!ent.alang && !isMuxedCand);
+            // v1.15.99: যখন বাহ্যিক অডিও নিশ্চিত (যেমন rousav-এর Greek/Spanish/German বা contentpublishing-এর ২য়+ ভাষা),
+            // তখন vbest ও mmVarProbe-এর জন্য ২–৫ সেকেন্ড অপেক্ষা না করে তাৎক্ষণিক (~১ms) mmMasterForm রিটার্ন + পটভূমিতে উভয় প্লেলিস্ট ও সেগমেন্ট প্রি-ওয়ার্ম!
+            if (knownExtAud) {
+              const mf = mmMasterForm(raw, ent.m, top, tg, origin2, qsTail);
+              if (mf) {
+                mini = mf; isMasterForm = true;
+                if (!mmDirect) {
+                  const auTagUri = ((String(tg || '').match(/URI="([^"]+)"/i)) || [])[1] || '';
+                  setImmediate(() => {
+                    if (!/dash-hls-bridge\.johndoes/i.test(top)) {
+                      mmGetOrFetchPlaylist(top, 5500).then(async vtx => {
+                        if (!vtx || vtx.indexOf('#EXTM') < 0) return;
+                        const vinl = mmVarInline(top, vtx);
+                        const vfs = (vinl.match(/^https?:\/\/\S+$/gm) || []).find(u2 => !/\.m3u8(\?|$)/i.test(u2));
+                        if (rel || mmRousav(vfs) || mmRousav(top) || (vfs && await mmNeedsRef(vfs))) mmPrewarmPlaylistSegs(vinl);
+                      }).catch(() => { });
+                    }
+                    if (/^https?:/i.test(auTagUri) && !/dash-hls-bridge\.johndoes/i.test(auTagUri)) {
+                      mmGetOrFetchPlaylist(auTagUri, 5000).then(async atx => {
+                        if (!atx || atx.indexOf('#EXTM') < 0) return;
+                        const ainl = mmVarInline(auTagUri, atx);
+                        const afs = (ainl.match(/^https?:\/\/\S+$/gm) || []).find(u2 => !/\.m3u8(\?|$)/i.test(u2));
+                        if (rel || mmRousav(afs) || mmRousav(auTagUri) || (afs && await mmNeedsRef(afs))) mmPrewarmPlaylistSegs(ainl);
+                      }).catch(() => { });
+                    }
+                  });
                 }
-                else if (inl) mini = inl;
-              } else if (inl) {
-                // মাক্সড MEDIA-প্লেলিস্টে কখনোই মাস্টার-ট্যাগ (#EXT-X-MEDIA / #EXT-X-I-FRAME-STREAM-INF) ঢোকানো যাবে না
-                const mediaKeys = String(tg || '').split('\n').filter(l2 => /^#EXT-X-(KEY|MAP|SESSION)/i.test(l2)).join('\n');
-                mini = mediaKeys ? mmM3UJoin(mediaKeys, inl) : inl;
+              }
+            }
+            if (!isMasterForm) {
+              let vbest = await mmGetOrFetchPlaylist(top, 5500);
+              if (vbest) {
+                let muxv = MM_MUX.get(top);
+                if (muxv === undefined) {
+                  let muxOK = false;
+                  try { const pr = await mmVarProbe(top, ent.ref || VB_REF, 2200); muxOK = !!(pr && pr.muxed); } catch { }
+                  MM_MUX.set(top, muxOK ? 1 : 0);
+                  muxv = muxOK ? 1 : 0;
+                }
+                const inl = mmVarInline(top, vbest);
+                const needExtAud = (muxv !== 1) || (audN > 1 && !usedLangVar);
+                if (needExtAud) {
+                  const mf = mmMasterForm(raw, ent.m, top, tg, origin2, qsTail);
+                  if (mf) {
+                    mini = mf; isMasterForm = true;
+                    if (!mmDirect) {
+                      const auTagUri = ((String(tg || '').match(/URI="([^"]+)"/i)) || [])[1] || '';
+                      setImmediate(async () => {
+                        try {
+                          if (inl) {
+                            const vfs = (inl.match(/^https?:\/\/\S+$/gm) || []).find(u2 => !/\.m3u8(\?|$)/i.test(u2));
+                            if (rel || mmRousav(vfs) || mmRousav(top) || (vfs && await mmNeedsRef(vfs))) mmPrewarmPlaylistSegs(inl);
+                          }
+                          if (/^https?:/i.test(auTagUri)) {
+                            const atx = await mmGetOrFetchPlaylist(auTagUri, 5000);
+                            if (atx && atx.indexOf('#EXTM') >= 0) {
+                              const ainl = mmVarInline(auTagUri, atx);
+                              const afs = (ainl.match(/^https?:\/\/\S+$/gm) || []).find(u2 => !/\.m3u8(\?|$)/i.test(u2));
+                              if (rel || mmRousav(afs) || mmRousav(auTagUri) || (afs && await mmNeedsRef(afs))) mmPrewarmPlaylistSegs(ainl);
+                            }
+                          }
+                        } catch { }
+                      });
+                    }
+                  }
+                  else if (inl) mini = inl;
+                } else if (inl) {
+                  // মাক্সড MEDIA-প্লেলিস্টে কখনোই মাস্টার-ট্যাগ (#EXT-X-MEDIA / #EXT-X-I-FRAME-STREAM-INF) ঢোকানো যাবে না
+                  const mediaKeys = String(tg || '').split('\n').filter(l2 => /^#EXT-X-(KEY|MAP|SESSION)/i.test(l2)).join('\n');
+                  mini = mediaKeys ? mmM3UJoin(mediaKeys, inl) : inl;
+                }
               }
             }
           }
@@ -4624,7 +4857,10 @@ const server = http.createServer((req, res) => {
         let relOn = rel;
         if (!isMasterForm && !relOn && !mmDirect) {
           const fs0 = (mini.match(/^https?:\/\/\S+$/gm) || []).find(u2 => !/\.m3u8(\?|$)/i.test(u2));
-          if (fs0) { try { if (await mmNeedsRef(fs0)) relOn = 1; } catch { } }
+          if (fs0) {
+            if (mmRousav(fs0)) relOn = 1;
+            else { try { if (await mmNeedsRef(fs0)) relOn = 1; } catch { } }
+          }
         }
         let miniOut = mini;
         if (relOn && !isMasterForm) {
@@ -4639,25 +4875,22 @@ const server = http.createServer((req, res) => {
         return res.end(miniOut);
       } catch { res.writeHead(502, { 'content-type': 'text/plain' }); return res.end('upstream-err'); }
     })();
-    // v1.15.90+97: **অডিও ও ভিডিও প্লেলিস্ট ইনলাইনার** — /mma/<b64url(প্লেলিস্ট)>/a.m3u8
+    // v1.15.90+97+99: **অডিও ও ভিডিও প্লেলিস্ট ইনলাইনার** — /mma/<b64url(প্লেলিস্ট)>/a.m3u8
     const mmAR = p.match(/^\/mma\/([A-Za-z0-9_=-]{8,2400})\/a\.m3u8$/);
     if (mmAR) return (async () => {
       let au = '';
       try { au = Buffer.from(mmAR[1], 'base64url').toString('utf8'); } catch { }
       if (!/^https?:\/\//i.test(au)) { res.writeHead(400, { 'content-type': 'text/plain' }); return res.end('bad'); }
+      au = mmNormBridgeUrl(au);
       try {
-        let tx = mmGet(MM_WC, au, 1800000) || '';
-        if (tx === '__404__') tx = '';
-        if (!tx || tx.indexOf('#EXTM') < 0) {
-          for (let a4 = 0; a4 < 2 && (!tx || tx.indexOf('#EXTM') < 0); a4++) tx = await mmPoolText(au, 6000);
-          if (tx && tx.indexOf('#EXTM') >= 0) mmPut(MM_WC, au, tx);
-        }
+        const tx = await mmGetOrFetchPlaylist(au, 6000);
         if (!tx || tx.indexOf('#EXTM') < 0) { res.writeHead(502, { 'content-type': 'text/plain' }); return res.end('upstream'); }
         let out = mmVarInline(au, tx) || tx; // absolute + keyed
         let aRel = rel;
         if (!aRel && !mmDirect) {
           const afs = (out.match(/^https?:\/\/\S+$/gm) || []).find(u2 => !/\.m3u8(\?|$)/i.test(u2)) || au;
-          try { if (await mmNeedsRef(afs)) aRel = 1; } catch { }
+          if (mmRousav(afs) || mmRousav(au)) aRel = 1; // v1.15.99: rousav সেগমেন্টগুলো /mmr/ লুকঅ্যাহেড প্রিফেচ ও রিলে দিয়ে (যাতে 00000.png ৪০৪ ও ৪-১৬সে cf=MISS স্টল না ঘটে)
+          else { try { if (await mmNeedsRef(afs)) aRel = 1; } catch { } }
         }
         if (aRel) {
           mmPrewarmPlaylistSegs(out);
