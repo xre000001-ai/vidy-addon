@@ -4075,7 +4075,9 @@ const server = http.createServer((req, res) => {
       if (!/^https?:\/\//i.test(tgt)) { try { res.writeHead(400); } catch { } return res.end('bad'); }
       try {
         const g = await m4hGeo(tgt);
-        if (!g) { try { res.writeHead(404, { 'content-type': 'text/plain' }); } catch { } return res.end('no-cues'); }
+        // v1.15.92-গ: **কখনোই ভাঙব না** — Cues না-থাকলে/পাওয়া না-গেলে আগের আচরণেই ফেরত (সরাসরি MKV)।
+        // (না-হলে ওই কার্ডটি একেবারে ৪০৪ হয়ে যেত — Make Me Tingle-এর ক্ষেত্রেই ধরা পড়ল।)
+        if (!g) { try { res.writeHead(302, { location: tgt, 'cache-control': 'no-store' }); } catch { } return res.end(); }
         const pl = m4hPlaylist(tgt, g, originOf(req));
         res.writeHead(200, {
           'content-type': 'application/vnd.apple.mpegurl', 'cache-control': 'no-store',
@@ -4094,7 +4096,9 @@ const server = http.createServer((req, res) => {
       if (!/^https?:\/\//i.test(tgt)) { try { res.writeHead(400); } catch { } return res.end('bad'); }
       try {
         const g = await m4hGeo(tgt);
-        if (!g) { try { res.writeHead(404, { 'content-type': 'text/plain' }); } catch { } return res.end('no-cues'); }
+        // v1.15.92-গ: **কখনোই ভাঙব না** — Cues না-থাকলে/পাওয়া না-গেলে আগের আচরণেই ফেরত (সরাসরি MKV)।
+        // (না-হলে ওই কার্ডটি একেবারে ৪০৪ হয়ে যেত — Make Me Tingle-এর ক্ষেত্রেই ধরা পড়ল।)
+        if (!g) { try { res.writeHead(302, { location: tgt, 'cache-control': 'no-store' }); } catch { } return res.end(); }
         const buf = await m4iInit(tgt, g);
         res.writeHead(200, {
           'content-type': 'video/x-matroska', 'content-length': String(buf.length),
