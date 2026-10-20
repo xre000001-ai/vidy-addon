@@ -330,27 +330,88 @@ function mmLooksReel(tx) { // short total + ENDLIST = a stub listing (the reel's
   const d4 = String(tx).split('\n').reduce((a4, l4) => { const m4 = l4.match(/^#EXTINF:([\d.]+)/); return m4 ? a4 + parseFloat(m4[1]) : a4; }, 0);
   return d4 > 0 && d4 < 900;
 }
-async function mmReelCheck(v1, vLeft) { // v1.15.97+99: প্রথম ব্যর্থতায় থামা + Origin ক্যাশ-কী উদ্ধার + পূর্ণ প্লেলিস্ট MM_WC-তে সংরক্ষণ
+async function mmReelCheck(v1, vLeft) { // v1.15.97+99: স্ট্রিমিং হেড ফাস্ট-পাথ (~৭KB পড়লেই real সিদ্ধান্ত) + পটভূমিতে সম্পূর্ণ প্লেলিস্ট MM_WC-তে ক্যাশ
   const rc0 = Date.now(); let stubs = 0, hits = 0, efirst = '';
   const isR = mmRousav(v1);
   for (let q5 = 0; q5 < 3; q5++) {
     const tmo = Math.max(900, Math.min(2800, vLeft ? vLeft(3200) : 2500));
-    let vt = '';
     try {
       const hd5 = { 'User-Agent': UA, Referer: VB_REF };
       if (isR) hd5.Origin = 'https://vidbolt.xyz';
-      let rr5 = await fetch(v1, { headers: hd5, signal: AbortSignal.timeout(tmo) });
+      const ac5 = new AbortController();
+      const bgTmo = setTimeout(() => ac5.abort(), 9000);
+      bgTmo.unref();
+      let rr5 = await Promise.race([
+        fetch(v1, { headers: hd5, signal: ac5.signal }),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('tmo')), tmo).unref())
+      ]);
       if (!rr5.ok && isR && rr5.status === 404) {
+        try { ac5.abort(); } catch { }
+        const ac5b = new AbortController();
+        const bgTmoB = setTimeout(() => ac5b.abort(), 9000);
+        bgTmoB.unref();
         hd5.Origin = 'https://r1.vidbolt.xyz';
-        rr5 = await fetch(v1, { headers: hd5, signal: AbortSignal.timeout(tmo) });
+        rr5 = await Promise.race([
+          fetch(v1, { headers: hd5, signal: ac5b.signal }),
+          new Promise((_, rej) => setTimeout(() => rej(new Error('tmo')), tmo).unref())
+        ]);
       }
-      vt = rr5.ok ? await rr5.text() : '';
-      if (!rr5.ok && !efirst) efirst = 'HTTP' + rr5.status;
-    } catch (e6) { if (!efirst) efirst = (e6 && e6.message || 'err'); }
-    if (!vt || vt.indexOf('#EXTM') < 0) { if (DBG) console.error('[reelchk] non-m3u8 body: ' + JSON.stringify(vt.slice(0, 60)) + ' len=' + vt.length); break; }
-    hits++;
-    if (!mmLooksReel(vt)) { mmPut(MM_WC, v1, vt); if (DBG) console.error('[reelchk] FULL el=' + (Date.now() - rc0) + 'ms'); return 'real'; }
-    stubs++;
+      if (!rr5.ok) {
+        clearTimeout(bgTmo);
+        if (!efirst) efirst = 'HTTP' + rr5.status;
+        break;
+      }
+      if (isR && rr5.body && rr5.body.getReader) {
+        const fastRes = await new Promise(resolve => {
+          let settled = false, vt = '';
+          const rdr = rr5.body.getReader();
+          const dec = new TextDecoder();
+          const hdT = setTimeout(() => { if (!settled) { settled = true; resolve('tmo'); } }, tmo);
+          hdT.unref();
+          (async () => {
+            try {
+              while (true) {
+                const { done, value } = await rdr.read();
+                if (done) break;
+                if (value) vt += dec.decode(value, { stream: true });
+                if (!settled && vt.length >= 2048) {
+                  if (/^\s*<(!doctype|html)/i.test(vt)) {
+                    settled = true; clearTimeout(hdT); clearTimeout(bgTmo);
+                    try { await rdr.cancel(); } catch { }
+                    resolve('bad'); return;
+                  }
+                  if (vt.indexOf('#EXTM') >= 0 && (vt.match(/#EXTINF:/g) || []).length >= 190) {
+                    settled = true; clearTimeout(hdT);
+                    resolve('real');
+                  }
+                }
+              }
+              vt += dec.decode();
+              if (vt.indexOf('#EXTM') >= 0 && !mmLooksReel(vt) && vt.length < 450000) mmPut(MM_WC, v1, vt);
+              if (!settled) {
+                settled = true; clearTimeout(hdT);
+                if (!vt || vt.indexOf('#EXTM') < 0) resolve('bad');
+                else if (!mmLooksReel(vt)) resolve('real');
+                else resolve('stub');
+              }
+            } catch {
+              if (!settled) { settled = true; clearTimeout(hdT); resolve('err'); }
+            } finally {
+              clearTimeout(bgTmo);
+            }
+          })();
+        });
+        if (fastRes === 'real') { if (DBG) console.error('[reelchk] FULL el=' + (Date.now() - rc0) + 'ms'); return 'real'; }
+        if (fastRes === 'stub') { hits++; stubs++; continue; }
+        break;
+      }
+      const vt = await rr5.text().catch(() => '');
+      clearTimeout(bgTmo);
+      if (!vt || vt.indexOf('#EXTM') < 0) break;
+      hits++;
+      if (!mmLooksReel(vt)) { mmPut(MM_WC, v1, vt); if (DBG) console.error('[reelchk] FULL el=' + (Date.now() - rc0) + 'ms'); return 'real'; }
+      stubs++;
+    } catch (e6) { if (!efirst) efirst = (e6 && e6.message || 'err'); break; }
   }
   const vout = stubs >= 3 ? 'reel' : 'unknown';
   if (DBG) console.error('[reelchk] v1=' + String(v1).slice(0, 70) + ' pulls=' + hits + ' stubs=' + stubs + ' verdict=' + vout + ' err=' + efirst + ' el=' + (Date.now() - rc0) + 'ms');
@@ -1350,7 +1411,7 @@ async function mmGetOrFetchPlaylist(u, ms) {
 async function mmNeedsRef(u) {
   try {
     const h = new URL(u).hostname;
-    if (/contentpublishing\.site$/i.test(h)) return 1; // v1.15.99: contentpublishing সবসময় Referer + /mmr/ রিলে চায় (০ms, ECONNRESET-নিরাপদ)
+    if (/(contentpublishing\.site|homechefrecipes\.sbs)$/i.test(h) || /\.urlset\//i.test(u)) return 1; // v1.15.99: contentpublishing ও .urlset সবসময় Referer + /mmr/ রিলে চায় (০ms)
     const c = MM_REF.get(h);
     if (c && Date.now() - c.ts < 1800000) return c.req;
     const shot = async ref => {
@@ -2012,24 +2073,76 @@ async function mmVarProbe(vUri, ref, ms, skipPmt) {
     if (!tx || !/#EXTM/i.test(tx)) {
       if (isR) {
         const fetchR = async orig => {
-          const r = await fetch(u0, { headers: { 'User-Agent': UA, Referer: ref || WO_REF, Origin: orig }, signal: AbortSignal.timeout(Math.ceil(T * 0.75)) });
-          if (!r.ok && r.status !== 206) return { ok: false, st: r.status, t: '' };
+          const acR = new AbortController();
+          const bgT = setTimeout(() => acR.abort(), 9000);
+          bgT.unref();
+          const r = await Promise.race([
+            fetch(u0, { headers: { 'User-Agent': UA, Referer: ref || WO_REF, Origin: orig }, signal: acR.signal }),
+            new Promise((_, rej) => setTimeout(() => rej(new Error('tmo')), Math.ceil(T * 0.85)).unref())
+          ]);
+          if (!r.ok && r.status !== 206) { clearTimeout(bgT); try { acR.abort(); } catch { } return { ok: false, st: r.status, t: '' }; }
+          if (skipPmt && r.body && r.body.getReader) {
+            return await new Promise(resolve => {
+              let settled = false, t = '';
+              const rdr = r.body.getReader();
+              const dec = new TextDecoder();
+              const hdT = setTimeout(() => { if (!settled) { settled = true; resolve({ ok: false, st: r.status, t: '' }); } }, Math.ceil(T * 0.85));
+              hdT.unref();
+              (async () => {
+                try {
+                  while (true) {
+                    const { done, value } = await rdr.read();
+                    if (done) break;
+                    if (value) t += dec.decode(value, { stream: true });
+                    if (!settled && t.length >= 1024) {
+                      if (/^\s*<(!doctype|html)/i.test(t)) {
+                        settled = true; clearTimeout(hdT); clearTimeout(bgT);
+                        try { await rdr.cancel(); } catch { }
+                        resolve({ ok: false, st: r.status, t: '' }); return;
+                      }
+                      if (/#EXTM/i.test(t) && (t.match(/#EXTINF:/g) || []).length >= 15) {
+                        settled = true; clearTimeout(hdT);
+                        resolve({ ok: true, st: r.status, t, fast: true });
+                      }
+                    }
+                  }
+                  t += dec.decode();
+                  if (/#EXTM/i.test(t) && !mmLooksReel(t) && t.length < 450000) {
+                    mmPut(MM_WC, u0, t);
+                    if (vUri !== u0) mmPut(MM_WC, vUri, t);
+                  }
+                  if (!settled) {
+                    settled = true; clearTimeout(hdT);
+                    if (!/#EXTM/i.test(t) || /^\s*<(!doctype|html)/i.test(t)) resolve({ ok: false, st: r.status, t: '' });
+                    else resolve({ ok: true, st: r.status, t });
+                  }
+                } catch {
+                  if (!settled) { settled = true; clearTimeout(hdT); resolve({ ok: false, st: r.status, t: '' }); }
+                } finally {
+                  clearTimeout(bgT);
+                }
+              })();
+            });
+          }
           const t = await r.text().catch(() => '');
+          clearTimeout(bgT);
           if (!/#EXTM/i.test(t) || /^\s*<(!doctype|html)/i.test(t)) return { ok: false, st: r.status, t: '' };
           return { ok: true, st: r.status, t };
         };
         let z1 = await fetchR('https://vidbolt.xyz');
-        if (!z1.ok) z1 = await fetchR('https://r1.vidbolt.xyz');
+        if (!z1.ok && z1.st === 404) z1 = await fetchR('https://r1.vidbolt.xyz');
         if (!z1.ok) return null;
         tx = z1.t;
-        const extCount = (tx.match(/#EXTINF:/g) || []).length;
-        if (extCount < 15) {
-          const z2 = await fetchR('https://vidbolt.xyz');
-          if (!z2.ok) return null;
-        }
-        if (!mmLooksReel(tx) && tx.length < 450000) {
-          mmPut(MM_WC, u0, tx);
-          if (vUri !== u0) mmPut(MM_WC, vUri, tx);
+        if (!z1.fast) {
+          const extCount = (tx.match(/#EXTINF:/g) || []).length;
+          if (extCount < 15) {
+            const z2 = await fetchR('https://vidbolt.xyz');
+            if (!z2.ok) return null;
+          }
+          if (!mmLooksReel(tx) && tx.length < 450000) {
+            mmPut(MM_WC, u0, tx);
+            if (vUri !== u0) mmPut(MM_WC, vUri, tx);
+          }
         }
       } else if (/dash-hls-bridge\.johndoes/i.test(u0)) {
         // v1.15.99: callisto ব্রিজ মাস্টার ইতিমধ্যে বৈধ হলে এর v0/v1/v2.m3u8 ভ্যারিয়েন্টও একই MPD থেকে তৈরি (০ms ফাস্ট-পাথ);
@@ -4820,14 +4933,20 @@ const server = http.createServer((req, res) => {
               try {
                 let vt = mmGet(MM_WC, tL, 1800000) || '';
                 if (!vt) {
-                  vt = await mmPoolText(tL, 3500);
-                  mmPut(MM_WC, tL, (vt && vt.indexOf('#EXTM') >= 0) ? vt : '__404__');
+                  vt = await mmPoolText(tL, 5000);
+                  if (vt && vt.indexOf('#EXTM') >= 0) mmPut(MM_WC, tL, vt);
+                  else if (!/\.urlset\//i.test(tL)) mmPut(MM_WC, tL, '__404__');
                 }
-                if (vt && vt !== '__404__' && vt.indexOf('#EXTM') >= 0) { top = tL; usedLangVar = true; }
+                if (vt && vt !== '__404__' && vt.indexOf('#EXTM') >= 0) {
+                  MM_MUX.set(tL, 1);
+                  top = tL;
+                  usedLangVar = true;
+                }
               } catch { }
             }
           }
           if (top) {
+            if (/\.urlset\/.*-v\d+-a\d+\.(m3u8|txt)/i.test(top) && !MM_MUX.has(top)) MM_MUX.set(top, 1);
             let tgRaw = mmMasterTags(raw, ent.m);
             let tg = ent.alang ? mmPinAud(String(tgRaw).split('\n'), ent.alang).join('\n') : tgRaw;
             if (ent.lang && tg) {
