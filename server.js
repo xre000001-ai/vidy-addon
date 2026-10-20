@@ -1378,8 +1378,8 @@ const MMR_HAGENT = new http.Agent({ keepAlive: true, keepAliveMsecs: 15000, maxS
 const MMR_SAGENT = new https.Agent({ keepAlive: true, keepAliveMsecs: 15000, maxSockets: 32, maxFreeSockets: 16 });
 const MMR_MEM = new Map(); // url → ent
 const MMR_WARMED = new Set();
-const MMR_MAX_MEM_BYTES = 40 * 1024 * 1024; // সর্বোচ্চ ৪০MB RAM বাফার (ডুয়াল ভিডিও+অডিও সেগমেন্টের জন্য পর্যাপ্ত)
-const MMR_MAX_SEG_BYTES = 10 * 1024 * 1024; // ১০MB-এর নিচের সেগমেন্টগুলো RAM-এ ক্যাশ হবে
+const MMR_MAX_MEM_BYTES = 26 * 1024 * 1024; // সর্বোচ্চ ২৬MB RAM বাফার (Beamup কন্টেইনার মেমরি সীমা নিরাপদ রেখে)
+const MMR_MAX_SEG_BYTES = 6 * 1024 * 1024; // ৬MB-এর নিচের সেগমেন্টগুলো RAM-এ ক্যাশ হবে
 let mmrMemBytes = 0;
 
 function mmEvictMem() {
@@ -1407,16 +1407,16 @@ function mmEvictMem() {
     mmrMemBytes = Math.max(0, mmrMemBytes - (old ? (old.memTracked || 0) : 0));
     MMR_MEM.delete(victim);
   }
-  // v1.15.99: ইন-ফ্লাইট পটভূমি প্রিফেচ ক্যাপ ৬ → ১২ (mmMasterForm-এ ভিডিও ও অডিও দুটি ধারা একসাথে প্রিফেচ হয়; ৬ থাকলে অডিও প্রিফেচ ভিডিওকে কিল করত)
+  // v1.15.99: ইন-ফ্লাইট পটভূমি প্রিফেচ ক্যাপ ৮ (mmMasterForm-এ ভিডিও ও অডিও দুটি ধারা একসাথে প্রিফেচ হয়)
   let bgInflight = 0;
   for (const [, v] of MMR_MEM) if (!v.done && !v.failed && v.waiters.size === 0) bgInflight++;
-  if (bgInflight > 12) {
+  if (bgInflight > 8) {
     for (const [k, v] of MMR_MEM) {
       if (!v.done && !v.failed && v.waiters.size === 0) {
         if (v.abort) try { v.abort(); } catch { }
         mmrMemBytes = Math.max(0, mmrMemBytes - (v.memTracked || 0));
         MMR_MEM.delete(k);
-        if (--bgInflight <= 12) break;
+        if (--bgInflight <= 8) break;
       }
     }
   }
@@ -2126,10 +2126,64 @@ async function mmTrkProbe(u, ref, ms) {
       const h = { 'User-Agent': UA, Referer: ref || WO_REF };
       if (useRange && !isR) h.Range = 'bytes=0-1023';
       if (orig) h.Origin = orig;
-      const r = await fetch(u0, { headers: h, signal: AbortSignal.timeout(T) });
+      const ac = new AbortController();
+      const tm = setTimeout(() => ac.abort(), isR ? 8000 : T);
+      tm.unref();
+      const r = await Promise.race([
+        fetch(u0, { headers: h, signal: ac.signal }),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('tmo')), T).unref())
+      ]);
       const cf = String(r.headers.get('cf-cache-status') || '');
-      if (!(r.ok || r.status === 206)) return { v: '', st: r.status, cf };
+      if (!(r.ok || r.status === 206)) { clearTimeout(tm); try { ac.abort(); } catch { } return { v: '', st: r.status, cf }; }
+      if (isR && r.body && r.body.getReader) {
+        return await new Promise(resolve => {
+          let settled = false;
+          let tx = '';
+          const rdr = r.body.getReader();
+          const dec = new TextDecoder();
+          const hdTmo = setTimeout(() => {
+            if (!settled) { settled = true; resolve({ v: '', st: r.status, cf }); }
+          }, T);
+          hdTmo.unref();
+          (async () => {
+            try {
+              while (true) {
+                const { done, value } = await rdr.read();
+                if (done) break;
+                if (value) tx += dec.decode(value, { stream: true });
+                if (!settled && tx.length >= 512) {
+                  if (/^\s*<(!doctype|html)/i.test(tx)) {
+                    settled = true; clearTimeout(hdTmo); clearTimeout(tm);
+                    try { await rdr.cancel(); } catch { }
+                    resolve({ v: '', st: r.status, cf });
+                    return;
+                  }
+                  if (/#EXTM/i.test(tx) && (tx.match(/#EXTINF:/g) || []).length >= 10) {
+                    settled = true; clearTimeout(hdTmo);
+                    resolve({ v: 'full', st: r.status, cf });
+                  }
+                }
+              }
+              tx += dec.decode();
+              if (/#EXTM/i.test(tx) && /#EXT-X-ENDLIST/i.test(tx) && tx.length < 450000) {
+                mmPut(MM_WC, u0, tx);
+                if (u !== u0) mmPut(MM_WC, u, tx);
+              }
+              if (!settled) {
+                settled = true; clearTimeout(hdTmo);
+                if (!/#EXTM/i.test(tx) || /^\s*<(!doctype|html)/i.test(tx)) resolve({ v: '', st: r.status, cf });
+                else resolve({ v: (tx.match(/#EXTINF:/g) || []).length >= 10 ? 'full' : 'short', st: r.status, cf });
+              }
+            } catch {
+              if (!settled) { settled = true; clearTimeout(hdTmo); resolve({ v: '', st: r.status, cf }); }
+            } finally {
+              clearTimeout(tm);
+            }
+          })();
+        });
+      }
       const tx = await r.text().catch(() => '');
+      clearTimeout(tm);
       if (!/#EXTM/i.test(tx) || /^\s*<(!doctype|html)/i.test(tx)) return { v: '', st: r.status, cf };
       if ((!useRange || isR || r.status === 200) && /#EXT-X-ENDLIST/i.test(tx) && tx.length < 450000) {
         mmPut(MM_WC, u0, tx);
@@ -4155,16 +4209,19 @@ function dvOfDesc(d) { // desc থেকে-HDR-ধরন:
   return 'HDR';
 }
 async function withSources(cardsP, srcs, cfg, t0) {
-  const cards = await cardsP.catch(e => { if (DBG) console.error('[srcdbg] cardsP died: ' + String(e && e.message || e).slice(0, 90)); return []; });
+  const cLeft = Math.max(500, 9200 - (Date.now() - t0));
+  const cards = await Promise.race([
+    cardsP.catch(e => { if (DBG) console.error('[srcdbg] cardsP died: ' + String(e && e.message || e).slice(0, 90)); return []; }),
+    new Promise(r => setTimeout(() => r([]), cLeft))
+  ]);
   const live = (srcs || []).filter(x => x && x.p && !(cfg && cfg[x.key] === 0));
   if (!live.length) return cards; // সব-বন্ধ → শূন্য-অপেক্ষা
   try {
     const el = Date.now() - t0;
     // v1.14.6 ঐক্যবদ্ধ-১ম-ক্লিক-সময়সীমা (ইউজার-টপ-অগ্রাধিকার: প্রতি-নির্বাচিত-সোর্স-১ম-ক্লিকেই):
-    // সব-লাইভ-সোর্স-একই-পরম-সীমা ~৯.৩সে (রুট-সেফটি ১০সে/এজ-কাট ১২সে-র-ভেতরে) — যে-সোর্স-আগে-সেটল
-    // উত্তর-তার-পরেই (দ্রুত-ক্ষেত্রে ২-৫সে), ধীর-সোর্স-কাটা-পড়ার-আগে-সর্বোচ্চ-সময়-পায়। পৃথক-৫.৫/৮.৫সে-জানালা-বাদ —
-    // প্রোডে-চাইল্ড/রেজলভার-লেটেন্সি-ওঠানামায়-পৃথক-জানালা-১ম-ক্লিক-মিস-করত (MB কখনো ৬.৬সে-তে-১৬-কার্ড, কখনো >৫.৫সে)।
-    const uniLeft = Math.max(0, Math.min(NXDEADLINE, 10800) - el); // v1.15.12: প্রথম-ক্লিক-সীমা ৯.৩→১০.৮সে (ইউজার-রিপোর্ট: সীমানায়-n=0; লগ-প্রমাণ tt7326322 ১০সে→০)
+    // সব-লাইভ-সোর্স-একই-পরম-সীমা ~৯.৬সে (রুট-সেফটি ১১.৯সে/এজ-কাট ১২সে-র-ভেতরে) — যে-সোর্স-আগে-সেটল
+    // উত্তর-তার-পরেই (দ্রুত-ক্ষেত্রে ২-৫সে), ধীর-সোর্স-কাটা-পড়ার-আগে-সর্বোচ্চ-সময়-পায়।
+    const uniLeft = Math.max(0, Math.min(NXDEADLINE, 9600) - el); // v1.15.99: ৯.৬সে যাতে Beamup প্রক্সির ১২সে কাটঅফের আগে সবসময় ২+ সেকেন্ড হাতে থাকে
     let errFlag = false; // v1.15.3: সোর্স-ত্রুটি (রিবিল্ড/নেটওয়ার্ক) ≠ সত্যিকারের-খালি — আংশিক-গণ্য হোক
     const outs = await Promise.all(live.map(x => Promise.race([
       x.p.catch(() => { errFlag = true; return []; }),
@@ -4653,9 +4710,9 @@ async function unifyCards(cards, meta) { // শুধু-টেক্সট-ব�
     if (!cards || !cards.length || !meta || !meta.tmdbId) return cards;
     const tcards = cards.filter(c => /^(sky|m4u|mm|tw|rt)\|/.test(String(c.bingeGroup || '')));
     if (!tcards.length) return cards;
-    const T = await nameForTmdb(meta.tmdbId, meta.type).catch(() => '');
+    const T = await Promise.race([nameForTmdb(meta.tmdbId, meta.type).catch(() => ''), new Promise(r => setTimeout(() => r(''), 600))]);
     if (!T) return cards; // টাইটেল-না-পেলে পুরনো-লেখাই-থাকে (খালি-কখনো-নয়)
-    const Y = (parseInt(meta.year, 10) || 0) || await yearForTmdb(meta.tmdbId, meta.type).catch(() => 0); // v1.15.52: imdb-রুটে Cinemeta-বছর-আগে (ম্যাপ-নিরপেক্ষ-সত্য)
+    const Y = (parseInt(meta.year, 10) || 0) || await Promise.race([yearForTmdb(meta.tmdbId, meta.type).catch(() => 0), new Promise(r => setTimeout(() => r(0), 600))]); // v1.15.52: imdb-রুটে Cinemeta-বছর-আগে (ম্যাপ-নিরপেক্ষ-সত্য)
     const head = '\u29c9 ' + T + (Y ? ' | ' + Y + ' |' : '');
     const epLine = meta.type === 'series' ? ('\u29e0 S' + (parseInt(meta.s, 10) || 1) + 'E' + (parseInt(meta.e, 10) || 1)) : '\u29e0 Movie';
     for (const c of tcards) {
@@ -5038,6 +5095,7 @@ const server = http.createServer((req, res) => {
     if ((m = p.match(/^\/stream\/movie\/tmdb(\d+)\.json$/))) {
       const t0 = Date.now();
       const tp = nameForTmdb(Number(m[1]), 'movie'); // টাইটেল-আর-sources-একসাথে-ছোটা — টাইটেল-শুধু-কার্ডের-জন্য
+      yearForTmdb(Number(m[1]), 'movie'); // v1.15.99: সমান্তরালে বছর প্রি-ওয়ার্ম
       const vOn = !(cfg && cfg.v === 0), nxOn = !(cfg && cfg.nx === 0); // per-source masters
       const nxP = nxOn ? nxFor('movie', String(m[1]), 0, 0) : null;
       const twP = (TWBASE && !(cfg && cfg.tw === 0)) ? tp.then(n => twrStreams(TWBASE, 'toonworld', n, 'movie', 0, 0)).catch(() => []) : null; // v1.12: টাইটেল-প্রমিস-থেকেই-সমান্তরালে-ছোটা
