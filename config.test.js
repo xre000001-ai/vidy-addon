@@ -68,6 +68,20 @@ setTimeout(()=>{try{
   /* v1.15.81: "None" আর st.srv=[] নয় (সার্ভার-চুক্তিতে খালি=সব-১৬) — এখন সত্যিই ফ্লিট-বন্ধ */
   d.getElementById('srvNone').click();c=C.st.v===0&&d.getElementById('card-v').classList.contains('off');A('srvNone → Vidy-ফ্লিট-বন্ধ (v=0)',c);
   d.getElementById('sw-v').click();c=C.st.v===1;A('পুনঃ-চালু → v=1',c);
+  /* v1.16.3: Vidy সবসময়-বন্ধ-করা-যায় (আগে nx=0 থাকলেই আটকে যেত) */
+  d.getElementById('sw-nx').click();c=C.st.nx===0;A('MovieBox-বন্ধ → nx=0',c);
+  d.getElementById('sw-v').click();
+  c=C.st.v===0&&d.getElementById('card-v').classList.contains('off');A('nx=0-তেও-Vidy-বন্ধ-হয় (আগের-বাগ-মুক্ত)',c);
+  d.getElementById('sw-v').click();d.getElementById('sw-nx').click();
+  c=C.st.v===1&&C.st.nx===1;A('দুটোই-আবার-চালু',c);
+  /* সব-উৎস-বন্ধ → ব্লক-নয়, শুধু-সতর্কতা */
+  var _sv=[];
+  ['v','nx','rt','tw','mm','m4u','sky','bf','vsp','ott','az'].forEach(function(k){if(C.st[k]===1){var sw=d.getElementById('sw-'+k);if(sw)sw.click();_sv.push(k);}});
+  var allOff=['v','nx','rt','tw','mm','m4u','sky','bf','vsp','ott','az'].every(function(k){return C.st[k]===0;});
+  c=allOff;A('সব-উৎস-বন্ধ-করা-গেল (ব্লক-নেই)',c);
+  c=d.getElementById('toast').textContent.indexOf('All sources off')>=0;A('সব-বন্ধে-সতর্কতা-টোস্ট',c);
+  _sv.forEach(function(k){var sw=d.getElementById('sw-'+k);if(sw&&C.st[k]===0)sw.click();});
+  c=['v','nx','rt','tw','mm','m4u','sky','bf','vsp','ott','az'].every(function(k){return C.st[k]===1;});A('সব-উৎস-আবার-চালু',c);
   d.getElementById('srvPri').click();c=C.st.srv.length===3;A('srvPri → ৩',c);
   d.getElementById('srvAll').click();c=C.st.srv.length===16;A('srvAll → ১৬',c);
   /* v1.15.81: বুটে-সার্ভার-টাইল-রিড্র (আগে প্রথম-লোডে কোনো-টাইলেই .on থাকত-না) */

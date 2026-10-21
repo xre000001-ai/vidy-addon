@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.16.1'; // v1.15.99: **rousav (`Greek`, `Spanish`, `German` ইত্যাদি) ও `callisto` বহু-ভাষা প্লেব্যাক সংস্কার** — ইউজার: "Hindi, English, Tamil, Telugu runs smoothly, but Greek, Spanish, German etc wasn't though it seems ok now. But check again and revise carefully"। সরাসরি পরিমাপে ৬টি নির্দিষ্ট ত্রুটি ধরা পড়েছে: (১) **Cloudflare `404 cf=HIT` ক্যাশ-পয়জনিং ও `Origin`-উদ্ধার**: `img.rousav.tech`-এ `Range: bytes=0-1023` দিয়ে `.m3u8` প্রোব করলে বা অরিজিন-গ্লিচে Cloudflare সেই `404` কে `cf=HIT (age=94693s)` হিসেবে ক্যাশ করে রাখে (`track_german.m3u8`, `track_spanish.m3u8`, `track_polish/portuguese/tamil/telugu/turkish.m3u8`, এবং `00000.png`); কিন্তু `Origin: https://vidbolt.xyz` (ও ব্যর্থ হলে `Origin: https://r1.vidbolt.xyz`) দিলে নতুন ক্যাশ-কী দিয়ে তাৎক্ষণিক `200 OK` পাওয়া যায়। (২) **প্রোব-কালে প্লেলিস্ট `MM_WC`-তে ক্যাশ না করা**: `/stream`-এ `mmTrkProbe` ও `mmVarProbe` ৭৫–১০০KB প্লেলিস্ট ডাউনলোড করেও ফেলে দিত, ফলে ইউজার কার্ডে চাপলে `/mm/` ও `/mma/`-তে আবার ১.৫–৪.৬ সেকেন্ড লাগত। (৩) **`/mm/`-এ অপ্রয়োজনীয় `vbest` + `mmVarProbe` অপেক্ষা**: `knownExtAud` হলে `/mm/` এখন ০-১ms-এ `mmMasterForm` রিটার্ন করে এবং পটভূমিতে ভিডিও+অডিও উভয় প্লেলিস্ট ও সেগমেন্ট প্রি-ওয়ার্ম করে (`MM_WC_INFLIGHT` ডিডুপসহ)। (৪) **rousav সেগমেন্টগুলো `/mmr/` লুকঅ্যাহেড প্রিফেচ ও রিলেতে যুক্ত করা (`#EXT-X-MAP` `init.mp4` সহ)**: যাতে ইউজার কখনোই ৪–১৬ সেকেন্ডের `cf=MISS` স্টল বা `00000.png` ৪০৪-এ না পড়েন। (৫) **ডুয়াল-স্ট্রিম (`mmMasterForm` ভিডিও+অডিও) লুকঅ্যাহেড সংঘর্ষ ও ছোট সেগমেন্ট ওয়াচডগ**: `bgInflight` ৬→১২ (যাতে অডিও প্রিফেচ ভিডিও প্রিফেচকে বাতিল না করে) এবং `kbps < 110` চেক শুধু `>600KB` সেগমেন্টে `headersAt` থেকে গণনা (যাতে ৪৫–৮৮KB অডিও সেগমেন্ট কখনোই ভুলবশত কিল না হয়)। (৬) **Vidbolt `callisto` (`dash-hls-bridge.johndoes*.workers.dev`) ৪২৯ ও `NAME="Audio"` বাগ**: ৪২৯ ওয়ার্কারগুলো সচল `johndoesdmc`-তে নরমালাইজ এবং `NAME="Audio"` থাকলে সোর্সের আসল ভাষা (`Arabic`, `Hindi`, `English` ইত্যাদি) বসানো। // v1.15.98: **MM প্লেব্যাক বাফারিং ও 'একটু পর পর ইন্টারনেট ছেড়ে দেয়' সমস্যার স্থায়ী সমাধান** — সরাসরি ও প্রড পরিমাপে ৩টি মূল কারণ ধরা পড়েছে: (ক) `contentpublishing.site`-এ প্রতি ~৮-১০ সেগমেন্টে একটি `cf=MISS` কানেকশন অরিজিন-থ্রটলিংয়ে (`২৩–৬৮ KB/s`, ৪৫–৬৯ সেকেন্ড!) আটকে যায় অথবা মাঝপথে (`got=37KB/1360KB`) সকেট বন্ধ করে দেয়; আগে `up.pipe(res)`-এ `'close'` হ্যান্ডলার বা Range-রিজিউম না থাকায় ক্লায়েন্টের সংযোগ ০ KB/s-এ ঝুলে থাকত। (খ) স্ট্রিমিং চলাকালীন প্রতি ৮–১৮ সেকেন্ডে পটভূমির `pxCheckerWave` (৮৪ সকেট) + `mmCheckerWave` (৮৪ সকেট) + `enrichPool` (১২০ সকেট + ৪টি প্রক্সি-তালিকা ডাউনলোড + `fs.writeFileSync`) কন্টেইনারের সিপিইউ ও নেটওয়ার্ক জ্যাম করত। (গ) প্লেয়ার সেগমেন্ট চাওয়ার পর ফেচ শুরু হওয়ায় অরিজিনের ধীরগতি সরাসরি ইউজারের ফোনে পৌঁছাত। সমাধান: (১) **ইন-মেমরি লুকঅ্যাহেড প্রিফেচ (`MMR_MEM`, পরবর্তী ৩টি সেগমেন্ট = ৩০ সেকেন্ড ভিডিও Beamup RAM-এ অগ্রীম লোড)** + **স্ট্যাগার্ড Cloudflare এজ-ওয়ার্মার (`mmWarmEdge`, পরবর্তী ৪..৬ সেগমেন্টে ১-বাইট `Range: bytes=0-0` পাঠিয়ে আগেভাগেই `cf=HIT` করা)** — পরীক্ষায় ২১/২১ সেগমেন্টের ১৯টিই প্লেয়ার চাওয়ার আগে ১০০% RAM-এ প্রস্তুত (`playerWait=0ms`, `cf=HIT` গতি `২৫–৭৫ MB/s`); (২) **স্মার্ট স্টল-রিজিউমিং পাম্প**: কোনো সেগমেন্টে ডেটা-গ্যাপ (`>2.4s`), ধীরগতি (`<110 KB/s`), বা অসম্পূর্ণ ক্লোজ (`received < total`) ঘটলে সাথে সাথে নতুন সকেটে `Range: bytes=${received}-` দিয়ে বাকি অংশ নিরবচ্ছিন্নভাবে জোড়া লাগানো; (৩) **অ্যাক্টিভ-স্ট্রিমিং গার্ড (`MMR_ACTIVE_UNTIL`)**: প্লেব্যাক চলাকালীন পটভূমির প্রক্সি-চেকার ও এনরিচ-ওয়েভ স্থগিত এবং অ্যাসিঙ্ক ফাইল-রাইট। // v1.15.93: (ক) **Movies4u আগের মতোই সরাসরি** — ইউজার: "Movies4u age jemon chilo direct temon e valo chilo, oita oi file er problem ager motoi kore daw"। v1.15.91/92-এর /m4h/ + /m4i/ (init-এ Cues) রাউটিং সরিয়ে মুভি ও সিরিজ দুই পথেই `url: x.url` ফিরিয়ে আনা হলো। /m4h/ ও /m4i/ এন্ডপয়েন্ট দুটো কোডে রয়ে গেছে (অব্যবহৃত) — ভবিষ্যতে প্রয়োজনে সক্রিয় করা যাবে। (খ) **কনফিগ-পেজ: ভাষা-ছাঁকনিতে দেশের-পতাকা ব্যাজ + ওপরে সংক্ষিপ্ত-কোড** — ইউজার: "country er flag tar upore short name"; "Indiar Hindi, Tamil, telugu, malayam joto language ase India er flag er upore short code alada alada"; "Bangladesh er Bangla obossoi attach korba"। ভাষা ১৭ → **৩৯**; ভারতীয় ৬ ভাষা (HIN/TAM/TEL/MAL/KAN/MAR) একই ভারতীয় পতাকা ভাগ করে, কোড আলাদা; বাংলাদেশের বাংলা = BAN (বাংলাদেশ-পতাকা)। আরবি/মাল্টি/অরিজিনাল = নিরপেক্ষ ব্যাজ (কোনো একক দেশের পতাকা নেই)। সব পতাকা **ইনলাইন SVG** (কোনো বাহ্যিক-ছবি/নেটওয়ার্ক নেই — স্যান্ডবক্স-প্রিভিউতেও দেখা যাবে)। সার্ভারে MM_LNAME প্রসারিত (marathi/sindhi/nepali/sinhala/punjabi/gujarati/odia/assamese/bhojpuri) যাতে নতুন কী-গুলো আসলেই ছাঁকনি-কাজ করে। যাচাই: ৩৯/৩৯ বৈধ পতাকা-এসভিজি, কোড সব অনন্য, config.test.js সব-সবুজ //  // v1.15.92: Movies4u **সিক-সংস্কার ৩** (ইউজার: "Na exo teh seek hocche na") — v1.15.91-এর /m4h/ কেন কাজ করেনি: `#EXT-X-MAP` এ ছিল শুধু MKV-হেডার [0,cut) — **Cues ছিল না**। ফলে MatroskaExtractor কোনো সিক-সূচকই পায়নি → আগের মতোই `SeekMap.Unseekable` → প্রতি সিক ০:০০-এ। এখন নতুন `/m4i/`: init = [0,cut) **+ Cues-এর একটি কপি**, আর ক্লাস্টার-অফসেট **অপরিবর্তিত** (ফাইলে কিছুই সরানো হয়নি — তাই অফসেট-সংশোধনের প্রয়োজন নেই)। ExoPlayer init পড়ার সময়েই Cues পেয়ে যায় → প্রথম Cluster-এর **আগেই** সঠিক সিক-মানচিত্র → সিক চলে। Segment-আকারও প্যাচ করা হয় (init-এ Cues যোগ হওয়ায় ঘোষিত আকার বাড়ে)। সুবিধা: সেগমেন্টগুলো `#EXT-X-BYTERANGE`-এ সরাসরি CDN-এ → আমাদের **ভিডিও-ব্যান্ডউইথ শূন্য**, আর v1.15.91-এ ধরা-পড়া প্রান্তিক-প্রক্সির Range-খোঁয়ানো সমস্যা এড়ানো যায়। যাচাই (২ ফাইল): init-এর উপরের-স্তর `SeekHead, Info, Tracks, **Cues**` (init-এ কোনো Cluster নেই), **CuePoint ৬/৬ আসল Cluster-এ পয়েন্ট করে** (HTTP ২০৬ + 0x1F43B675), সেগমেন্ট-রেঞ্জও Cluster-এ শুরু। পাশাপাশি ইউজার-প্রশ্ন "libmpv-এ চালানো যায়?"-এর উত্তর তদন্ত করে জানা গেল: Nuvio-তে প্লেয়ার-ইঞ্জিন **ইউজার-সেটিং** (ExoPlayer / Libmpv / Auto) এবং Auto হলে **কনটেন্ট** দিয়ে ঠিক হয় (-anime→libmpv, HDR/DV→ExoPlayer, বাকি সব→ExoPlayer) — অ্যাডন থেকে `behaviorHints` দিয়ে এটি বদলানো যায় না (প্রমাণ: nuvio.wiki/settings/player + NuvioMobile PR#2192)। তাই সমাধান হলো ExoPlayer-এই সিক চালানো // 
+const VERSION = '1.16.3'; // v1.16.3: (ক) **RareToons ডাব-নাম কার্ডে ঘোষণা** (ইউজার: "raretoons-এ দুই-ধরনের dub, Muse/Crunchyroll — ভাষার পাশে লিখে দাও") — `twrFetch`-এ `rtDubMap()`: পোস্ট-পাতার `<h4>↓ X DUB ↓</h4>` সেকশন-হেডিং + `WatchMultQuality`/`WatchNow` জিপার-লিংক → 302 `/multiquality/?url=<mq_fid>` → রেজলভার-কার্ডের `/hls/<b64>`-এর `mq_fid`-এর সাথে **exact-match**; পিক্সেলড্রেইন-ফাইলনামের `[Muse Dub]`ও পড়া হয়; কার্ডে `⌗ Hindi · Muse Dub`, bingeGroup-এ ডাব-পৃথক। সত্য-প্রমাণ: AoT S01E01 = `Hindi · Muse Dub` / `Hindi 2 · Anime Times Dub` (তৃতীয়টি unmapped → সৎভাবে কোনো ডাব-দাবি নেই)। সাইটে-বানান-দুটোই (`WatchMultQuality`/`WatchMultiQuality`) সমর্থিত। (খ) **কনফিগ-পেজ: Vidy আর কখনোই deselect-অবরোধ** (ইউজার: "I can't deselect vidy source at all") — পুরোনো `guardV` শুধু `nx` দেখত, তাই MovieBox বন্ধ থাকলেই Vidy বন্ধ করা যেত না; এখন সব উৎস স্বাধীনভাবে বন্ধ হয়, শুধু সব-বন্ধ হলে সতর্কতা-টোস্ট; `mobCnt`-এ খালি-তালিকা = ১৬ সার্ভার (আগে "0 servers armed")। (গ) **BollyFlix ভবিষ্যৎ-পোস্ট-স্বয়ংক্রিয়** — wp-json-ইনডেক্সে নতুন পোস্ট না থাকলে সাইটের `/search/<query>` HTML-ফলাফল ফলব্যাক (`bfPick` একই গেটে যাচাই করে)। // v1.16.2: BollyFlix সিরিজ ও মুভি স্ট্রিমিং পূর্ণ সংস্কার — (১) GDFlix `/cloud/<ts>/<fid>` এ `<2GB` এপিসোডের `.mkv.zip?bytes=<rawSize>` (stored DEFLATE Type-0 ৩২KB ব্লক) `O(1)` `/bfz/<b64>/v.mkv` ডি-ফ্রেমার দিয়ে সরাসরি `.mkv` হিসেবে স্ট্রিম; (২) অ-জেনারেটেড `<button id="cloud">` এ পটভূমিতে `POST action=cloud` + `xhr=1` পোলিং + `GET <redirect>` কমিট এবং `/bfz/fid/<fid>/v.mkv` লেজি-রিজলভার; (৩) `pixeldrain.dev` ও `/pack/<packId>` ও `linksmod.top` সমর্থন; (৪) `S01`/`S02` হেডিং, স্ট্যান্ডঅ্যালোন `S05` পোস্ট-টাইটেল, `Anime Series`/`NetFlix Series` ট্যাগ, `fxRows` ডাইভার্স নির্বাচন, অ্যানিমে কন্টিনিউয়াস এপিসোড (`S02E25`), এবং প্রতি-IP ১০-রিকোয়েস্ট/মিনিট স্লাইডিং রেট-লিমিট গার্ড; (৫) IMDb `/stream/` রুটে `findTmdbInfo` ব্যর্থ হলে `nmP` (`suggName`) ফলব্যাক। // v1.15.99: **rousav (`Greek`, `Spanish`, `German` ইত্যাদি) ও `callisto` বহু-ভাষা প্লেব্যাক সংস্কার** — ইউজার: "Hindi, English, Tamil, Telugu runs smoothly, but Greek, Spanish, German etc wasn't though it seems ok now. But check again and revise carefully"। সরাসরি পরিমাপে ৬টি নির্দিষ্ট ত্রুটি ধরা পড়েছে: (১) **Cloudflare `404 cf=HIT` ক্যাশ-পয়জনিং ও `Origin`-উদ্ধার**: `img.rousav.tech`-এ `Range: bytes=0-1023` দিয়ে `.m3u8` প্রোব করলে বা অরিজিন-গ্লিচে Cloudflare সেই `404` কে `cf=HIT (age=94693s)` হিসেবে ক্যাশ করে রাখে (`track_german.m3u8`, `track_spanish.m3u8`, `track_polish/portuguese/tamil/telugu/turkish.m3u8`, এবং `00000.png`); কিন্তু `Origin: https://vidbolt.xyz` (ও ব্যর্থ হলে `Origin: https://r1.vidbolt.xyz`) দিলে নতুন ক্যাশ-কী দিয়ে তাৎক্ষণিক `200 OK` পাওয়া যায়। (২) **প্রোব-কালে প্লেলিস্ট `MM_WC`-তে ক্যাশ না করা**: `/stream`-এ `mmTrkProbe` ও `mmVarProbe` ৭৫–১০০KB প্লেলিস্ট ডাউনলোড করেও ফেলে দিত, ফলে ইউজার কার্ডে চাপলে `/mm/` ও `/mma/`-তে আবার ১.৫–৪.৬ সেকেন্ড লাগত। (৩) **`/mm/`-এ অপ্রয়োজনীয় `vbest` + `mmVarProbe` অপেক্ষা**: `knownExtAud` হলে `/mm/` এখন ০-১ms-এ `mmMasterForm` রিটার্ন করে এবং পটভূমিতে ভিডিও+অডিও উভয় প্লেলিস্ট ও সেগমেন্ট প্রি-ওয়ার্ম করে (`MM_WC_INFLIGHT` ডিডুপসহ)। (৪) **rousav সেগমেন্টগুলো `/mmr/` লুকঅ্যাহেড প্রিফেচ ও রিলেতে যুক্ত করা (`#EXT-X-MAP` `init.mp4` সহ)**: যাতে ইউজার কখনোই ৪–১৬ সেকেন্ডের `cf=MISS` স্টল বা `00000.png` ৪০৪-এ না পড়েন। (৫) **ডুয়াল-স্ট্রিম (`mmMasterForm` ভিডিও+অডিও) লুকঅ্যাহেড সংঘর্ষ ও ছোট সেগমেন্ট ওয়াচডগ**: `bgInflight` ৬→১২ (যাতে অডিও প্রিফেচ ভিডিও প্রিফেচকে বাতিল না করে) এবং `kbps < 110` চেক শুধু `>600KB` সেগমেন্টে `headersAt` থেকে গণনা (যাতে ৪৫–৮৮KB অডিও সেগমেন্ট কখনোই ভুলবশত কিল না হয়)। (৬) **Vidbolt `callisto` (`dash-hls-bridge.johndoes*.workers.dev`) ৪২৯ ও `NAME="Audio"` বাগ**: ৪২৯ ওয়ার্কারগুলো সচল `johndoesdmc`-তে নরমালাইজ এবং `NAME="Audio"` থাকলে সোর্সের আসল ভাষা (`Arabic`, `Hindi`, `English` ইত্যাদি) বসানো। // v1.15.98: **MM প্লেব্যাক বাফারিং ও 'একটু পর পর ইন্টারনেট ছেড়ে দেয়' সমস্যার স্থায়ী সমাধান** — সরাসরি ও প্রড পরিমাপে ৩টি মূল কারণ ধরা পড়েছে: (ক) `contentpublishing.site`-এ প্রতি ~৮-১০ সেগমেন্টে একটি `cf=MISS` কানেকশন অরিজিন-থ্রটলিংয়ে (`২৩–৬৮ KB/s`, ৪৫–৬৯ সেকেন্ড!) আটকে যায় অথবা মাঝপথে (`got=37KB/1360KB`) সকেট বন্ধ করে দেয়; আগে `up.pipe(res)`-এ `'close'` হ্যান্ডলার বা Range-রিজিউম না থাকায় ক্লায়েন্টের সংযোগ ০ KB/s-এ ঝুলে থাকত। (খ) স্ট্রিমিং চলাকালীন প্রতি ৮–১৮ সেকেন্ডে পটভূমির `pxCheckerWave` (৮৪ সকেট) + `mmCheckerWave` (৮৪ সকেট) + `enrichPool` (১২০ সকেট + ৪টি প্রক্সি-তালিকা ডাউনলোড + `fs.writeFileSync`) কন্টেইনারের সিপিইউ ও নেটওয়ার্ক জ্যাম করত। (গ) প্লেয়ার সেগমেন্ট চাওয়ার পর ফেচ শুরু হওয়ায় অরিজিনের ধীরগতি সরাসরি ইউজারের ফোনে পৌঁছাত। সমাধান: (১) **ইন-মেমরি লুকঅ্যাহেড প্রিফেচ (`MMR_MEM`, পরবর্তী ৩টি সেগমেন্ট = ৩০ সেকেন্ড ভিডিও Beamup RAM-এ অগ্রীম লোড)** + **স্ট্যাগার্ড Cloudflare এজ-ওয়ার্মার (`mmWarmEdge`, পরবর্তী ৪..৬ সেগমেন্টে ১-বাইট `Range: bytes=0-0` পাঠিয়ে আগেভাগেই `cf=HIT` করা)** — পরীক্ষায় ২১/২১ সেগমেন্টের ১৯টিই প্লেয়ার চাওয়ার আগে ১০০% RAM-এ প্রস্তুত (`playerWait=0ms`, `cf=HIT` গতি `২৫–৭৫ MB/s`); (২) **স্মার্ট স্টল-রিজিউমিং পাম্প**: কোনো সেগমেন্টে ডেটা-গ্যাপ (`>2.4s`), ধীরগতি (`<110 KB/s`), বা অসম্পূর্ণ ক্লোজ (`received < total`) ঘটলে সাথে সাথে নতুন সকেটে `Range: bytes=${received}-` দিয়ে বাকি অংশ নিরবচ্ছিন্নভাবে জোড়া লাগানো; (৩) **অ্যাক্টিভ-স্ট্রিমিং গার্ড (`MMR_ACTIVE_UNTIL`)**: প্লেব্যাক চলাকালীন পটভূমির প্রক্সি-চেকার ও এনরিচ-ওয়েভ স্থগিত এবং অ্যাসিঙ্ক ফাইল-রাইট। // v1.15.93: (ক) **Movies4u আগের মতোই সরাসরি** — ইউজার: "Movies4u age jemon chilo direct temon e valo chilo, oita oi file er problem ager motoi kore daw"। v1.15.91/92-এর /m4h/ + /m4i/ (init-এ Cues) রাউটিং সরিয়ে মুভি ও সিরিজ দুই পথেই `url: x.url` ফিরিয়ে আনা হলো। /m4h/ ও /m4i/ এন্ডপয়েন্ট দুটো কোডে রয়ে গেছে (অব্যবহৃত) — ভবিষ্যতে প্রয়োজনে সক্রিয় করা যাবে। (খ) **কনফিগ-পেজ: ভাষা-ছাঁকনিতে দেশের-পতাকা ব্যাজ + ওপরে সংক্ষিপ্ত-কোড** — ইউজার: "country er flag tar upore short name"; "Indiar Hindi, Tamil, telugu, malayam joto language ase India er flag er upore short code alada alada"; "Bangladesh er Bangla obossoi attach korba"। ভাষা ১৭ → **৩৯**; ভারতীয় ৬ ভাষা (HIN/TAM/TEL/MAL/KAN/MAR) একই ভারতীয় পতাকা ভাগ করে, কোড আলাদা; বাংলাদেশের বাংলা = BAN (বাংলাদেশ-পতাকা)। আরবি/মাল্টি/অরিজিনাল = নিরপেক্ষ ব্যাজ (কোনো একক দেশের পতাকা নেই)। সব পতাকা **ইনলাইন SVG** (কোনো বাহ্যিক-ছবি/নেটওয়ার্ক নেই — স্যান্ডবক্স-প্রিভিউতেও দেখা যাবে)। সার্ভারে MM_LNAME প্রসারিত (marathi/sindhi/nepali/sinhala/punjabi/gujarati/odia/assamese/bhojpuri) যাতে নতুন কী-গুলো আসলেই ছাঁকনি-কাজ করে। যাচাই: ৩৯/৩৯ বৈধ পতাকা-এসভিজি, কোড সব অনন্য, config.test.js সব-সবুজ //  // v1.15.92: Movies4u **সিক-সংস্কার ৩** (ইউজার: "Na exo teh seek hocche na") — v1.15.91-এর /m4h/ কেন কাজ করেনি: `#EXT-X-MAP` এ ছিল শুধু MKV-হেডার [0,cut) — **Cues ছিল না**। ফলে MatroskaExtractor কোনো সিক-সূচকই পায়নি → আগের মতোই `SeekMap.Unseekable` → প্রতি সিক ০:০০-এ। এখন নতুন `/m4i/`: init = [0,cut) **+ Cues-এর একটি কপি**, আর ক্লাস্টার-অফসেট **অপরিবর্তিত** (ফাইলে কিছুই সরানো হয়নি — তাই অফসেট-সংশোধনের প্রয়োজন নেই)। ExoPlayer init পড়ার সময়েই Cues পেয়ে যায় → প্রথম Cluster-এর **আগেই** সঠিক সিক-মানচিত্র → সিক চলে। Segment-আকারও প্যাচ করা হয় (init-এ Cues যোগ হওয়ায় ঘোষিত আকার বাড়ে)। সুবিধা: সেগমেন্টগুলো `#EXT-X-BYTERANGE`-এ সরাসরি CDN-এ → আমাদের **ভিডিও-ব্যান্ডউইথ শূন্য**, আর v1.15.91-এ ধরা-পড়া প্রান্তিক-প্রক্সির Range-খোঁয়ানো সমস্যা এড়ানো যায়। যাচাই (২ ফাইল): init-এর উপরের-স্তর `SeekHead, Info, Tracks, **Cues**` (init-এ কোনো Cluster নেই), **CuePoint ৬/৬ আসল Cluster-এ পয়েন্ট করে** (HTTP ২০৬ + 0x1F43B675), সেগমেন্ট-রেঞ্জও Cluster-এ শুরু। পাশাপাশি ইউজার-প্রশ্ন "libmpv-এ চালানো যায়?"-এর উত্তর তদন্ত করে জানা গেল: Nuvio-তে প্লেয়ার-ইঞ্জিন **ইউজার-সেটিং** (ExoPlayer / Libmpv / Auto) এবং Auto হলে **কনটেন্ট** দিয়ে ঠিক হয় (-anime→libmpv, HDR/DV→ExoPlayer, বাকি সব→ExoPlayer) — অ্যাডন থেকে `behaviorHints` দিয়ে এটি বদলানো যায় না (প্রমাণ: nuvio.wiki/settings/player + NuvioMobile PR#2192)। তাই সমাধান হলো ExoPlayer-এই সিক চালানো // 
 // v1.15.91-বি: v1.15.91-বি: **প্রক্সি পথ প্রড-এ কাজ করে না** — প্রান্তিক-প্রক্সি Range হেডার খুলে ফেলে (নিদান: `curl -H "Range: bytes=100000-100999"` → `HTTP/2 200` + `x-m4p-rng: none`; HTTP/1.1-তেও একই)। তাই আমাদের সার্ভার দিয়ে প্রক্সি করলে ক্লায়েন্টের কোনো রেঞ্জ-অনুরোধই টিকে না → /m4p/ দিয়ে সিক অসম্ভব। চূড়ান্ত সমাধান **/m4h/**: আমরা শুধু একটি ছোট HLS প্লেলিস্ট দিই, সেগমেন্টগুলো `#EXT-X-BYTERANGE`-এ **সরাসরি CDN-এ** পয়েন্ট করে — ExoPlayer নিজেই CDN-এ রেঞ্জ পাঠায় (সেখানে ২০৬ চলে)। ফলে আমাদের ব্যান্ডউইথ **শূন্য** এবং Range-খোঁয়ানো প্রান্তিক-প্রক্সি কোনো সমস্যা করে না। `#EXT-X-MAP` = MKV-হেডার [0,cut) (Tracks/CodecPrivate), প্রতি সেগমেন্ট = CuePoint-এর Cluster-সীমানা (কী-ফ্রেম → স্বাধীনভাবে ডিকোড-যোগ্য); CuePoint একত্রীকরণ ≈৬ সে/সেগমেন্ট। যাচাই (২ ফাইল): ৮০৩/৭৯৯ সেগমেন্ট, #EXTM3U প্রথম লাইনে, VOD+ENDLIST+MAP; MAP-রেঞ্জ HTTP ২০৬ হুবহু আকার EBML✅ Tracks✅; **সেগমেন্ট-সীমানা ৬/৬ আসল Cluster** (HTTP ২০৬ + 0x1F43B675); `cut + ΣBYTERANGE = ৪৬,২৫৩,৪০৭৮` = সঠিক ফাইল-আকার (কোনো ফাঁক/ওভারল্যাপ নেই)
 // v1.15.91: v1.15.91: দুটি ইউজার-রিপোর্ট — (ক) **Movies4u ExoPlayer-সিক মৃত** ("Movies4u does not work seek when it plays on exo player", libmpv-তে ঠিকই চলে)। মূল কারণ ExoPlayer-এর MatroskaExtractor: `case ID_CLUSTER: if (!sentSeekMap) { if (seekForCuesEnabled && …) seekForCues = true; else extractorOutput.seekMap(new SeekMap.Unseekable(durationUs)); }` — অর্থাৎ **প্রথম Cluster-এ পৌঁছানোর আগেই Cues পড়া না থাকলে** ExoPlayer "অসিক-যোগ্য" ঘোষণা করে, আর ProgressiveMediaPeriod.seekToUs()-এ `positionUs = seekMap.isSeekable() ? positionUs : 0` → **প্রতি সিক ০:০০-এ ফেরত যায়**। Cues সবসময় ফাইলের একদম **শেষে** (পরিমাপ: Cues@18,120,319,734 / 16.88GB) — mpv/FFmpeg তা পড়তে পারে, ExoPlayer পারে না (FLAG_DISABLE_SEEK_FOR_CUES)। মাপকাঠি: যে-সব উৎস ExoPlayer-এ সিক চলে (Multimovies, Miami) সবাই **HLS**; Movies4u-ই একমাত্র প্রগতিশীল-MKV সোর্স — নিদর্শন মিলে গেল। সমাধান (`/m4p/`): Cues-এলিমেন্ট হেডারের পরে, প্রথম Cluster-এর **আগে** সরানো, আর সব CueClusterPosition + delta (নাহলে সিক ভুল অবস্থানে যায়)। Segment-আকার প্যাচ + রেঞ্জ-সচেতন স্ট্রিমিং (prefix / Cues / লেজ—তিন-খণ্ড)। যাচাই (৩টি ফাইল, ০.৪৩/০.৮৬/০.৯৬ GB): উপরের-স্তর `SeekHead, Info, Tracks, **Cues**, Cluster…`; Cues@33146 বনাম প্রথম-Cluster@84656; **CuePoint ১২/১২ আসল Cluster-এ পয়েন্ট করে** (HTTP ২০৬ + 0x1F43B675)। HLS-কার্ড অস্পৃষ্ট (শুধু kind==='file' রূপান্তরিত)। (খ) **Multimovies ভাষা-কার্ড কম দেখানো** ("multimovies has a more lot of audio varients, please show them all") — পরিমাপ: Demon Slayer rousav মাস্টার **১৬** অডিও-ট্র্যাক ঘোষণা করে, **১৩টি জীবিত**; কিন্তু ক্যাপ MM_MAXLANG=৬ / MM_SCANTRK=১২ → মাত্র ৬টি দেখানো হতো (Greek/Italian/Polish/Portuguese/Russian/Tamil/Telugu কখনোই আসত না)। ক্যাপ ৬→২৪, ১২→২৪, ভ্যারিয়েন্ট ২০→৬০। ফল: Demon Slayer ২০→**৫৪** কার্ড/১৭ ভাষা, The Runner ১৮→**৩৬-৩৯**/১২ ভাষা (Kannada/Malayalam/Hungarian/Arabic নতুন)। যাচাই: test.js ২০/৪৩, config.test.js সব-সবুজ, বাংলা=০/১৮২, #EXTM3U প্রথম লাইনে ৯৩/৯৩ //  // v1.15.90: Multimovies **অডিও-ভাষা সংস্কার** (ইউজার: "Eta toh Chinese audio howar Kotha but Hindi audio dei … etar English ta o Hindi audio set Kore, Greek, German e Kono audio nai")। তিনটি স্বতন্ত্র ত্রুটি, প্রতিটি PMT-প্রমাণিত: (ক) **ভাষা-ভিত্তিক মাক্সড ভ্যারিয়েন্ট বাছাই হয় না** — .urlset/CDN ভ্যারিয়েন্ট-নামেই ভাষা এনকোড করে (`index-f3-v1-a1`=हिन्दी, `a2`=English, `a3`=日本語, `a4`=తెలుగు, `a5`=தமிழ்)। প্রমাণ: ৫টি ভ্যারিয়েন্টের AAC-PID(257)-হ্যাশ **৫/৫ ভিন্ন**। কিন্তু আমরা সব কার্ডে একই `a1` পাঠাচ্ছিলাম → প্রতিটি ভাষার কার্ডেই हिन्दी বাজত। নতুন `mmPickVarLang(pl, base, wantH, alang)`: মাস্টারের অডিও-তালিকায় ভাষার ক্রমিক N বের করে `-a1`→`-aN` করে (HTTP ২০০ যাচাইসহ)। (খ) **`#EXT-X-MEDIA` MEDIA-প্লেলিস্টে অর্থহীন** — rousav-এর ভিডিওতে কোনো অডিও নেই (PMT = `[0x1b]`), অডিও আলাদা `track_*.m3u8`-এ; কিন্তু আমরা ইনলাইন MEDIA-প্লেলিস্টে TYPE=AUDIO ট্যাগ লিখছিলাম, যা প্লেয়ার **সম্পূর্ণ উপেক্ষা করে** → নিঃশব্দ। নতুন `mmMasterForm()`: ভিডিও মাক্সড না হলে সঠিক এক-ভ্যারিয়েন্ট MASTER-প্লেলিস্ট (AUDIO="a0" দ্বারা যুক্ত)। (গ) **অডিও-সেগমেন্টে api_key পৌঁছায় না** — track_*.m3u8-এর সেগমেন্ট আপেক্ষিক (`track_czech/00000.png`) আর api_key শুধু প্লেলিস্ট-ইউআরএলে → প্লেয়ারের রিজলভ করা সেগমেন্ট **৪০৪** (পরীক্ষায় ৬/৬ ভাষাতেই)। নতুন `/mma/<b64>/a.m3u8` ইনলাইনার: absolute + keyed সেগমেন্ট (আর প্রয়োজনে Referer-রিলে)। সংশোধিত ভিত্তি: `mmTsHasAudio` ছিল ত্রুটিপূর্ণ — PMT-পিআইডি PAT থেকে না বের করে "যেকোনো PUSI = PMT" ধরত, আর 0x06 (প্রাইভেট-ডেটা) কে অডিও গণ্য করত; তাই অডিওবিহীন rousav-কেও "মাক্সড" দাবি করা হতো। `mmVarProbe` শুধু **প্রথম** সেগমেন্ট দেখত — কিন্তু অনেক উৎসের ০-নম্বর সেগমেন্ট lead-in (PMT `[0x1b,0x0f]`, কিন্তু বাস্তবে কোনো অডিও নেই; The Runner seg 0 বনাম seg 1..10); এখন ৩টি নমুনা। যাচাই: Demon Slayer ৫ ভাষায় ৫/৫ স্বতন্ত্র মাক্সড অডিও; rousav-সব কার্ডে PMT=0xf অডিও (৫-৬/৬ সেগমেন্ট); test.js ২০/৪৩; config.test.js সব-সবুজ; বাংলা=০ //  // v1.15.89: Multimovies **দ্বিতীয় গভীর-নিরীক্ষা** — ইউজার: "video length dekhai 10s, sese hoi abar por theke 10s suru kore … aje maje audio o thake na"। তিনটি স্বতন্ত্র ত্রুটি, প্রতিটি প্রমাণ-সহ: (ক) **#EXTM3U প্রথম লাইনে ছিল না** — HLS-স্পেসিফিকেশনে #EXTM3U অবশ্যই প্রথম লাইন; আমরা মাস্টারের ট্যাগ-ব্লক (TYPE=AUDIO / I-FRAME-STREAM-INF) তার **আগে** জুড়ে দিচ্ছিলাম। পরীক্ষায় ১৬/১৬ MM-কার্ডেই #EXTM3U ৪ নম্বর (Demon Slayer) থেকে ৩৮ নম্বর (The Runner) লাইনে — প্লেয়ার প্লেলিস্ট অগ্রাহ্য/অডিও-ট্র্যাক হারাতো। আগের যাচাইয়ে ধরা পড়েনি কারণ সেখানে শুধু "#EXTM3U আছে কি" দেখা হতো, **কোন লাইনে** তা নয়। নতুন `mmM3UJoin(tags, body)` ট্যাগ-ব্লক #EXTM3U-এর পরে বসায়; `mmMiniBuild`-এর মাস্টার-আউটপুটেও #EXTM3U যোগ (আগে সেটিতে #EXTM3U-ই ছিল না)। (খ) **CDN Referer দাবি করে, প্লেয়ার পাঠায় না** — dd2stliwt0bc.homechefrecipes.sbs (.urlset): Referer ছাড়া **০/২০** ৪০৪, Referer সহ **২০/২০** ২০০; img.rousav.tech Referer ছাড়াই ১০/১০। নতুন `mmNeedsRef(u)` হোস্ট-ভিত্তিক (৩০মিন ক্যাশ) সনাক্তকরণ → প্রয়োজনীয় হোস্টের মিডিয়া আমাদের /mmr/ রিলে দিয়ে (রিলে সবসময় সঠিক Referer যোগ করে), প্রয়োজন না হলে সরাসরি CDN — কোনো অতিরিক্ত ব্যান্ডউইথ-খরচ নেই। যাচাই: Demon Slayer-এর ৪টি .urlset কার্ড রিলে-কৃত, rousav কার্ড ও The Runner সরাসরি। (গ) **বেস৬৪-প্যাডিং ('=') রেগেক্সে ছিল না** → কপি/পেস্টে প্যাডিং যোগ হলে ২০০-এর বদলে ৪০৪ (প্রমাণ: ইউজারের ইউআরএল "…8amE=/mini.m3u8" → ৮/৮ বার ৪০৪; '=' বাদ দিলেই ২০০)। /mm/ ও /mmr/ দুটোতেই '=' এখন বৈধ। যাচাই: ৩৮/৩৮ কার্ডে #EXTM3U প্রথম লাইনে; ENDLIST শেষ লাইনে; রিলে-কৃত সেগমেন্ট ৬/৬ HTTP ২০৬/২০০ video/mp2t মাক্সড-অডিও; অডিও-প্লেলিস্ট HTTP ২০০ (৯৩০ EXTINF); test.js ২০/৪৩ বেসলাইন; config.test.js সব-সবুজ; বাংলা=০ //  // v1.15.88: Multimovies গভীর-নিরীক্ষা + **single-audio সংস্কার** (ইউজার: "Demob slayer infinity castle … fast hls gulo pelam na, the runner e single audio fast hls gulo pelam na, multi audio play problem hoi")। (ক) **নকল কোয়ালিটি-কার্ড বন্ধ**: `woHasAudioGrp` শাখা প্রতি কোয়ালিটিতে একটি করে কার্ড দিত, কিন্তু সবার `url` একই (পুরো মাস্টার) — প্রমাণ: Demon Slayer ১৩১১০৩১-এ ৩টি কার্ড (1080/720/480) যাদের URL **হুবহু অভিন্ন** (`…v51t5m9qymh5_,l,n,h,.urlset/master.txt`)। (খ) **মাল্টি-অডিও সমস্যার মূল**: rousav মাস্টার ১৬-২০টি আলাদা অডিও-ট্র্যাক ঘোষণা করে, কিন্তু প্লেয়ারকে সেগুলো আলাদাভাবে টানতে হয় — আর The Runner-এর track_english/spa/fra/pol/por/tam/tel/tha/tur **৪০৪**; Demon Slayer .urlset-এর ভিডিও-ভ্যারিয়েন্ট আসলে **মাক্সড** (H.264+AAC একই TS-এ — PMT-স্ক্যানে প্রমাণিত)। এখন **প্রতি কোয়ালিটি × প্রতি ভাষা = একটি single-audio কার্ড** (mini + `alang`-পিন: মাস্টারে শুধু ওই একটি অডিও-ট্র্যাক থাকে)। (গ) **প্রোব-ভিত্তিক সততা**: `mmVarProbe` (ভ্যারিয়েন্ট জীবিত + TS-এ অডিও মাক্সড কি — ৪KB রেঞ্জ-ফেচ) ও `mmTrkProbe` (অডিও-ট্র্যাক জীবিত), দুটোতেই **দ্বৈত-নিশ্চিতকরণ** — rousav/CDN-এর 'নোড-লটারি'তে ভাগ্যবান-নোড মিথ্যা-জীবিত দেখায় (প্রমাণ: track_english একবার ২০০, পরের ১৫ বার ৪০৪)। মিথ্যা-মাল্টি-অডিও মাস্টারে আর 'N Audio' দাবি নেই; মাক্সড ভ্যারিয়েন্ট থাকলে সরাসরি সেটিই (দ্রুততম), নইলে সৎ শূন্য। (ঘ) **অন্যান্য**: ডিডুপ-কী'তে `alang` (নাহলে ৬ ভাষা-কার্ড অভিন্ন-কী হয়ে ৫টি বাদ পড়ত — প্রমাণ `[mmvbd] out=6` → `variants=1`); `_lang`-এ ISO-কোড→ইংরেজি-নাম ম্যাপার (`mmLangBlob`) — mml=['hindi'] আগে ০ কার্ড দিত, এখন ৩; MM কার্ড-ক্যাপ ১৬→২০; decodeURIComponent-সহ কোনো মিড-লাইন কমেন্ট নেই। যাচাই: test.js ২০/৪৩ (বেসলাইন), config.test.js সব-সবুজ, বাংলা=০, Demon Slayer ২০ কার্ড (হিন্দি/ইংলিশ/জাপানি/তেলুগু/তামিল × ১০৮০/৭২০/৪৮০), The Runner ০→৬ (চেক/জার্মান/হিন্দি/হাঙ্গেরিয়ান/ইতালিয়ান/জাপানি — সব জীবিত), প্রতি কার্ডে অডিও-ট্র্যাক=১, সেগমেন্ট HTTP ২০৬ video/mp2t মাক্সড-অডিও //  // v1.15.87: স্কাইমুভিজ-সাইট গভীর-নিরীক্ষা + স্কোরার-মেরামত। (ক) **'/movie/'-প্রিফিক্স-বাগ (বড়)**: skyStreams-এ posts = "/movie/Slug-…", কিন্তু স্কোরার সরাসরি nrm(p) করত → n = "movie jaws 1975 …" → `n === Tn` ও `n.startsWith(Tn+' ')` দুটোই **মৃত কোড** (n কখনোই টাইটেল দিয়ে শুরু হয় না)। বহু-শব্দ-টাইটেল বেঁচেছিল শুধু `n.includes(' '+Tn+' ')` (১১০) শাখায়; **এক-শব্দ-টাইটেলের (Jaws/Rocky/Alien/Chernobyl/Lucifer) কোনো শাখাই থাকত না → sc=0 → সব সময় ০ কার্ড**। প্রমাণ: Jaws(৫৭৮) → no-match posts=6 (সাইটে ৪× Jaws-1975 থেকেও); এখন ১× Jaws.1975 720p, Rocky(১৩৬৬) ০→৪ (Rocky.1976.*), Alien(৩৪৮) ০→৪ (Alien.1979.*)। (খ) **বছর-রেজেক্সে 19xx** (আগে শুধু 20xx) — Godfather-সার্চে Part II(1974)/Part III(1990)-এর বছর-যাচাই-ই হত না; এখন সঠিক ১৯৭২ +৪০, ভুল ১৯৭৪/১৯৯০ −৩০। সিরিজে বছর-দণ্ড **নেই** (প্রমাণ: স্লাগের বছর = সিজন-বছর — Breaking Bad S01=(2008)…S05=(2012), first_air_date নয়)। (গ) **এক-শব্দ-টাইটেলে দ্বৈত-নিশ্চিতকরণ** (প্রিফিক্স-মিল এখন সক্রিয়, তাই ভুল-টাইটেল-ঝুঁকি নতুন) — টাইটেলের ঠিক-পরের টোকেন হতে হবে ৪-অঙ্কের-বছর | সিজন-চিহ্ন | রেজোলিউশন | স্ট্রিং-শেষ, **এবং** মুভি=বছর-মিল / সিরিজ=সিজন-মিল। প্রমাণ (পরের-টোকেন): সঠিক → Jaws→1975, Alien→1979, Rocky→1976, Chernobyl→2019, Lucifer→2016/2017/2018; ভুল → Dark→"fantasies"(Dark-Fantasies-2010), Rocky→"handsome"/"mental", Alien→"predator", Jaws→"3d"(Jaws-3D-1983)। ফল: Dark S01E01 আগে দিত **ভুল** Dark.Hole.S01.COMPLETE → এখন ০ (সৎ শূন্য)। (ঘ) decodeURIComponent try/catch (lone '%'-স্লাগে URIError → সোর্স-মৃত্যু ঠেকানো)। পরীক্ষিত: test.js ২০/৪৩ (বেসলাইন), config.test.js সব-সবুজ, স্বাধীনতা-ম্যাট্রিক্স v1.15.86-এর সাথে হুবহু মিল (ডিফল্ট Sky[1080,720,720,480]/M4u[2160,1080,1080,720,720,720]; sky=0→Sky[]; skyr=720→Sky[720,720,480]; m4ur=720→M4u[720,720,480,720]; m4u=0→M4u[]; Pengu=0) //  // v1.15.86: (ক) **Pengu-সোর্স সম্পূর্ণ সরানো** (ইউজার: "No pengu please") — penguStreams/pengResolve/PENGU_BASE/PENGU_CFG কোড-থেকেই মুছে ফেলা, সাথে cfg-কী peng/pengr/pengq/pengl, কনফিগ-পেজের Pengu-কার্ড ও UNIFY_SRV-এন্ট্রি। (খ) **Sky Movies = আসল SkymoviesHD, এখন সম্পূর্ণ স্বাধীন সোর্স** — নিজস্ব মাস্টার-সুইচ (sky), নিজস্ব রেজো-ক্যাপ (skyr), নিজস্ব কোয়ালিটি/ভাষা-ফিল্টার (skyq/skyl), নিজস্ব bingeGroup 'sky|'। আগে Sky-কে Pengu-সুইচ ও **m4ur** (মুভিজ4ইউ-এর সেটিং) দিয়ে চালানো হত — এবং skyStreams-এর bingeGroup ছিল 'peng|' (পেঙ্গু-এর সাথে হুবহু একই), ফলে স্কাই-কার্ড 'Pengu' লেবেল পেত। প্রমাণ: sky=0 → শুধু স্কাই বন্ধ; skyr=720 → শুধু স্কাই ক্যাপ (মুভিজ4ইউ-এর 2160 অক্ষুণ্ণ); m4ur=720 → শুধু মুভিজ4ইউ ক্যাপ (স্কাই-এর 1080 অক্ষুণ্ণ)। (গ) **SkymoviesHD ডোমেইন-আপডেটার** — সাইট বারবার ডোমেইন বদলায়; ঘোষক-পাতা skybap.site (প্রমাণিত: সেখান থেকে new1.skymovieshd.clinic লিংক) থেকে প্রার্থী-ডোমেইন নিয়ে **যাচাই** (search.php + /movie/*.html) করে SKY_BASE বসানো হয়; বুটে + প্রতি-৬ঘণ্টায় রিফ্রেশ, সার্চ-ব্যর্থ হলে জোর-রিফ্রেশ-পুনঃচেষ্টা। যাচাই বাধ্যতামূলক — ঘোষক-পাতার টেক্সটে পুরনো মৃত ডোমেইন (skymovieshd.in/.com) থাকে, সেগুলো সঠিকভাবে বাতিল হয় (প্রমাণিত)  // v1.15.85: (ক) কার্ড-টেক্সট থেকে বাংলা সম্পূর্ণ সরানো — "ⓘ সম্পূর্ণ সিজন (এক-ফাইলে) — Ep 1 থেকে শুরু" → "ⓘ Full season in one file — starts at Ep 1" (Movies4u/Sky/unifyCards — ৩ জায়গা)। (খ) Sky-মিরর-ডুপ্লিকেট বন্ধ: একই হাবে pixeldrain যে-রেজো দিয়েছে, সেই রেজোতে signed-S3/workers-মিরর আর ঢোকে না। প্রমাণ: Shawshank-এ ৬ কার্ডের ২ জোড়া ছিল **হুবহু একই ফাইল** (pd ২.৬১GB = S3 ২.৬১GB, ৪৮০-তেও তাই) — অথচ ৬টির কার্ড-টেক্সট অভিন্ন, ব্যবহারকারী পার্থক্য বুঝতেই পারত না → ৬→৪। (গ) Sky-সার্চ/স্কোরার-এ অ্যাপোস্ট্রোফি-স্বাভাবিকীকরণ: "Schindler's List" সার্চে ০ পোস্ট, "Schindlers List"-এ ১ — অ্যাপোস্ট্রোফি সার্চ ভেঙে দিত; স্কোরারেও অতিরিক্ত-টোকেন-দণ্ডে স্কোর ৩৩ (<৬০, বাতিল) → এখন ১২০ (মিল)। (ঘ) S3/ফলব্যাক-রেজো এখন স্লাগ-লেবেল নয়, আসল ফাইলনাম থেকে — প্রমাণ: Godfather-স্লাগ "720p" কিন্তু ফাইল 1080p/৩.৪২GB (আগে 720 ভুল-লেবেল)  // v1.15.84: workers.dev আর বাদ নয় (পরিমাপিত — সিক-যোগ্য)। প্রমাণ: সরাসরি-ফাইল workers.dev-এ মাঝ-রেঞ্জে HTTP 206, content-type video/x-matroska, ১৭.৫/২৪.৮ GB; টোকেন t=0/60/180/360/600s-এ বহাল। নিরাপত্তা: .m3u8 বাদ (সেকেন্ডেই 404), text/*-কনটেন্ট-টাইপ বাতিল, শুধু মিডিয়া-এক্সটেনশন-যুক্ত ফাইলনাম, রেজো কেবল পরিচিত-সিঁড়ি থেকে (ভুল-লেবেল-নিষিদ্ধ), অন্তর্বর্তী 403-এ একবার পুনঃচেষ্টা। ফল: Sikandar-2025-এ 0→2×2160 (আগে সর্বোচ্চ 1080)  // v1.15.83: সিজন-প্যাক-ফলব্যাক (হুবহু SxxExx-মিল-থাকলে সেটাই; না-থাকলে সিজন-নিশ্চিত 'S01…' প্যাক — লেবেলে "· S1 Pack" + "ⓘ সম্পূর্ণ সিজন (এক-ফাইলে) — Ep 1 থেকে শুরু")। প্রমাণ: Kon Yashwant Pansare (2026) S01 শুধু-প্যাক, 2160p-কপিতে pixeldrain×2+signed-S3×2 (206, সিক-যোগ্য) — আগে হুবহু-শর্তে সম্পূর্ণ বাতিল হত। ভুল-সিজন কখনো নয় (ssn !== SE → বাতিল; S02E01-এ S01-প্যাক যায় না — পরীক্ষিত)  // v1.15.82: Sky + Movies4u সিরিজ-পথ (হাবক্লাউড-পাতার-শিরোনামে SxxExx মিল — প্রতি-এপিসোড; ভুল-এপিসোড-নিষিদ্ধ, সিজন-জিপ-বাদ) + 4K (মৃত-S3/FSL-শাখা-জীবিত → 2160p-কার্ড; ভুল-h4-লেবেলে 4K-মিরর-বাতিল-হত) + hits[0]-অন্ধ-গ্রহণ-বন্ধ (বছর-সচেতন m4uPick — Superman-২০২৫-এ hits[0] ছিল Superman-১৯৭৮ = ভুল-টাইটেল) + m4ur/mmr-ক্যাপে 2160  // কনফিগ-পেজ-বাগ-মেরামত (৫-ট্যাব): সার্ভার-টাইল-বুটে-রিড্র, "None"=ফ্লিট-বন্ধ (খালি=সব-চুক্তি), Reset-এ-চিপ-রিড্র, flab-<em>-আক্ষরিক-লেখা, Jump-টগল+লেবেল, Sky-প্রিভিউ-m4ur-লিক, rtsrv-দুটোই-বাদ-সম্মান // v1.15.80: RT-দ্বিতীয়-সার্ভার (WN/pixeldrain)-পুনরুদ্ধার: é-ডিঅ্যাকসেন্ট+রেস-মার্জ+PD-inline+per-সার্ভার-টগল (rtsrv)
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
@@ -1295,6 +1295,97 @@ function twTitleOk(title, fn) { // v1.13.5 ভুল-টাইটেল-বা�
   return i >= Math.min(qt.length, Math.max(2, Math.ceil(qt.length * 0.6))); // v1.15.11: RT-পোস্ট-টাইটেল-প্রায়ই-কোয়েরির-শুরুর-অংশ-মাত্র → ৬০%-ক্রমানুসারে-মিল-যথেষ্ট; ভুল-শো (Breaking Bad→Bad Guys: ১/২) আগের-মতোই-বাদ
 }
 
+// ─── v1.16.3: RareToons **ডাব-নাম ঘোষণা** (ইউজার: \"raretoons-এ-দুই-ধরনের-dub, Muse/Crunchyroll — কার্ডে-ভাষার-পাশে-লিখে-দাও\") ───
+// সাইটের-পোস্ট-পাতায়-প্রতি-DUB-সেকশন-হেডিং থাকে (`<h4>↓ Muse DUB ↓</h4>`, `↓ Anime Times DUB ↓`, `↓ Crunchyroll DUB ↓`)।
+// প্রতিটি-`WatchMultQuality`/`WatchNow`-জিপার-লিংক 302-দেয় `/multiquality/?url=<mq_fid>`-এ, আর-রেজলভার-কার্ডের
+// `/hls/<b64>`-এ-ঠিক-সেই-`mq_fid`-ই-থাকে → **exact-match** ম্যাপিং (অনুমান-নয়)। পিক্সেলড্রেইন-ফাইলনামেও `[Muse Dub]` থাকে।
+const RT_SITE_BASE = 'https://www.rareanimes.mov';           // রেজলভারের-নিজের-SITE-এর-সঙ্গে-সামঞ্জস্যপূর্ণ
+const RT_HUB_TEXT = new Map();   // slug -> {ts, txt}
+const RT_DUB_MAP = new Map();    // slug|S|E -> {ts, map: {fid: dub}}
+const RT_FID_CACHE = new Map();  // zipper-url -> {ts, fid}
+function rtNormDub(h) { // \"↓ Muse DUB ↓\" → \"Muse\"; \"Anime Times DUB\" → \"Anime Times\"
+  let t = bfDecodeEnt(String(h || '')).replace(/[↓↑]/g, ' ').replace(/\s+/g, ' ').trim();
+  t = t.replace(/[:\-–|]+$/g, '').trim();
+  const m = t.match(/^(.*?)\s*(?:dub|dubbed)\s*$/i);
+  if (m) t = m[1].trim();
+  t = t.replace(/\s+/g, ' ').trim();
+  if (!t) return '';
+  if (/(?:season|episode|series|movie|download|batch|zip|complete|watch|recommend)/i.test(t)) return ''; // সেকশন-নয় (অনুসন্ধান-হেডিং)
+  if (t.length > 24) return ''; // ডাব-নাম-ছোট-হয় (Muse / Anime Times / Crunchyroll / Sony Yay / Jio Cinema)
+  return t;
+}
+function rtMqFid(u) { // রেজলভার-কার্ড-URL → mq_fid
+  const m = String(u || '').match(/\/hls\/([A-Za-z0-9_-]+)/);
+  if (!m) return '';
+  try { return String((JSON.parse(Buffer.from(m[1], 'base64url').toString('utf8')) || {}).mq_fid || ''); } catch { return ''; }
+}
+async function rtFidOfZipper(zu, tmo) {
+  const hit = RT_FID_CACHE.get(zu);
+  if (hit && (Date.now() - hit.ts) < 1800000) return hit.fid;
+  try {
+    const r = await fetch(zu, { redirect: 'manual', headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(tmo || 2200) });
+    const loc = String(r.headers.get('location') || '');
+    try { if (r.body) await r.body.cancel(); } catch { }
+    const fid = (loc.match(/[?&]url=([A-Za-z0-9]{6,})/) || [])[1] || '';
+    if (fid) { RT_FID_CACHE.set(zu, { ts: Date.now(), fid }); if (RT_FID_CACHE.size > 3000) RT_FID_CACHE.clear(); }
+    return fid;
+  } catch { return ''; }
+}
+async function rtHubText(slug) {
+  const hit = RT_HUB_TEXT.get(slug);
+  if (hit && (Date.now() - hit.ts) < 600000) return hit.txt;
+  for (const bse of [RT_SITE_BASE, 'https://rareanimes.mov']) {
+    try {
+      const r = await fetch(bse + '/' + slug + '/', { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(3200) });
+      if (!r.ok) { try { await r.body.cancel(); } catch { } continue; }
+      const txt = await r.text();
+      if (txt && txt.length > 5000) { RT_HUB_TEXT.set(slug, { ts: Date.now(), txt }); if (RT_HUB_TEXT.size > 120) RT_HUB_TEXT.clear(); return txt; }
+    } catch { }
+  }
+  RT_HUB_TEXT.set(slug, { ts: Date.now(), txt: '' });
+  return '';
+}
+async function rtDubMap(slug, SE, EP, budgetMs) { // {mq_fid: \"Muse\"} — সেই-এপিসোডের-সব-DUB-সেকশন-মিলিয়ে
+  if (!slug) return {};
+  const key = slug + '|' + SE + '|' + EP;
+  const hit = RT_DUB_MAP.get(key);
+  if (hit && (Date.now() - hit.ts) < 900000) return hit.map;
+  const txt = await rtHubText(slug);
+  if (!txt) return {};
+  const heads = []; // {pos, dub}
+  const rxH = /<h[1-5][^>]*>([\s\S]{0,300}?)<\/h[1-5]>/gi; let m;
+  while ((m = rxH.exec(txt))) {
+    const raw = m[1].replace(/<[^>]+>/g, ' ');
+    if (!/\bdub(?:bed)?\b/i.test(raw)) continue;
+    const dub = rtNormDub(raw);
+    if (dub) heads.push({ pos: m.index, dub });
+  }
+  if (!heads.length) { RT_DUB_MAP.set(key, { ts: Date.now(), map: {} }); return {}; }
+  const eps = []; const rxE = /Episode\s*0*(\d{1,3})/gi;
+  while ((m = rxE.exec(txt))) eps.push({ pos: m.index, ep: parseInt(m[1], 10) });
+  const links = []; const rxA = /<a[^>]*href="(https:\/\/codedew\.com\/zipper\/\?url=[^"]+)"[^>]*>([\s\S]{0,90}?)<\/a>/gi;
+  while ((m = rxA.exec(txt))) {
+    const lbl = bfDecodeEnt(m[2]).replace(/<[^>]+>/g, '').replace(/\s+/g, '').toLowerCase();
+    // সাইটে-বানান-দুই-রকম: \"WatchMultQuality\" ও \"WatchMultiQuality\" (resolver-এর-তালিকায়-শুধু-দ্বিতীয়টি — তাই-আগে-MQ-লিংক-বাদ-পড়ত)
+    if (lbl !== 'watchnow' && !/^watchmul.{0,2}quality$/.test(lbl)) continue; // ডাউনলোড-লিংক-নয় (রেজলভারও-নেয়-না)
+    let ep = 0; for (const p of eps) { if (p.pos < m.index) ep = p.ep; else break; }
+    if (ep !== EP) continue;
+    let dub = ''; for (const h of heads) { if (h.pos < m.index) dub = h.dub; else break; }
+    if (dub) links.push({ zu: m[1].replace(/&amp;/g, '&'), dub });
+  }
+  const uniq = []; const seenZ = new Set();
+  for (const l of links) { if (!seenZ.has(l.zu)) { seenZ.add(l.zu); uniq.push(l); } }
+  const map = {};
+  const budget = Math.max(600, budgetMs || 2400);
+  const work = Promise.all(uniq.slice(0, 24).map(async l => {
+    const fid = await rtFidOfZipper(l.zu, Math.min(2000, budget));
+    if (fid) map[fid] = l.dub;
+  }));
+  await Promise.race([work, new Promise(r => setTimeout(r, budget))]);
+  RT_DUB_MAP.set(key, { ts: Date.now(), map });
+  if (RT_DUB_MAP.size > 400) RT_DUB_MAP.clear();
+  return map;
+}
 async function twrFetch(base, tag, title, type, s, e, t3) {
   const qs = new URLSearchParams({ source: tag, title: String(title || '').replace(/[\u2018\u2019\u02BC]/g, "'"), _: String(Date.now()) }); // v1.15.11: ইউনিকোড-অ্যাপস্ট্রফি→ASCII (রেজলভার-ক্যাশ-কী-একতা)
   if (type === 'series') { qs.set('season', String(s || 1)); qs.set('episode', String(e || 1)); }
@@ -1313,12 +1404,21 @@ async function twrFetch(base, tag, title, type, s, e, t3) {
     const keep = catShow ? twTitleOk(qG, catShow) // পোস্ট-পরিচিতি-থাকলে-সেটাই-চূড়ান্ত-রায়
           : (named.length ? named.some(x => twTitleOk(qG, x.name)) : false); // নইলে-নাম-ওয়ালা-কার্ড-রায়; সব-জেনেরিক+পরিচয়হীন → বাদ (ভুল-শো-MQ-লিক-বন্ধ — সুরক্ষা-অক্ষত)
     if (DBG) console.error('[twrGATE] ' + tag + ' title=' + String(title).slice(0, 34) + ' cat=' + (catShow || '(শূন্য)').slice(0, 50) + ' named=' + named.length + '/' + raws.length + ' keep=' + keep + ' names=' + raws.map(x => String(x.name || '').slice(0, 26)).join(' | ').slice(0, 110));
+    // v1.16.3: RareToons-ডাব-নাম (Muse/Anime Times/Crunchyroll …) — ভাষার-পাশে-ঘোষণা
+    let dubM = {};
+    if (tag === 'raretoons' && keep && raws.length && String(cat0.live || cat0.show || '').trim()) {
+      try { dubM = await rtDubMap(String(cat0.live || cat0.show).trim(), s || 1, e || 1, 2400); } catch { dubM = {}; }
+    }
     const arr = (keep ? raws : []).map(x => {
       const hq = parseInt(String(x.quality || ''), 10) || 0; // রেজলভারের-আসল-উচ্চতা — twq-ফিল্টার-এর-জন্য
       const fn = String(x.name || '');
       const q2 = '1080';
       const lang = String(x.lang || '');
-      const audio = lang || (/\b(multi|dual)\b/i.test(fn) ? 'Multi Audio' : 'Hindi Audio');
+      const dubRaw = (tag === 'raretoons')
+        ? (dubM[rtMqFid(x.url)] || (String(fn).match(/\[([^\]]{2,26}?)\s*Dub\]/i) || [])[1] || '')
+        : '';
+      const dub = dubRaw ? rtNormDub(dubRaw) || String(dubRaw).trim() : '';
+      const audio = (lang || (/\b(multi|dual)\b/i.test(fn) ? 'Multi Audio' : 'Hindi Audio')) + (dub ? ' \u00b7 ' + dub + ' Dub' : '');
       const epLine = type === 'series' ? ('\u29e0 S' + (s || 1) + 'E' + (e || 1) + ((x.ep_title || '') ? ' \u2022 ' + x.ep_title : '')) : '\u29e0 Movie';
       const lbl = tag === 'toonworld' ? 'ToonWorld' : 'RareToons';
       let hu = String(x.url || '');
@@ -1334,7 +1434,7 @@ async function twrFetch(base, tag, title, type, s, e, t3) {
         _lang: lang,
         url: hu, // v1.15.80-wip: পরিষ্কার-hu (?download-বাদ)
         behaviorHints: { notWebReady: false, isBingeable: true, filename: fn || (tag === 'toonworld' ? 'toonworld.mkv' : 'raretoons.mkv') },
-        bingeGroup: (tag === 'toonworld' ? 'tw|' : 'rt|') + String(title).toLowerCase() + '::|' + (lang || 'Hindi')
+        bingeGroup: (tag === 'toonworld' ? 'tw|' : 'rt|') + String(title).toLowerCase() + '::|' + (lang || 'Hindi') + (dub ? '::' + dub : '') // v1.16.3: ডাব-আলাদা-বিংজ-গ্রুপ (Muse↔Anime Times মিশে-যাবে-না)
       };
     });
     if (DBG) console.error('[twr] ' + tag + ' ' + String(title).slice(0, 30) + ' S' + (s || 1) + 'E' + (e || 1) + ' -> ' + arr.length + ' cards @' + (Date.now() - t3) + 'ms');
@@ -1615,6 +1715,11 @@ function mmEnsureFetch(tgt) {
         return retry();
       }
       const cl = Number(up.headers['content-length'] || 0);
+      if (cl > 48 * 1024 * 1024) {
+        closed = true; clearInterval(wd); upReq.destroy();
+        ent.failed = true; ent.errCode = 413; MMR_MEM.delete(tgt);
+        return notify();
+      }
       if (ent.received === 0) {
         ent.status = 200;
         ent.ctype = up.headers['content-type'] || 'video/mp2t';
@@ -4326,10 +4431,29 @@ let bfDomTs = 0, bfDomInflight = null;
 const BF_DOM_TTL = 6 * 3600 * 1000;
 const BF_ANNOUNCERS = ['https://bollyflix.vip/?re=bollyflix', 'https://bollyflix.nz/?re=bollyflix', 'https://bollyflix.vip/'];
 let bfDirectCoolUntil = 0, bfRrIdx = 0;
-const BF_FID_CACHE = new Map(); // fid -> { ts, ttl, streamUrl }
+const BF_FID_CACHE = new Map(); // fid -> { ts, ttl, streamUrl, isZip, rawBytes }
 const BF_POST_CACHE = new Map(); // url -> { ts, txt }
 const BF_H2_OK = new Set(); // px -> verified CONNECT + ALPN h2
 const BF_H2_BAD = new Map(); // px -> ts of CONNECT/ALPN failure
+const BF_IP_REQS = new Map(); // px|'direct' -> [ts1, ts2, ...] sliding 65s window (GDFlix limit = 10 req/IP/min)
+const BF_CLOUD_INFLIGHT = new Map(); // fid -> Promise<{ fid, ttl, streamUrl, isZip, rawBytes }>
+const BF_PENDING_CLOUD = new Map(); // fid -> { ts, pendingCloud, ttl }
+const BFZ_META = new Map(); // zipUrl -> { ts, dataStart, rawSize }
+
+function bfIpCount(pxKey) {
+  const k = pxKey || 'direct';
+  const now = Date.now();
+  const arr = (BF_IP_REQS.get(k) || []).filter(t => now - t < 65000);
+  if (arr.length) BF_IP_REQS.set(k, arr); else BF_IP_REQS.delete(k);
+  return arr.length;
+}
+function bfIpMark(pxKey, n = 1) {
+  const k = pxKey || 'direct';
+  const now = Date.now();
+  const arr = (BF_IP_REQS.get(k) || []).filter(t => now - t < 65000);
+  for (let i = 0; i < n; i++) arr.push(now);
+  BF_IP_REQS.set(k, arr);
+}
 
 function bfCleanStreamUrl(raw) {
   if (!raw) return '';
@@ -4351,7 +4475,7 @@ function bfCachePut(map, k, val, maxEntries = 400) {
   map.set(k, Object.assign({ ts: Date.now() }, val));
 }
 
-function bfHealthyPxs(limit = 16) {
+function bfHealthyPxs(limit = 20) {
   const now = Date.now();
   const isNotBad = px => {
     const b = BF_H2_BAD.get(px);
@@ -4359,26 +4483,28 @@ function bfHealthyPxs(limit = 16) {
     if (now - b > 15 * 60 * 1000) { BF_H2_BAD.delete(px); return true; }
     return false;
   };
-  const h2Proven = [...BF_H2_OK].filter(px => isNotBad(px));
+  const notOverloaded = px => bfIpCount(px) < 8;
+  const h2Proven = [...BF_H2_OK].filter(px => isNotBad(px) && notOverloaded(px))
+    .sort((a, b) => bfIpCount(a) - bfIpCount(b));
   const proven = POOL.filter(c => {
-    if (!isNotBad(c.px) || BF_H2_OK.has(c.px)) return false;
+    if (!isNotBad(c.px) || BF_H2_OK.has(c.px) || !notOverloaded(c.px)) return false;
     const h = PX_RUN.get(c.px);
     return h && h.ok > 0 && h.fail <= h.ok * 2;
   }).sort((a, b) => pxScore(a.px, a.ms) - pxScore(b.px, b.ms)).map(c => c.px);
   const mmProven = MM_POOL.filter(c => {
-    if (!isNotBad(c.px) || BF_H2_OK.has(c.px)) return false;
+    if (!isNotBad(c.px) || BF_H2_OK.has(c.px) || !notOverloaded(c.px)) return false;
     const h = MM_RUN.get(c.px);
     return h && h.ok > 0 && h.fail <= h.ok * 2;
   }).sort((a, b) => mmScore(a.px, a.ms) - mmScore(b.px, b.ms)).map(c => c.px);
   const combined = [...new Set([...h2Proven, ...proven, ...mmProven])];
-  if (combined.length >= 4) return combined.slice(0, limit);
-  const extra = POOL.filter(c => isNotBad(c.px) && !combined.includes(c.px)).slice(0, limit - combined.length).map(c => c.px);
+  if (combined.length >= 6) return combined.slice(0, limit);
+  const extra = POOL.filter(c => isNotBad(c.px) && notOverloaded(c.px) && !combined.includes(c.px)).slice(0, limit - combined.length).map(c => c.px);
   return [...combined, ...extra];
 }
 
 let bfWarmInflight = false;
 async function bfWarmH2Pool() {
-  if (bfWarmInflight || BF_H2_OK.size >= 8) return;
+  if (bfWarmInflight || BF_H2_OK.size >= 12) return;
   bfWarmInflight = true;
   try {
     const now = Date.now();
@@ -4389,12 +4515,13 @@ async function bfWarmH2Pool() {
         if (aSite !== bSite) return aSite - bSite;
         return pxScore(a.px, a.ms) - pxScore(b.px, b.ms);
       })
-      .slice(0, 16);
+      .slice(0, 20);
     await Promise.all(cands.map(async c => {
       let cl = null;
       try {
         cl = await bfOpenH2(BF_GD_BASE, c.px, 2800);
         const uProbe = new URL(BF_GD_BASE + '/login');
+        bfIpMark(c.px, 1);
         const gp = await bfH2Req(cl, uProbe, { timeout: 2600 });
         if (gp && gp.st === 200 && gp.data && /GDFlix/i.test(gp.data)) {
           BF_H2_OK.add(c.px);
@@ -4494,7 +4621,7 @@ function bfDecodeEnt(s) {
 }
 function bfCoreTitle(raw) {
   const s = bfDecodeEnt(raw).replace(/^Download\s+/i, '').trim();
-  const m = s.match(/^(.*?)(?:\s*\((?:19|20)\d{2}\)|\s*\(\s*Season\b|\s+(?:IMAX|Dual\s*Audio|Multi\s*Audio|Hindi|English|Tamil|Telugu|Malayalam|Kannada|Bengali|Punjabi|Marathi|Korean|Japanese|Chinese|Spanish|WEB[\s-]*Series|TV[\s-]*Series|\d{3,4}p)\b)/i);
+  const m = s.match(/^(.*?)(?:\s*\((?:19|20)\d{2}\)|\s*\(\s*Season\b|\s+\bS\d{1,2}(?:E\d{1,3})?\b|\s+(?:Season\s*\d+|IMAX|Dual\s*Audio|Multi\s*Audio|Hindi|English|Tamil|Telugu|Malayalam|Kannada|Bengali|Punjabi|Marathi|Korean|Japanese|Chinese|Spanish|WEB[\s-]*Series|TV[\s-]*Series|NetFlix[\s-]*Series|Anime[\s-]*Series|\d{3,4}p)\b)/i);
   return (m ? m[1] : s).trim();
 }
 function bfPick(posts, T, year, isTv, SE) {
@@ -4507,7 +4634,7 @@ function bfPick(posts, T, year, isTv, SE) {
     const raw = bfDecodeEnt(p.title && p.title.rendered ? p.title.rendered : (p.title || ''));
     const link = p.link || p.permalink || '';
     if (!raw || !link) continue;
-    const postIsTv = /\b(web[\s-]*series|tv[\s-]*series|season\s*\d+|s\d{1,2}\s*e\d{1,2})\b/i.test(raw);
+    const postIsTv = /\b(web[\s-]*series|tv[\s-]*series|netflix[\s-]*series|anime[\s-]*series|season\s*\d+|s\d{1,2}\s*(?:e\d{1,3}|\b)|all\s+episodes|complete\s+series)\b/i.test(raw);
     if (Boolean(isTv) !== postIsTv) continue;
     const core = bfCoreTitle(raw);
     const cn = nrm(core);
@@ -4524,14 +4651,14 @@ function bfPick(posts, T, year, isTv, SE) {
       sc += (py === year ? 60 : 25);
     }
     if (isTv && SE) {
-      const sm = raw.match(/Season\s*0*(\d+)\s*(?:[-\u2013]|to)\s*0*(\d+)/i);
-      const s1 = !sm && raw.match(/Season\s*0*(\d+)/i);
+      const sm = raw.match(/(?:Season\s*0*(\d+)\s*(?:[-\u2013]|to)\s*0*(\d+)|\bS0*(\d{1,2})\s*(?:[-\u2013]|to)\s*S?0*(\d{1,2})\b)/i);
+      const s1 = !sm && raw.match(/(?:Season\s*0*(\d+)|\bS0*(\d{1,2})(?:\b|E\d))/i);
       if (sm) {
-        const a = parseInt(sm[1], 10), b = parseInt(sm[2], 10);
+        const a = parseInt(sm[1] || sm[3], 10), b = parseInt(sm[2] || sm[4], 10);
         if (SE >= a && SE <= b) sc += 50;
         else continue;
       } else if (s1) {
-        if (parseInt(s1[1], 10) === SE) sc += 50;
+        if (parseInt(s1[1] || s1[2], 10) === SE) sc += 50;
         else continue;
       }
     }
@@ -4675,15 +4802,26 @@ function bfH2Req(client, u, opts = {}) {
   });
 }
 
+function bfExtractCloudWorker(cClean) {
+  const wm = cClean.match(/href=["'](https?:\/\/(?:(?:[a-z0-9-]+\.)+workers\.dev|pub-[a-z0-9]+\.r2\.dev)\/[^"']+)["']/i);
+  if (!wm || !wm[1]) return null;
+  const u = bfCleanStreamUrl(wm[1]);
+  const zm = u.match(/\.(?:mkv|mp4)\.zip\?bytes=(\d+)/i);
+  if (zm) return { streamUrl: u, isZip: true, rawBytes: Number(zm[1]) || 0 };
+  if (/\.(?:zip|rar|7z)(?:\?|$)/i.test(u)) return { streamUrl: '', dead: true };
+  return { streamUrl: u, isZip: false, rawBytes: 0 };
+}
+
 async function bfResolveGdflixOne(fid, origin, px, timeoutMs = 3800) {
   const t0 = Date.now();
   const client = await bfOpenH2(origin, px, px ? Math.min(2100, timeoutMs) : Math.min(2600, timeoutMs));
   try {
     const uFile = new URL(origin + '/file/' + fid);
+    bfIpMark(px, 1);
     const gp = await bfH2Req(client, uFile, { timeout: Math.max(1500, timeoutMs - (Date.now() - t0)) });
     if (gp.st === 429 || gp.st === 403 || /error code:\s*1015|Just a moment/i.test(gp.data || '')) {
-      if (!px) bfDirectCoolUntil = Date.now() + 60000;
-      else { BF_H2_OK.delete(px); BF_H2_BAD.set(px, Date.now()); pxRec(px, false, 0); }
+      if (!px) bfDirectCoolUntil = Date.now() + 65000;
+      else { bfIpMark(px, 10); }
       throw new Error('rate-limited');
     }
     if (gp.st >= 300 && gp.st < 400 && gp.headers && gp.headers.location && /^https?:\/\/[a-z0-9.-]*gdflix\.[a-z.]+/i.test(gp.headers.location)) {
@@ -4696,29 +4834,39 @@ async function bfResolveGdflixOne(fid, origin, px, timeoutMs = 3800) {
     if (px) BF_H2_OK.add(px);
     const ttl = ((gp.data.match(/<title>([^<]+)<\/title>/) || [])[1] || '').replace(/^GDFlix\s*\|\s*/i, '').trim();
     const clean = gp.data.replace(/<!--[\s\S]*?-->/g, '');
-    let streamUrl = '';
+    let streamUrl = '', isZip = false, rawBytes = 0;
     const r2m = clean.match(/https?:\/\/pub-[a-z0-9]+\.r2\.dev\/[^\s"'<>]+/i);
     if (r2m) {
       streamUrl = bfCleanStreamUrl(decodeURIComponent(r2m[0].replace(/&amp;/g, '&')));
     }
     if (!streamUrl) {
-      const pdm = clean.match(/https?:\/\/pixeldrain\.com\/(?:api\/file|u)\/([A-Za-z0-9_-]+)/i);
-      if (pdm) streamUrl = 'https://pixeldrain.com/api/file/' + pdm[1];
+      const pdm = clean.match(/https?:\/\/pixeldrain\.(?:com|dev)\/(?:api\/file|u)\/([A-Za-z0-9_-]+)/i);
+      if (pdm) streamUrl = 'https://pixeldrain.dev/api/file/' + pdm[1];
     }
     if (!streamUrl) {
       const cloudPath = (clean.match(/\/cloud\/\d+\/[A-Za-z0-9]+/) || gp.data.match(/\/cflare\/\d+\/[A-Za-z0-9]+/) || [])[0] || '';
       if (cloudPath) {
         const uCloud = new URL(origin + cloudPath);
+        bfIpMark(px, 1);
         const cp = await bfH2Req(client, uCloud, { timeout: Math.max(1600, timeoutMs - (Date.now() - t0)) }).catch(() => null);
         if (!cp || cp.st !== 200 || !cp.data) throw new Error('cloud-fetch-failed');
         const cClean = cp.data.replace(/<!--[\s\S]*?-->/g, '');
-        const wm = cClean.match(/href=["'](https?:\/\/(?:[a-z0-9.-]+\.workers\.dev|pub-[a-z0-9]+\.r2\.dev)\/[^"']+)["']/i);
-        if (wm && wm[1]) {
-          if (/\.(?:zip|rar|7z)(?:\?|$)/i.test(wm[1])) {
+        const cw = bfExtractCloudWorker(cClean);
+        if (cw) {
+          if (cw.dead) {
             if (px) pxRec(px, true, Date.now() - t0);
             return { fid, ttl, streamUrl: '', dead: true, via: px || 'direct' };
           }
-          streamUrl = bfCleanStreamUrl(wm[1]);
+          streamUrl = cw.streamUrl;
+          isZip = cw.isZip;
+          rawBytes = cw.rawBytes;
+        } else if (/<button[^>]+id=["']cloud["']/i.test(cClean)) {
+          const key = (cClean.match(/append\(["']key["']\s*,\s*["']([^"']+)["']\)/) || [])[1] || '';
+          const tok = (cClean.match(/var\s+cf_token\s*=\s*["']([^"']*)["']/) || [])[1] || '';
+          if (key) {
+            if (px) pxRec(px, true, Date.now() - t0);
+            return { fid, ttl, streamUrl: '', pendingCloud: { origin, cloudPath, key, tok }, via: px || 'direct' };
+          }
         }
       } else {
         if (px) pxRec(px, true, Date.now() - t0);
@@ -4727,16 +4875,140 @@ async function bfResolveGdflixOne(fid, origin, px, timeoutMs = 3800) {
     }
     if (!streamUrl) throw new Error('no-links');
     if (px) pxRec(px, true, Date.now() - t0);
-    return { fid, ttl, streamUrl, via: px || 'direct' };
+    return { fid, ttl, streamUrl, isZip, rawBytes, via: px || 'direct' };
   } finally {
     try { client.close(); } catch { }
   }
 }
 
+function bfStartCloudGen(fid, pendingCloud, ttlHint = '') {
+  if (BF_CLOUD_INFLIGHT.has(fid)) return BF_CLOUD_INFLIGHT.get(fid);
+  const p = (async () => {
+    const origin = (pendingCloud && pendingCloud.origin) || BF_GD_BASE;
+    const h2List = [...BF_H2_OK].filter(px => bfIpCount(px) < 5);
+    const canDir = Date.now() > bfDirectCoolUntil && bfIpCount(null) < 5;
+    const viaPx = (pendingCloud && pendingCloud.via && pendingCloud.via !== 'direct' && bfIpCount(pendingCloud.via) < 5) ? pendingCloud.via : undefined;
+    const cands = [];
+    if (viaPx) cands.push(viaPx);
+    for (const x of h2List) if (!cands.includes(x)) cands.push(x);
+    if (canDir) cands.push(null);
+    if (!cands.length) {
+      for (const x of bfHealthyPxs(8)) if (!cands.includes(x)) cands.push(x);
+      cands.push(null);
+    }
+
+    for (const px of cands.slice(0, 3)) {
+      let client = null;
+      try {
+        client = await bfOpenH2(origin, px, 3200);
+        let ttl = ttlHint;
+        let cloudPath = (pendingCloud && pendingCloud.cloudPath) || '';
+        let key = (pendingCloud && pendingCloud.key) || '';
+        let tok = (pendingCloud && pendingCloud.tok) || '';
+        if (!cloudPath) {
+          bfIpMark(px, 1);
+          const gp = await bfH2Req(client, new URL(origin + '/file/' + fid), { timeout: 3500 });
+          if (!gp || gp.st !== 200 || !gp.data) continue;
+          ttl = ((gp.data.match(/<title>([^<]+)<\/title>/) || [])[1] || '').replace(/^GDFlix\s*\|\s*/i, '').trim() || ttl;
+          const clean = gp.data.replace(/<!--[\s\S]*?-->/g, '');
+          cloudPath = (clean.match(/\/cloud\/\d+\/[A-Za-z0-9]+/) || gp.data.match(/\/cflare\/\d+\/[A-Za-z0-9]+/) || [])[0] || '';
+          if (!cloudPath) continue;
+        }
+        if (!key) {
+          bfIpMark(px, 1);
+          const cp = await bfH2Req(client, new URL(origin + cloudPath), { timeout: 3500 });
+          if (!cp || cp.st !== 200 || !cp.data) continue;
+          const cClean = cp.data.replace(/<!--[\s\S]*?-->/g, '');
+          const cw0 = bfExtractCloudWorker(cClean);
+          if (cw0 && cw0.streamUrl) {
+            const res0 = { fid, ttl, streamUrl: cw0.streamUrl, isZip: cw0.isZip, rawBytes: cw0.rawBytes, via: px || 'direct' };
+            bfCachePut(BF_FID_CACHE, fid, res0, 400);
+            return res0;
+          }
+          key = (cClean.match(/append\(["']key["']\s*,\s*["']([^"']+)["']\)/) || [])[1] || '';
+          tok = (cClean.match(/var\s+cf_token\s*=\s*["']([^"']*)["']/) || [])[1] || '';
+        }
+        if (!key) continue;
+        const body = 'action=cloud&key=' + encodeURIComponent(key) + '&action_token=' + encodeURIComponent(tok);
+        bfIpMark(px, 1);
+        const uOrigin = new URL(origin);
+        const pr = await bfH2Req(client, new URL(origin + cloudPath), {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
+            'x-requested-with': 'XMLHttpRequest',
+            'x-token': uOrigin.hostname,
+            'origin': origin,
+            'referer': origin + cloudPath
+          },
+          body,
+          timeout: 4500
+        });
+        let pj = null;
+        try { pj = JSON.parse(pr.data || '{}'); } catch { }
+        if (pj && pj.visit_url && !pj.url) {
+          const vU = new URL(pj.visit_url, origin);
+          bfIpMark(px, 1);
+          const vr = await bfH2Req(client, vU, { headers: { 'referer': origin + cloudPath }, timeout: 4000 }).catch(() => null);
+          const cwV = vr && vr.data ? bfExtractCloudWorker(vr.data.replace(/<!--[\s\S]*?-->/g, '')) : null;
+          if (cwV && cwV.streamUrl) {
+            const resV = { fid, ttl, streamUrl: cwV.streamUrl, isZip: cwV.isZip, rawBytes: cwV.rawBytes, via: px || 'direct' };
+            bfCachePut(BF_FID_CACHE, fid, resV, 400);
+            return resV;
+          }
+        }
+        const pollPath = pj && pj.url;
+        if (!pollPath) continue;
+        const pollU = new URL(pollPath + (pollPath.includes('?') ? '&' : '?') + 'xhr=1', origin);
+        for (let i = 0; i < 8; i++) {
+          await new Promise(r => setTimeout(r, i === 0 ? 3600 : 3200));
+          bfIpMark(px, 1);
+          const xr = await bfH2Req(client, pollU, {
+            headers: { 'x-requested-with': 'XMLHttpRequest', 'referer': new URL(pollPath, origin).href },
+            timeout: 3600
+          }).catch(() => null);
+          if (!xr || !xr.data) continue;
+          let xj = null;
+          try { xj = JSON.parse(xr.data); } catch { }
+          const redir = xj && (xj.redirect || xj.visit_url || xj.url);
+          if (xj && (xj.done === true || /^succe/i.test(String(xj.status || ''))) && redir) {
+            const redirU = new URL(redir, origin);
+            bfIpMark(px, 1);
+            const rr = await bfH2Req(client, redirU, { headers: { 'referer': new URL(pollPath, origin).href }, timeout: 4000 }).catch(() => null);
+            const htmlAfter = (rr && rr.data) ? rr.data : '';
+            let cw = bfExtractCloudWorker(htmlAfter.replace(/<!--[\s\S]*?-->/g, ''));
+            if (!cw || !cw.streamUrl) {
+              bfIpMark(px, 1);
+              const cp2 = await bfH2Req(client, new URL(origin + cloudPath), { timeout: 3500 }).catch(() => null);
+              if (cp2 && cp2.data) cw = bfExtractCloudWorker(cp2.data.replace(/<!--[\s\S]*?-->/g, ''));
+            }
+            if (cw && cw.streamUrl) {
+              const resObj = { fid, ttl, streamUrl: cw.streamUrl, isZip: cw.isZip, rawBytes: cw.rawBytes, via: px || 'direct' };
+              bfCachePut(BF_FID_CACHE, fid, resObj, 400);
+              return resObj;
+            }
+            break;
+          }
+          if (xj && (xj.error || /^err|^fail/i.test(String(xj.status || '')))) break;
+        }
+        return null;
+      } catch {
+      } finally {
+        try { if (client) client.close(); } catch { }
+      }
+    }
+    return null;
+  })().finally(() => {
+    BF_CLOUD_INFLIGHT.delete(fid);
+  });
+  BF_CLOUD_INFLIGHT.set(fid, p);
+  return p;
+}
+
 async function bfResolveGdflixSmart(fid, idx, maxMs = 4600) {
   const cached = bfCacheGet(BF_FID_CACHE, fid, 20 * 60 * 1000);
   if (cached) return cached;
-  if (BF_H2_OK.size < 4) bfWarmH2Pool().catch(() => { });
+  if (BF_H2_OK.size < 6) bfWarmH2Pool().catch(() => { });
   const tStart = Date.now();
   const tryWithRetry = async (initialPx, allowDirectFallback) => {
     let curPx = initialPx;
@@ -4746,40 +5018,66 @@ async function bfResolveGdflixSmart(fid, idx, maxMs = 4600) {
       try {
         return await bfResolveGdflixOne(fid, BF_GD_BASE, curPx, Math.min(3600, rem));
       } catch (e) {
-        const fresh = bfHealthyPxs(16);
-        curPx = fresh.length ? fresh[(bfRrIdx++) % fresh.length] : (allowDirectFallback && Date.now() > bfDirectCoolUntil ? null : null);
-        if (!curPx && !(allowDirectFallback && Date.now() > bfDirectCoolUntil)) break;
+        const fresh = bfHealthyPxs(20);
+        const canDir = allowDirectFallback && Date.now() > bfDirectCoolUntil && bfIpCount(null) < 6;
+        curPx = fresh.length ? fresh[(bfRrIdx++) % fresh.length] : (canDir ? null : undefined);
+        if (curPx === undefined) break;
       }
     }
     throw new Error('exhausted');
   };
-  const pxs = bfHealthyPxs(16);
-  const canDirect = Date.now() > bfDirectCoolUntil;
+  const pxs = bfHealthyPxs(20);
+  const canDirect = Date.now() > bfDirectCoolUntil && bfIpCount(null) < 4;
   const baseIdx = (bfRrIdx++) % Math.max(1, pxs.length);
-  const p1 = (canDirect && (idx < 4 || !pxs.length)) ? null : pxs[baseIdx];
+  const p1 = (canDirect && (idx < 2 || !pxs.length)) ? null : pxs[baseIdx];
   const p2 = pxs.length ? pxs[(baseIdx + 1) % pxs.length] : null;
-  const p3 = (p1 !== null && canDirect) ? null : (pxs.length > 1 ? pxs[(baseIdx + 2) % pxs.length] : null);
+  const p3 = (p1 !== null && canDirect) ? null : (pxs.length > 1 ? pxs[(baseIdx + 2) % pxs.length] : undefined);
   const delay1 = (p1 === null && idx > 0) ? idx * 90 : 0;
   const res = await Promise.any([
-    new Promise((resolve, reject) => setTimeout(() => tryWithRetry(p1, true).then(resolve, reject), delay1)),
-    new Promise((resolve, reject) => setTimeout(() => (p2 !== null ? tryWithRetry(p2, false) : Promise.reject(new Error('no-p2'))).then(resolve, reject), delay1 + 260)),
+    new Promise((resolve, reject) => setTimeout(() => (p1 !== undefined ? tryWithRetry(p1, true) : Promise.reject(new Error('no-p1'))).then(resolve, reject), delay1)),
+    new Promise((resolve, reject) => setTimeout(() => (p2 !== null && p2 !== undefined ? tryWithRetry(p2, false) : Promise.reject(new Error('no-p2'))).then(resolve, reject), delay1 + 260)),
     new Promise((resolve, reject) => setTimeout(() => (p3 !== undefined ? tryWithRetry(p3, true) : Promise.reject(new Error('no-p3'))).then(resolve, reject), delay1 + 680))
   ]).catch(() => null);
-  if (res) bfCachePut(BF_FID_CACHE, fid, res, 400);
+  if (res && !res.pendingCloud) bfCachePut(BF_FID_CACHE, fid, res, 400);
   return res;
 }
 
-async function bfVerify206(url, timeoutMs = 2800) {
+async function bfVerify206(url, isZip = false, timeoutMs = 2800) {
   if (!url || /drive\.usercontent\.google\.com|drive\.google\.com/i.test(url)) return null;
   const cleanUrl = bfCleanStreamUrl(url);
   const cached = bfCacheGet(BF_FID_CACHE, '206:' + cleanUrl, 20 * 60 * 1000);
   if (cached) return cached;
   try {
-    const r = await fetch(cleanUrl, { headers: { 'User-Agent': UA, Range: 'bytes=0-' }, signal: AbortSignal.timeout(timeoutMs) });
+    const r = await fetch(cleanUrl, {
+      headers: { 'User-Agent': UA, Range: isZip ? 'bytes=0-511' : 'bytes=0-' },
+      signal: AbortSignal.timeout(timeoutMs)
+    });
     const st = r.status;
     const ct = String(r.headers.get('content-type') || '').toLowerCase();
     const cr = String(r.headers.get('content-range') || '');
-    if (st !== 206 || !/^bytes\s+0-\d+\/\d+/i.test(cr) || /text\/html|application\/x-zip|application\/zip/i.test(ct)) {
+    if (st !== 206 || !/^bytes\s+0-\d+\/\d+/i.test(cr) || /text\/html/i.test(ct)) {
+      try { if (r.body) await r.body.cancel(); } catch { }
+      return null;
+    }
+    if (isZip) {
+      const buf = Buffer.from(await r.arrayBuffer());
+      if (buf.length < 48 || buf.readUInt32LE(0) !== 0x04034b50) return null;
+      const fnLen = buf.readUInt16LE(26);
+      const extraLen = buf.readUInt16LE(28);
+      const dataStart = 30 + fnLen + extraLen;
+      if (buf.length < dataStart + 17 || (buf[dataStart] & 0x06) !== 0) return null;
+      const magicHex = buf.subarray(dataStart + 5, dataStart + 17).toString('hex').toLowerCase();
+      const isMkv = magicHex.startsWith('1a45dfa3');
+      const isMp4 = magicHex.slice(8, 16) === '66747970';
+      if (!isMkv && !isMp4) return null;
+      const rawSize = Number((cleanUrl.match(/[?&]bytes=(\d+)/i) || [])[1] || 0);
+      if (!rawSize) return null;
+      bfCachePut(BFZ_META, cleanUrl, { dataStart, rawSize }, 600);
+      const v = { ok: true, url: cleanUrl, isZip: true, dataStart, rawSize };
+      bfCachePut(BF_FID_CACHE, '206:' + cleanUrl, v, 500);
+      return v;
+    }
+    if (/application\/x-zip|application\/zip/i.test(ct)) {
       try { if (r.body) await r.body.cancel(); } catch { }
       return null;
     }
@@ -4795,38 +5093,208 @@ async function bfVerify206(url, timeoutMs = 2800) {
     const isMkv = magicHex.startsWith('1a45dfa3');
     const isMp4 = magicHex.slice(8, 16) === '66747970';
     if (!isMkv && !isMp4) return null;
-    const v = { ok: true, url: cleanUrl };
+    const v = { ok: true, url: cleanUrl, isZip: false };
     bfCachePut(BF_FID_CACHE, '206:' + cleanUrl, v, 500);
     return v;
   } catch { return null; }
 }
 
-async function bfResolveFdlToFid(fdlUrl, timeoutMs = 3200) {
+async function bfResolveFdlToLoc(fdlUrl, timeoutMs = 3200) {
   const cached = bfCacheGet(BF_FID_CACHE, 'fdl:' + fdlUrl, 30 * 60 * 1000);
-  if (cached && cached.fid) return cached.fid;
+  if (cached) return cached;
   try {
     const r0 = await fetch(fdlUrl, { redirect: 'manual', headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(timeoutMs) });
     const loc = String(r0.headers.get('location') || '');
     try { if (r0.body) await r0.body.cancel(); } catch { }
-    const fid = (loc.match(/\/file\/([A-Za-z0-9]+)/) || [])[1];
-    if (fid) {
-      bfCachePut(BF_FID_CACHE, 'fdl:' + fdlUrl, { fid }, 500);
-      return fid;
+    const fid = (loc.match(/\/file\/([A-Za-z0-9]+)/) || [])[1] || '';
+    const packId = (loc.match(/\/pack\/([A-Za-z0-9]+)/) || [])[1] || '';
+    if (fid || packId) {
+      const v = { fid, packId };
+      bfCachePut(BF_FID_CACHE, 'fdl:' + fdlUrl, v, 500);
+      return v;
     }
   } catch { }
+  return { fid: '', packId: '' };
+}
+
+async function bfExpandPack(packId, SE, EP, timeoutMs = 3600) {
+  const ck = 'pack:' + packId;
+  let items = bfCacheGet(BF_FID_CACHE, ck, 30 * 60 * 1000);
+  if (!items) {
+    const pxs = bfHealthyPxs(12);
+    const px = (Date.now() > bfDirectCoolUntil && bfIpCount(null) < 5) ? null : (pxs[0] || null);
+    let cl = null;
+    try {
+      cl = await bfOpenH2(BF_GD_BASE, px, 2400);
+      bfIpMark(px, 1);
+      const gp = await bfH2Req(cl, new URL(BF_GD_BASE + '/pack/' + packId), { timeout: timeoutMs });
+      if (gp && gp.st === 200 && gp.data) {
+        const list = [];
+        const rx = /<a[^>]+href=["'](?:https?:\/\/[^/"']+)?\/file\/([A-Za-z0-9]+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+        let m;
+        while ((m = rx.exec(gp.data))) {
+          const fid = m[1];
+          const nm = bfDecodeEnt(m[2]);
+          if (fid && nm && !list.some(x => x.fid === fid)) list.push({ fid, nm });
+        }
+        if (list.length) {
+          items = { list };
+          bfCachePut(BF_FID_CACHE, ck, items, 300);
+        }
+      }
+    } catch {
+    } finally {
+      try { if (cl) cl.close(); } catch { }
+    }
+  }
+  if (!items || !items.list || !items.list.length) return '';
+  for (const it of items.list) {
+    const ep = epOfName(it.nm);
+    if (ep && ep.e === EP && (!ep.s || ep.s === SE)) return it.fid;
+  }
+  const epRe = new RegExp('(?:\\bEpisode\\s*0*' + EP + '\\b|\\bE0*' + EP + '\\b)', 'i');
+  const byRe = items.list.find(it => epRe.test(it.nm));
+  if (byRe) return byRe.fid;
+  const withEp = items.list.map(it => ({ fid: it.fid, nm: it.nm, ep: epOfName(it.nm) })).filter(x => x.ep && x.ep.e > 0);
+  if (withEp.length >= EP) {
+    withEp.sort((a, b) => a.ep.e - b.ep.e);
+    if (withEp[0].ep.e > 1 && withEp[EP - 1]) return withEp[EP - 1].fid;
+  }
   return '';
 }
 
-async function bfStreams(tmdbId, title, type, s, e, origin, maxh) {
-  if (!tmdbId) return [];
+function bfPatchSeekHeadNoCues(buf) {
+  const n = Math.min(buf.length, 600);
+  const patCues = Buffer.from([0x53, 0xab, 0x84, 0x1c, 0x53, 0xbb, 0x6b]);
+  const patTags = Buffer.from([0x53, 0xab, 0x84, 0x12, 0x54, 0xc3, 0x67]);
+  let out = null;
+  const i1 = buf.subarray(0, n).indexOf(patCues);
+  if (i1 >= 0) { out = Buffer.from(buf); out[i1 + 6] = 0x6c; }
+  const i2 = buf.subarray(0, n).indexOf(patTags);
+  if (i2 >= 0) { if (!out) out = Buffer.from(buf); out[i2 + 6] = 0x68; }
+  return out || buf;
+}
+
+async function bfServeZip(req, res, zipUrl) {
+  try {
+    const cleanUrl = bfCleanStreamUrl(zipUrl);
+    if (!/^https?:\/\/(?:(?:[a-z0-9-]+\.)+workers\.dev|pub-[a-z0-9]+\.r2\.dev)\//i.test(cleanUrl)) {
+      res.writeHead(400); return res.end('bad-host');
+    }
+    let meta = bfCacheGet(BFZ_META, cleanUrl, 6 * 3600 * 1000);
+    if (!meta) {
+      const r0 = await fetch(cleanUrl, { headers: { 'User-Agent': UA, Range: 'bytes=0-63' }, signal: AbortSignal.timeout(8000) });
+      const b0 = Buffer.from(await r0.arrayBuffer());
+      if (b0.length < 30 || b0.readUInt32LE(0) !== 0x04034b50) {
+        res.writeHead(502); return res.end('bad-zip-hdr');
+      }
+      const fnLen = b0.readUInt16LE(26);
+      const extraLen = b0.readUInt16LE(28);
+      const dataStart = 30 + fnLen + extraLen;
+      const rawSize = Number((cleanUrl.match(/[?&]bytes=(\d+)/i) || [])[1] || 0);
+      if (!rawSize) { res.writeHead(502); return res.end('no-raw-size'); }
+      meta = { dataStart, rawSize };
+      bfCachePut(BFZ_META, cleanUrl, meta, 600);
+    }
+    const { dataStart, rawSize } = meta;
+    const qs = new URL(req.url, 'http://x').searchParams;
+    const rbQ = qs.get('rb');
+    const rngHdr = String(req.headers.range || (rbQ ? 'bytes=' + rbQ : '')).trim();
+    const rm = /^bytes=(\d+)-(\d*)$/i.exec(rngHdr);
+    const hasRange = !!rm;
+    const rawStart = rm ? Math.max(0, parseInt(rm[1], 10) || 0) : 0;
+    const rawEnd = (rm && rm[2]) ? Math.min(rawSize - 1, parseInt(rm[2], 10)) : (rawSize - 1);
+    if (hasRange && (rawStart >= rawSize || rawEnd < rawStart)) {
+      res.writeHead(416, { 'content-range': 'bytes */' + rawSize, 'access-control-allow-origin': '*' });
+      return res.end();
+    }
+    const totalWanted = rawEnd - rawStart + 1;
+    const ct = /\.mp4\.zip/i.test(cleanUrl) ? 'video/mp4' : 'video/x-matroska';
+    const respHdrs = {
+      'content-type': ct,
+      'accept-ranges': 'bytes',
+      'content-length': String(totalWanted),
+      'access-control-allow-origin': '*',
+      'cache-control': 'no-store',
+      'cdn-cache-control': 'no-store',
+      'x-accel-buffering': 'no'
+    };
+    if (hasRange) respHdrs['content-range'] = 'bytes ' + rawStart + '-' + rawEnd + '/' + rawSize;
+    res.writeHead(hasRange ? 206 : 200, respHdrs);
+    if (req.method === 'HEAD') return res.end();
+
+    const startBlock = Math.floor(rawStart / 32768);
+    const offInStart = rawStart % 32768;
+    const endBlock = Math.floor(rawEnd / 32768);
+    const offInEnd = rawEnd % 32768;
+    const zipStart = dataStart + startBlock * 32773 + 5 + offInStart;
+    const zipEnd = dataStart + endBlock * 32773 + 5 + offInEnd;
+
+    const ac = new AbortController();
+    const onClose = () => { try { ac.abort(); } catch { } };
+    req.once('close', onClose);
+    res.once('close', onClose);
+
+    const up = await fetch(cleanUrl, {
+      headers: { 'User-Agent': UA, Range: 'bytes=' + zipStart + '-' + zipEnd },
+      signal: ac.signal
+    });
+    if (!up.ok && up.status !== 206) { try { res.end(); } catch { } return; }
+
+    let remInPayload = Math.min(32768, rawSize - startBlock * 32768) - offInStart;
+    let remInSkip = 0;
+    let totalOut = 0;
+    let curBlock = startBlock;
+    let patchedFirst = !(rawStart === 0 && !hasRange);
+
+    for await (const chunk of up.body) {
+      if (res.writableEnded || res.destroyed) break;
+      let buf = Buffer.from(chunk), pos = 0;
+      while (pos < buf.length && totalOut < totalWanted) {
+        if (remInSkip > 0) {
+          const s = Math.min(remInSkip, buf.length - pos);
+          pos += s;
+          remInSkip -= s;
+          if (remInSkip === 0) {
+            curBlock++;
+            remInPayload = Math.min(32768, rawSize - curBlock * 32768);
+          }
+          continue;
+        }
+        const take = Math.min(remInPayload, buf.length - pos, totalWanted - totalOut);
+        let slice = buf.subarray(pos, pos + take);
+        if (!patchedFirst && totalOut === 0 && slice.length >= 160) {
+          slice = bfPatchSeekHeadNoCues(slice);
+          patchedFirst = true;
+        }
+        const ok = res.write(slice);
+        pos += take;
+        remInPayload -= take;
+        totalOut += take;
+        if (remInPayload === 0 && totalOut < totalWanted) remInSkip = 5;
+        if (!ok && totalOut < totalWanted) {
+          await new Promise(r => { res.once('drain', r); res.once('close', r); });
+        }
+      }
+      if (totalOut >= totalWanted) { try { ac.abort(); } catch { } break; }
+    }
+    try { res.end(); } catch { }
+  } catch {
+    try { if (!res.headersSent) res.writeHead(502); res.end(); } catch { }
+  }
+}
+
+async function bfStreams(tmdbId, title, type, s, e, origin, maxh, imdbHint = '') {
+  if (!tmdbId && !imdbHint) return [];
   const isTv = type === 'series';
   const SE = Math.max(1, parseInt(s, 10) || 1), EP = Math.max(1, parseInt(e, 10) || 1);
-  const tS = Date.now(); const WS = 8400; const lS = () => Math.max(250, WS - (Date.now() - tS));
+  const tS = Date.now(); const WS = 8600; const lS = () => Math.max(250, WS - (Date.now() - tS));
+  const pubBase = String(origin || VSP_PUB || 'https://3404d3c5dc63-vidy.baby-beamup.club').replace(/\/+$/, '');
   try {
-    const T = String(title || '').trim() || (await nameForTmdb(tmdbId, isTv ? 'series' : 'movie').catch(() => ''));
+    const T = String(title || '').trim() || (typeof tmdbId === 'number' && tmdbId > 0 ? await nameForTmdb(tmdbId, isTv ? 'series' : 'movie').catch(() => '') : '');
     if (!T || lS() < 3000) return [];
-    const yP = skyYear(tmdbId, isTv).catch(() => 0);
-    const imdbP = tmdbToImdb(tmdbId, isTv ? 'tv' : 'movie').catch(() => '');
+    const yP = (typeof tmdbId === 'number' && tmdbId > 0) ? skyYear(tmdbId, isTv).catch(() => 0) : Promise.resolve(0);
+    const imdbP = imdbHint ? Promise.resolve(imdbHint) : ((typeof tmdbId === 'number' && tmdbId > 0) ? tmdbToImdb(tmdbId, isTv ? 'tv' : 'movie').catch(() => '') : Promise.resolve(''));
     const sq = T.replace(/['\u2018\u2019\u02bc`]/g, '').trim();
     const searchUrl = BF_BASE + '/wp-json/wp/v2/posts?search=' + encodeURIComponent(sq) + '&orderby=relevance&_fields=id,link,title&per_page=8';
     let srTxt = await bfText(searchUrl, BF_BASE + '/', Math.min(3600, lS()));
@@ -4845,19 +5313,43 @@ async function bfStreams(tmdbId, title, type, s, e, origin, maxh) {
         try { hits = bfPick(JSON.parse(sr2 || '[]'), T, Y, isTv, SE); } catch { }
       }
     }
+    if (!hits.length) { // v1.16.3: ভবিষ্যতে-যোগ-হওয়া-পোস্ট-স্বয়ংক্রিয় — wp-json-ইনডেক্সে-না-থাকলেও-সাইটের-/search/-পাতা-থেকে
+      const sHtml = await bfText(BF_BASE + '/search/' + encodeURIComponent(sq).replace(/%20/g, '+'), BF_BASE + '/', Math.min(3000, lS()));
+      if (sHtml) {
+        const altPosts = [];
+        const rxS = /<h[12][^>]*class="[^"]*\btitle\b[^"]*"[^>]*>\s*<a[^>]+href="(https?:\/\/[^"]+)"[^>]*>([\s\S]{0,260}?)<\/a>/gi;
+        let ms2;
+        while ((ms2 = rxS.exec(sHtml))) {
+          const link2 = ms2[1];
+          if (/\/wp-|\/category\/|\/tag\/|\/author\//i.test(link2) || /\.(?:jpg|jpeg|png|webp|gif)$/i.test(link2)) continue;
+          altPosts.push({ id: 0, link: link2, title: { rendered: bfDecodeEnt(ms2[2]) } });
+        }
+        if (altPosts.length) {
+          hits = bfPick(altPosts, T, Y, isTv, SE);
+          if (hits.length && DBG) console.error('[bf] html-search-fallback → ' + hits.length + ' hit(s) for "' + T + '"');
+        }
+      }
+    }
     if (!hits.length) {
       if (DBG) console.error('[bf] ' + tmdbId + ' 0-hits for "' + T + '" @' + (Date.now() - tS) + 'ms');
       return [];
     }
-    const hit = hits[0];
-    const html = await bfText(hit.link, BF_BASE + '/', Math.min(3600, lS()));
-    if (!html) return [];
-    const pageImdb = (html.match(/imdb\.com\/title\/(tt\d+)/i) || [])[1] || '';
     const wantImdb = await Promise.race([imdbP, new Promise(r => setTimeout(() => r(''), 400))]);
-    if (pageImdb && wantImdb && pageImdb !== wantImdb) {
-      if (DBG) console.error('[bf] imdb-mismatch page=' + pageImdb + ' want=' + wantImdb + ' for "' + T + '"');
-      return [];
+    let hit = null, html = '';
+    for (const cand of hits.slice(0, 2)) {
+      const h = await bfText(cand.link, BF_BASE + '/', Math.min(3600, lS()));
+      if (!h) continue;
+      const pageImdb = (h.match(/imdb\.com\/title\/(tt\d+)/i) || [])[1] || '';
+      if (pageImdb && wantImdb && pageImdb !== wantImdb) {
+        if (DBG) console.error('[bf] imdb-mismatch page=' + pageImdb + ' want=' + wantImdb + ' for "' + cand.raw + '"');
+        continue;
+      }
+      hit = cand;
+      html = h;
+      break;
     }
+    if (!hit || !html) return [];
+
     let fdlRows = [];
     if (!isTv) {
       const rxh = /<h[3-5][^>]*>([\s\S]*?)<\/h[3-5]>/gi;
@@ -4874,52 +5366,109 @@ async function bfStreams(tmdbId, title, type, s, e, origin, maxh) {
       }
     } else {
       const rxh = /<h[3-5][^>]*>([\s\S]*?)<\/h[3-5]>/gi;
-      const fxRows = [];
+      const seasonContainers = [];
       let m;
       while ((m = rxh.exec(html))) {
         const htxt = bfDecodeEnt(m[1]);
-        if (/^Download\s+/i.test(htxt) && fxRows.length) break;
-        const sm = htxt.match(/Season\s*0*(\d+)/i);
-        if (sm && parseInt(sm[1], 10) !== SE) continue;
-        const after = html.slice(m.index, m.index + 900);
+        if (/^Download\s+/i.test(htxt) && seasonContainers.length) break;
+        const sr = htxt.match(/(?:Season\s*0*(\d+)\s*(?:[-\u2013]|to)\s*0*(\d+)|\bS0*(\d{1,2})\s*(?:[-\u2013]|to)\s*S?0*(\d{1,2})\b)/i);
+        const s1 = !sr && htxt.match(/(?:Season\s*0*(\d+)|\bS0*(\d{1,2})(?:\b|E\d))/i);
+        if (sr) {
+          const a = parseInt(sr[1] || sr[3], 10), b = parseInt(sr[2] || sr[4], 10);
+          if (SE < a || SE > b) continue;
+        } else if (s1) {
+          if (parseInt(s1[1] || s1[2], 10) !== SE) continue;
+        }
+        const nextH = html.slice(m.index + m[0].length).search(/<h[2-5][^>]*>/i);
+        const after = html.slice(m.index, m.index + m[0].length + (nextH > 0 ? Math.min(nextH, 1100) : 900));
         const fxm = after.match(/https?:\/\/fxlinks\.[a-z.]+\/elinks\/[^"<\s]+/i);
-        if (fxm) fxRows.push({ fx: fxm[0], htxt, rh: resOfName(htxt) });
+        const lmm = !fxm && after.match(/https?:\/\/linksmod\.[a-z.]+\/view\/[^"<\s]+/i);
+        const fdm = !fxm && !lmm && after.match(/https?:\/\/dl\.fastdlserver\.site\/\?id=[^"<\s]+/i);
+        if (fxm) seasonContainers.push({ kind: 'fx', u: fxm[0], htxt, rh: resOfName(htxt) });
+        else if (lmm) seasonContainers.push({ kind: 'lm', u: lmm[0], htxt, rh: resOfName(htxt) });
+        else if (fdm) seasonContainers.push({ kind: 'fdl', u: fdm[0].replace(/&amp;/g, '&'), htxt, rh: resOfName(htxt) });
       }
-      await Promise.all(fxRows.slice(0, 5).map(async r => {
-        if (lS() < 1800) return;
-        const fxh = await bfText(r.fx, hit.link, Math.min(3200, lS()));
+      const pickedContainers = bfSelectDiverseRows(seasonContainers, maxh, 6);
+      await Promise.all(pickedContainers.map(async r => {
+        if (lS() < 1600) return;
+        if (r.kind === 'fdl') {
+          fdlRows.push({ fdl: r.u, htxt: r.htxt, rh: r.rh, fromEpLink: false });
+          return;
+        }
+        const fxh = await bfText(r.u, hit.link, Math.min(3000, lS()));
         if (!fxh) return;
         const links = [...fxh.matchAll(/<a[^>]+href="(https?:\/\/dl\.fastdlserver\.site\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi)];
-        const epRe = new RegExp('\\bEpisode\\s*0*' + EP + '\\b', 'i');
-        const em = links.find(x => epRe.test(x[2]));
-        if (em) fdlRows.push({ fdl: em[1].replace(/&amp;/g, '&'), htxt: r.htxt, rh: r.rh });
+        const epRe = new RegExp('(?:\\bEpisode\\s*0*' + EP + '\\b|\\bEp\\s*0*' + EP + '\\b)', 'i');
+        const em = links.find(x => epRe.test(bfDecodeEnt(x[2])));
+        if (em) {
+          fdlRows.push({ fdl: em[1].replace(/&amp;/g, '&'), htxt: r.htxt, rh: r.rh, fromEpLink: true });
+        } else {
+          const packLink = links.find(x => /type=2\b|season|pack|complete|zip/i.test(x[1] + ' ' + x[2])) || (links.length === 1 ? links[0] : null);
+          if (packLink) fdlRows.push({ fdl: packLink[1].replace(/&amp;/g, '&'), htxt: r.htxt, rh: r.rh, fromEpLink: false });
+        }
       }));
     }
     if (!fdlRows.length) {
       if (DBG) console.error('[bf] ' + tmdbId + ' 0-fdl-rows @' + (Date.now() - tS) + 'ms');
       return [];
     }
-    const pickRows = bfSelectDiverseRows(fdlRows, maxh, 8);
+    const pickRows = bfSelectDiverseRows(fdlRows, maxh, 6);
     const got = [];
     const seenUrl = new Set();
+    const pendingList = [];
     await Promise.all(pickRows.map(async (row, idx) => {
-      if (lS() < 1200) return;
-      const fid = await bfResolveFdlToFid(row.fdl, Math.min(2800, lS()));
-      if (!fid || lS() < 900) return;
-      const gd = await bfResolveGdflixSmart(fid, idx, Math.min(4600, Math.max(1500, lS() - 450)));
-      if (!gd || gd.dead || !gd.streamUrl || /\.zip\b/i.test(gd.ttl)) return;
+      if (lS() < 1100) return;
+      const loc = await bfResolveFdlToLoc(row.fdl, Math.min(2800, lS()));
+      let fid = loc.fid;
+      if (!fid && loc.packId && isTv && lS() > 1500) {
+        fid = await bfExpandPack(loc.packId, SE, EP, Math.min(3200, lS()));
+      }
+      if (!fid || lS() < 850) return;
+      const gd = await bfResolveGdflixSmart(fid, idx, Math.min(4600, Math.max(1400, lS() - 400)));
+      if (!gd || gd.dead) return;
+      if (!gd.isZip && /\.zip\b/i.test(gd.ttl)) return;
       if (isTv) {
         const ep = epOfName(gd.ttl);
-        if (ep && (ep.s !== SE || ep.e !== EP)) return;
+        if (ep) {
+          if (ep.s && ep.s !== SE) return;
+          if (!row.fromEpLink && ep.e !== EP) return;
+        }
       }
       const fh = resOfName(gd.ttl) || row.rh || 720;
       if (maxh && fh > maxh) return;
-      const v = await bfVerify206(gd.streamUrl, Math.min(2800, lS()));
+      const aud = bfAudInfo(gd.ttl + ' ' + row.htxt, hit.raw);
+      if (gd.pendingCloud && !gd.streamUrl) {
+        pendingList.push({ fid, fh, gd, row, aud });
+        return;
+      }
+      if (!gd.streamUrl) return;
+      const v = await bfVerify206(gd.streamUrl, Boolean(gd.isZip), Math.min(2800, lS()));
       if (!v || seenUrl.has(v.url)) return;
       seenUrl.add(v.url);
-      const aud = bfAudInfo(gd.ttl + ' ' + row.htxt, hit.raw);
-      got.push({ h: fh, url: v.url, spec: gd.ttl, aud: aud.label, _lang: aud.langKey });
+      const ext = /\.mp4(?:\.zip)?(?:\?|$)/i.test(v.url) ? 'v.mp4' : 'v.mkv';
+      const finalUrl = v.isZip
+        ? (pubBase + '/bfz/' + Buffer.from(v.url).toString('base64url') + '/' + ext)
+        : v.url;
+      got.push({ h: fh, url: finalUrl, spec: gd.ttl, aud: aud.label, _lang: aud.langKey });
     }));
+    if (pendingList.length) {
+      pendingList.sort((a, b) => b.fh - a.fh);
+      for (let pi = 0; pi < pendingList.length; pi++) {
+        const item = pendingList[pi];
+        bfCachePut(BF_PENDING_CLOUD, item.fid, { pendingCloud: item.gd.pendingCloud, ttl: item.gd.ttl }, 300);
+        if (pi === 0) {
+          bfStartCloudGen(item.fid, item.gd.pendingCloud, item.gd.ttl).catch(() => null);
+        }
+        if (got.filter(g => g.h === item.fh).length < 1) {
+          const ext = /\.mp4/i.test(item.gd.ttl) ? 'v.mp4' : 'v.mkv';
+          const lazyUrl = pubBase + '/bfz/fid/' + item.fid + '/' + ext;
+          if (!seenUrl.has(lazyUrl)) {
+            seenUrl.add(lazyUrl);
+            got.push({ h: item.fh, url: lazyUrl, spec: item.gd.ttl, aud: item.aud.label, _lang: item.aud.langKey });
+          }
+        }
+      }
+    }
     if (!got.length) {
       if (DBG) console.error('[bf] ' + tmdbId + ' 0-cards @' + (Date.now() - tS) + 'ms');
       return [];
@@ -5467,12 +6016,12 @@ function yearForTmdb(tmdbId, type) { // মুভি=release_date, সিরি�
 const UNIFY_SRV = { sky: 'Sky Movies', m4u: 'Movies4u', bf: 'BollyFlix', mm: 'Multimovies', tw: 'ToonWorld', rt: 'RareToons', vsp: 'Vidsrc', ott: 'AsianTV', az: 'AniZone' };
 async function unifyCards(cards, meta) { // শুধু-টেক্সট-বদলায়: name/quality/url/bingeGroup/_lang/_hq/সাব — সব-অস্পৃশ্য (ফিল্টার-নিরাপদ)
   try {
-    if (!cards || !cards.length || !meta || !meta.tmdbId) return cards;
+    if (!cards || !cards.length || !meta || (!meta.tmdbId && !meta.title)) return cards;
     const tcards = cards.filter(c => /^(sky|m4u|bf|mm|tw|rt)\|/.test(String(c.bingeGroup || '')));
     if (!tcards.length) return cards;
-    const T = await Promise.race([nameForTmdb(meta.tmdbId, meta.type).catch(() => ''), new Promise(r => setTimeout(() => r(''), 600))]);
+    const T = (meta.tmdbId ? await Promise.race([nameForTmdb(meta.tmdbId, meta.type).catch(() => ''), new Promise(r => setTimeout(() => r(''), 600))]) : '') || String(meta.title || '').trim();
     if (!T) return cards; // টাইটেল-না-পেলে পুরনো-লেখাই-থাকে (খালি-কখনো-নয়)
-    const Y = (parseInt(meta.year, 10) || 0) || await Promise.race([yearForTmdb(meta.tmdbId, meta.type).catch(() => 0), new Promise(r => setTimeout(() => r(0), 600))]); // v1.15.52: imdb-রুটে Cinemeta-বছর-আগে (ম্যাপ-নিরপেক্ষ-সত্য)
+    const Y = (parseInt(meta.year, 10) || 0) || (meta.tmdbId ? await Promise.race([yearForTmdb(meta.tmdbId, meta.type).catch(() => 0), new Promise(r => setTimeout(() => r(0), 600))]) : 0); // v1.15.52: imdb-রুটে Cinemeta-বছর-আগে (ম্যাপ-নিরপেক্ষ-সত্য)
     const head = '\u29c9 ' + T + (Y ? ' | ' + Y + ' |' : '');
     const epLine = meta.type === 'series' ? ('\u29e0 S' + (parseInt(meta.s, 10) || 1) + 'E' + (parseInt(meta.e, 10) || 1)) : '\u29e0 Movie';
     for (const c of tcards) {
@@ -5839,6 +6388,48 @@ const server = http.createServer((req, res) => {
       } catch { try { res.writeHead(502); } catch { } return res.end('m4p'); }
     })();
 
+    const bfzFidM = p.match(/^\/bfz\/fid\/([A-Za-z0-9]+)\/v\.(?:mkv|mp4)$/);
+    if (bfzFidM) return (async () => {
+      try {
+        const fid = bfzFidM[1];
+        let gd = bfCacheGet(BF_FID_CACHE, fid, 2 * 3600 * 1000);
+        if (!gd || !gd.streamUrl) {
+          if (BF_CLOUD_INFLIGHT.has(fid)) {
+            gd = await BF_CLOUD_INFLIGHT.get(fid);
+          } else {
+            const pend = bfCacheGet(BF_PENDING_CLOUD, fid, 15 * 60 * 1000);
+            if (pend && pend.pendingCloud) {
+              gd = await bfStartCloudGen(fid, pend.pendingCloud, pend.ttl || '');
+            } else {
+              const c0 = await bfResolveGdflixSmart(fid, 0, 5000);
+              if (c0 && c0.streamUrl) gd = c0;
+              else gd = await bfStartCloudGen(fid, c0 && c0.pendingCloud, c0 && c0.ttl || '');
+            }
+          }
+        }
+        if (!gd || !gd.streamUrl) {
+          res.writeHead(502); return res.end('bfz-fid-unresolved');
+        }
+        if (gd.isZip || /\.(?:mkv|mp4)\.zip\?bytes=\d+/i.test(gd.streamUrl)) {
+          return await bfServeZip(req, res, gd.streamUrl);
+        }
+        res.writeHead(302, { Location: gd.streamUrl, 'access-control-allow-origin': '*', 'cache-control': 'no-store' });
+        return res.end();
+      } catch {
+        try { if (!res.headersSent) res.writeHead(502); res.end(); } catch { }
+      }
+    })();
+
+    const bfzM = p.match(/^\/bfz\/([A-Za-z0-9_=-]{8,2400})\/v\.(?:mkv|mp4)$/);
+    if (bfzM) return (async () => {
+      let tgt = '';
+      try { tgt = Buffer.from(bfzM[1], 'base64url').toString('utf8'); } catch { }
+      if (!tgt || !/^https?:\/\//i.test(tgt)) {
+        res.writeHead(400); return res.end('bad-bfz');
+      }
+      return await bfServeZip(req, res, tgt);
+    })();
+
     let m;
     // সব-পথ-লগ (৪০৪-ও-দৃশ্যমান-হোক):
     logReq(p, 0, -1, 'route-in', RVA);
@@ -5911,13 +6502,13 @@ cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'series', s: Number(m
       const mmP = !(cfg && cfg.mm === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? mmStreams(info.id, info.name || '', 'movie', 0, 0, originOf(req), cfg && cfg.mmr || 0, cfg && cfg.mmrelay === 1).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.28: Multimovies (cfg.mm toggle)
       const m4uP = !(cfg && cfg.m4u === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? m4uStreams(info.id, info.name || '', 'movie', 0, 0, originOf(req), cfg && cfg.m4ur || 0).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.40-local
       const skyP = !(cfg && cfg.sky === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? skyStreams(info.id, info.name || '', 'movie', 0, 0, originOf(req), cfg && cfg.skyr || 0).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.50: Arctic-স্বাধীন (SkymoviesHD)
-      const bfP = !(cfg && cfg.bf === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? bfStreams(info.id, info.name || '', 'movie', 0, 0, originOf(req), cfg && cfg.bfr || 0).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // BollyFlix
+      const bfP = !(cfg && cfg.bf === 0) ? Promise.all([infoP, nmP]).then(([info, nm]) => ((info && info.id > 0) || nm) ? bfStreams((info && info.id) || 0, (info && info.name) || nm || '', 'movie', 0, 0, originOf(req), cfg && cfg.bfr || 0, m[1]).catch(() => []) : []).catch(() => []) : null; // BollyFlix
       const vspP = !(cfg && cfg.vsp === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? vspStreams(info.id, 'movie', 0, 0, cfg && cfg.vspq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.71: Vidsrc
       const ottP = !(cfg && cfg.ott === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? ottStreams(info.id, 'movie', 0, 0, cfg && cfg.ottq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.72: AsianTV
       const azP = !(cfg && cfg.az === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? azStreams(info.id, 'movie', 0, 0, cfg && cfg.azq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.76: AniZone
       kickSubs(m[1], 'movie', null, null, cfg);
       return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'movie', null, null, info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: bfP, key: 'bf' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0), 11900 /* v1.15.26 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
-cards => { Promise.resolve(infoP).then(info => unifyCards(cards, { tmdbId: info && info.id, type: 'movie', s: 0, e: 0, year: info && info.year })).then(u => sendStreams(res, req.url, p, Date.now() - t0, u, RVA)); },
+cards => { Promise.all([infoP, nmP]).then(([info, nm]) => unifyCards(cards, { tmdbId: info && info.id, title: (info && info.name) || nm, type: 'movie', s: 0, e: 0, year: info && info.year })).then(u => sendStreams(res, req.url, p, Date.now() - t0, u, RVA)); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }
     if ((m = p.match(/^\/stream\/series\/(tt\d+):(\d+):(\d+)\.json$/))) {
@@ -5932,7 +6523,7 @@ cards => { Promise.resolve(infoP).then(info => unifyCards(cards, { tmdbId: info 
       const mmP = !(cfg && cfg.mm === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? mmStreams(info.id, info.name || '', 'series', Number(m[2]), Number(m[3]), originOf(req), cfg && cfg.mmr || 0, cfg && cfg.mmrelay === 1).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.28: Multimovies (cfg.mm toggle)
       const m4uP = !(cfg && cfg.m4u === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? m4uStreams(info.id, info.name || '', 'series', Number(m[2]), Number(m[3]), originOf(req), cfg && cfg.m4ur || 0).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.40-local
       const skyP = !(cfg && cfg.sky === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? skyStreams(info.id, info.name || '', 'series', Number(m[2]), Number(m[3]), originOf(req), cfg && cfg.skyr || 0).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.50: Arctic-স্বাধীন (SkymoviesHD)
-      const bfP = !(cfg && cfg.bf === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? bfStreams(info.id, info.name || '', 'series', Number(m[2]), Number(m[3]), originOf(req), cfg && cfg.bfr || 0).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // BollyFlix
+      const bfP = !(cfg && cfg.bf === 0) ? Promise.all([infoP, nmP]).then(([info, nm]) => ((info && info.id > 0) || nm) ? bfStreams((info && info.id) || 0, (info && info.name) || nm || '', 'series', Number(m[2]), Number(m[3]), originOf(req), cfg && cfg.bfr || 0, m[1]).catch(() => []) : []).catch(() => []) : null; // BollyFlix
       const vspP = !(cfg && cfg.vsp === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? vspStreams(info.id, 'tv', Number(m[2]), Number(m[3]), cfg && cfg.vspq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.71: Vidsrc
       const ottP = !(cfg && cfg.ott === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? ottStreams(info.id, 'tv', Number(m[2]), Number(m[3]), cfg && cfg.ottq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.72: AsianTV
       const azP = !(cfg && cfg.az === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? azStreams(info.id, 'tv', Number(m[2]), Number(m[3]), cfg && cfg.azq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.76: AniZone
@@ -5940,7 +6531,7 @@ cards => { Promise.resolve(infoP).then(info => unifyCards(cards, { tmdbId: info 
       twRtPrewarm(nmP, 'series', Number(m[2]), Number(m[3]));
       kickSubs(m[1], 'series', Number(m[2]), Number(m[3]), cfg);
       return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'tv', Number(m[2]), Number(m[3]), info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: bfP, key: 'bf' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0), 11900 /* v1.15.26 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
-cards => { Promise.resolve(infoP).then(info => unifyCards(cards, { tmdbId: info && info.id, type: 'series', s: Number(m[2]), e: Number(m[3]), year: info && info.year })).then(u => sendStreams(res, req.url, p, Date.now() - t0, u, RVA)); },
+cards => { Promise.all([infoP, nmP]).then(([info, nm]) => unifyCards(cards, { tmdbId: info && info.id, title: (info && info.name) || nm, type: 'series', s: Number(m[2]), e: Number(m[3]), year: info && info.year })).then(u => sendStreams(res, req.url, p, Date.now() - t0, u, RVA)); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }
     if ((m = p.match(/^\/stream\/series\/(tt\d+)\.json$/))) { // সেফটি-নেট: s:e-ছাড়া কল → S1E1
@@ -5955,7 +6546,7 @@ cards => { Promise.resolve(infoP).then(info => unifyCards(cards, { tmdbId: info 
       const mmP = !(cfg && cfg.mm === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? mmStreams(info.id, info.name || '', 'series', 1, 1, originOf(req), cfg && cfg.mmr || 0, cfg && cfg.mmrelay === 1).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.28: Multimovies (cfg.mm toggle)
       const m4uP = !(cfg && cfg.m4u === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? m4uStreams(info.id, info.name || '', 'series', 1, 1, originOf(req), cfg && cfg.m4ur || 0).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.40-local
       const skyP = !(cfg && cfg.sky === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? skyStreams(info.id, info.name || '', 'series', 1, 1, originOf(req), cfg && cfg.skyr || 0).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.50: Arctic-স্বাধীন (SkymoviesHD)
-      const bfP = !(cfg && cfg.bf === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? bfStreams(info.id, info.name || '', 'series', 1, 1, originOf(req), cfg && cfg.bfr || 0).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // BollyFlix
+      const bfP = !(cfg && cfg.bf === 0) ? Promise.all([infoP, nmP]).then(([info, nm]) => ((info && info.id > 0) || nm) ? bfStreams((info && info.id) || 0, (info && info.name) || nm || '', 'series', 1, 1, originOf(req), cfg && cfg.bfr || 0, m[1]).catch(() => []) : []).catch(() => []) : null; // BollyFlix
       const vspP = !(cfg && cfg.vsp === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? vspStreams(info.id, 'tv', 1, 1, cfg && cfg.vspq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.71: Vidsrc
       const ottP = !(cfg && cfg.ott === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? ottStreams(info.id, 'tv', 1, 1, cfg && cfg.ottq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.72: AsianTV
       const azP = !(cfg && cfg.az === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? azStreams(info.id, 'tv', 1, 1, cfg && cfg.azq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.76: AniZone
@@ -5963,7 +6554,7 @@ cards => { Promise.resolve(infoP).then(info => unifyCards(cards, { tmdbId: info 
       twRtPrewarm(nmP, 'series', 1, 1);
       kickSubs(m[1], 'series', 1, 1, cfg);
       return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'tv', 1, 1, info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: bfP, key: 'bf' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0), 11900 /* v1.15.26 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
-cards => { Promise.resolve(infoP).then(info => unifyCards(cards, { tmdbId: info && info.id, type: 'series', s: 1, e: 1, year: info && info.year })).then(u => sendStreams(res, req.url, p + ' [no-s:e]', Date.now() - t0, u, RVA)); },
+cards => { Promise.all([infoP, nmP]).then(([info, nm]) => unifyCards(cards, { tmdbId: info && info.id, title: (info && info.name) || nm, type: 'series', s: 1, e: 1, year: info && info.year })).then(u => sendStreams(res, req.url, p + ' [no-s:e]', Date.now() - t0, u, RVA)); },
         e => { logReq(p + ' [no-s:e]', Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }
     // ── subtitles-রিসোর্স (MovieBox-সাবটাইটেল-ট্র্যাক — এমবেডেড-চাইল্ডের-/subtitles-প্রক্সি) ──

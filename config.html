@@ -661,9 +661,13 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
       swEl.classList.toggle('on',!!st[key]);
       if(cardEl)cardEl.classList.toggle('off',!st[key]);
       rebuild();
+      if(st[key]===0&&!srcOnAny())toast('All sources off — turn on at least one to get streams'); /* v1.16.3: ব্লক-নয়, শুধু-সৎ-সতর্কতা */
     };
   }
-  function guardV(){if(st.v===1&&st.nx===0){toast('Keep at least one source on');return true;}return false;}
+  function srcOnAny(exceptKey){ /* v1.16.3: সত্যিই-কোনো-উৎস-অন-আছে-কি (আগের-guardV শুধু-nx-দেখত → MovieBox-বন্ধ-থাকলে-Vidy কখনোই-বন্ধ-হত না) */
+    return SRC.some(function(s){return s[0]!==exceptKey&&st[s[0]]===1;});
+  }
+  function guardV(){return false;} /* v1.16.3: Vidy এখন সবসময়-বন্ধ-করা-যায় (ইউজার-অভিযোগ: \"can't deselect vidy source at all\") */
 
   function srcCard(s){
     var key=s[0],card=el('div','card');card.id='card-'+key;
@@ -748,8 +752,8 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     /* v1.15.81: "None" আগে st.srv=[] দিত — সার্ভার-চুক্তিতে খালি=সব-১৬ (None আসলে All ছিল)। এখন সত্যিই ফ্লিট-বন্ধ (st.v=0)। */
     $('srvNone').onclick=function(){
       if(st.v===0){toast('Fleet already off');return;}
-      if(guardV())return; /* শেষ-উৎস-বন্ধ-রোধ */
-      st.v=0;syncAll();rebuild();toast('Vidy fleet off — re-enable in Sources');
+      st.v=0;syncAll();rebuild();
+      toast(srcOnAny()?'Vidy fleet off — re-enable in Sources':'Vidy fleet off — turn on another source to get streams');
     };
   })();
   function drawSrv(){srvDraws.forEach(function(f){f();});}
@@ -960,7 +964,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     if(st.az===1&&(st.azq.length||st.azl.length))f++;
     $('bdTune').textContent=f;
     var tot=on+(st.v===1?st.srv.length:0);
-    $('mobCnt').textContent=on+' source'+(on===1?'':'s')+(st.v===1?' · '+st.srv.length+' servers':'')+' armed';
+    $('mobCnt').textContent=on+' source'+(on===1?'':'s')+(st.v===1?' · '+(st.srv.length||SRVS.length)+' servers':'')+' armed'; /* v1.16.3: খালি=সব-১৬ (আগে \"0 servers armed\" দেখাত) */
   }
   function summary(){
     var s=$('summ');s.innerHTML='';
