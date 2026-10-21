@@ -83,7 +83,6 @@ export async function run(params) {
   }
 
   const qualities = normalizeQualities(streams);
-  if (process.env.NXDUMP) console.error('[NXDUMP] raw streams:', JSON.stringify(streams).slice(0, 3500));
   const body = {
     title: subject.title || "",
     subjectId: String(subject.subjectId || ""),
