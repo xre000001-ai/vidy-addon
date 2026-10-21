@@ -4504,9 +4504,12 @@ function bfHealthyPxs(limit = 20) {
 }
 
 let bfWarmInflight = false;
+let bfWarmPromise = null; // v1.17.1: চলমান ওয়ার্ম-আপের জন্য অপেক্ষা করা যায় (কোল্ড-স্টার্ট ফিক্স)
 async function bfWarmH2Pool() {
-  if (bfWarmInflight || BF_H2_OK.size >= 12) return;
+  if (bfWarmInflight) return bfWarmPromise;
+  if (BF_H2_OK.size >= 12) return null;
   bfWarmInflight = true;
+  bfWarmPromise = (async () => {
   try {
     const now = Date.now();
     const cands = POOL.filter(c => !BF_H2_OK.has(c.px) && (!BF_H2_BAD.get(c.px) || now - BF_H2_BAD.get(c.px) > 15 * 60 * 1000))
@@ -4535,6 +4538,10 @@ async function bfWarmH2Pool() {
       }
     }));
   } finally { bfWarmInflight = false; }
+  })();
+  const pr = bfWarmPromise;
+  try { await pr; } finally { if (bfWarmPromise === pr) bfWarmPromise = null; }
+  return pr;
 }
 
 async function bfText(url, ref, timeoutMs = 4500) {
@@ -5214,24 +5221,26 @@ async function bfResolveFdlToLoc(fdlUrl, timeoutMs = 3200) {
   } catch { }
   // v1.17.0: dl.fastdlserver.site সরাসরি 403 দেয় (IP-flag) → প্রক্সি-পুল দিয়ে আবার চেষ্টা
   // ⚠️ deadline-বাঁধা (v1.17.1): আগে ৩টি প্রক্সি × (open+req) ≈ ১৬s stall করত ⇒ পুরো লিস্ট লেট হয়ে যেত
-  const dl = Date.now() + Math.min(5200, Math.max(1800, timeoutMs * 2));
+  const dl = Date.now() + Math.min(5600, Math.max(2200, timeoutMs * 2));
   try {
-    const pxs = bfHealthyPxs(12);
-    for (const px of pxs.slice(0, 3)) {
-      const left = dl - Date.now();
-      if (left < 700) break;
+    // v1.17.1: ★ তিনটি প্রক্সি এখন **সমান্তরালে** (আগে ধারাবাহিক ছিল ⇒ ৩×(open+req) ≈ ৯s ⇒
+    // ঠান্ডা পুলে প্রায় সবসময় fid পাওয়া যেত না ⇒ বুটের পর প্রথম রিকোয়েস্টে ০ কার্ড)
+    const pxs = bfHealthyPxs(12).slice(0, 3);
+    const left = dl - Date.now();
+    const tries = pxs.map(async px => {
       let cl = null;
       try {
-        cl = await bfOpenH2('https://dl.fastdlserver.site', px, Math.min(2000, left));
+        cl = await bfOpenH2('https://dl.fastdlserver.site', px, Math.min(2000, Math.max(600, left)));
         const left2 = dl - Date.now();
-        if (left2 < 500) break;
+        if (left2 < 400) return null;
         bfIpMark(px, 1);
         const rr = await bfH2Req(cl, new URL(fdlUrl), { timeout: Math.min(left2, 2600) });
         const loc = String((rr && rr.headers && rr.headers.location) || '');
-        const v = pick(loc);
-        if (v) return v;
-      } catch { } finally { try { if (cl) cl.close(); } catch { } }
-    }
+        return pick(loc);
+      } catch { return null; } finally { try { if (cl) cl.close(); } catch { } }
+    });
+    const outs = await Promise.all(tries);
+    for (const v of outs) if (v) return v;
   } catch { }
   return { fid: '', packId: '' };
 }
@@ -5407,13 +5416,18 @@ async function bfStreams(tmdbId, title, type, s, e, origin, maxh, imdbHint = '')
   if (!tmdbId && !imdbHint) return [];
   const isTv = type === 'series';
   const SE = Math.max(1, parseInt(s, 10) || 1), EP = Math.max(1, parseInt(e, 10) || 1);
-  const tS = Date.now(); const WS = 8600; const lS = () => Math.max(250, WS - (Date.now() - tS));
+  const tS = Date.now(); const WS = 9400; const lS = () => Math.max(250, WS - (Date.now() - tS)); // v1.17.1: ৮.৬s→৯.৪s (গ্লোবাল uniLeft ৯.৬s-এর মধ্যেই)
   const pubBase = String(origin || VSP_PUB || 'https://3404d3c5dc63-vidy.baby-beamup.club').replace(/\/+$/, '');
   try {
     const T = String(title || '').trim() || (typeof tmdbId === 'number' && tmdbId > 0 ? await nameForTmdb(tmdbId, isTv ? 'series' : 'movie').catch(() => '') : '');
     if (!T || lS() < 3000) return [];
     const yP = (typeof tmdbId === 'number' && tmdbId > 0) ? skyYear(tmdbId, isTv).catch(() => 0) : Promise.resolve(0);
     const imdbP = imdbHint ? Promise.resolve(imdbHint) : ((typeof tmdbId === 'number' && tmdbId > 0) ? tmdbToImdb(tmdbId, isTv ? 'tv' : 'movie').catch(() => '') : Promise.resolve(''));
+    // v1.17.1: কোল্ড-স্টার্ট — প্রক্সি-পুল না ওয়ার্ম থাকলে রিজলভ ৯.৬সের ডেডলাইন ছাড়ায়
+    // (ডিপ্লয়ের পর প্রথম রিকোয়েস্টে ০ কার্ড) ⇒ ওয়ার্ম-আপ চললে সীমিত অপেক্ষা
+    if (BF_H2_OK.size < 4 && bfWarmPromise) {
+      try { await Promise.race([bfWarmPromise, new Promise(r2 => setTimeout(r2, 1200))]); } catch { }
+    }
     const sq = T.replace(/['\u2018\u2019\u02bc`]/g, '').trim();
     const searchUrl = BF_BASE + '/wp-json/wp/v2/posts?search=' + encodeURIComponent(sq) + '&orderby=relevance&_fields=id,link,title&per_page=8';
     let srTxt = await bfText(searchUrl, BF_BASE + '/', Math.min(3600, lS()));
@@ -6845,8 +6859,12 @@ setInterval(() => { nxBenchHealth(); }, 15000).unref();
   // ব্যর্থ হলে হার্ডকোডেড-ফলব্যাক-ডোমেইন-ই থাকে; সার্চ-ব্যর্থ হলে skyStreams-ও জোর-রিফ্রেশ করে।
   setTimeout(() => { skyDomRefresh(true).then(b => { if (DBG) console.error('[sky-dom] boot → ' + b); }).catch(() => {}); }, 8000).unref();
   setInterval(() => { skyDomRefresh(true).catch(() => {}); }, SKY_DOM_TTL).unref();
-  setTimeout(() => { bfDomRefresh(true).then(b => { if (DBG) console.error('[bf-dom] boot → ' + b); }).catch(() => {}); }, 8500).unref();
+  // v1.17.1: ৮.৫s→০.৮s — ডিপ্লয়ের পর প্রথম রিকোয়েস্টে সাইট-ফেচ ধীর হলে বাজেট শেষ হয়ে যেত
+  setTimeout(() => { bfDomRefresh(true).then(b => { if (DBG) console.error('[bf-dom] boot → ' + b); }).catch(() => {}); }, 800).unref();
   setInterval(() => { bfDomRefresh(true).catch(() => {}); }, BF_DOM_TTL).unref();
+  // v1.17.1: ★ বুট-এর পর প্রথম-১০-সেকেন্ডে প্রক্সি-পুল ঠান্ডা থাকলে BollyFlix রিজলভ ৯.৬সের
+  // গ্লোবাল ডেডলাইন ছাড়িয়ে যায় ⇒ ডিপ্লয়ের পর প্রথম রিকোয়েস্টে ০ কার্ড। এখন বুটেই ১.২সে পুল ওয়ার্ম হয়।
+  setTimeout(() => { bfWarmH2Pool().catch(() => {}); }, 1200).unref();
   setTimeout(() => { bfWarmH2Pool().catch(() => {}); }, 8000).unref();
   setInterval(() => { bfWarmH2Pool().catch(() => {}); }, 180000).unref();
   // v1.15.18 (r68b ইউজার-অনুমোদিত): রেপ্লিকা-জাগ্রত নিজ-পিং — প্রতি-৪মিনিটে নিজের-পাবলিক-URL-এ /_health
