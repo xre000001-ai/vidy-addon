@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.15.99'; // v1.15.99: **rousav (`Greek`, `Spanish`, `German` ইত্যাদি) ও `callisto` বহু-ভাষা প্লেব্যাক সংস্কার** — ইউজার: "Hindi, English, Tamil, Telugu runs smoothly, but Greek, Spanish, German etc wasn't though it seems ok now. But check again and revise carefully"। সরাসরি পরিমাপে ৬টি নির্দিষ্ট ত্রুটি ধরা পড়েছে: (১) **Cloudflare `404 cf=HIT` ক্যাশ-পয়জনিং ও `Origin`-উদ্ধার**: `img.rousav.tech`-এ `Range: bytes=0-1023` দিয়ে `.m3u8` প্রোব করলে বা অরিজিন-গ্লিচে Cloudflare সেই `404` কে `cf=HIT (age=94693s)` হিসেবে ক্যাশ করে রাখে (`track_german.m3u8`, `track_spanish.m3u8`, `track_polish/portuguese/tamil/telugu/turkish.m3u8`, এবং `00000.png`); কিন্তু `Origin: https://vidbolt.xyz` (ও ব্যর্থ হলে `Origin: https://r1.vidbolt.xyz`) দিলে নতুন ক্যাশ-কী দিয়ে তাৎক্ষণিক `200 OK` পাওয়া যায়। (২) **প্রোব-কালে প্লেলিস্ট `MM_WC`-তে ক্যাশ না করা**: `/stream`-এ `mmTrkProbe` ও `mmVarProbe` ৭৫–১০০KB প্লেলিস্ট ডাউনলোড করেও ফেলে দিত, ফলে ইউজার কার্ডে চাপলে `/mm/` ও `/mma/`-তে আবার ১.৫–৪.৬ সেকেন্ড লাগত। (৩) **`/mm/`-এ অপ্রয়োজনীয় `vbest` + `mmVarProbe` অপেক্ষা**: `knownExtAud` হলে `/mm/` এখন ০-১ms-এ `mmMasterForm` রিটার্ন করে এবং পটভূমিতে ভিডিও+অডিও উভয় প্লেলিস্ট ও সেগমেন্ট প্রি-ওয়ার্ম করে (`MM_WC_INFLIGHT` ডিডুপসহ)। (৪) **rousav সেগমেন্টগুলো `/mmr/` লুকঅ্যাহেড প্রিফেচ ও রিলেতে যুক্ত করা (`#EXT-X-MAP` `init.mp4` সহ)**: যাতে ইউজার কখনোই ৪–১৬ সেকেন্ডের `cf=MISS` স্টল বা `00000.png` ৪০৪-এ না পড়েন। (৫) **ডুয়াল-স্ট্রিম (`mmMasterForm` ভিডিও+অডিও) লুকঅ্যাহেড সংঘর্ষ ও ছোট সেগমেন্ট ওয়াচডগ**: `bgInflight` ৬→১২ (যাতে অডিও প্রিফেচ ভিডিও প্রিফেচকে বাতিল না করে) এবং `kbps < 110` চেক শুধু `>600KB` সেগমেন্টে `headersAt` থেকে গণনা (যাতে ৪৫–৮৮KB অডিও সেগমেন্ট কখনোই ভুলবশত কিল না হয়)। (৬) **Vidbolt `callisto` (`dash-hls-bridge.johndoes*.workers.dev`) ৪২৯ ও `NAME="Audio"` বাগ**: ৪২৯ ওয়ার্কারগুলো সচল `johndoesdmc`-তে নরমালাইজ এবং `NAME="Audio"` থাকলে সোর্সের আসল ভাষা (`Arabic`, `Hindi`, `English` ইত্যাদি) বসানো। // v1.15.98: **MM প্লেব্যাক বাফারিং ও 'একটু পর পর ইন্টারনেট ছেড়ে দেয়' সমস্যার স্থায়ী সমাধান** — সরাসরি ও প্রড পরিমাপে ৩টি মূল কারণ ধরা পড়েছে: (ক) `contentpublishing.site`-এ প্রতি ~৮-১০ সেগমেন্টে একটি `cf=MISS` কানেকশন অরিজিন-থ্রটলিংয়ে (`২৩–৬৮ KB/s`, ৪৫–৬৯ সেকেন্ড!) আটকে যায় অথবা মাঝপথে (`got=37KB/1360KB`) সকেট বন্ধ করে দেয়; আগে `up.pipe(res)`-এ `'close'` হ্যান্ডলার বা Range-রিজিউম না থাকায় ক্লায়েন্টের সংযোগ ০ KB/s-এ ঝুলে থাকত। (খ) স্ট্রিমিং চলাকালীন প্রতি ৮–১৮ সেকেন্ডে পটভূমির `pxCheckerWave` (৮৪ সকেট) + `mmCheckerWave` (৮৪ সকেট) + `enrichPool` (১২০ সকেট + ৪টি প্রক্সি-তালিকা ডাউনলোড + `fs.writeFileSync`) কন্টেইনারের সিপিইউ ও নেটওয়ার্ক জ্যাম করত। (গ) প্লেয়ার সেগমেন্ট চাওয়ার পর ফেচ শুরু হওয়ায় অরিজিনের ধীরগতি সরাসরি ইউজারের ফোনে পৌঁছাত। সমাধান: (১) **ইন-মেমরি লুকঅ্যাহেড প্রিফেচ (`MMR_MEM`, পরবর্তী ৩টি সেগমেন্ট = ৩০ সেকেন্ড ভিডিও Beamup RAM-এ অগ্রীম লোড)** + **স্ট্যাগার্ড Cloudflare এজ-ওয়ার্মার (`mmWarmEdge`, পরবর্তী ৪..৬ সেগমেন্টে ১-বাইট `Range: bytes=0-0` পাঠিয়ে আগেভাগেই `cf=HIT` করা)** — পরীক্ষায় ২১/২১ সেগমেন্টের ১৯টিই প্লেয়ার চাওয়ার আগে ১০০% RAM-এ প্রস্তুত (`playerWait=0ms`, `cf=HIT` গতি `২৫–৭৫ MB/s`); (২) **স্মার্ট স্টল-রিজিউমিং পাম্প**: কোনো সেগমেন্টে ডেটা-গ্যাপ (`>2.4s`), ধীরগতি (`<110 KB/s`), বা অসম্পূর্ণ ক্লোজ (`received < total`) ঘটলে সাথে সাথে নতুন সকেটে `Range: bytes=${received}-` দিয়ে বাকি অংশ নিরবচ্ছিন্নভাবে জোড়া লাগানো; (৩) **অ্যাক্টিভ-স্ট্রিমিং গার্ড (`MMR_ACTIVE_UNTIL`)**: প্লেব্যাক চলাকালীন পটভূমির প্রক্সি-চেকার ও এনরিচ-ওয়েভ স্থগিত এবং অ্যাসিঙ্ক ফাইল-রাইট। // v1.15.93: (ক) **Movies4u আগের মতোই সরাসরি** — ইউজার: "Movies4u age jemon chilo direct temon e valo chilo, oita oi file er problem ager motoi kore daw"। v1.15.91/92-এর /m4h/ + /m4i/ (init-এ Cues) রাউটিং সরিয়ে মুভি ও সিরিজ দুই পথেই `url: x.url` ফিরিয়ে আনা হলো। /m4h/ ও /m4i/ এন্ডপয়েন্ট দুটো কোডে রয়ে গেছে (অব্যবহৃত) — ভবিষ্যতে প্রয়োজনে সক্রিয় করা যাবে। (খ) **কনফিগ-পেজ: ভাষা-ছাঁকনিতে দেশের-পতাকা ব্যাজ + ওপরে সংক্ষিপ্ত-কোড** — ইউজার: "country er flag tar upore short name"; "Indiar Hindi, Tamil, telugu, malayam joto language ase India er flag er upore short code alada alada"; "Bangladesh er Bangla obossoi attach korba"। ভাষা ১৭ → **৩৯**; ভারতীয় ৬ ভাষা (HIN/TAM/TEL/MAL/KAN/MAR) একই ভারতীয় পতাকা ভাগ করে, কোড আলাদা; বাংলাদেশের বাংলা = BAN (বাংলাদেশ-পতাকা)। আরবি/মাল্টি/অরিজিনাল = নিরপেক্ষ ব্যাজ (কোনো একক দেশের পতাকা নেই)। সব পতাকা **ইনলাইন SVG** (কোনো বাহ্যিক-ছবি/নেটওয়ার্ক নেই — স্যান্ডবক্স-প্রিভিউতেও দেখা যাবে)। সার্ভারে MM_LNAME প্রসারিত (marathi/sindhi/nepali/sinhala/punjabi/gujarati/odia/assamese/bhojpuri) যাতে নতুন কী-গুলো আসলেই ছাঁকনি-কাজ করে। যাচাই: ৩৯/৩৯ বৈধ পতাকা-এসভিজি, কোড সব অনন্য, config.test.js সব-সবুজ //  // v1.15.92: Movies4u **সিক-সংস্কার ৩** (ইউজার: "Na exo teh seek hocche na") — v1.15.91-এর /m4h/ কেন কাজ করেনি: `#EXT-X-MAP` এ ছিল শুধু MKV-হেডার [0,cut) — **Cues ছিল না**। ফলে MatroskaExtractor কোনো সিক-সূচকই পায়নি → আগের মতোই `SeekMap.Unseekable` → প্রতি সিক ০:০০-এ। এখন নতুন `/m4i/`: init = [0,cut) **+ Cues-এর একটি কপি**, আর ক্লাস্টার-অফসেট **অপরিবর্তিত** (ফাইলে কিছুই সরানো হয়নি — তাই অফসেট-সংশোধনের প্রয়োজন নেই)। ExoPlayer init পড়ার সময়েই Cues পেয়ে যায় → প্রথম Cluster-এর **আগেই** সঠিক সিক-মানচিত্র → সিক চলে। Segment-আকারও প্যাচ করা হয় (init-এ Cues যোগ হওয়ায় ঘোষিত আকার বাড়ে)। সুবিধা: সেগমেন্টগুলো `#EXT-X-BYTERANGE`-এ সরাসরি CDN-এ → আমাদের **ভিডিও-ব্যান্ডউইথ শূন্য**, আর v1.15.91-এ ধরা-পড়া প্রান্তিক-প্রক্সির Range-খোঁয়ানো সমস্যা এড়ানো যায়। যাচাই (২ ফাইল): init-এর উপরের-স্তর `SeekHead, Info, Tracks, **Cues**` (init-এ কোনো Cluster নেই), **CuePoint ৬/৬ আসল Cluster-এ পয়েন্ট করে** (HTTP ২০৬ + 0x1F43B675), সেগমেন্ট-রেঞ্জও Cluster-এ শুরু। পাশাপাশি ইউজার-প্রশ্ন "libmpv-এ চালানো যায়?"-এর উত্তর তদন্ত করে জানা গেল: Nuvio-তে প্লেয়ার-ইঞ্জিন **ইউজার-সেটিং** (ExoPlayer / Libmpv / Auto) এবং Auto হলে **কনটেন্ট** দিয়ে ঠিক হয় (-anime→libmpv, HDR/DV→ExoPlayer, বাকি সব→ExoPlayer) — অ্যাডন থেকে `behaviorHints` দিয়ে এটি বদলানো যায় না (প্রমাণ: nuvio.wiki/settings/player + NuvioMobile PR#2192)। তাই সমাধান হলো ExoPlayer-এই সিক চালানো // 
+const VERSION = '1.16.0'; // v1.15.99: **rousav (`Greek`, `Spanish`, `German` ইত্যাদি) ও `callisto` বহু-ভাষা প্লেব্যাক সংস্কার** — ইউজার: "Hindi, English, Tamil, Telugu runs smoothly, but Greek, Spanish, German etc wasn't though it seems ok now. But check again and revise carefully"। সরাসরি পরিমাপে ৬টি নির্দিষ্ট ত্রুটি ধরা পড়েছে: (১) **Cloudflare `404 cf=HIT` ক্যাশ-পয়জনিং ও `Origin`-উদ্ধার**: `img.rousav.tech`-এ `Range: bytes=0-1023` দিয়ে `.m3u8` প্রোব করলে বা অরিজিন-গ্লিচে Cloudflare সেই `404` কে `cf=HIT (age=94693s)` হিসেবে ক্যাশ করে রাখে (`track_german.m3u8`, `track_spanish.m3u8`, `track_polish/portuguese/tamil/telugu/turkish.m3u8`, এবং `00000.png`); কিন্তু `Origin: https://vidbolt.xyz` (ও ব্যর্থ হলে `Origin: https://r1.vidbolt.xyz`) দিলে নতুন ক্যাশ-কী দিয়ে তাৎক্ষণিক `200 OK` পাওয়া যায়। (২) **প্রোব-কালে প্লেলিস্ট `MM_WC`-তে ক্যাশ না করা**: `/stream`-এ `mmTrkProbe` ও `mmVarProbe` ৭৫–১০০KB প্লেলিস্ট ডাউনলোড করেও ফেলে দিত, ফলে ইউজার কার্ডে চাপলে `/mm/` ও `/mma/`-তে আবার ১.৫–৪.৬ সেকেন্ড লাগত। (৩) **`/mm/`-এ অপ্রয়োজনীয় `vbest` + `mmVarProbe` অপেক্ষা**: `knownExtAud` হলে `/mm/` এখন ০-১ms-এ `mmMasterForm` রিটার্ন করে এবং পটভূমিতে ভিডিও+অডিও উভয় প্লেলিস্ট ও সেগমেন্ট প্রি-ওয়ার্ম করে (`MM_WC_INFLIGHT` ডিডুপসহ)। (৪) **rousav সেগমেন্টগুলো `/mmr/` লুকঅ্যাহেড প্রিফেচ ও রিলেতে যুক্ত করা (`#EXT-X-MAP` `init.mp4` সহ)**: যাতে ইউজার কখনোই ৪–১৬ সেকেন্ডের `cf=MISS` স্টল বা `00000.png` ৪০৪-এ না পড়েন। (৫) **ডুয়াল-স্ট্রিম (`mmMasterForm` ভিডিও+অডিও) লুকঅ্যাহেড সংঘর্ষ ও ছোট সেগমেন্ট ওয়াচডগ**: `bgInflight` ৬→১২ (যাতে অডিও প্রিফেচ ভিডিও প্রিফেচকে বাতিল না করে) এবং `kbps < 110` চেক শুধু `>600KB` সেগমেন্টে `headersAt` থেকে গণনা (যাতে ৪৫–৮৮KB অডিও সেগমেন্ট কখনোই ভুলবশত কিল না হয়)। (৬) **Vidbolt `callisto` (`dash-hls-bridge.johndoes*.workers.dev`) ৪২৯ ও `NAME="Audio"` বাগ**: ৪২৯ ওয়ার্কারগুলো সচল `johndoesdmc`-তে নরমালাইজ এবং `NAME="Audio"` থাকলে সোর্সের আসল ভাষা (`Arabic`, `Hindi`, `English` ইত্যাদি) বসানো। // v1.15.98: **MM প্লেব্যাক বাফারিং ও 'একটু পর পর ইন্টারনেট ছেড়ে দেয়' সমস্যার স্থায়ী সমাধান** — সরাসরি ও প্রড পরিমাপে ৩টি মূল কারণ ধরা পড়েছে: (ক) `contentpublishing.site`-এ প্রতি ~৮-১০ সেগমেন্টে একটি `cf=MISS` কানেকশন অরিজিন-থ্রটলিংয়ে (`২৩–৬৮ KB/s`, ৪৫–৬৯ সেকেন্ড!) আটকে যায় অথবা মাঝপথে (`got=37KB/1360KB`) সকেট বন্ধ করে দেয়; আগে `up.pipe(res)`-এ `'close'` হ্যান্ডলার বা Range-রিজিউম না থাকায় ক্লায়েন্টের সংযোগ ০ KB/s-এ ঝুলে থাকত। (খ) স্ট্রিমিং চলাকালীন প্রতি ৮–১৮ সেকেন্ডে পটভূমির `pxCheckerWave` (৮৪ সকেট) + `mmCheckerWave` (৮৪ সকেট) + `enrichPool` (১২০ সকেট + ৪টি প্রক্সি-তালিকা ডাউনলোড + `fs.writeFileSync`) কন্টেইনারের সিপিইউ ও নেটওয়ার্ক জ্যাম করত। (গ) প্লেয়ার সেগমেন্ট চাওয়ার পর ফেচ শুরু হওয়ায় অরিজিনের ধীরগতি সরাসরি ইউজারের ফোনে পৌঁছাত। সমাধান: (১) **ইন-মেমরি লুকঅ্যাহেড প্রিফেচ (`MMR_MEM`, পরবর্তী ৩টি সেগমেন্ট = ৩০ সেকেন্ড ভিডিও Beamup RAM-এ অগ্রীম লোড)** + **স্ট্যাগার্ড Cloudflare এজ-ওয়ার্মার (`mmWarmEdge`, পরবর্তী ৪..৬ সেগমেন্টে ১-বাইট `Range: bytes=0-0` পাঠিয়ে আগেভাগেই `cf=HIT` করা)** — পরীক্ষায় ২১/২১ সেগমেন্টের ১৯টিই প্লেয়ার চাওয়ার আগে ১০০% RAM-এ প্রস্তুত (`playerWait=0ms`, `cf=HIT` গতি `২৫–৭৫ MB/s`); (২) **স্মার্ট স্টল-রিজিউমিং পাম্প**: কোনো সেগমেন্টে ডেটা-গ্যাপ (`>2.4s`), ধীরগতি (`<110 KB/s`), বা অসম্পূর্ণ ক্লোজ (`received < total`) ঘটলে সাথে সাথে নতুন সকেটে `Range: bytes=${received}-` দিয়ে বাকি অংশ নিরবচ্ছিন্নভাবে জোড়া লাগানো; (৩) **অ্যাক্টিভ-স্ট্রিমিং গার্ড (`MMR_ACTIVE_UNTIL`)**: প্লেব্যাক চলাকালীন পটভূমির প্রক্সি-চেকার ও এনরিচ-ওয়েভ স্থগিত এবং অ্যাসিঙ্ক ফাইল-রাইট। // v1.15.93: (ক) **Movies4u আগের মতোই সরাসরি** — ইউজার: "Movies4u age jemon chilo direct temon e valo chilo, oita oi file er problem ager motoi kore daw"। v1.15.91/92-এর /m4h/ + /m4i/ (init-এ Cues) রাউটিং সরিয়ে মুভি ও সিরিজ দুই পথেই `url: x.url` ফিরিয়ে আনা হলো। /m4h/ ও /m4i/ এন্ডপয়েন্ট দুটো কোডে রয়ে গেছে (অব্যবহৃত) — ভবিষ্যতে প্রয়োজনে সক্রিয় করা যাবে। (খ) **কনফিগ-পেজ: ভাষা-ছাঁকনিতে দেশের-পতাকা ব্যাজ + ওপরে সংক্ষিপ্ত-কোড** — ইউজার: "country er flag tar upore short name"; "Indiar Hindi, Tamil, telugu, malayam joto language ase India er flag er upore short code alada alada"; "Bangladesh er Bangla obossoi attach korba"। ভাষা ১৭ → **৩৯**; ভারতীয় ৬ ভাষা (HIN/TAM/TEL/MAL/KAN/MAR) একই ভারতীয় পতাকা ভাগ করে, কোড আলাদা; বাংলাদেশের বাংলা = BAN (বাংলাদেশ-পতাকা)। আরবি/মাল্টি/অরিজিনাল = নিরপেক্ষ ব্যাজ (কোনো একক দেশের পতাকা নেই)। সব পতাকা **ইনলাইন SVG** (কোনো বাহ্যিক-ছবি/নেটওয়ার্ক নেই — স্যান্ডবক্স-প্রিভিউতেও দেখা যাবে)। সার্ভারে MM_LNAME প্রসারিত (marathi/sindhi/nepali/sinhala/punjabi/gujarati/odia/assamese/bhojpuri) যাতে নতুন কী-গুলো আসলেই ছাঁকনি-কাজ করে। যাচাই: ৩৯/৩৯ বৈধ পতাকা-এসভিজি, কোড সব অনন্য, config.test.js সব-সবুজ //  // v1.15.92: Movies4u **সিক-সংস্কার ৩** (ইউজার: "Na exo teh seek hocche na") — v1.15.91-এর /m4h/ কেন কাজ করেনি: `#EXT-X-MAP` এ ছিল শুধু MKV-হেডার [0,cut) — **Cues ছিল না**। ফলে MatroskaExtractor কোনো সিক-সূচকই পায়নি → আগের মতোই `SeekMap.Unseekable` → প্রতি সিক ০:০০-এ। এখন নতুন `/m4i/`: init = [0,cut) **+ Cues-এর একটি কপি**, আর ক্লাস্টার-অফসেট **অপরিবর্তিত** (ফাইলে কিছুই সরানো হয়নি — তাই অফসেট-সংশোধনের প্রয়োজন নেই)। ExoPlayer init পড়ার সময়েই Cues পেয়ে যায় → প্রথম Cluster-এর **আগেই** সঠিক সিক-মানচিত্র → সিক চলে। Segment-আকারও প্যাচ করা হয় (init-এ Cues যোগ হওয়ায় ঘোষিত আকার বাড়ে)। সুবিধা: সেগমেন্টগুলো `#EXT-X-BYTERANGE`-এ সরাসরি CDN-এ → আমাদের **ভিডিও-ব্যান্ডউইথ শূন্য**, আর v1.15.91-এ ধরা-পড়া প্রান্তিক-প্রক্সির Range-খোঁয়ানো সমস্যা এড়ানো যায়। যাচাই (২ ফাইল): init-এর উপরের-স্তর `SeekHead, Info, Tracks, **Cues**` (init-এ কোনো Cluster নেই), **CuePoint ৬/৬ আসল Cluster-এ পয়েন্ট করে** (HTTP ২০৬ + 0x1F43B675), সেগমেন্ট-রেঞ্জও Cluster-এ শুরু। পাশাপাশি ইউজার-প্রশ্ন "libmpv-এ চালানো যায়?"-এর উত্তর তদন্ত করে জানা গেল: Nuvio-তে প্লেয়ার-ইঞ্জিন **ইউজার-সেটিং** (ExoPlayer / Libmpv / Auto) এবং Auto হলে **কনটেন্ট** দিয়ে ঠিক হয় (-anime→libmpv, HDR/DV→ExoPlayer, বাকি সব→ExoPlayer) — অ্যাডন থেকে `behaviorHints` দিয়ে এটি বদলানো যায় না (প্রমাণ: nuvio.wiki/settings/player + NuvioMobile PR#2192)। তাই সমাধান হলো ExoPlayer-এই সিক চালানো // 
 // v1.15.91-বি: v1.15.91-বি: **প্রক্সি পথ প্রড-এ কাজ করে না** — প্রান্তিক-প্রক্সি Range হেডার খুলে ফেলে (নিদান: `curl -H "Range: bytes=100000-100999"` → `HTTP/2 200` + `x-m4p-rng: none`; HTTP/1.1-তেও একই)। তাই আমাদের সার্ভার দিয়ে প্রক্সি করলে ক্লায়েন্টের কোনো রেঞ্জ-অনুরোধই টিকে না → /m4p/ দিয়ে সিক অসম্ভব। চূড়ান্ত সমাধান **/m4h/**: আমরা শুধু একটি ছোট HLS প্লেলিস্ট দিই, সেগমেন্টগুলো `#EXT-X-BYTERANGE`-এ **সরাসরি CDN-এ** পয়েন্ট করে — ExoPlayer নিজেই CDN-এ রেঞ্জ পাঠায় (সেখানে ২০৬ চলে)। ফলে আমাদের ব্যান্ডউইথ **শূন্য** এবং Range-খোঁয়ানো প্রান্তিক-প্রক্সি কোনো সমস্যা করে না। `#EXT-X-MAP` = MKV-হেডার [0,cut) (Tracks/CodecPrivate), প্রতি সেগমেন্ট = CuePoint-এর Cluster-সীমানা (কী-ফ্রেম → স্বাধীনভাবে ডিকোড-যোগ্য); CuePoint একত্রীকরণ ≈৬ সে/সেগমেন্ট। যাচাই (২ ফাইল): ৮০৩/৭৯৯ সেগমেন্ট, #EXTM3U প্রথম লাইনে, VOD+ENDLIST+MAP; MAP-রেঞ্জ HTTP ২০৬ হুবহু আকার EBML✅ Tracks✅; **সেগমেন্ট-সীমানা ৬/৬ আসল Cluster** (HTTP ২০৬ + 0x1F43B675); `cut + ΣBYTERANGE = ৪৬,২৫৩,৪০৭৮` = সঠিক ফাইল-আকার (কোনো ফাঁক/ওভারল্যাপ নেই)
 // v1.15.91: v1.15.91: দুটি ইউজার-রিপোর্ট — (ক) **Movies4u ExoPlayer-সিক মৃত** ("Movies4u does not work seek when it plays on exo player", libmpv-তে ঠিকই চলে)। মূল কারণ ExoPlayer-এর MatroskaExtractor: `case ID_CLUSTER: if (!sentSeekMap) { if (seekForCuesEnabled && …) seekForCues = true; else extractorOutput.seekMap(new SeekMap.Unseekable(durationUs)); }` — অর্থাৎ **প্রথম Cluster-এ পৌঁছানোর আগেই Cues পড়া না থাকলে** ExoPlayer "অসিক-যোগ্য" ঘোষণা করে, আর ProgressiveMediaPeriod.seekToUs()-এ `positionUs = seekMap.isSeekable() ? positionUs : 0` → **প্রতি সিক ০:০০-এ ফেরত যায়**। Cues সবসময় ফাইলের একদম **শেষে** (পরিমাপ: Cues@18,120,319,734 / 16.88GB) — mpv/FFmpeg তা পড়তে পারে, ExoPlayer পারে না (FLAG_DISABLE_SEEK_FOR_CUES)। মাপকাঠি: যে-সব উৎস ExoPlayer-এ সিক চলে (Multimovies, Miami) সবাই **HLS**; Movies4u-ই একমাত্র প্রগতিশীল-MKV সোর্স — নিদর্শন মিলে গেল। সমাধান (`/m4p/`): Cues-এলিমেন্ট হেডারের পরে, প্রথম Cluster-এর **আগে** সরানো, আর সব CueClusterPosition + delta (নাহলে সিক ভুল অবস্থানে যায়)। Segment-আকার প্যাচ + রেঞ্জ-সচেতন স্ট্রিমিং (prefix / Cues / লেজ—তিন-খণ্ড)। যাচাই (৩টি ফাইল, ০.৪৩/০.৮৬/০.৯৬ GB): উপরের-স্তর `SeekHead, Info, Tracks, **Cues**, Cluster…`; Cues@33146 বনাম প্রথম-Cluster@84656; **CuePoint ১২/১২ আসল Cluster-এ পয়েন্ট করে** (HTTP ২০৬ + 0x1F43B675)। HLS-কার্ড অস্পৃষ্ট (শুধু kind==='file' রূপান্তরিত)। (খ) **Multimovies ভাষা-কার্ড কম দেখানো** ("multimovies has a more lot of audio varients, please show them all") — পরিমাপ: Demon Slayer rousav মাস্টার **১৬** অডিও-ট্র্যাক ঘোষণা করে, **১৩টি জীবিত**; কিন্তু ক্যাপ MM_MAXLANG=৬ / MM_SCANTRK=১২ → মাত্র ৬টি দেখানো হতো (Greek/Italian/Polish/Portuguese/Russian/Tamil/Telugu কখনোই আসত না)। ক্যাপ ৬→২৪, ১২→২৪, ভ্যারিয়েন্ট ২০→৬০। ফল: Demon Slayer ২০→**৫৪** কার্ড/১৭ ভাষা, The Runner ১৮→**৩৬-৩৯**/১২ ভাষা (Kannada/Malayalam/Hungarian/Arabic নতুন)। যাচাই: test.js ২০/৪৩, config.test.js সব-সবুজ, বাংলা=০/১৮২, #EXTM3U প্রথম লাইনে ৯৩/৯৩ //  // v1.15.90: Multimovies **অডিও-ভাষা সংস্কার** (ইউজার: "Eta toh Chinese audio howar Kotha but Hindi audio dei … etar English ta o Hindi audio set Kore, Greek, German e Kono audio nai")। তিনটি স্বতন্ত্র ত্রুটি, প্রতিটি PMT-প্রমাণিত: (ক) **ভাষা-ভিত্তিক মাক্সড ভ্যারিয়েন্ট বাছাই হয় না** — .urlset/CDN ভ্যারিয়েন্ট-নামেই ভাষা এনকোড করে (`index-f3-v1-a1`=हिन्दी, `a2`=English, `a3`=日本語, `a4`=తెలుగు, `a5`=தமிழ்)। প্রমাণ: ৫টি ভ্যারিয়েন্টের AAC-PID(257)-হ্যাশ **৫/৫ ভিন্ন**। কিন্তু আমরা সব কার্ডে একই `a1` পাঠাচ্ছিলাম → প্রতিটি ভাষার কার্ডেই हिन्दी বাজত। নতুন `mmPickVarLang(pl, base, wantH, alang)`: মাস্টারের অডিও-তালিকায় ভাষার ক্রমিক N বের করে `-a1`→`-aN` করে (HTTP ২০০ যাচাইসহ)। (খ) **`#EXT-X-MEDIA` MEDIA-প্লেলিস্টে অর্থহীন** — rousav-এর ভিডিওতে কোনো অডিও নেই (PMT = `[0x1b]`), অডিও আলাদা `track_*.m3u8`-এ; কিন্তু আমরা ইনলাইন MEDIA-প্লেলিস্টে TYPE=AUDIO ট্যাগ লিখছিলাম, যা প্লেয়ার **সম্পূর্ণ উপেক্ষা করে** → নিঃশব্দ। নতুন `mmMasterForm()`: ভিডিও মাক্সড না হলে সঠিক এক-ভ্যারিয়েন্ট MASTER-প্লেলিস্ট (AUDIO="a0" দ্বারা যুক্ত)। (গ) **অডিও-সেগমেন্টে api_key পৌঁছায় না** — track_*.m3u8-এর সেগমেন্ট আপেক্ষিক (`track_czech/00000.png`) আর api_key শুধু প্লেলিস্ট-ইউআরএলে → প্লেয়ারের রিজলভ করা সেগমেন্ট **৪০৪** (পরীক্ষায় ৬/৬ ভাষাতেই)। নতুন `/mma/<b64>/a.m3u8` ইনলাইনার: absolute + keyed সেগমেন্ট (আর প্রয়োজনে Referer-রিলে)। সংশোধিত ভিত্তি: `mmTsHasAudio` ছিল ত্রুটিপূর্ণ — PMT-পিআইডি PAT থেকে না বের করে "যেকোনো PUSI = PMT" ধরত, আর 0x06 (প্রাইভেট-ডেটা) কে অডিও গণ্য করত; তাই অডিওবিহীন rousav-কেও "মাক্সড" দাবি করা হতো। `mmVarProbe` শুধু **প্রথম** সেগমেন্ট দেখত — কিন্তু অনেক উৎসের ০-নম্বর সেগমেন্ট lead-in (PMT `[0x1b,0x0f]`, কিন্তু বাস্তবে কোনো অডিও নেই; The Runner seg 0 বনাম seg 1..10); এখন ৩টি নমুনা। যাচাই: Demon Slayer ৫ ভাষায় ৫/৫ স্বতন্ত্র মাক্সড অডিও; rousav-সব কার্ডে PMT=0xf অডিও (৫-৬/৬ সেগমেন্ট); test.js ২০/৪৩; config.test.js সব-সবুজ; বাংলা=০ //  // v1.15.89: Multimovies **দ্বিতীয় গভীর-নিরীক্ষা** — ইউজার: "video length dekhai 10s, sese hoi abar por theke 10s suru kore … aje maje audio o thake na"। তিনটি স্বতন্ত্র ত্রুটি, প্রতিটি প্রমাণ-সহ: (ক) **#EXTM3U প্রথম লাইনে ছিল না** — HLS-স্পেসিফিকেশনে #EXTM3U অবশ্যই প্রথম লাইন; আমরা মাস্টারের ট্যাগ-ব্লক (TYPE=AUDIO / I-FRAME-STREAM-INF) তার **আগে** জুড়ে দিচ্ছিলাম। পরীক্ষায় ১৬/১৬ MM-কার্ডেই #EXTM3U ৪ নম্বর (Demon Slayer) থেকে ৩৮ নম্বর (The Runner) লাইনে — প্লেয়ার প্লেলিস্ট অগ্রাহ্য/অডিও-ট্র্যাক হারাতো। আগের যাচাইয়ে ধরা পড়েনি কারণ সেখানে শুধু "#EXTM3U আছে কি" দেখা হতো, **কোন লাইনে** তা নয়। নতুন `mmM3UJoin(tags, body)` ট্যাগ-ব্লক #EXTM3U-এর পরে বসায়; `mmMiniBuild`-এর মাস্টার-আউটপুটেও #EXTM3U যোগ (আগে সেটিতে #EXTM3U-ই ছিল না)। (খ) **CDN Referer দাবি করে, প্লেয়ার পাঠায় না** — dd2stliwt0bc.homechefrecipes.sbs (.urlset): Referer ছাড়া **০/২০** ৪০৪, Referer সহ **২০/২০** ২০০; img.rousav.tech Referer ছাড়াই ১০/১০। নতুন `mmNeedsRef(u)` হোস্ট-ভিত্তিক (৩০মিন ক্যাশ) সনাক্তকরণ → প্রয়োজনীয় হোস্টের মিডিয়া আমাদের /mmr/ রিলে দিয়ে (রিলে সবসময় সঠিক Referer যোগ করে), প্রয়োজন না হলে সরাসরি CDN — কোনো অতিরিক্ত ব্যান্ডউইথ-খরচ নেই। যাচাই: Demon Slayer-এর ৪টি .urlset কার্ড রিলে-কৃত, rousav কার্ড ও The Runner সরাসরি। (গ) **বেস৬৪-প্যাডিং ('=') রেগেক্সে ছিল না** → কপি/পেস্টে প্যাডিং যোগ হলে ২০০-এর বদলে ৪০৪ (প্রমাণ: ইউজারের ইউআরএল "…8amE=/mini.m3u8" → ৮/৮ বার ৪০৪; '=' বাদ দিলেই ২০০)। /mm/ ও /mmr/ দুটোতেই '=' এখন বৈধ। যাচাই: ৩৮/৩৮ কার্ডে #EXTM3U প্রথম লাইনে; ENDLIST শেষ লাইনে; রিলে-কৃত সেগমেন্ট ৬/৬ HTTP ২০৬/২০০ video/mp2t মাক্সড-অডিও; অডিও-প্লেলিস্ট HTTP ২০০ (৯৩০ EXTINF); test.js ২০/৪৩ বেসলাইন; config.test.js সব-সবুজ; বাংলা=০ //  // v1.15.88: Multimovies গভীর-নিরীক্ষা + **single-audio সংস্কার** (ইউজার: "Demob slayer infinity castle … fast hls gulo pelam na, the runner e single audio fast hls gulo pelam na, multi audio play problem hoi")। (ক) **নকল কোয়ালিটি-কার্ড বন্ধ**: `woHasAudioGrp` শাখা প্রতি কোয়ালিটিতে একটি করে কার্ড দিত, কিন্তু সবার `url` একই (পুরো মাস্টার) — প্রমাণ: Demon Slayer ১৩১১০৩১-এ ৩টি কার্ড (1080/720/480) যাদের URL **হুবহু অভিন্ন** (`…v51t5m9qymh5_,l,n,h,.urlset/master.txt`)। (খ) **মাল্টি-অডিও সমস্যার মূল**: rousav মাস্টার ১৬-২০টি আলাদা অডিও-ট্র্যাক ঘোষণা করে, কিন্তু প্লেয়ারকে সেগুলো আলাদাভাবে টানতে হয় — আর The Runner-এর track_english/spa/fra/pol/por/tam/tel/tha/tur **৪০৪**; Demon Slayer .urlset-এর ভিডিও-ভ্যারিয়েন্ট আসলে **মাক্সড** (H.264+AAC একই TS-এ — PMT-স্ক্যানে প্রমাণিত)। এখন **প্রতি কোয়ালিটি × প্রতি ভাষা = একটি single-audio কার্ড** (mini + `alang`-পিন: মাস্টারে শুধু ওই একটি অডিও-ট্র্যাক থাকে)। (গ) **প্রোব-ভিত্তিক সততা**: `mmVarProbe` (ভ্যারিয়েন্ট জীবিত + TS-এ অডিও মাক্সড কি — ৪KB রেঞ্জ-ফেচ) ও `mmTrkProbe` (অডিও-ট্র্যাক জীবিত), দুটোতেই **দ্বৈত-নিশ্চিতকরণ** — rousav/CDN-এর 'নোড-লটারি'তে ভাগ্যবান-নোড মিথ্যা-জীবিত দেখায় (প্রমাণ: track_english একবার ২০০, পরের ১৫ বার ৪০৪)। মিথ্যা-মাল্টি-অডিও মাস্টারে আর 'N Audio' দাবি নেই; মাক্সড ভ্যারিয়েন্ট থাকলে সরাসরি সেটিই (দ্রুততম), নইলে সৎ শূন্য। (ঘ) **অন্যান্য**: ডিডুপ-কী'তে `alang` (নাহলে ৬ ভাষা-কার্ড অভিন্ন-কী হয়ে ৫টি বাদ পড়ত — প্রমাণ `[mmvbd] out=6` → `variants=1`); `_lang`-এ ISO-কোড→ইংরেজি-নাম ম্যাপার (`mmLangBlob`) — mml=['hindi'] আগে ০ কার্ড দিত, এখন ৩; MM কার্ড-ক্যাপ ১৬→২০; decodeURIComponent-সহ কোনো মিড-লাইন কমেন্ট নেই। যাচাই: test.js ২০/৪৩ (বেসলাইন), config.test.js সব-সবুজ, বাংলা=০, Demon Slayer ২০ কার্ড (হিন্দি/ইংলিশ/জাপানি/তেলুগু/তামিল × ১০৮০/৭২০/৪৮০), The Runner ০→৬ (চেক/জার্মান/হিন্দি/হাঙ্গেরিয়ান/ইতালিয়ান/জাপানি — সব জীবিত), প্রতি কার্ডে অডিও-ট্র্যাক=১, সেগমেন্ট HTTP ২০৬ video/mp2t মাক্সড-অডিও //  // v1.15.87: স্কাইমুভিজ-সাইট গভীর-নিরীক্ষা + স্কোরার-মেরামত। (ক) **'/movie/'-প্রিফিক্স-বাগ (বড়)**: skyStreams-এ posts = "/movie/Slug-…", কিন্তু স্কোরার সরাসরি nrm(p) করত → n = "movie jaws 1975 …" → `n === Tn` ও `n.startsWith(Tn+' ')` দুটোই **মৃত কোড** (n কখনোই টাইটেল দিয়ে শুরু হয় না)। বহু-শব্দ-টাইটেল বেঁচেছিল শুধু `n.includes(' '+Tn+' ')` (১১০) শাখায়; **এক-শব্দ-টাইটেলের (Jaws/Rocky/Alien/Chernobyl/Lucifer) কোনো শাখাই থাকত না → sc=0 → সব সময় ০ কার্ড**। প্রমাণ: Jaws(৫৭৮) → no-match posts=6 (সাইটে ৪× Jaws-1975 থেকেও); এখন ১× Jaws.1975 720p, Rocky(১৩৬৬) ০→৪ (Rocky.1976.*), Alien(৩৪৮) ০→৪ (Alien.1979.*)। (খ) **বছর-রেজেক্সে 19xx** (আগে শুধু 20xx) — Godfather-সার্চে Part II(1974)/Part III(1990)-এর বছর-যাচাই-ই হত না; এখন সঠিক ১৯৭২ +৪০, ভুল ১৯৭৪/১৯৯০ −৩০। সিরিজে বছর-দণ্ড **নেই** (প্রমাণ: স্লাগের বছর = সিজন-বছর — Breaking Bad S01=(2008)…S05=(2012), first_air_date নয়)। (গ) **এক-শব্দ-টাইটেলে দ্বৈত-নিশ্চিতকরণ** (প্রিফিক্স-মিল এখন সক্রিয়, তাই ভুল-টাইটেল-ঝুঁকি নতুন) — টাইটেলের ঠিক-পরের টোকেন হতে হবে ৪-অঙ্কের-বছর | সিজন-চিহ্ন | রেজোলিউশন | স্ট্রিং-শেষ, **এবং** মুভি=বছর-মিল / সিরিজ=সিজন-মিল। প্রমাণ (পরের-টোকেন): সঠিক → Jaws→1975, Alien→1979, Rocky→1976, Chernobyl→2019, Lucifer→2016/2017/2018; ভুল → Dark→"fantasies"(Dark-Fantasies-2010), Rocky→"handsome"/"mental", Alien→"predator", Jaws→"3d"(Jaws-3D-1983)। ফল: Dark S01E01 আগে দিত **ভুল** Dark.Hole.S01.COMPLETE → এখন ০ (সৎ শূন্য)। (ঘ) decodeURIComponent try/catch (lone '%'-স্লাগে URIError → সোর্স-মৃত্যু ঠেকানো)। পরীক্ষিত: test.js ২০/৪৩ (বেসলাইন), config.test.js সব-সবুজ, স্বাধীনতা-ম্যাট্রিক্স v1.15.86-এর সাথে হুবহু মিল (ডিফল্ট Sky[1080,720,720,480]/M4u[2160,1080,1080,720,720,720]; sky=0→Sky[]; skyr=720→Sky[720,720,480]; m4ur=720→M4u[720,720,480,720]; m4u=0→M4u[]; Pengu=0) //  // v1.15.86: (ক) **Pengu-সোর্স সম্পূর্ণ সরানো** (ইউজার: "No pengu please") — penguStreams/pengResolve/PENGU_BASE/PENGU_CFG কোড-থেকেই মুছে ফেলা, সাথে cfg-কী peng/pengr/pengq/pengl, কনফিগ-পেজের Pengu-কার্ড ও UNIFY_SRV-এন্ট্রি। (খ) **Sky Movies = আসল SkymoviesHD, এখন সম্পূর্ণ স্বাধীন সোর্স** — নিজস্ব মাস্টার-সুইচ (sky), নিজস্ব রেজো-ক্যাপ (skyr), নিজস্ব কোয়ালিটি/ভাষা-ফিল্টার (skyq/skyl), নিজস্ব bingeGroup 'sky|'। আগে Sky-কে Pengu-সুইচ ও **m4ur** (মুভিজ4ইউ-এর সেটিং) দিয়ে চালানো হত — এবং skyStreams-এর bingeGroup ছিল 'peng|' (পেঙ্গু-এর সাথে হুবহু একই), ফলে স্কাই-কার্ড 'Pengu' লেবেল পেত। প্রমাণ: sky=0 → শুধু স্কাই বন্ধ; skyr=720 → শুধু স্কাই ক্যাপ (মুভিজ4ইউ-এর 2160 অক্ষুণ্ণ); m4ur=720 → শুধু মুভিজ4ইউ ক্যাপ (স্কাই-এর 1080 অক্ষুণ্ণ)। (গ) **SkymoviesHD ডোমেইন-আপডেটার** — সাইট বারবার ডোমেইন বদলায়; ঘোষক-পাতা skybap.site (প্রমাণিত: সেখান থেকে new1.skymovieshd.clinic লিংক) থেকে প্রার্থী-ডোমেইন নিয়ে **যাচাই** (search.php + /movie/*.html) করে SKY_BASE বসানো হয়; বুটে + প্রতি-৬ঘণ্টায় রিফ্রেশ, সার্চ-ব্যর্থ হলে জোর-রিফ্রেশ-পুনঃচেষ্টা। যাচাই বাধ্যতামূলক — ঘোষক-পাতার টেক্সটে পুরনো মৃত ডোমেইন (skymovieshd.in/.com) থাকে, সেগুলো সঠিকভাবে বাতিল হয় (প্রমাণিত)  // v1.15.85: (ক) কার্ড-টেক্সট থেকে বাংলা সম্পূর্ণ সরানো — "ⓘ সম্পূর্ণ সিজন (এক-ফাইলে) — Ep 1 থেকে শুরু" → "ⓘ Full season in one file — starts at Ep 1" (Movies4u/Sky/unifyCards — ৩ জায়গা)। (খ) Sky-মিরর-ডুপ্লিকেট বন্ধ: একই হাবে pixeldrain যে-রেজো দিয়েছে, সেই রেজোতে signed-S3/workers-মিরর আর ঢোকে না। প্রমাণ: Shawshank-এ ৬ কার্ডের ২ জোড়া ছিল **হুবহু একই ফাইল** (pd ২.৬১GB = S3 ২.৬১GB, ৪৮০-তেও তাই) — অথচ ৬টির কার্ড-টেক্সট অভিন্ন, ব্যবহারকারী পার্থক্য বুঝতেই পারত না → ৬→৪। (গ) Sky-সার্চ/স্কোরার-এ অ্যাপোস্ট্রোফি-স্বাভাবিকীকরণ: "Schindler's List" সার্চে ০ পোস্ট, "Schindlers List"-এ ১ — অ্যাপোস্ট্রোফি সার্চ ভেঙে দিত; স্কোরারেও অতিরিক্ত-টোকেন-দণ্ডে স্কোর ৩৩ (<৬০, বাতিল) → এখন ১২০ (মিল)। (ঘ) S3/ফলব্যাক-রেজো এখন স্লাগ-লেবেল নয়, আসল ফাইলনাম থেকে — প্রমাণ: Godfather-স্লাগ "720p" কিন্তু ফাইল 1080p/৩.৪২GB (আগে 720 ভুল-লেবেল)  // v1.15.84: workers.dev আর বাদ নয় (পরিমাপিত — সিক-যোগ্য)। প্রমাণ: সরাসরি-ফাইল workers.dev-এ মাঝ-রেঞ্জে HTTP 206, content-type video/x-matroska, ১৭.৫/২৪.৮ GB; টোকেন t=0/60/180/360/600s-এ বহাল। নিরাপত্তা: .m3u8 বাদ (সেকেন্ডেই 404), text/*-কনটেন্ট-টাইপ বাতিল, শুধু মিডিয়া-এক্সটেনশন-যুক্ত ফাইলনাম, রেজো কেবল পরিচিত-সিঁড়ি থেকে (ভুল-লেবেল-নিষিদ্ধ), অন্তর্বর্তী 403-এ একবার পুনঃচেষ্টা। ফল: Sikandar-2025-এ 0→2×2160 (আগে সর্বোচ্চ 1080)  // v1.15.83: সিজন-প্যাক-ফলব্যাক (হুবহু SxxExx-মিল-থাকলে সেটাই; না-থাকলে সিজন-নিশ্চিত 'S01…' প্যাক — লেবেলে "· S1 Pack" + "ⓘ সম্পূর্ণ সিজন (এক-ফাইলে) — Ep 1 থেকে শুরু")। প্রমাণ: Kon Yashwant Pansare (2026) S01 শুধু-প্যাক, 2160p-কপিতে pixeldrain×2+signed-S3×2 (206, সিক-যোগ্য) — আগে হুবহু-শর্তে সম্পূর্ণ বাতিল হত। ভুল-সিজন কখনো নয় (ssn !== SE → বাতিল; S02E01-এ S01-প্যাক যায় না — পরীক্ষিত)  // v1.15.82: Sky + Movies4u সিরিজ-পথ (হাবক্লাউড-পাতার-শিরোনামে SxxExx মিল — প্রতি-এপিসোড; ভুল-এপিসোড-নিষিদ্ধ, সিজন-জিপ-বাদ) + 4K (মৃত-S3/FSL-শাখা-জীবিত → 2160p-কার্ড; ভুল-h4-লেবেলে 4K-মিরর-বাতিল-হত) + hits[0]-অন্ধ-গ্রহণ-বন্ধ (বছর-সচেতন m4uPick — Superman-২০২৫-এ hits[0] ছিল Superman-১৯৭৮ = ভুল-টাইটেল) + m4ur/mmr-ক্যাপে 2160  // কনফিগ-পেজ-বাগ-মেরামত (৫-ট্যাব): সার্ভার-টাইল-বুটে-রিড্র, "None"=ফ্লিট-বন্ধ (খালি=সব-চুক্তি), Reset-এ-চিপ-রিড্র, flab-<em>-আক্ষরিক-লেখা, Jump-টগল+লেবেল, Sky-প্রিভিউ-m4ur-লিক, rtsrv-দুটোই-বাদ-সম্মান // v1.15.80: RT-দ্বিতীয়-সার্ভার (WN/pixeldrain)-পুনরুদ্ধার: é-ডিঅ্যাকসেন্ট+রেস-মার্জ+PD-inline+per-সার্ভার-টগল (rtsrv)
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
@@ -4316,6 +4316,550 @@ async function skyStreams(tmdbId, title, type, s, e, origin, maxh) {
     });
   } catch (eS) { if (DBG) console.error('[sky] ERR ' + String(eS && eS.message).slice(0, 60)); return []; }
 }
+
+// ─── BollyFlix (bollyflix.vip ডোমেইন-ঘোষক + প্রক্সি IP-flag বাইপাস + GDFlix R2/Direct-GDrive 206) ───
+const http2 = require('http2');
+const BF_FALLBACK = 'https://bollyflix.co.za';
+let BF_BASE = String(process.env.BF_BASE || BF_FALLBACK).replace(/\/+$/, '');
+let BF_GD_BASE = String(process.env.BF_GD_BASE || 'https://new6.gdflix.io').replace(/\/+$/, '');
+let bfDomTs = 0, bfDomInflight = null;
+const BF_DOM_TTL = 6 * 3600 * 1000;
+const BF_ANNOUNCERS = ['https://bollyflix.vip/?re=bollyflix', 'https://bollyflix.nz/?re=bollyflix', 'https://bollyflix.vip/'];
+let bfDirectCoolUntil = 0, bfRrIdx = 0;
+const BF_FID_CACHE = new Map(); // fid -> { ts, ttl, r2u, gdId, url206 }
+const BF_POST_CACHE = new Map(); // url -> { ts, txt }
+
+function bfCacheGet(map, k, ttlMs) {
+  const v = map.get(k);
+  if (!v) return null;
+  if (Date.now() - v.ts > ttlMs) { map.delete(k); return null; }
+  return v;
+}
+function bfCachePut(map, k, val, maxEntries = 400) {
+  if (map.size >= maxEntries) {
+    const firstK = map.keys().next().value;
+    if (firstK !== undefined) map.delete(firstK);
+  }
+  map.set(k, Object.assign({ ts: Date.now() }, val));
+}
+
+function bfHealthyPxs(limit = 12) {
+  const proven = POOL.filter(c => {
+    const h = PX_RUN.get(c.px);
+    return h && h.ok > 0 && h.fail <= h.ok * 2;
+  }).sort((a, b) => pxScore(a.px, a.ms) - pxScore(b.px, b.ms));
+  if (proven.length) return proven.slice(0, limit).map(c => c.px);
+  const mmProven = MM_POOL.filter(c => {
+    const h = MM_RUN.get(c.px);
+    return h && h.ok > 0 && h.fail <= h.ok * 2;
+  }).sort((a, b) => mmScore(a.px, a.ms) - mmScore(b.px, b.ms));
+  return mmProven.slice(0, limit).map(c => c.px);
+}
+
+async function bfText(url, ref, timeoutMs = 4500) {
+  const cached = bfCacheGet(BF_POST_CACHE, url, 15 * 60 * 1000);
+  if (cached && cached.txt) return cached.txt;
+  const tmo = Math.max(1200, timeoutMs || 4500);
+  try {
+    const r = await fetch(url, {
+      headers: Object.assign({ 'User-Agent': UA, 'Accept': '*/*' }, ref ? { 'Referer': ref } : {}),
+      signal: AbortSignal.timeout(Math.min(tmo, 3600))
+    });
+    if (r.status === 200) {
+      const txt = await r.text();
+      if (txt && txt.length > 80 && !/Just a moment|error code:\s*1015|Attention Required/i.test(txt)) {
+        bfCachePut(BF_POST_CACHE, url, { txt }, 300);
+        return txt;
+      }
+    }
+  } catch { }
+  try {
+    const pr = await racePool(url, 4, tmo);
+    if (pr && pr.body && pr.body.length > 80 && !/Just a moment|error code:\s*1015/i.test(pr.body)) {
+      bfCachePut(BF_POST_CACHE, url, { txt: pr.body }, 300);
+      return pr.body;
+    }
+  } catch { }
+  return '';
+}
+
+async function bfDomRefresh(force) {
+  if (!force && bfDomTs && (Date.now() - bfDomTs) < BF_DOM_TTL) return BF_BASE;
+  if (bfDomInflight) return bfDomInflight;
+  bfDomInflight = (async () => {
+    try {
+      const cands = [];
+      for (const au of BF_ANNOUNCERS) {
+        try {
+          const r = await fetch(au, { redirect: 'manual', headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(4000) });
+          const loc = String(r.headers.get('location') || '').trim();
+          try { if (r.body) await r.body.cancel(); } catch { }
+          if (loc && /^https?:\/\/bollyflix\.[a-z.]+/i.test(loc) && !/bollyflix\.(vip|nz|xn--)/i.test(loc)) {
+            cands.push(new URL(loc).origin);
+          } else if (loc && loc.startsWith('/')) {
+            const r2 = await fetch(new URL(loc, au).href, { redirect: 'manual', headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(4000) });
+            const loc2 = String(r2.headers.get('location') || '').trim();
+            try { if (r2.body) await r2.body.cancel(); } catch { }
+            if (loc2 && /^https?:\/\/bollyflix\.[a-z.]+/i.test(loc2)) cands.push(new URL(loc2).origin);
+          }
+        } catch { }
+        if (cands.length) break;
+      }
+      if (!cands.length) {
+        const html = await bfText('https://bollyflix.vip/', '', 4500);
+        for (const m of html.matchAll(/https?:\/\/(bollyflix\.[a-z0-9.-]+)/gi)) {
+          const dom = 'https://' + m[1].toLowerCase();
+          if (!/bollyflix\.(vip|nz|xn--)/i.test(dom) && !cands.includes(dom)) cands.push(dom);
+        }
+      }
+      if (!cands.includes(BF_FALLBACK)) cands.push(BF_FALLBACK);
+      for (const dom of cands) {
+        const probe = await bfText(dom + '/wp-json/wp/v2/posts?per_page=1&_fields=id,link', dom + '/', 4000);
+        if (probe && /^\s*\[\s*\{/.test(probe)) {
+          BF_BASE = dom.replace(/\/+$/, '');
+          bfDomTs = Date.now();
+          if (DBG) console.error('[bf-dom] active=' + BF_BASE);
+          return BF_BASE;
+        }
+      }
+    } catch { }
+    bfDomTs = Date.now();
+    return BF_BASE;
+  })().finally(() => { bfDomInflight = null; });
+  return bfDomInflight;
+}
+
+function bfDecodeEnt(s) {
+  return String(s || '')
+    .replace(/&#8217;|&#039;|&rsquo;/g, "'")
+    .replace(/&#8211;|&#8212;|&ndash;|&mdash;/g, '-')
+    .replace(/&#038;|&amp;/g, '&')
+    .replace(/&quot;|&#8220;|&#8221;/g, '"')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+function bfCoreTitle(raw) {
+  const s = bfDecodeEnt(raw).replace(/^Download\s+/i, '').trim();
+  const m = s.match(/^(.*?)(?:\s*\((?:19|20)\d{2}\)|\s*\(\s*Season\b|\s+(?:IMAX|Dual\s*Audio|Multi\s*Audio|Hindi|English|Tamil|Telugu|Malayalam|Kannada|Bengali|Punjabi|Marathi|Korean|Japanese|Chinese|Spanish|WEB[\s-]*Series|TV[\s-]*Series|\d{3,4}p)\b)/i);
+  return (m ? m[1] : s).trim();
+}
+function bfPick(posts, T, year, isTv, SE) {
+  const nrm = z => bfDecodeEnt(z).toLowerCase().replace(/['\u2018\u2019`]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+  const Tn = nrm(T);
+  if (!Tn) return [];
+  const tWords = Tn.split(' ').filter(Boolean);
+  const scored = [];
+  for (const p of (posts || [])) {
+    const raw = bfDecodeEnt(p.title && p.title.rendered ? p.title.rendered : (p.title || ''));
+    const link = p.link || p.permalink || '';
+    if (!raw || !link) continue;
+    const postIsTv = /\b(web[\s-]*series|tv[\s-]*series|season\s*\d+|s\d{1,2}\s*e\d{1,2})\b/i.test(raw);
+    if (Boolean(isTv) !== postIsTv) continue;
+    const core = bfCoreTitle(raw);
+    const cn = nrm(core);
+    if (!cn) continue;
+    const cWords = cn.split(' ').filter(Boolean);
+    let sc = 0;
+    if (cn === Tn) sc = 220;
+    else if (cn.startsWith(Tn + ' ') || Tn.startsWith(cn + ' ')) sc = 160 - Math.abs(cWords.length - tWords.length) * 6;
+    else if (tWords.length >= 2 && tWords.every(w => cWords.includes(w))) sc = 125 - Math.abs(cWords.length - tWords.length) * 6;
+    else continue;
+    const py = parseInt(((raw.match(/\((19|20)\d{2}\)/) || [])[0] || '').replace(/\D+/g, '') || '0', 10);
+    if (!isTv && py && year) {
+      if (Math.abs(py - year) > 1) continue;
+      sc += (py === year ? 60 : 25);
+    }
+    if (isTv && SE) {
+      const sm = raw.match(/Season\s*0*(\d+)\s*(?:[-\u2013]|to)\s*0*(\d+)/i);
+      const s1 = !sm && raw.match(/Season\s*0*(\d+)/i);
+      if (sm) {
+        const a = parseInt(sm[1], 10), b = parseInt(sm[2], 10);
+        if (SE >= a && SE <= b) sc += 50;
+        else continue;
+      } else if (s1) {
+        if (parseInt(s1[1], 10) === SE) sc += 50;
+        else continue;
+      }
+    }
+    scored.push({ sc, raw, core, link, id: p.id });
+  }
+  scored.sort((a, b) => b.sc - a.sc);
+  return scored;
+}
+
+const BF_LANG_LIST = ['Hindi', 'English', 'Tamil', 'Telugu', 'Malayalam', 'Kannada', 'Bengali', 'Marathi', 'Punjabi', 'Urdu', 'Japanese', 'Korean', 'Chinese', 'Spanish', 'French', 'German', 'Italian', 'Portuguese', 'Russian', 'Turkish', 'Arabic', 'Thai', 'Indonesian', 'Tagalog', 'Vietnamese'];
+function bfAudInfo(primaryBlob, fallbackBlob) {
+  const extract = s => {
+    const found = [];
+    for (const L of BF_LANG_LIST) {
+      if (new RegExp('\\b' + L + '\\b', 'i').test(s)) found.push(L);
+    }
+    return found;
+  };
+  let found = extract(String(primaryBlob || ''));
+  if (!found.length) found = extract(String(fallbackBlob || ''));
+  const sAll = String(primaryBlob || '') + ' ' + String(fallbackBlob || '');
+  if (!found.length && /Multi[\s._-]*Audio/i.test(sAll)) return { label: 'Multi-Audio', langKey: 'multi' };
+  if (!found.length && /Dual[\s._-]*Audio/i.test(sAll)) return { label: 'Dual-Audio', langKey: 'multi' };
+  const label = found.length ? found.join(' / ') : 'Hindi';
+  const langKey = (found.length ? found.map(x => x.toLowerCase()).join('/') : 'hindi') + (found.length > 1 || /Multi[\s._-]*Audio|Dual[\s._-]*Audio/i.test(primaryBlob || '') ? '/multi' : '');
+  return { label, langKey };
+}
+
+function bfSelectDiverseRows(rows, maxh, cap = 6) {
+  const f = maxh ? rows.filter(r => !r.rh || r.rh <= maxh) : rows.slice();
+  f.sort((a, b) => (b.rh || 720) - (a.rh || 720));
+  const out = [], perR = new Map();
+  for (const r of f) {
+    const k = r.rh || 720;
+    if ((perR.get(k) || 0) < 1) {
+      perR.set(k, 1);
+      out.push(r);
+      if (out.length >= cap) return out;
+    }
+  }
+  for (const r of f) {
+    if (out.includes(r)) continue;
+    const k = r.rh || 720;
+    if ((perR.get(k) || 0) < 2) {
+      perR.set(k, (perR.get(k) || 0) + 1);
+      out.push(r);
+      if (out.length >= cap) return out;
+    }
+  }
+  return out;
+}
+
+function bfOpenH2(origin, px, timeoutMs = 3400) {
+  return new Promise((resolve, reject) => {
+    let done = false, sock = null, client = null;
+    const bail = e => {
+      if (done) return; done = true; clearTimeout(tm);
+      try { if (client) client.destroy(); } catch { }
+      try { if (sock) sock.destroy(); } catch { }
+      reject(e);
+    };
+    const tm = setTimeout(() => bail(new Error('h2-open-tmo')), timeoutMs);
+    const u = new URL(origin);
+    if (!px) {
+      try {
+        client = http2.connect(origin);
+        client.once('error', bail);
+        client.once('connect', () => {
+          if (done) return; done = true; clearTimeout(tm);
+          client.unref();
+          resolve(client);
+        });
+      } catch (e) { bail(e); }
+      return;
+    }
+    try {
+      const ci = px.indexOf(':');
+      const phost = px.slice(0, ci), pport = Number(px.slice(ci + 1)) || 8080;
+      sock = net.connect({ host: phost, port: pport });
+      sock.once('error', bail);
+      sock.once('connect', () => {
+        sock.write('CONNECT ' + u.host + ':443 HTTP/1.1\r\nHost: ' + u.host + ':443\r\n\r\n');
+      });
+      let buf = Buffer.alloc(0);
+      const onData = d => {
+        buf = Buffer.concat([buf, d]);
+        const i = buf.indexOf('\r\n\r\n');
+        if (i < 0) return;
+        sock.removeListener('data', onData);
+        const head = buf.slice(0, i).toString('latin1');
+        if (!/^HTTP\/1\.[01] 200/.test(head)) return bail(new Error('px-refused'));
+        const tl = tls.connect({
+          socket: sock,
+          servername: u.hostname,
+          ALPNProtocols: ['h2'],
+          rejectUnauthorized: false
+        }, () => {
+          if (tl.alpnProtocol !== 'h2') return bail(new Error('no-h2'));
+          client = http2.connect(origin, { createConnection: () => tl });
+          client.once('error', bail);
+          if (done) return; done = true; clearTimeout(tm);
+          client.unref();
+          resolve(client);
+        });
+        tl.once('error', bail);
+      };
+      sock.on('data', onData);
+    } catch (e) { bail(e); }
+  });
+}
+
+function bfH2Req(client, u, opts = {}) {
+  return new Promise((resolve, reject) => {
+    let done = false;
+    const fin = (err, v) => { if (done) return; done = true; clearTimeout(tm); if (err) reject(err); else resolve(v); };
+    const tm = setTimeout(() => fin(new Error('req-tmo')), opts.timeout || 3400);
+    try {
+      const h = Object.assign({
+        ':method': opts.method || 'GET',
+        ':path': u.pathname + u.search,
+        ':scheme': 'https',
+        ':authority': u.host,
+        'user-agent': UA,
+        'accept': '*/*'
+      }, opts.headers || {});
+      const req = client.request(h);
+      let st = 0, headers = {}, data = '';
+      req.on('response', rh => { st = rh[':status']; headers = rh; });
+      req.on('data', c => data += c);
+      req.on('end', () => fin(null, { st, headers, data }));
+      req.on('error', e => fin(e));
+      if (opts.body) req.write(opts.body);
+      req.end();
+    } catch (e) { fin(e); }
+  });
+}
+
+async function bfResolveGdflixOne(fid, origin, px, timeoutMs = 3400) {
+  const t0 = Date.now();
+  const client = await bfOpenH2(origin, px, timeoutMs);
+  try {
+    const uFile = new URL(origin + '/file/' + fid);
+    const gp = await bfH2Req(client, uFile, { timeout: timeoutMs });
+    if (gp.st === 429 || gp.st === 403 || /error code:\s*1015|Just a moment/i.test(gp.data || '')) {
+      if (!px) bfDirectCoolUntil = Date.now() + 60000;
+      else pxRec(px, false, 0);
+      throw new Error('rate-limited');
+    }
+    if (gp.st >= 300 && gp.st < 400 && gp.headers && gp.headers.location && /^https?:\/\/[a-z0-9.-]*gdflix\.[a-z.]+/i.test(gp.headers.location)) {
+      BF_GD_BASE = new URL(gp.headers.location).origin;
+    }
+    if (gp.st !== 200 || !gp.data) throw new Error('bad-get-' + gp.st);
+    const ttl = ((gp.data.match(/<title>([^<]+)<\/title>/) || [])[1] || '').replace(/^GDFlix\s*\|\s*/i, '').trim();
+    const clean = gp.data.replace(/<!--[\s\S]*?-->/g, '');
+    const r2m = clean.match(/https?:\/\/pub-[a-z0-9]+\.r2\.dev\/[^\s"<>]+/);
+    const r2u = r2m ? decodeURIComponent(r2m[0].replace(/&amp;/g, '&')) : '';
+    const fKey = (gp.data.match(/formData\.append\("key",\s*"([^"]+)"\)/) || [])[1] || '';
+    let gdId = '';
+    if (fKey) {
+      const boundary = '----WebKitFormBoundary7MA4YWxkTrZu0gW';
+      const body = `--${boundary}\r\nContent-Disposition: form-data; name="action"\r\n\r\ndirect\r\n--${boundary}\r\nContent-Disposition: form-data; name="key"\r\n\r\n${fKey}\r\n--${boundary}\r\nContent-Disposition: form-data; name="action_token"\r\n\r\n\r\n--${boundary}--\r\n`;
+      const rP = await bfH2Req(client, uFile, {
+        method: 'POST',
+        headers: { 'content-type': 'multipart/form-data; boundary=' + boundary, 'x-token': uFile.hostname, 'referer': uFile.href },
+        body,
+        timeout: timeoutMs
+      });
+      if (/error code:\s*1015/i.test(rP.data || '') && !px) bfDirectCoolUntil = Date.now() + 60000;
+      try {
+        const j = JSON.parse(rP.data);
+        gdId = ((j.url || '').match(/[?&]id=([A-Za-z0-9_-]+)/) || [])[1] || '';
+      } catch { }
+    }
+    if (!r2u && !gdId) throw new Error('no-links');
+    if (px) pxRec(px, true, Date.now() - t0);
+    return { fid, ttl, r2u, gdId, via: px || 'direct' };
+  } finally {
+    try { client.close(); } catch { }
+  }
+}
+
+async function bfResolveGdflixSmart(fid, idx, maxMs = 3800) {
+  const cached = bfCacheGet(BF_FID_CACHE, fid, 20 * 60 * 1000);
+  if (cached) return cached;
+  const pxs = bfHealthyPxs(12);
+  const tryOne = px => bfResolveGdflixOne(fid, BF_GD_BASE, px, Math.min(3500, maxMs));
+  const canDirect = Date.now() > bfDirectCoolUntil;
+  const baseIdx = (bfRrIdx++) % Math.max(1, pxs.length);
+  const p1 = (canDirect && (idx < 2 || !pxs.length)) ? null : pxs[baseIdx];
+  const p2 = pxs.length ? pxs[(baseIdx + 1) % pxs.length] : null;
+  const p3 = pxs.length > 2 ? pxs[(baseIdx + 2) % pxs.length] : null;
+  const delay1 = (p1 === null && idx > 0) ? idx * 140 : 0;
+  const res = await Promise.any([
+    new Promise((resolve, reject) => setTimeout(() => tryOne(p1).then(resolve, reject), delay1)),
+    new Promise((resolve, reject) => setTimeout(() => (p2 && p2 !== p1 ? tryOne(p2) : Promise.reject(new Error('no-p2'))).then(resolve, reject), delay1 + 350)),
+    new Promise((resolve, reject) => setTimeout(() => (p3 && p3 !== p1 ? tryOne(p3) : (p1 !== null && canDirect ? tryOne(null) : Promise.reject(new Error('no-p3')))).then(resolve, reject), delay1 + 950))
+  ]).catch(() => null);
+  if (res) bfCachePut(BF_FID_CACHE, fid, res, 400);
+  return res;
+}
+
+async function bfVerify206(url, timeoutMs = 2800) {
+  if (!url) return null;
+  const cached = bfCacheGet(BF_FID_CACHE, '206:' + url, 20 * 60 * 1000);
+  if (cached) return cached;
+  try {
+    const r = await fetch(url, { headers: { 'User-Agent': UA, Range: 'bytes=0-2047' }, signal: AbortSignal.timeout(timeoutMs) });
+    const st = r.status;
+    const ct = String(r.headers.get('content-type') || '').toLowerCase();
+    const cr = String(r.headers.get('content-range') || '');
+    try { if (r.body) await r.body.cancel(); } catch { }
+    if (st !== 206 || !/^bytes\s+0-\d+\/\d+/i.test(cr) || /text\/html/i.test(ct)) return null;
+    const v = { ok: true, url };
+    bfCachePut(BF_FID_CACHE, '206:' + url, v, 500);
+    return v;
+  } catch { return null; }
+}
+
+async function bfResolveFdlToFid(fdlUrl, timeoutMs = 3200) {
+  const cached = bfCacheGet(BF_FID_CACHE, 'fdl:' + fdlUrl, 30 * 60 * 1000);
+  if (cached && cached.fid) return cached.fid;
+  try {
+    const r0 = await fetch(fdlUrl, { redirect: 'manual', headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(timeoutMs) });
+    const loc = String(r0.headers.get('location') || '');
+    try { if (r0.body) await r0.body.cancel(); } catch { }
+    const fid = (loc.match(/\/file\/([A-Za-z0-9]+)/) || [])[1];
+    if (fid) {
+      bfCachePut(BF_FID_CACHE, 'fdl:' + fdlUrl, { fid }, 500);
+      return fid;
+    }
+  } catch { }
+  return '';
+}
+
+async function bfStreams(tmdbId, title, type, s, e, origin, maxh) {
+  if (!tmdbId) return [];
+  const isTv = type === 'series';
+  const SE = Math.max(1, parseInt(s, 10) || 1), EP = Math.max(1, parseInt(e, 10) || 1);
+  const tS = Date.now(); const WS = 8400; const lS = () => Math.max(250, WS - (Date.now() - tS));
+  try {
+    const T = String(title || '').trim() || (await nameForTmdb(tmdbId, isTv ? 'series' : 'movie').catch(() => ''));
+    if (!T || lS() < 3000) return [];
+    const yP = skyYear(tmdbId, isTv).catch(() => 0);
+    const imdbP = tmdbToImdb(tmdbId, isTv ? 'tv' : 'movie').catch(() => '');
+    const sq = T.replace(/['\u2018\u2019\u02bc`]/g, '').trim();
+    const searchUrl = BF_BASE + '/wp-json/wp/v2/posts?search=' + encodeURIComponent(sq) + '&orderby=relevance&_fields=id,link,title&per_page=8';
+    let srTxt = await bfText(searchUrl, BF_BASE + '/', Math.min(3600, lS()));
+    if (!srTxt || !/^\s*\[/.test(srTxt)) {
+      await bfDomRefresh(true).catch(() => '');
+      srTxt = await bfText(BF_BASE + '/wp-json/wp/v2/posts?search=' + encodeURIComponent(sq) + '&orderby=relevance&_fields=id,link,title&per_page=8', BF_BASE + '/', Math.min(3400, lS()));
+    }
+    let posts = [];
+    try { posts = JSON.parse(srTxt || '[]'); } catch { posts = []; }
+    const Y = await yP;
+    let hits = bfPick(posts, T, Y, isTv, SE);
+    if (!hits.length && sq.includes(':')) {
+      const sqShort = sq.split(':')[0].trim();
+      if (sqShort.length >= 3) {
+        const sr2 = await bfText(BF_BASE + '/wp-json/wp/v2/posts?search=' + encodeURIComponent(sqShort) + '&orderby=relevance&_fields=id,link,title&per_page=8', BF_BASE + '/', Math.min(3000, lS()));
+        try { hits = bfPick(JSON.parse(sr2 || '[]'), T, Y, isTv, SE); } catch { }
+      }
+    }
+    if (!hits.length) {
+      if (DBG) console.error('[bf] ' + tmdbId + ' 0-hits for "' + T + '" @' + (Date.now() - tS) + 'ms');
+      return [];
+    }
+    const hit = hits[0];
+    const html = await bfText(hit.link, BF_BASE + '/', Math.min(3600, lS()));
+    if (!html) return [];
+    const pageImdb = (html.match(/imdb\.com\/title\/(tt\d+)/i) || [])[1] || '';
+    const wantImdb = await Promise.race([imdbP, new Promise(r => setTimeout(() => r(''), 400))]);
+    if (pageImdb && wantImdb && pageImdb !== wantImdb) {
+      if (DBG) console.error('[bf] imdb-mismatch page=' + pageImdb + ' want=' + wantImdb + ' for "' + T + '"');
+      return [];
+    }
+    let fdlRows = [];
+    if (!isTv) {
+      const rxh = /<h[3-5][^>]*>([\s\S]*?)<\/h[3-5]>/gi;
+      let m;
+      while ((m = rxh.exec(html))) {
+        const htxt = bfDecodeEnt(m[1]);
+        const after = html.slice(m.index, m.index + 1200);
+        const fm = after.match(/https?:\/\/dl\.fastdlserver\.site\/\?id=[^"&\s<>]+(?:&amp;type=file|&type=file)?/i);
+        if (fm) fdlRows.push({ fdl: fm[0].replace(/&amp;/g, '&'), htxt, rh: resOfName(htxt) });
+      }
+      if (!fdlRows.length) {
+        const allF = [...html.matchAll(/https?:\/\/dl\.fastdlserver\.site\/\?id=[^"&\s<>]+(?:&amp;type=file|&type=file)?/gi)].map(x => x[0].replace(/&amp;/g, '&'));
+        fdlRows = [...new Set(allF)].map(fdl => ({ fdl, htxt: hit.raw, rh: 0 }));
+      }
+    } else {
+      const rxh = /<h[3-5][^>]*>([\s\S]*?)<\/h[3-5]>/gi;
+      const fxRows = [];
+      let m;
+      while ((m = rxh.exec(html))) {
+        const htxt = bfDecodeEnt(m[1]);
+        if (/^Download\s+/i.test(htxt) && fxRows.length) break;
+        const sm = htxt.match(/Season\s*0*(\d+)/i);
+        if (sm && parseInt(sm[1], 10) !== SE) continue;
+        const after = html.slice(m.index, m.index + 900);
+        const fxm = after.match(/https?:\/\/fxlinks\.[a-z.]+\/elinks\/[^"<\s]+/i);
+        if (fxm) fxRows.push({ fx: fxm[0], htxt, rh: resOfName(htxt) });
+      }
+      await Promise.all(fxRows.slice(0, 5).map(async r => {
+        if (lS() < 1800) return;
+        const fxh = await bfText(r.fx, hit.link, Math.min(3200, lS()));
+        if (!fxh) return;
+        const links = [...fxh.matchAll(/<a[^>]+href="(https?:\/\/dl\.fastdlserver\.site\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi)];
+        const epRe = new RegExp('\\bEpisode\\s*0*' + EP + '\\b', 'i');
+        const em = links.find(x => epRe.test(x[2]));
+        if (em) fdlRows.push({ fdl: em[1].replace(/&amp;/g, '&'), htxt: r.htxt, rh: r.rh });
+      }));
+    }
+    if (!fdlRows.length) {
+      if (DBG) console.error('[bf] ' + tmdbId + ' 0-fdl-rows @' + (Date.now() - tS) + 'ms');
+      return [];
+    }
+    const pickRows = bfSelectDiverseRows(fdlRows, maxh, 6);
+    const got = [];
+    const seenUrl = new Set();
+    await Promise.all(pickRows.map(async (row, idx) => {
+      if (lS() < 1200) return;
+      const fid = await bfResolveFdlToFid(row.fdl, Math.min(2800, lS()));
+      if (!fid || lS() < 900) return;
+      const gd = await bfResolveGdflixSmart(fid, idx, Math.min(3600, lS()));
+      if (!gd || /\.zip\b/i.test(gd.ttl)) return;
+      if (isTv) {
+        const ep = epOfName(gd.ttl);
+        if (ep && (ep.s !== SE || ep.e !== EP)) return;
+      }
+      const fh = resOfName(gd.ttl) || row.rh || 720;
+      if (maxh && fh > maxh) return;
+      let v = null;
+      if (gd.r2u) v = await bfVerify206(gd.r2u, Math.min(2600, lS()));
+      if (!v && gd.gdId) {
+        const gdu = 'https://drive.usercontent.google.com/download?id=' + gd.gdId + '&export=download&confirm=t';
+        v = await bfVerify206(gdu, Math.min(2800, lS()));
+      }
+      if (!v || seenUrl.has(v.url)) return;
+      seenUrl.add(v.url);
+      const aud = bfAudInfo(gd.ttl + ' ' + row.htxt, hit.raw);
+      got.push({ h: fh, url: v.url, spec: gd.ttl, aud: aud.label, _lang: aud.langKey });
+    }));
+    if (!got.length) {
+      if (DBG) console.error('[bf] ' + tmdbId + ' 0-cards @' + (Date.now() - tS) + 'ms');
+      return [];
+    }
+    got.sort((a, b) => b.h - a.h);
+    const perRes = new Map(), fin = [];
+    for (const x of got) {
+      const cN = perRes.get(x.h) || 0;
+      if (cN >= 2) continue;
+      perRes.set(x.h, cN + 1);
+      fin.push(x);
+      if (fin.length >= 8) break;
+    }
+    if (DBG) console.error('[bf] ' + tmdbId + ' "' + T + '" cards=' + fin.length + ' @' + (Date.now() - tS) + 'ms');
+    const epLine = isTv ? ('\u29e0 S' + SE + 'E' + EP) : '\u29e0 Movie';
+    return fin.map(x => {
+      const q2 = String(x.h);
+      const txt = '\u29c9 ' + T + '\n' + epLine + '\n\u229e BollyFlix \u2317 ' + (x.aud || 'Hindi');
+      return {
+        name: '\u25a5 ' + q2 + ' \u25a5',
+        title: txt,
+        description: txt + (x.spec ? '\n' + x.spec.slice(0, 120) : ''),
+        quality: q2,
+        _lang: x._lang || 'hindi',
+        url: x.url,
+        behaviorHints: {
+          notWebReady: false,
+          isBingeable: true,
+          proxyHeaders: { request: { 'User-Agent': UA } },
+          filename: (String(x.spec || '').match(/[A-Za-z0-9 ().&+\[\]{}_-]+\.(?:mkv|mp4)/i) || ['bollyflix.mkv'])[0]
+        },
+        bingeGroup: 'bf|' + T.toLowerCase() + '::'
+      };
+    });
+  } catch (eB) {
+    if (DBG) console.error('[bf] ERR ' + String(eB && eB.message).slice(0, 60));
+    return [];
+  }
+}
 function dvOfDesc(d) { // desc থেকে-HDR-ধরন:
   if (/HDR10\+/i.test(d)) return 'HDR10+';
   if (/Dolby Vision|\bDV\b/i.test(d)) return 'DV';
@@ -4369,13 +4913,15 @@ async function withSources(cardsP, srcs, cfg, t0) {
         const mmAllow = qToList(cfg && cfg.mmq);
         const mmSel = Array.isArray(cfg && cfg.mml) ? cfg.mml : [];
         all = all.concat(v.filter(z => qPass(z, mmAllow) && rtLangPass(z, mmSel)));
-      } else if (live[i].key === 'sky' || live[i].key === 'm4u') { // v1.15.50: Arctic-সোর্সগুলোর-মধ্যে-একই-ফাইল-ডুপ-কাটা (একই-path ভিন্ন-সিগনেচার-ও-ডুপ-ই):
-        const famKey = live[i].key === 'm4u' ? 'm4u' : 'sky'; // v1.15.86: Sky=skyq/skyl, Movies4u=m4uq/m4ul (Pengu-সোর্স সরানো)
+      } else if (live[i].key === 'sky' || live[i].key === 'm4u' || live[i].key === 'bf') { // v1.15.50: Arctic-সোর্সগুলোর-মধ্যে-একই-ফাইল-ডুপ-কাটা (একই-path ভিন্ন-সিগনেচার-ও-ডুপ-ই):
+        const famKey = live[i].key; // Sky=skyq/skyl, Movies4u=m4uq/m4ul, BollyFlix=bfq/bfl
         const famAllow = qToList(cfg && cfg[famKey + 'q']);
         const famSel = Array.isArray(cfg && cfg[famKey + 'l']) ? cfg[famKey + 'l'] : [];
         const vf = v.filter(z => qPass(z, famAllow) && rtLangPass(z, famSel));
         for (const c2 of vf) {
-          const k2 = String(c2.url || '').split('?')[0];
+          const uRaw = String(c2.url || '');
+          const idM = uRaw.match(/[?&]id=([A-Za-z0-9_-]+)/);
+          const k2 = uRaw.split('?')[0] + (idM ? '?id=' + idM[1] : '');
           if (k2 && seenFileU.has(k2)) continue;
           if (k2) seenFileU.add(k2);
           all.push(c2);
@@ -4716,7 +5262,7 @@ function qToList(q) { // মাল্টি-রেজোলিউশন: অ্�
   const n = Math.min(2160, Math.max(0, Number(q) || 0));
   return n ? QH.filter(h => h <= n) : [];
 }
-const DEFAULT_CFG = { q: 0, sub: 1, cat: 'kd,mv', lang: '', sort: 'pop', era: '', g: [], srv: [], v: 1, nx: 1, nxq: 0, nxl: [], tw: 1, rt: 1, twq: [], rtl: [], mmr: 0, m4u: 1, m4ur: 0, sky: 1, skyr: 0, mm: 1, mmrelay: 0, mmdirect: 0, vsp: 1, vspq: 0, ott: 1, ottq: 0, az: 1, azq: 0, rtsrv: [], rtq: [], mmq: [], m4uq: [], skyq: [], twl: [], mml: [], m4ul: [], skyl: [], vspl: [], ottl: [], azl: [] } // v1.15.80-wip: সর্ব-উৎস-রেজো-সাদৃশ্য (rtq/mmq/m4uq/pengq) + সর্ব-উৎস-ভাষা-সাদৃশ্য (twl…azl); // v1.15.71: vsp=Vidsrc-মাস্টার-সুইচ, vspq=Vidsrc-নিজের-মান-ছাঁকনি (0=সব) // v1.15.54: mmrelay=1 → MM-মিনি-মিডিয়া-আমাদের-সার্ভার-রিলে (ব্যবহারকারীর-IP-CDN-আটকালে) // mmr = Multimovies-রেজোলিউশন-ছাঁকনি (0=সব) // v/nx/tw/rt/mm/m4u/peng = per-source master switches (tw=ToonWorld, rt=RareToons; mm v1.15.67-ফিক্স) // v/nx = per-source master switches; nxq/nxl = NetHex's OWN quality/audio-language filters (independent of the vidy-side q)
+const DEFAULT_CFG = { q: 0, sub: 1, cat: 'kd,mv', lang: '', sort: 'pop', era: '', g: [], srv: [], v: 1, nx: 1, nxq: 0, nxl: [], tw: 1, rt: 1, twq: [], rtl: [], mmr: 0, m4u: 1, m4ur: 0, sky: 1, skyr: 0, bf: 1, bfr: 0, mm: 1, mmrelay: 0, mmdirect: 0, vsp: 1, vspq: 0, ott: 1, ottq: 0, az: 1, azq: 0, rtsrv: [], rtq: [], mmq: [], m4uq: [], skyq: [], bfq: [], twl: [], mml: [], m4ul: [], skyl: [], bfl: [], vspl: [], ottl: [], azl: [] } // v1.15.80-wip: সর্ব-উৎস-রেজো-সাদৃশ্য (rtq/mmq/m4uq/skyq/bfq) + সর্ব-উৎস-ভাষা-সাদৃশ্য (twl…azl); // v1.15.71: vsp=Vidsrc-মাস্টার-সুইচ, vspq=Vidsrc-নিজের-মান-ছাঁকনি (0=সব) // v1.15.54: mmrelay=1 → MM-মিনি-মিডিয়া-আমাদের-সার্ভার-রিলে (ব্যবহারকারীর-IP-CDN-আটকালে) // mmr = Multimovies-রেজোলিউশন-ছাঁকনি (0=সব) // v/nx/tw/rt/mm/m4u/sky/bf = per-source master switches
 function parseCfgFromObj(o) {
   const c = Object.assign({}, DEFAULT_CFG, { g: [] });
   if (o) {
@@ -4737,15 +5283,17 @@ function parseCfgFromObj(o) {
     if (Array.isArray(o.nxl)) c.nxl = o.nxl.map(x => String(x).toLowerCase().replace(/[^a-z]/g, '')).filter(x => x.length >= 2 && x.length <= 12).slice(0, 12);
     if (Array.isArray(o.rtl)) c.rtl = o.rtl.map(x => String(x).toLowerCase().replace(/[^a-z]/g, '')).filter(x => x.length >= 2 && x.length <= 12).slice(0, 14); // v1.15.80-wip: RareToons-ভাষা-তালিকা-প্রশস্ত (nxl-মানদণ্ড) — অনুপস্থিত-ভাষা-সৎ-শূন্য
     const wipQ = (key) => { const val = o[key]; if (val !== undefined && val !== null && val !== '') c[key] = qToList(val).filter(x => [2160, 1080, 720, 480].indexOf(x) >= 0).sort((a, b) => b - a).slice(0, 4); }; // v1.15.80-wip
-    wipQ('rtq'); wipQ('mmq'); wipQ('m4uq'); wipQ('skyq'); // v1.15.86: Sky-নিজস্ব-কোয়ালিটি
+    wipQ('rtq'); wipQ('mmq'); wipQ('m4uq'); wipQ('skyq'); wipQ('bfq'); // v1.15.86: Sky+BollyFlix-নিজস্ব-কোয়ালিটি
     if (Array.isArray(o.rtsrv)) { const rs = o.rtsrv.map(x => String(x).toLowerCase()).filter(x => ['mq', 'pd'].indexOf(x) >= 0).slice(0, 2); if (rs.length) c.rtsrv = rs; } // v1.15.81: RT-নিজস্ব-সার্ভার (বাদ-তালিকা; ১ বা ২ — দুটোই-বাদ-মানে-RT-শূন্য)
     const wipL = (key) => { if (Array.isArray(o[key])) c[key] = o[key].map(x => String(x).toLowerCase().replace(/[^a-z]/g, '')).filter(x => x.length >= 2 && x.length <= 12).slice(0, 14); }; // v1.15.80-wip
-    wipL('twl'); wipL('mml'); wipL('m4ul'); wipL('skyl'); wipL('vspl'); wipL('ottl'); wipL('azl'); // v1.15.86: Sky-নিজস্ব-ভাষা
+    wipL('twl'); wipL('mml'); wipL('m4ul'); wipL('skyl'); wipL('bfl'); wipL('vspl'); wipL('ottl'); wipL('azl'); // v1.15.86: Sky+BollyFlix-নিজস্ব-ভাষা
     if (o.mmr !== undefined && o.mmr !== null && o.mmr !== '') { const mv = parseInt(o.mmr, 10) || 0; if ([0, 480, 720, 1080, 2160].indexOf(mv) >= 0) c.mmr = mv; } // v1.15.39: MM-রেজোলিউশন-ছাঁকনি
     if (o.m4u === 0 || o.m4u === '0') c.m4u = 0; // v1.15.42: Movies4u-মাস্টার-সুইচ
     if (o.m4ur !== undefined && o.m4ur !== null && o.m4ur !== '') { const m4v = parseInt(o.m4ur, 10) || 0; if ([0, 480, 720, 1080, 2160].indexOf(m4v) >= 0) c.m4ur = m4v; } // v1.15.42: Movies4u-নিজের-রেজোলিউশন-ছাঁকনি (MM-থেকে-স্বাধীন)
     if (o.sky === 0 || o.sky === '0') c.sky = 0; // v1.15.86: Sky Movies-নিজস্ব-মাস্টার-সুইচ (আগে peng-সুইচেই চলত — আলাদা সোর্স হওয়া সত্ত্বেও)
     if (o.skyr !== undefined && o.skyr !== null && o.skyr !== '') { const sv2 = parseInt(o.skyr, 10) || 0; if ([0, 480, 720, 1080, 2160].indexOf(sv2) >= 0) c.skyr = sv2; } // v1.15.86: Sky-নিজস্ব-রেজো-ক্যাপ (আগে **m4ur** — মুভিজ4ইউ-এর সেটিং স্কাই-তে বসানো হত)
+    if (o.bf === 0 || o.bf === '0') c.bf = 0; // BollyFlix-মাস্টার-সুইচ
+    if (o.bfr !== undefined && o.bfr !== null && o.bfr !== '') { const bfv = parseInt(o.bfr, 10) || 0; if ([0, 480, 720, 1080, 2160].indexOf(bfv) >= 0) c.bfr = bfv; } // BollyFlix-নিজস্ব-রেজো-ক্যাপ
     if (o.mm === 0 || o.mm === '0') c.mm = 0; // v1.15.67-debug: MM-মাস্টার-সুইচ (v1.15.28-থেকে-মৃত-ছিল — parseCfg-তে-লাইন-ই-ছিল-না)
     if (o.mmrelay === 1 || o.mmrelay === '1') c.mmrelay = 1; // v1.15.54: MM-রিলে-সুইচ
     if (o.mmdirect === 1 || o.mmdirect === '1') c.mmdirect = 1; // v1.15.96: MM-সরাসরি-সুইচ
@@ -4817,11 +5365,11 @@ function yearForTmdb(tmdbId, type) { // মুভি=release_date, সিরি�
     YEAR_CACHE.set(k, y); return y;
   }).catch(() => { YEAR_CACHE.set(k, 0); return 0; });
 }
-const UNIFY_SRV = { sky: 'Sky Movies', m4u: 'Movies4u', mm: 'Multimovies', tw: 'ToonWorld', rt: 'RareToons', vsp: 'Vidsrc', ott: 'AsianTV', az: 'AniZone' };
+const UNIFY_SRV = { sky: 'Sky Movies', m4u: 'Movies4u', bf: 'BollyFlix', mm: 'Multimovies', tw: 'ToonWorld', rt: 'RareToons', vsp: 'Vidsrc', ott: 'AsianTV', az: 'AniZone' };
 async function unifyCards(cards, meta) { // শুধু-টেক্সট-বদলায়: name/quality/url/bingeGroup/_lang/_hq/সাব — সব-অস্পৃশ্য (ফিল্টার-নিরাপদ)
   try {
     if (!cards || !cards.length || !meta || !meta.tmdbId) return cards;
-    const tcards = cards.filter(c => /^(sky|m4u|mm|tw|rt)\|/.test(String(c.bingeGroup || '')));
+    const tcards = cards.filter(c => /^(sky|m4u|bf|mm|tw|rt)\|/.test(String(c.bingeGroup || '')));
     if (!tcards.length) return cards;
     const T = await Promise.race([nameForTmdb(meta.tmdbId, meta.type).catch(() => ''), new Promise(r => setTimeout(() => r(''), 600))]);
     if (!T) return cards; // টাইটেল-না-পেলে পুরনো-লেখাই-থাকে (খালি-কখনো-নয়)
@@ -4866,7 +5414,7 @@ const server = http.createServer((req, res) => {
     if (cm2) { cfg = decodeCfg(cm2[1]); p = cm2[2]; cfgged = true; }
     else {
       const qs = new URL(req.url, 'http://x').searchParams;
-      if ([...qs.keys()].length) cfg = parseCfgFromObj({ q: qs.get('q') || qs.get('maxq'), sub: qs.get('sub') === '0' ? 0 : 1, cat: qs.get('cat') || '', lang: qs.get('lang') || '', sort: qs.get('sort') || '', era: qs.get('era') || '', g: (qs.get('g') || '').split(',').filter(Boolean), srv: (qs.get('srv') || '').split(',').filter(Boolean), v: qs.get('v') === '0' ? 0 : undefined, nx: qs.get('nx') === '0' ? 0 : undefined, tw: qs.get('tw') === '0' ? 0 : undefined, rt: qs.get('rt') === '0' ? 0 : undefined, m4u: qs.get('m4u') === '0' ? 0 : undefined, m4ur: qs.get('m4ur') || undefined, sky: qs.get('sky') === '0' ? 0 : undefined, skyr: qs.get('skyr') || undefined, mm: qs.get('mm') === '0' ? 0 : undefined, mmrelay: qs.get('mmrelay') === '1' ? 1 : undefined, mmdirect: qs.get('mmdirect') === '1' ? 1 : undefined, vsp: qs.get('vsp') === '0' ? 0 : undefined, vspq: qs.get('vspq') || undefined, ott: qs.get('ott') === '0' ? 0 : undefined, ottq: qs.get('ottq') || undefined, az: qs.get('az') === '0' ? 0 : undefined, azq: qs.get('azq') || undefined, rtl: qs.get('rtl') ? qs.get('rtl').split(',') : undefined, nxq: qs.get('nxq') || undefined, nxl: qs.get('nxl') ? qs.get('nxl').split(',') : undefined, rtq: qs.get('rtq') || undefined, mmq: qs.get('mmq') || undefined, m4uq: qs.get('m4uq') || undefined, skyq: qs.get('skyq') || undefined, twl: qs.get('twl') ? qs.get('twl').split(',') : undefined, mml: qs.get('mml') ? qs.get('mml').split(',') : undefined, m4ul: qs.get('m4ul') ? qs.get('m4ul').split(',') : undefined, skyl: qs.get('skyl') ? qs.get('skyl').split(',') : undefined, vspl: qs.get('vspl') ? qs.get('vspl').split(',') : undefined, ottl: qs.get('ottl') ? qs.get('ottl').split(',') : undefined, azl: qs.get('azl') ? qs.get('azl').split(',') : undefined });
+      if ([...qs.keys()].length) cfg = parseCfgFromObj({ q: qs.get('q') || qs.get('maxq'), sub: qs.get('sub') === '0' ? 0 : 1, cat: qs.get('cat') || '', lang: qs.get('lang') || '', sort: qs.get('sort') || '', era: qs.get('era') || '', g: (qs.get('g') || '').split(',').filter(Boolean), srv: (qs.get('srv') || '').split(',').filter(Boolean), v: qs.get('v') === '0' ? 0 : undefined, nx: qs.get('nx') === '0' ? 0 : undefined, tw: qs.get('tw') === '0' ? 0 : undefined, rt: qs.get('rt') === '0' ? 0 : undefined, m4u: qs.get('m4u') === '0' ? 0 : undefined, m4ur: qs.get('m4ur') || undefined, sky: qs.get('sky') === '0' ? 0 : undefined, skyr: qs.get('skyr') || undefined, bf: qs.get('bf') === '0' ? 0 : undefined, bfr: qs.get('bfr') || undefined, mm: qs.get('mm') === '0' ? 0 : undefined, mmrelay: qs.get('mmrelay') === '1' ? 1 : undefined, mmdirect: qs.get('mmdirect') === '1' ? 1 : undefined, vsp: qs.get('vsp') === '0' ? 0 : undefined, vspq: qs.get('vspq') || undefined, ott: qs.get('ott') === '0' ? 0 : undefined, ottq: qs.get('ottq') || undefined, az: qs.get('az') === '0' ? 0 : undefined, azq: qs.get('azq') || undefined, rtl: qs.get('rtl') ? qs.get('rtl').split(',') : undefined, nxq: qs.get('nxq') || undefined, nxl: qs.get('nxl') ? qs.get('nxl').split(',') : undefined, rtq: qs.get('rtq') || undefined, mmq: qs.get('mmq') || undefined, m4uq: qs.get('m4uq') || undefined, skyq: qs.get('skyq') || undefined, bfq: qs.get('bfq') || undefined, twl: qs.get('twl') ? qs.get('twl').split(',') : undefined, mml: qs.get('mml') ? qs.get('mml').split(',') : undefined, m4ul: qs.get('m4ul') ? qs.get('m4ul').split(',') : undefined, skyl: qs.get('skyl') ? qs.get('skyl').split(',') : undefined, bfl: qs.get('bfl') ? qs.get('bfl').split(',') : undefined, vspl: qs.get('vspl') ? qs.get('vspl').split(',') : undefined, ottl: qs.get('ottl') ? qs.get('ottl').split(',') : undefined, azl: qs.get('azl') ? qs.get('azl').split(',') : undefined });
     }
     if (!cfg) cfg = Object.assign({}, DEFAULT_CFG, { g: [], srv: [] });
     VSP_PUB = originOf(req) || VSP_PUB; // v1.15.71: রিলে-বেস (x-forwarded-host-সচেতন)
@@ -5222,11 +5770,12 @@ const server = http.createServer((req, res) => {
       const mmP = !(cfg && cfg.mm === 0) ? mmStreams(Number(m[1]), '', 'movie', 0, 0, originOf(req), cfg && cfg.mmr || 0, cfg && cfg.mmrelay === 1).catch(() => []) : null; // v1.15.28: Multimovies (cfg.mm toggle)
       const m4uP = !(cfg && cfg.m4u === 0) ? m4uStreams(Number(m[1]), '', 'movie', 0, 0, originOf(req), cfg && cfg.m4ur || 0).catch(() => []) : null; // v1.15.40-local: Movies4u
       const skyP = !(cfg && cfg.sky === 0) ? skyStreams(Number(m[1]), '', 'movie', 0, 0, originOf(req), cfg && cfg.skyr || 0).catch(() => []) : null; // v1.15.50: Arctic-স্বাধীন (SkymoviesHD)
+      const bfP = !(cfg && cfg.bf === 0) ? bfStreams(Number(m[1]), '', 'movie', 0, 0, originOf(req), cfg && cfg.bfr || 0).catch(() => []) : null; // BollyFlix
       const vspP = !(cfg && cfg.vsp === 0) ? vspStreams(Number(m[1]), 'movie', 0, 0, cfg && cfg.vspq || []).catch(() => []) : null; // v1.15.71: Vidsrc
       const ottP = !(cfg && cfg.ott === 0) ? ottStreams(Number(m[1]), 'movie', 0, 0, cfg && cfg.ottq || []).catch(() => []) : null; // v1.15.72: AsianTV
       const azP = !(cfg && cfg.az === 0) ? azStreams(Number(m[1]), 'movie', 0, 0, cfg && cfg.azq || []).catch(() => []) : null; // v1.15.76: AniZone
       kickSubs('tmdb' + m[1], 'movie', null, null, cfg);
-      return withDeadline(withSources(vOn ? getSources(Number(m[1]), 'movie', null, null, '', cfg, tp) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0), 11900 /* v1.15.26 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
+      return withDeadline(withSources(vOn ? getSources(Number(m[1]), 'movie', null, null, '', cfg, tp) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: bfP, key: 'bf' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0), 11900 /* v1.15.26 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
 cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'movie', s: 0, e: 0 }).then(u => sendStreams(res, req.url, p, Date.now() - t0, u, RVA)); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }
@@ -5240,13 +5789,14 @@ cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'movie', s: 0, e: 0 }
       const mmP = !(cfg && cfg.mm === 0) ? mmStreams(Number(m[1]), '', 'series', Number(m[2] || 1), Number(m[3] || 1), originOf(req), cfg && cfg.mmr || 0, cfg && cfg.mmrelay === 1).catch(() => []) : null; // v1.15.28: Multimovies (cfg.mm toggle)
       const m4uP = !(cfg && cfg.m4u === 0) ? m4uStreams(Number(m[1]), '', 'series', Number(m[2] || 1), Number(m[3] || 1), originOf(req), cfg && cfg.m4ur || 0).catch(() => []) : null; // v1.15.40-local
       const skyP = !(cfg && cfg.sky === 0) ? skyStreams(Number(m[1]), '', 'series', Number(m[2] || 1), Number(m[3] || 1), originOf(req), cfg && cfg.skyr || 0).catch(() => []) : null; // v1.15.50: Arctic-স্বাধীন (SkymoviesHD)
+      const bfP = !(cfg && cfg.bf === 0) ? bfStreams(Number(m[1]), '', 'series', Number(m[2] || 1), Number(m[3] || 1), originOf(req), cfg && cfg.bfr || 0).catch(() => []) : null; // BollyFlix
       const vspP = !(cfg && cfg.vsp === 0) ? vspStreams(Number(m[1]), 'tv', Number(m[2] || 1), Number(m[3] || 1), cfg && cfg.vspq || []).catch(() => []) : null; // v1.15.71: Vidsrc
       const ottP = !(cfg && cfg.ott === 0) ? ottStreams(Number(m[1]), 'tv', Number(m[2] || 1), Number(m[3] || 1), cfg && cfg.ottq || []).catch(() => []) : null; // v1.15.72: AsianTV
       const azP = !(cfg && cfg.az === 0) ? azStreams(Number(m[1]), 'tv', Number(m[2] || 1), Number(m[3] || 1), cfg && cfg.azq || []).catch(() => []) : null; // v1.15.76: AniZone
       if (nxOn) nxPrewarm('series', String(m[1]), Number(m[2] || 1), Number(m[3] || 1));
       twRtPrewarm(tp, 'series', Number(m[2] || 1), Number(m[3] || 1));
       kickSubs('tmdb' + m[1], 'series', Number(m[2] || 1), Number(m[3] || 1), cfg);
-      return withDeadline(withSources(vOn ? getSources(Number(m[1]), 'tv', Number(m[2] || 1), Number(m[3] || 1), '', cfg, tp) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0), 11900 /* v1.15.26 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
+      return withDeadline(withSources(vOn ? getSources(Number(m[1]), 'tv', Number(m[2] || 1), Number(m[3] || 1), '', cfg, tp) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: bfP, key: 'bf' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0), 11900 /* v1.15.26 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
 cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'series', s: Number(m[2] || 1), e: Number(m[3] || 1) }).then(u => sendStreams(res, req.url, p, Date.now() - t0, u, RVA)); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }
@@ -5254,18 +5804,20 @@ cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'series', s: Number(m
       const t0 = Date.now();
       const vOn = !(cfg && cfg.v === 0), nxOn = !(cfg && cfg.nx === 0); // per-source masters
       const nxP = nxOn ? nxFor('movie', m[1], 0, 0) : null;
-      const infoP = vOn ? findTmdbInfo(m[1], 'movie') : null; // v1.12: এক-কলেই-সব-সোর্স-খাওয়ানো
+      const needTmdb = vOn || !(cfg && cfg.mm === 0) || !(cfg && cfg.m4u === 0) || !(cfg && cfg.sky === 0) || !(cfg && cfg.bf === 0) || !(cfg && cfg.vsp === 0) || !(cfg && cfg.ott === 0) || !(cfg && cfg.az === 0);
+      const infoP = needTmdb ? findTmdbInfo(m[1], 'movie') : null; // v1.12: এক-কলেই-সব-সোর্স-খাওয়ানো (v=0 হলেও অন্য TMDB-সোর্সের জন্য সচল)
       const nmP = suggName(m[1]); // v1.12.6: rt/tw-দ্রুত-নাম
       const twP = (TWBASE && !(cfg && cfg.tw === 0)) ? nmP.then(nm => nm ? twrStreams(TWBASE, 'toonworld', nm, 'movie', 0, 0) : []).catch(() => []) : null; // v1.15.15: infoP-গেট-বাদ — v=0-কনফিগেও TW/RT-জীবন্ত (আগে vidy-সোর্স-বন্ধ=TW/RT-ও-নীরবে-মৃত — 'শুধু-MovieBox'-মূল-কারণ)
       const rtP = (RTBASE && !(cfg && cfg.rt === 0)) ? nmP.then(nm => nm ? twrStreams(RTBASE, 'raretoons', nm, 'movie', 0, 0) : []).catch(() => []) : null;
       const mmP = !(cfg && cfg.mm === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? mmStreams(info.id, info.name || '', 'movie', 0, 0, originOf(req), cfg && cfg.mmr || 0, cfg && cfg.mmrelay === 1).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.28: Multimovies (cfg.mm toggle)
       const m4uP = !(cfg && cfg.m4u === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? m4uStreams(info.id, info.name || '', 'movie', 0, 0, originOf(req), cfg && cfg.m4ur || 0).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.40-local
       const skyP = !(cfg && cfg.sky === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? skyStreams(info.id, info.name || '', 'movie', 0, 0, originOf(req), cfg && cfg.skyr || 0).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.50: Arctic-স্বাধীন (SkymoviesHD)
+      const bfP = !(cfg && cfg.bf === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? bfStreams(info.id, info.name || '', 'movie', 0, 0, originOf(req), cfg && cfg.bfr || 0).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // BollyFlix
       const vspP = !(cfg && cfg.vsp === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? vspStreams(info.id, 'movie', 0, 0, cfg && cfg.vspq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.71: Vidsrc
       const ottP = !(cfg && cfg.ott === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? ottStreams(info.id, 'movie', 0, 0, cfg && cfg.ottq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.72: AsianTV
       const azP = !(cfg && cfg.az === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? azStreams(info.id, 'movie', 0, 0, cfg && cfg.azq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.76: AniZone
       kickSubs(m[1], 'movie', null, null, cfg);
-      return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'movie', null, null, info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0), 11900 /* v1.15.26 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
+      return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'movie', null, null, info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: bfP, key: 'bf' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0), 11900 /* v1.15.26 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
 cards => { Promise.resolve(infoP).then(info => unifyCards(cards, { tmdbId: info && info.id, type: 'movie', s: 0, e: 0, year: info && info.year })).then(u => sendStreams(res, req.url, p, Date.now() - t0, u, RVA)); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }
@@ -5273,20 +5825,22 @@ cards => { Promise.resolve(infoP).then(info => unifyCards(cards, { tmdbId: info 
       const t0 = Date.now();
       const vOn = !(cfg && cfg.v === 0), nxOn = !(cfg && cfg.nx === 0); // per-source masters
       const nxP = nxOn ? nxFor('series', m[1], Number(m[2]), Number(m[3])) : null;
-      const infoP = vOn ? findTmdbInfo(m[1], 'series') : null;
+      const needTmdb = vOn || !(cfg && cfg.mm === 0) || !(cfg && cfg.m4u === 0) || !(cfg && cfg.sky === 0) || !(cfg && cfg.bf === 0) || !(cfg && cfg.vsp === 0) || !(cfg && cfg.ott === 0) || !(cfg && cfg.az === 0);
+      const infoP = needTmdb ? findTmdbInfo(m[1], 'series') : null;
       const nmP = suggName(m[1]); // v1.12.6: rt/tw-দ্রুত-নাম
       const twP = (TWBASE && !(cfg && cfg.tw === 0)) ? nmP.then(nm => nm ? twrStreams(TWBASE, 'toonworld', nm, 'series', Number(m[2]), Number(m[3])) : []).catch(() => []) : null; // v1.15.15: infoP-গেট-বাদ — v=0-তেও TW/RT-জীবন্ত (nmP=IMDb-suggestion, v-নিরপেক্ষ)
       const rtP = (RTBASE && !(cfg && cfg.rt === 0)) ? nmP.then(nm => nm ? twrStreams(RTBASE, 'raretoons', nm, 'series', Number(m[2]), Number(m[3])) : []).catch(() => []) : null;
       const mmP = !(cfg && cfg.mm === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? mmStreams(info.id, info.name || '', 'series', Number(m[2]), Number(m[3]), originOf(req), cfg && cfg.mmr || 0, cfg && cfg.mmrelay === 1).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.28: Multimovies (cfg.mm toggle)
       const m4uP = !(cfg && cfg.m4u === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? m4uStreams(info.id, info.name || '', 'series', Number(m[2]), Number(m[3]), originOf(req), cfg && cfg.m4ur || 0).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.40-local
       const skyP = !(cfg && cfg.sky === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? skyStreams(info.id, info.name || '', 'series', Number(m[2]), Number(m[3]), originOf(req), cfg && cfg.skyr || 0).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.50: Arctic-স্বাধীন (SkymoviesHD)
+      const bfP = !(cfg && cfg.bf === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? bfStreams(info.id, info.name || '', 'series', Number(m[2]), Number(m[3]), originOf(req), cfg && cfg.bfr || 0).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // BollyFlix
       const vspP = !(cfg && cfg.vsp === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? vspStreams(info.id, 'tv', Number(m[2]), Number(m[3]), cfg && cfg.vspq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.71: Vidsrc
       const ottP = !(cfg && cfg.ott === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? ottStreams(info.id, 'tv', Number(m[2]), Number(m[3]), cfg && cfg.ottq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.72: AsianTV
       const azP = !(cfg && cfg.az === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? azStreams(info.id, 'tv', Number(m[2]), Number(m[3]), cfg && cfg.azq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.76: AniZone
       if (nxOn) nxPrewarm('series', m[1], Number(m[2]), Number(m[3]));
       twRtPrewarm(nmP, 'series', Number(m[2]), Number(m[3]));
       kickSubs(m[1], 'series', Number(m[2]), Number(m[3]), cfg);
-      return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'tv', Number(m[2]), Number(m[3]), info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0), 11900 /* v1.15.26 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
+      return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'tv', Number(m[2]), Number(m[3]), info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: bfP, key: 'bf' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0), 11900 /* v1.15.26 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
 cards => { Promise.resolve(infoP).then(info => unifyCards(cards, { tmdbId: info && info.id, type: 'series', s: Number(m[2]), e: Number(m[3]), year: info && info.year })).then(u => sendStreams(res, req.url, p, Date.now() - t0, u, RVA)); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }
@@ -5294,20 +5848,22 @@ cards => { Promise.resolve(infoP).then(info => unifyCards(cards, { tmdbId: info 
       const t0 = Date.now();
       const vOn = !(cfg && cfg.v === 0), nxOn = !(cfg && cfg.nx === 0); // per-source masters
       const nxP = nxOn ? nxFor('series', m[1], 1, 1) : null;
-      const infoP = vOn ? findTmdbInfo(m[1], 'series') : null;
+      const needTmdb = vOn || !(cfg && cfg.mm === 0) || !(cfg && cfg.m4u === 0) || !(cfg && cfg.sky === 0) || !(cfg && cfg.bf === 0) || !(cfg && cfg.vsp === 0) || !(cfg && cfg.ott === 0) || !(cfg && cfg.az === 0);
+      const infoP = needTmdb ? findTmdbInfo(m[1], 'series') : null;
       const nmP = suggName(m[1]); // v1.12.6: rt/tw-দ্রুত-নাম
       const twP = (TWBASE && !(cfg && cfg.tw === 0)) ? nmP.then(nm => nm ? twrStreams(TWBASE, 'toonworld', nm, 'series', 1, 1) : []).catch(() => []) : null;
       const rtP = (RTBASE && !(cfg && cfg.rt === 0)) ? nmP.then(nm => nm ? twrStreams(RTBASE, 'raretoons', nm, 'series', 1, 1) : []).catch(() => []) : null;
       const mmP = !(cfg && cfg.mm === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? mmStreams(info.id, info.name || '', 'series', 1, 1, originOf(req), cfg && cfg.mmr || 0, cfg && cfg.mmrelay === 1).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.28: Multimovies (cfg.mm toggle)
       const m4uP = !(cfg && cfg.m4u === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? m4uStreams(info.id, info.name || '', 'series', 1, 1, originOf(req), cfg && cfg.m4ur || 0).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.40-local
       const skyP = !(cfg && cfg.sky === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? skyStreams(info.id, info.name || '', 'series', 1, 1, originOf(req), cfg && cfg.skyr || 0).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.50: Arctic-স্বাধীন (SkymoviesHD)
+      const bfP = !(cfg && cfg.bf === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? bfStreams(info.id, info.name || '', 'series', 1, 1, originOf(req), cfg && cfg.bfr || 0).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // BollyFlix
       const vspP = !(cfg && cfg.vsp === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? vspStreams(info.id, 'tv', 1, 1, cfg && cfg.vspq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.71: Vidsrc
       const ottP = !(cfg && cfg.ott === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? ottStreams(info.id, 'tv', 1, 1, cfg && cfg.ottq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.72: AsianTV
       const azP = !(cfg && cfg.az === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? azStreams(info.id, 'tv', 1, 1, cfg && cfg.azq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.76: AniZone
       if (nxOn) nxPrewarm('series', m[1], 1, 1);
       twRtPrewarm(nmP, 'series', 1, 1);
       kickSubs(m[1], 'series', 1, 1, cfg);
-      return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'tv', 1, 1, info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0), 11900 /* v1.15.26 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
+      return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'tv', 1, 1, info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: bfP, key: 'bf' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0), 11900 /* v1.15.26 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
 cards => { Promise.resolve(infoP).then(info => unifyCards(cards, { tmdbId: info && info.id, type: 'series', s: 1, e: 1, year: info && info.year })).then(u => sendStreams(res, req.url, p + ' [no-s:e]', Date.now() - t0, u, RVA)); },
         e => { logReq(p + ' [no-s:e]', Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }
@@ -5445,6 +6001,8 @@ setInterval(() => { nxBenchHealth(); }, 15000).unref();
   // ব্যর্থ হলে হার্ডকোডেড-ফলব্যাক-ডোমেইন-ই থাকে; সার্চ-ব্যর্থ হলে skyStreams-ও জোর-রিফ্রেশ করে।
   setTimeout(() => { skyDomRefresh(true).then(b => { if (DBG) console.error('[sky-dom] boot → ' + b); }).catch(() => {}); }, 8000).unref();
   setInterval(() => { skyDomRefresh(true).catch(() => {}); }, SKY_DOM_TTL).unref();
+  setTimeout(() => { bfDomRefresh(true).then(b => { if (DBG) console.error('[bf-dom] boot → ' + b); }).catch(() => {}); }, 8500).unref();
+  setInterval(() => { bfDomRefresh(true).catch(() => {}); }, BF_DOM_TTL).unref();
   // v1.15.18 (r68b ইউজার-অনুমোদিত): রেপ্লিকা-জাগ্রত নিজ-পিং — প্রতি-৪মিনিটে নিজের-পাবলিক-URL-এ /_health
   // (স্কেল-টু-জিরো/নিষ্ক্রিয়তা-ঘুম-বন্ধ; রাউটার-সর্বদা-গরম) + warmBases (রেজলভার/শিশুর-সকেট-DNS+TLS-হাত গরম — ঠান্ডা-১ম-ট্যাপের-মূল-কারণ)
   const SELF_URL = String(process.env.SELFPING_URL || 'https://3404d3c5dc63-vidy.baby-beamup.club/_health');
