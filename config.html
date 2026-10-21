@@ -480,7 +480,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
   var SUBS=[[1,'On'],[0,'No subs']];
 
   /* ─────────── state (server-contract keys) ─────────── */
-  var st={v:1,q:[],sub:1,srv:SRVS.map(function(x){return x[0];}),nx:1,nxq:[],nxl:[],rt:1,rtl:[],rtq:[],tw:1,twq:[],twl:[],mm:1,mmr:0,mmq:[],mml:[],m4u:1,m4ur:0,m4uq:[],m4ul:[],sky:1,skyr:0,skyq:[],skyl:[],bf:1,bfr:0,bfq:[],bfl:[],vsp:1,vspq:[],vspl:[],ott:1,ottq:[],ottl:[],az:1,azq:[],azl:[],rtsrv:[]}; /* rtsrv: খালি=MQ+Pixeldrain-দুটোই (সার্ভার-চুক্তি: খালি=সব) */
+  var st={v:1,q:[],sub:1,srv:SRVS.map(function(x){return x[0];}),nx:1,nxq:[],nxl:[],rt:1,rtl:[],rtq:[],tw:1,twq:[],twl:[],mm:1,mmr:0,mmq:[],mml:[],m4u:1,m4ur:0,m4uq:[],m4ul:[],sky:1,skyr:0,skyq:[],skyl:[],bf:1,bfr:0,bfq:[],bfl:[],bfexo:1,vsp:1,vspq:[],vspl:[],ott:1,ottq:[],ottl:[],az:1,azq:[],azl:[],rtsrv:[]}; /* rtsrv: খালি=MQ+Pixeldrain-দুটোই (সার্ভার-চুক্তি: খালি=সব) */
 
   /* source definitions: [key, tile, tileBg, tileFg, name, badge, badgeCls, blurb, hasTune] */
   var SRC=[
@@ -544,6 +544,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
       if(o.skyq)st.skyq=numL(o.skyq,[2160,1080,720,480]);
       if(o.skyl)st.skyl=strL(o.skyl,LK);
       if(o.bf===0)st.bf=0;
+      if(o.bfexo===0)st.bfexo=0;
       if(o.bfr)st.bfr=({2160:2160,1080:1080,720:720,480:480})[o.bfr]||0;
       if(o.bfq)st.bfq=numL(o.bfq,[2160,1080,720,480]);
       if(o.bfl)st.bfl=strL(o.bfl,LK);
@@ -610,6 +611,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
       else if(st.bfr)c.bfr=st.bfr;
       if(st.bfl.length)c.bfl=st.bfl.slice();
     }
+    if(st.bfexo===0)c.bfexo=0; /* v1.17.2: ExoPlayer-এ libmpv-ফলব্যাক বন্ধ */
     if(st.vsp===0)c.vsp=0;
     else{
       if(st.vspq.length)c.vspq=st.vspq.slice();
@@ -876,6 +878,8 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     o=tuneCard('tune-bf','bf','BollyFlix','GDFlix/R2 · Multi-audio · direct MKV · auto domain');h.appendChild(o.card);
     chipsInto(o.zone,'Resolutions',st.bfq,RES,rebuild,'',1);
     chipsInto(o.zone,'Audio languages',st.bfl,LANGS,rebuild);
+    /* v1.17.2: ExoPlayer-এ সিক না চললে অ্যাপ নিজে থেকেই libmpv-তে ফলব্যাক করুক */
+    singleInto(o.zone,'ExoPlayer → libmpv fallback','bfexo',[[1,'Auto'],[0,'Off']],rebuild);
     /* Vidsrc */
     o=tuneCard('tune-vsp','vsp','Vidsrc','Own relay pool · wide catalog');h.appendChild(o.card);
     chipsInto(o.zone,'Resolutions',st.vspq,RES,rebuild,'',1);
@@ -998,7 +1002,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     Object.keys(st).forEach(function(k){if(Array.isArray(st[k]))st[k].length=0;});
     st.v=1;st.sub=1;st.srv=SRVS.map(function(x){return x[0];});
     st.nx=1;st.rt=1;st.tw=1;st.mm=1;st.mmr=0;st.m4u=1;st.m4ur=0;
-    st.sky=1;st.bf=1;st.bfr=0;st.vsp=1;st.ott=1;st.az=1;
+    st.sky=1;st.bf=1;st.bfr=0;st.bfexo=1;st.vsp=1;st.ott=1;st.az=1;
     syncAll(true);rebuild();toast('Reset');
   };
   function syncAll(collapse){ /* v1.15.81: collapse=সত্য → প্রসারিত-কার্ড-গুটানো (কেবল Reset) */
