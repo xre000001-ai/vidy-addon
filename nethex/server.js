@@ -7,7 +7,7 @@ import { apiFetch } from './mb-lib/http.js';
 import { poolStart, poolStats, checkerStats } from './mb-lib/pool.js';
 
 const PORT = Number(process.env.PORT || 7000);
-const VERSION = '2.10.4';
+const VERSION = '2.10.5';
 const CINEMETA = 'https://v3-cinemeta.strem.io';
 const PUBLIC_BASE = process.env.PUBLIC_BASE || 'https://5a16d5684c14-nethex.baby-beamup.club';
 let LOGO_BUF = null;
@@ -15,6 +15,9 @@ try { LOGO_BUF = fs.readFileSync(new URL('./logo.png', import.meta.url)); } catc
 // v2.4.0 MASS-USER cache: TTL 30min + max 400 keys (oldest evicted) —
 // a shared Map used to grow without bound under many users
 const CACHE_TTL = 30 * 60 * 1000;
+// v2.10.5: the signed CDN links expire in ~2h -> a 90-min positive cache could hand out
+// dead links (CDN then answers "426 Forbidden" and the card cannot play). 15 min is safe.
+const POS_TTL = 15 * 60 * 1000;
 const CACHE_MAX = 400;
 const cache = new Map();          // key -> { streams, at }
 function cacheGet(key) {
@@ -311,7 +314,12 @@ function glassCard(b, lang, x, ctype, season, episode, year, subs) {
       notWebReady: false,
       isBingeable: true,
       filename: "stream.mp4",
-      proxyHeaders: { request: { Referer: "https://movieboxonline.net/", Origin: "https://movieboxonline.net", "User-Agent": "Mozilla/5.0" } },
+      // v2.10.5: the BFF may require a signed cookie / a signed header -> pass them through
+      proxyHeaders: { request: Object.assign(
+        { Referer: "https://movieboxonline.net/", Origin: "https://movieboxonline.net", "User-Agent": "Mozilla/5.0" },
+        x.signCookie ? { Cookie: x.signCookie } : {},
+        x.signHeaderKey ? { "X-Sign-Header": x.signHeaderKey } : {}
+      ) },
     },
     bingeGroup: `mbxr|${b.title}::|${dub || "Original"}`,
     _lang: langName,
@@ -369,7 +377,9 @@ const server = http.createServer(async (req, res) => {
       const nonPreferredKey = u.searchParams.get('nonpreferred') || '';
       const languageKey = u.searchParams.get('language') || '';
       const key = `${m[1]}:${imdb}:${season}:${episode}`;
-      let streams = cacheGet(key);
+      // v2.10.5: ?fresh=1 -> skip the cache entirely (the addon uses it when it found a dead link)
+      const forceFresh = u.searchParams.get('fresh') === '1';
+      let streams = forceFresh ? null : cacheGet(key);
       if (streams && streams.length === 0) {
         // v2.9.4: a cached empty must never glue the addon at zero — fire a
         // deduped background re-resolve and answer honestly-empty now
@@ -377,7 +387,7 @@ const server = http.createServer(async (req, res) => {
           BG.add(key);
           setTimeout(() => {
             resolve(m[1], imdb, season, episode)
-              .then(y => { if (y.length) cacheSet(key, y, 90 * 60 * 1000); })
+              .then(y => { if (y.length) cacheSet(key, y, POS_TTL); })
               .catch(() => {})
               .finally(() => BG.delete(key));
           }, 300).unref?.();
@@ -396,7 +406,7 @@ const server = http.createServer(async (req, res) => {
             // positive shelf lives 90min (sign urls ~2h).
             // v2.6.0: a THIN bench (boot/churn window) must never write
             // a negative cache — the next tap re-resolves on fresh exits
-            if (x.length) cacheSet(key, x, 90 * 60 * 1000); // v2.10.3: শুধু-ধনাত্মক-ক্যাশ — খালি-ক্যাশ-লিখলে-MB-সাইট-ঢেউ-ভাঙা-৬০সে-মেমো-হয়ে-যেত (r57-নীতি)
+            if (x.length) cacheSet(key, x, POS_TTL); // v2.10.3: শুধু-ধনাত্মক-ক্যাশ — খালি-ক্যাশ-লিখলে-MB-সাইট-ঢেউ-ভাঙা-৬০সে-মেমো-হয়ে-যেত (r57-নীতি)
             // v2.9.2 BINGE PREWARM: a successful series tap quietly resolves
             // the NEXT 3 episodes into the cache — the next tap is a cache hit
             // (1.2s-class) instead of a cold chain.  Pool untouched.
@@ -404,7 +414,7 @@ const server = http.createServer(async (req, res) => {
               setTimeout(() => {
                 for (let e = episode + 1; e <= episode + 3; e++) {
                   resolve('series', imdb, season, e)
-                    .then(y => { if (y.length) cacheSet(`${m[1]}:${imdb}:${season}:${e}`, y, 90 * 60 * 1000); })
+                    .then(y => { if (y.length) cacheSet(`${m[1]}:${imdb}:${season}:${e}`, y, POS_TTL); })
                     .catch(() => {});
                 }
               }, 1500).unref?.();

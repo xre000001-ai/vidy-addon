@@ -51,6 +51,7 @@ async function variantStreams(subjectId, detailPath, season, episode) {
     if (streams.length > 0 || round === 1) break;
     await sleep(250);
   }
+  if (process.env.NXDUMP && streams.length) console.error('[NXDUMP] raw:', JSON.stringify(streams).slice(0, 2500));
   return streams;
 }
 
@@ -74,14 +75,22 @@ async function variantCaptions(subjectId, detailPath, season, episode, videoId) 
 }
 
 function normQuality(s) {
+  // v2.10.5: the BFF sometimes hands out a link whose timestamp is the placeholder
+  // "&t=1" — the CDN answers "426 Forbidden" for those, so they must never leave here.
+  let u = s.url || "";
+  const tm = /[?&]t=(\d+)/.exec(u);
+  const tOk = tm && Number(tm[1]) > 1700000000;   // a real unix-seconds stamp
+  if (!tOk) u = "";
   return {
     resolution: parseInt(s.resolutions || s.resolution || 0),
     size_mb: Math.round((parseInt(s.size || 0) / 1e6) * 100) / 100,
     duration_sec: s.duration || 0,
     codec: s.codecName || "h264",
     vipLocked: s.vipLocked || false,
-    url: s.url || "",
+    url: u,
     videoId: String(s.id || ""),
+    signCookie: s.signCookie || "",       // v2.10.5: the BFF may demand a cookie / signed header
+    signHeaderKey: s.signHeaderKey || "",
   };
 }
 
