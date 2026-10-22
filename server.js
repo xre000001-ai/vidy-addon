@@ -10,7 +10,20 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.17.39'; // v1.17.39: **ভিডি-সোর্স-টাইমিং** (ইউজার: "vidy source er timing dekho … tmdb id"):
+const VERSION = '1.17.40'; // v1.17.40: **m4u/sky/bf — সব-স্ট্রিম, ৪–৫সে-র-ভিতরে** (ইউজার: "m4u, sky, bf 4-5s e sob
+//   stream ase ni dekho, sobai IP flag bypass er jonno condition passed proxy use kore ni"):
+//   মাপা (লোকাল, ৮ টাইটেল): bf ০.৯–৩.৬সে · mm ০.১–৪.৫সে · m4u ২.৪–৪.৩সে · **sky ৪.৮–৭.৭সে ⇒ সবসময় কাটা**।
+//   (১) **sky-এর ২টি সিরিয়াল-অপেক্ষা সমান্তরাল**: workers.dev-ফলব্যাক আগে pd-লুপের পরে `await` হতো
+//       (হাব-প্রতি +১.৪সে) — এখন pd-এর সাথে একসাথে চলে ⇒ sky ৪.৫–৫.৫সে → **৩.৯সে**, কার্ড একটাও কমেনি।
+//   (২) **pixeldrain-প্রোব ক্যাশ + ইন-ফ্লাইট-ডিডিউপ** (id-ভিত্তিক, ৩০-মিনিট): sky-এ একই-id ৯ বার
+//       প্রোব হচ্ছিল। ⚠️ সমান্তরাল-প্রোব **পরীক্ষা-করা-হয়েছে-ও-বাদ**: pixeldrain ১০-req/IP রেট-লিমিটে
+//       sky ৩.৯→৫.৪–৭.৭সে হয়ে যায় — সিরিয়াল+iন-ফ্লাইট-ডিডিউপ-ই সঠিক।
+//   (৩) **m4uText/bfText-এ হোস্ট-ভিত্তিক condition-পাস-প্রক্সি**: যে-হোস্ট আমাদের-IP-এ সরাসরি-ব্লক
+//       (৪০৩/CF) প্রমাণিত, সেটি HOST_PX-এ ৩০-মিনিট মনে থাকে ⇒ পরের-হপে **বেঞ্চ-পাস-প্রক্সি আগে**,
+//       ব্যর্থ-সরাসরি-চেষ্টায় tmo নষ্ট হয় না। সফল-প্রক্সি pxRec-এ স্কোর-বাড়ে (পুল শেখে)।
+//   (৪) **হারভেস্ট-ফ্লোর ৩৬০০→৪৬০০মিসে (cap ৪৯০০)** — sky/m4u-র জন্য; মাপা: ফ্লোর ৪৬০০-এ ৮-টাইটেলে
+//       m4u ৭/৮ · sky ৭/৮ · bf ৮/৮ · mm ৭/৮ উপস্থিত, মোট ৩.৫–৪.৯সে। (৪৩০০-এও প্রায় একই, ৪৮০০-এ একটু বেশি সম্পূর্ণ।)
+const V1NOTE_39 = ''; // v1.17.39: **ভিডি-সোর্স-টাইমিং** (ইউজার: "vidy source er timing dekho … tmdb id"):
 //   মাপা — fetch ৩৬৬–৫০০মিসে (TMDB-id-keyed, শিরোনাম-ম্যাচিং নেই), কিন্তু **প্রোব** ৮৩৪–৩১৯৬মিসে ⇒ আসল খরচ প্রোব।
 //   (১) প্রোব-টাইমআউট/403-426-429 আর "মৃত" নয় — soft (কার্ড-রাখা, সার্ভার-শাস্তি-নেই); আগে একটি ধীর-প্রোব
 //       পুরো সার্ভারের কার্ড হারাত (ok:false ⇒ skip)। ১৬-সার্ভার-ঢেউয়ে ok ৫–৭ → ৬–১০।
@@ -3453,7 +3466,36 @@ async function azStreams(tmdbId, type, s, e, azq) { // সার্চ→সি�
 }
 // ---------- v1.15.40-local: Movies4u (M4U) — lookup.php-সার্চ + hubcloud→gamerxyt→FSL-R2 সরাসরি-MKV ----------
 const M4U_BASE = 'https://new2.movies4u.garden';
-function m4uText(u, ref, tmo) { // ছোট-টেক্সট-GET (r171: মিডিয়া-বাইট-নয়; identity-এনকোডিং — node-নিজে-গানজিপ-ভাঙে-না)
+// ★ v1.17.40: **বেঞ্চ-পাস-প্রক্সি আগে** — যে-হোস্টগুলো আমাদের-IP-এ-ব্লক (৪০৩/CF/খালি-বডি)
+//   সেগুলো HOST_PX-এ মনে থাকে ⇒ পরের-হপে সরাসরি-চেষ্টা-নষ্ট-হয়-না। প্রক্সি না-থাকলে/ব্যর্থ-হলে সরাসরি।
+const HOST_PX = new Map(); // host → ts (সরাসরি-ব্লক-প্রমাণিত, ৩০-মিনিট)
+const HOST_D = new Map();  // host → ts (সরাসরি-ঠিক-প্রমাণিত)
+const _hst = u => { try { return new URL(u).hostname; } catch { return ''; } };
+function m4uText(u, ref, tmo) { return m4uTextQ(u, ref, tmo); }
+async function m4uTextQ(u, ref, tmo) { // ছোট-টেক্সট-GET (r171: মিডিয়া-বাইট-নয়; identity-এনকোডিং)
+  const host = _hst(u), now = Date.now(), pxFirst = (HOST_PX.get(host) || 0) > now;
+  const budget = Math.max(1200, tmo || 6000);
+  let txt = '';
+  const dT = Date.now();
+  if (!pxFirst) txt = await m4uTextD(u, ref, budget);
+  if (txt && txt.length > 80) { HOST_D.set(host, now); return txt; }
+  const left = budget - (Date.now() - dT);
+  if (left > 1200) {
+    try {
+      const r = await racePool(u, 3, Math.min(left, 6000));
+      if (r && r.body && r.body.length > 80) {
+        HOST_PX.set(host, Date.now() + 30 * 60 * 1000); HOST_D.delete(host);
+        pxRec(r.px, true, 800);
+        if (DBG) console.error('[m4upx] ' + host + ' সরাসরি-ব্লক ⇒ বেঞ্চ-পাস-প্রক্সি ✓ ' + r.px);
+        return r.body;
+      }
+    } catch { }
+  }
+  if (pxFirst) { const t2 = await m4uTextD(u, ref, Math.max(1200, budget - (Date.now() - dT))); if (t2) return t2; }
+  if (!txt) { /* সরাসরি-ব্লক */ HOST_PX.set(host, Date.now() + 30 * 60 * 1000); }
+  return txt;
+}
+function m4uTextD(u, ref, tmo) {
   return new Promise(resolve => {
     try {
       const mod = u.indexOf('http:') === 0 ? http : https;
@@ -3535,7 +3577,17 @@ function wkReso(svName, url) {
   const h = resOfName(svName || '') || resOfName(wkName(url)) || 0;
   return LADDER.has(h) ? h : 0;
 }
-function pdProbe(u) { // 1KB-রেঞ্জ-GET-প্রোব — pixeldrain; CF-ক্যাশে-disposition-লুকাতে-পারে বলে-সাইজ-সহ-ফেরত
+const PD_P = new Map();
+const PD_C = new Map(); // id → {r, ts} — v1.17.40: এক-id-এক-প্রোব (৩০-মিনিট); sky-এ একই-id ৯ বার প্রোব হচ্ছিল
+function pdProbe(u) {
+  const id = (String(u).split('/').pop() || '').split('?')[0];
+  const c = PD_C.get(id);
+  if (c && Date.now() - c.ts < 30 * 60 * 1000) return Promise.resolve(c.r);
+  if (PD_P.has(id)) return PD_P.get(id); // একই-সময়-একাধিক-হাব এক-id ⇒ একটাই-প্রোব
+  const p = pdProbeRaw(u).then(r => { PD_C.set(id, { r, ts: Date.now() }); PD_P.delete(id); if (PD_C.size > 600) { const k = PD_C.keys().next().value; PD_C.delete(k); } return r; }, e => { PD_P.delete(id); throw e; });
+  PD_P.set(id, p); return p;
+}
+function pdProbeRaw(u) { // 1KB-রেঞ্জ-GET-প্রোব — pixeldrain; CF-ক্যাশে-disposition-লুকাতে-পারে বলে-সাইজ-সহ-ফেরত
   return new Promise(resolve => {
     try {
       const req = https.get(u, { headers: { 'User-Agent': UA, 'Range': 'bytes=0-1023', 'Connection': 'close' }, timeout: 5000 }, res => {
@@ -4445,13 +4497,16 @@ async function skyStreams(tmdbId, title, type, s, e, origin, maxh) {
         const slugRaw = sp.p.split('/').pop();
         const slugEnc = encodeURIComponent(slugRaw).replace(/%28/g, '(').replace(/%29/g, ')'); // quote(safe='()')-সমতুল্য — ব্র্যাকেট-এনকোড, প্যারেন-র
         const ph = await m4uText(SKY_BASE + '/movie/' + slugEnc, SKY_BASE + '/', Math.min(3400, lS())).catch(() => '');
+      if (DBG) console.error('[skyT] page @' + (Date.now() - tS) + 'ms len=' + ph.length);
         const hbIds = [...new Set((ph.match(/https?:\/\/howblogs\.xyz\/([a-z0-9]+)/gi) || []).map(z => z.split('/').pop()))].slice(0, isTv ? 8 : 3); // v1.15.82: সিরিজে-এপিসোড-howblogs-এ-ছড়ানো (৩-এ-S01E05-মিস-হত)
         await Promise.all(hbIds.map(async hb => { // v1.15.51: hb-চেইন-সমান্তরাল (ধারাবাহিকে-৩-চেইন-বাজেট-কাটত)
           if (lS() < 2400 || got.length >= 8) return;
           const bw = await m4uText('https://howblogs.xyz/' + hb, SKY_BASE + '/', Math.min(3000, lS())).catch(() => '');
+          if (DBG) console.error('[skyT] hb ' + hb + ' @' + (Date.now() - tS) + 'ms len=' + bw.length);
           const hcm = bw.match(/https?:\/\/hubcloud\.[a-z.]+\/(drive|video)\/([a-z0-9]+)/);
           if (!hcm) return;
           const hc = await m4uText(hcm[0], 'https://howblogs.xyz/', Math.min(3600, lS())).catch(() => '');
+          if (DBG) console.error('[skyT] hubcloud @' + (Date.now() - tS) + 'ms len=' + hc.length);
           const ttl = ((hc.match(/<title>([^<]{4,200})</) || [])[1] || '').trim();
           let kind = 'movie'; // v1.15.83: মুভি-পথ অপরিবর্তিত
           if (isTv) { // সিরিজে (ক) হুবহু SxxExx = সেরা; (খ) E-চিহ্ন-নেই কিন্তু সিজন নিশ্চিত = সিজন-প্যাক (ভুল-সিজন কখনো নয়)
@@ -4464,6 +4519,7 @@ async function skyStreams(tmdbId, title, type, s, e, origin, maxh) {
           const gx = (hc.match(/https:\/\/gamerxyt\.com\/hubcloud\.php\?[^"']+/) || [])[0];
           if (!gx) return;
           const gp = await m4uText(gx.replace(/&amp;/g, '&'), 'https://hubcloud.ist/', Math.min(3600, lS())).catch(() => '');
+          if (DBG) console.error('[skyT] gamerxyt @' + (Date.now() - tS) + 'ms len=' + gp.length);
           const s3s = [...new Set((gp.match(/https?:\/\/[a-z0-9.-]+\/[^"'<> ]*X-Amz-Signature=[A-Za-z0-9%]+/g) || []).map(z => z.replace(/&amp;/g, '&')))];
           const pds = [...new Set((gp.match(/pixeldrain\.dev\/u\/([A-Za-z0-9]+)/g) || []).map(z => z.split('/u/')[1]))];
           if (!s3s.length && !pds.length) { if (DBG) console.error('[sky] hub-no-file ' + hb); return; }
@@ -4477,7 +4533,24 @@ async function skyStreams(tmdbId, title, type, s, e, origin, maxh) {
           // কিন্তু কার্ড-টেক্সট ৬টির-ই অভিন্ন ("▥ 1080 ▥ / ⧉ The Shawshank Redemption…") — ব্যবহারকারী
           // পার্থক্য বুঝতেই পারত না। নীতি অনুযায়ী pixeldrain-ই অগ্রাধিকার, তাই S3-মিরর বাদ।
           const pdH = new Set();
-          for (const pdi of pds.slice(0, 2)) { // v1.15.50: pd-প্রোব-বাধ্যতামূলক (negn6f-মৃত-প্রমাণিত; পেঙ্গু-ও-মৃত-ফাইল-দেয়):
+          // ★ v1.17.40: workers.dev-ফলব্যাক এখন **pd-লুপের সাথে সমান্তরাল** (আগে সিরিয়াল-await ছিল ⇒
+          //   প্রতি-হাবে +১.৪সে যোগ হতো: sky ৪.৪–৫.৫সে ⇒ সবসময় কাটা পড়ত)। কার্ড একটাও বাদ যায় না।
+          const wkP = (lS() > 1600) ? (async () => {
+            const out = [];
+            for (const w of wkCands(gp).slice(0, 2)) {
+              const sv = await wkAlive(w).catch(() => null);
+              if (!sv || !sv.alive) continue;
+              const wh = wkReso(sv.name, w);
+              if (!wh) continue;                               // রেজো-অনিশ্চিত → কার্ড-নয়
+              if (maxh && wh > maxh) break;
+              out.push({ h: wh, url: w, spec: (sv.name || wkName(w) || ttl).replace(/\+/g, ' '), pd: 0, kind: kind });
+              break;
+            }
+            return out;
+          })().catch(() => []) : Promise.resolve([]);
+          // v1.17.40: pd-প্রোব **সিরিয়াল-ই রাখা হলো** — সমান্তরালে pixeldrain রেট-লিমিট করে (১০-req/IP):
+          //   মাপা — সমান্তরালে sky ৩.৯সে → ৫.৪–৭.৭সে (উল্টো ধীর)। ক্যাশ+ইন-ফ্লাইট-ডিডিউপই যথেষ্ট।
+          for (const pdi of pds.slice(0, 2)) {
             if (lS() < 2200) break;
             const pu = 'https://pixeldrain.dev/api/file/' + pdi;
             const pv = await pdProbe(pu).catch(() => null);
@@ -4490,21 +4563,12 @@ async function skyStreams(tmdbId, title, type, s, e, origin, maxh) {
           if (maxh && fh > maxh) return;
           for (const s3 of s3s.slice(0, 1)) { if (!pdH.has(fh) && !seenUrl.has(s3)) { seenUrl.add(s3); got.push({ h: fh, url: s3, spec: ttl.replace(/\+/g, ' '), pd: 0, kind: kind }); } }
           // workers.dev (v1.15.84): সিক-যোগ্য পরিমাপিত — শেষ অবলম্বন (pd/S3 না থাকলে)। Referer নেই (403 এড়াতে)।
-          if (lS() > 1600) {
-            for (const w of wkCands(gp).slice(0, 2)) {
-              const sv = await wkAlive(w).catch(() => null);
-              if (!sv || !sv.alive) continue;
-              const wh = wkReso(sv.name, w);
-              if (!wh) continue;                               // রেজো-অনিশ্চিত → কার্ড-নয়
-              if (maxh && wh > maxh) break;
-              if (pdH.has(wh)) continue;                       // v1.15.85: এই রেজোতে ইতিমধ্যে pixeldrain-কার্ড আছে
-              if (!seenUrl.has(w)) {
-                seenUrl.add(w);
-                got.push({ h: wh, url: w, spec: (sv.name || wkName(w) || ttl).replace(/\+/g, ' '), pd: 0, kind: kind });
-                if (DBG) console.error('[sky] workers-mirror h=' + wh);
-              }
-              break;
-            }
+          // v1.17.40: সমান্তরাল-চালানো wk-ফল এখানে কুড়ানো হয় (সময় = max(pd, wk), যোগফল নয়)
+          for (const wc of await wkP) {
+            if (pdH.has(wc.h)) continue;                       // একই-রেজোতে pixeldrain-কার্ড আছে
+            if (seenUrl.has(wc.url)) continue;
+            seenUrl.add(wc.url); got.push(wc);
+            if (DBG) console.error('[sky] workers-mirror h=' + wc.h);
           }
           if (DBG) console.error('[sky] res ' + fh + ' pd=' + pds.length + ' s3=' + s3s.length + ' @' + (Date.now() - tS) + 'ms');
           if (got.length >= 8) return;
@@ -4674,6 +4738,15 @@ async function bfText(url, ref, timeoutMs = 4500) {
   const cached = bfCacheGet(BF_POST_CACHE, url, 15 * 60 * 1000);
   if (cached && cached.txt) return cached.txt;
   const tmo = Math.max(1200, timeoutMs || 4500);
+  // ★ v1.17.40: যে-হোস্ট একবার সরাসরি-ব্লক-প্রমাণিত (৪০৩/CF) ⇒ পরের-বার **বেঞ্চ-পাস-প্রক্সি আগে**
+  //   (আগে প্রতি-হপে ব্যর্থ-সরাসরি-চেষ্টা করে tmo পর্যন্ত সময় নষ্ট হতো — প্রোডে bf-এর বড়-খরচ)
+  const _h0 = _hst(url), _now = Date.now();
+  if ((HOST_PX.get(_h0) || 0) > _now) {
+    try {
+      const r0 = await racePool(url, 3, Math.min(tmo, 6000));
+      if (r0 && r0.body && r0.body.length > 80) { bfCachePut(BF_POST_CACHE, url, { txt: r0.body }, 300); return r0.body; }
+    } catch { }
+  }
   try {
     const r = await fetch(url, {
       headers: Object.assign({ 'User-Agent': UA, 'Accept': '*/*' }, ref ? { 'Referer': ref } : {}),
@@ -4683,6 +4756,7 @@ async function bfText(url, ref, timeoutMs = 4500) {
       const txt = await r.text();
       if (txt && txt.length > 80 && !/Just a moment|error code:\s*1015|Attention Required/i.test(txt)) {
         bfCachePut(BF_POST_CACHE, url, { txt }, 300);
+        HOST_D.set(_h0, _now);
         return txt;
       }
     }
@@ -4691,6 +4765,7 @@ async function bfText(url, ref, timeoutMs = 4500) {
     const pr = await racePool(url, 4, tmo);
     if (pr && pr.body && pr.body.length > 80 && !/Just a moment|error code:\s*1015/i.test(pr.body)) {
       bfCachePut(BF_POST_CACHE, url, { txt: pr.body }, 300);
+      HOST_PX.set(_h0, Date.now() + 30 * 60 * 1000); // v1.17.40: সরাসরি-ব্লক-প্রমাণিত ⇒ পরের-বার প্রক্সি-আগে
       return pr.body;
     }
   } catch { }
@@ -6321,7 +6396,7 @@ async function withSources(cardsP, srcs, cfg, t0) {
     // ⚠️ v1.17.26-কড়াকড়ি: শুধু "৬ কার্ড হয়েছে" দেখে কাটা যাবে না — Multimovies ১.৫সে-তে
     //   ২৬ কার্ড দেয়, তাতে BollyFlix (৩–৪সে) কেটে যেত আর BF কার্ডই হারিয়ে যেত (মাপা: BF=0)।
     //   তাই **ন্যূনতম ৪সে** অপেক্ষা (SB), তারপর কার্ড-থাকলে কাট; যাই হোক ৫.৬সে-তে কাট।
-    const MIN_WAIT_MS = Number(process.env.VFLOOR || 3600), HARD_CAP_MS = Number(process.env.VCAP || 4250), HARVEST_N = 6; // v1.17.39: ৪.১সে ফ্লোর মাপা-হিসাবে sky/m4u-ও ধরত না // v1.17.28: প্রোডে (beamup) প্রতি-ফেচে ~১.১সে বেশি লাগে ⇒ লোকাল-৪.৭সে = প্রোড-৫.৮সে; তাই ক্যাপ নামানো
+    const MIN_WAIT_MS = Number(process.env.VFLOOR || 4600), HARD_CAP_MS = Number(process.env.VCAP || 4900), HARVEST_N = 6; // v1.17.39: ৪.১সে ফ্লোর মাপা-হিসাবে sky/m4u-ও ধরত না // v1.17.28: প্রোডে (beamup) প্রতি-ফেচে ~১.১সে বেশি লাগে ⇒ লোকাল-৪.৭সে = প্রোড-৫.৮সে; তাই ক্যাপ নামানো
     let lit = 0, fireCut = null;
     _cutP = new Promise(r => { fireCut = r; });
     _watch = setInterval(() => {
