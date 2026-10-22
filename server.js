@@ -10,7 +10,9 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.17.41'; // v1.17.41: প্রক্সি-রেসে **সীমা (একসাথে ৪)** — 1.17.40-এর হোস্ট-ভিত্তিক প্রক্সি-পথ
+const VERSION = '1.17.42'; // v1.17.42: `_health`-এ **up (আপটাইম-সেকেন্ড) + deploy-ট্যাগ** যোগ — ডিপ্লয় সত্যিই
+//   নতুন কনটেইনার চালু করছে কি না তা এক-নজরে বোঝার জন্য (প্রোড এখনো 1.17.39 দেখাচ্ছিল, nxwaves=101 ⇒ রিস্টার্ট-ই হয়নি)।
+const V1NOTE_41 = ''; // v1.17.41: প্রক্সি-রেসে **সীমা (একসাথে ৪)** — 1.17.40-এর হোস্ট-ভিত্তিক প্রক্সি-পথ
 //   প্রোডে (যেখানে বেশি হোস্ট ব্লক) প্রতিটি-হপে ৩টি CONNECT-টানেল খুলছিল ⇒ RAM/CPU-স্পাইক আশঙ্কা।
 //   এখন সীমা পেরোলে শুধু সরাসরি-ফল-ই ফেরে (কার্ড কমে না, শুধু IP-বাইপাস-চেষ্টা কমে)। বাকি সব 1.17.40-এর মতো।
 const V1NOTE_40 = ''; // v1.17.40: **m4u/sky/bf — সব-স্ট্রিম, ৪–৫সে-র-ভিতরে** (ইউজার: "m4u, sky, bf 4-5s e sob
@@ -7056,7 +7058,7 @@ const server = http.createServer((req, res) => {
         return res.end(hit.body);
       }
     }
-    if (p === '/_health') return sendJson(res, 200, { ok: 1, version: VERSION, pool: POOL.length, pxbench: POOL.filter(c => PX_SITE.has(c.px)).length, pxbf: PX_BF.size, memo: memo.size, nx: NEXBASE ? 1 : 0, nxpool: NXBENCH, nxwaves: NXWAVES, nxsize: NXSIZE, tw: TWBASE ? 1 : 0, rt: RTBASE ? 1 : 0, vsp: VSP_POOL.length }); // v1.15.71: vsp=Vidsrc-পুল-আকার // v1.15.18: pxbench=সাইট-প্রমাণিত-বেঞ্চ (v1.15.8: nxpool=MB-বেঞ্চ)
+    if (p === '/_health') return sendJson(res, 200, { ok: 1, version: VERSION, up: Math.round(process.uptime()), deploy: '1.17.42-canary', pool: POOL.length, pxbench: POOL.filter(c => PX_SITE.has(c.px)).length, pxbf: PX_BF.size, memo: memo.size, nx: NEXBASE ? 1 : 0, nxpool: NXBENCH, nxwaves: NXWAVES, nxsize: NXSIZE, tw: TWBASE ? 1 : 0, rt: RTBASE ? 1 : 0, vsp: VSP_POOL.length }); // v1.15.71: vsp=Vidsrc-পুল-আকার // v1.15.18: pxbench=সাইট-প্রমাণিত-বেঞ্চ (v1.15.8: nxpool=MB-বেঞ্চ)
     if (p === '/mbpool.json') { try { const b = fs.readFileSync(MB_POOL_FILE); res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', 'access-control-allow-origin': '*' }); return res.end(b); } catch (e) { return sendJson(res, 200, []); } } // v1.17.34: child-যাচাই করা MB-বেঞ্চ (ডিপ্লয়-বীজ-হালনাগাদের জন্য)
     if (p === '/_pool') return sendJson(res, 200, POOL.map(c => Object.assign({}, c, PX_RUN.get(c.px) || {}))); // v1.15.0: রানটাইম-স্বাস্থ্য-সহ
     if (p === '/_nxring') { if (!NEXBASE) return sendJson(res, 200, { off: 1 }); directGet(NEXBASE + '/debug/ring', 4000).then(b => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(b); }).catch(() => { res.writeHead(200, { 'content-type': 'application/json' }); res.end('{"err":1}'); }); return; } // v2.10.2 চাইল্ড-রিজলভ-ধাপ-প্রমাণ
