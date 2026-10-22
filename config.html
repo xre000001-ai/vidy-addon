@@ -491,7 +491,6 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     ['mm','MM','linear-gradient(135deg,#23172b,#181020)','#d3a3f0','Multimovies','MM-HLS','', 'Bengali/English · fast HLS',1],
     ['m4u','M4U','linear-gradient(135deg,#252012,#19150c)','#e8d48a','Movies4u','MKV · 4K · HDR','', 'HDR10+/DV · Atmos · direct MKV',1],
     ['sky','SM','linear-gradient(135deg,#0f2436,#0a1826)','#7fd4ff','Sky Movies','SMHD','', 'SkymoviesHD · GDFlix/HubCloud · direct MKV',1],
-    ['bf','BF','linear-gradient(135deg,#2b161d,#1c0e13)','#ff9eb5','BollyFlix','GDFlix · R2','new','Multi-audio · 4K/1080p · direct MKV · auto domain',1],
     ['vsp','VS','linear-gradient(135deg,#1b2337,#121826)','#a9b8e8','Vidsrc','HLS · Eng','', 'Own relay pool · wide catalog',1],
     ['ott','AT','linear-gradient(135deg,#102a26,#0b1d1a)','#7fe0cc','AsianTV','HLS · K/C/J/Thai','', 'Dramas & movies · embedded subs',1],
     ['az','AZ','linear-gradient(135deg,#221a33,#171122)','#c9b8ff','AniZone','HLS · Anime','new','Anime series & movies · multi-language subs',1]
@@ -874,8 +873,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     o=tuneCard('tune-sky','sky','Sky Movies','SkymoviesHD · GDFlix/HubCloud · direct MKV · auto domain');h.appendChild(o.card);
     chipsInto(o.zone,'Resolutions',st.skyq,RES,rebuild,'',1);
     chipsInto(o.zone,'Audio languages',st.skyl,LANGS,rebuild);
-    /* BollyFlix */
-    o=tuneCard('tune-bf','bf','BollyFlix','GDFlix/R2 · Multi-audio · direct MKV · auto domain');h.appendChild(o.card);
+    /* BollyFlix — v1.17.44: সোর্স বাদ (zip+relay ⇒ seek/play সমস্যা) */
     chipsInto(o.zone,'Resolutions',st.bfq,RES,rebuild,'',1);
     chipsInto(o.zone,'Audio languages',st.bfl,LANGS,rebuild);
     /* v1.17.9: আলাদা ⚡(libmpv) কার্ড বন্ধ — প্রতি কোয়ালিটিতে একটাই সরাসরি কার্ড।
@@ -942,7 +940,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     $('pvPq').textContent=st.skyq.length?('≤'+Math.max.apply(null,st.skyq)+'p'):'All'; /* v1.15.81: m4ur-লিক-বন্ধ */
     $('pvB').style.display=st.bf?'':'none';
     $('pvBh').textContent='\u25a5 '+(st.bfq.length?Math.max.apply(null,st.bfq):(st.bfr||2160))+' \u25a5';
-    $('pvBt').textContent='\u29c9 Sikandar | 2025 |\n\u29e0 Movie\n\u229e BollyFlix \u2317 '+(st.bfl.length?cap1(st.bfl):'Hindi / Multi-Audio');
+    $('pvBt').textContent='\u29c9 Sikandar | 2025 |\n\u29e0 Movie\n\u229e Movies4u \u2317 '+(st.m4ul.length?cap1(st.m4ul):'Hindi / Dual-Audio'); // v1.17.44: BF-প্রিভিউ → Movies4u
     $('pvBq').textContent=st.bfq.length?('≤'+Math.max.apply(null,st.bfq)+'p'):(st.bfr?('cap '+st.bfr+'p'):'All');
   }
 
