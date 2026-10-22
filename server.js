@@ -10,7 +10,10 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.17.40'; // v1.17.40: **m4u/sky/bf — সব-স্ট্রিম, ৪–৫সে-র-ভিতরে** (ইউজার: "m4u, sky, bf 4-5s e sob
+const VERSION = '1.17.41'; // v1.17.41: প্রক্সি-রেসে **সীমা (একসাথে ৪)** — 1.17.40-এর হোস্ট-ভিত্তিক প্রক্সি-পথ
+//   প্রোডে (যেখানে বেশি হোস্ট ব্লক) প্রতিটি-হপে ৩টি CONNECT-টানেল খুলছিল ⇒ RAM/CPU-স্পাইক আশঙ্কা।
+//   এখন সীমা পেরোলে শুধু সরাসরি-ফল-ই ফেরে (কার্ড কমে না, শুধু IP-বাইপাস-চেষ্টা কমে)। বাকি সব 1.17.40-এর মতো।
+const V1NOTE_40 = ''; // v1.17.40: **m4u/sky/bf — সব-স্ট্রিম, ৪–৫সে-র-ভিতরে** (ইউজার: "m4u, sky, bf 4-5s e sob
 //   stream ase ni dekho, sobai IP flag bypass er jonno condition passed proxy use kore ni"):
 //   মাপা (লোকাল, ৮ টাইটেল): bf ০.৯–৩.৬সে · mm ০.১–৪.৫সে · m4u ২.৪–৪.৩সে · **sky ৪.৮–৭.৭সে ⇒ সবসময় কাটা**।
 //   (১) **sky-এর ২টি সিরিয়াল-অপেক্ষা সমান্তরাল**: workers.dev-ফলব্যাক আগে pd-লুপের পরে `await` হতো
@@ -3468,6 +3471,7 @@ async function azStreams(tmdbId, type, s, e, azq) { // সার্চ→সি�
 const M4U_BASE = 'https://new2.movies4u.garden';
 // ★ v1.17.40: **বেঞ্চ-পাস-প্রক্সি আগে** — যে-হোস্টগুলো আমাদের-IP-এ-ব্লক (৪০৩/CF/খালি-বডি)
 //   সেগুলো HOST_PX-এ মনে থাকে ⇒ পরের-হপে সরাসরি-চেষ্টা-নষ্ট-হয়-না। প্রক্সি না-থাকলে/ব্যর্থ-হলে সরাসরি।
+let PXRACE_N = 0; const PXRACE_MAX = 4; // একসাথে-সর্বোচ্চ-৪টি প্রক্সি-রেস
 const HOST_PX = new Map(); // host → ts (সরাসরি-ব্লক-প্রমাণিত, ৩০-মিনিট)
 const HOST_D = new Map();  // host → ts (সরাসরি-ঠিক-প্রমাণিত)
 const _hst = u => { try { return new URL(u).hostname; } catch { return ''; } };
@@ -3480,7 +3484,8 @@ async function m4uTextQ(u, ref, tmo) { // ছোট-টেক্সট-GET (r171
   if (!pxFirst) txt = await m4uTextD(u, ref, budget);
   if (txt && txt.length > 80) { HOST_D.set(host, now); return txt; }
   const left = budget - (Date.now() - dT);
-  if (left > 1200) {
+  if (left > 1200 && PXRACE_N < PXRACE_MAX) { // v1.17.41: একসাথে-অনেক-প্রক্সি-রেস = RAM/CPU-স্পাইক (প্রোডে-ব্লক-বেশি)
+    PXRACE_N++;
     try {
       const r = await racePool(u, 3, Math.min(left, 6000));
       if (r && r.body && r.body.length > 80) {
@@ -3490,6 +3495,7 @@ async function m4uTextQ(u, ref, tmo) { // ছোট-টেক্সট-GET (r171
         return r.body;
       }
     } catch { }
+    finally { PXRACE_N--; }
   }
   if (pxFirst) { const t2 = await m4uTextD(u, ref, Math.max(1200, budget - (Date.now() - dT))); if (t2) return t2; }
   if (!txt) { /* সরাসরি-ব্লক */ HOST_PX.set(host, Date.now() + 30 * 60 * 1000); }
@@ -4741,11 +4747,12 @@ async function bfText(url, ref, timeoutMs = 4500) {
   // ★ v1.17.40: যে-হোস্ট একবার সরাসরি-ব্লক-প্রমাণিত (৪০৩/CF) ⇒ পরের-বার **বেঞ্চ-পাস-প্রক্সি আগে**
   //   (আগে প্রতি-হপে ব্যর্থ-সরাসরি-চেষ্টা করে tmo পর্যন্ত সময় নষ্ট হতো — প্রোডে bf-এর বড়-খরচ)
   const _h0 = _hst(url), _now = Date.now();
-  if ((HOST_PX.get(_h0) || 0) > _now) {
+  if ((HOST_PX.get(_h0) || 0) > _now && PXRACE_N < PXRACE_MAX) {
+    PXRACE_N++;
     try {
       const r0 = await racePool(url, 3, Math.min(tmo, 6000));
       if (r0 && r0.body && r0.body.length > 80) { bfCachePut(BF_POST_CACHE, url, { txt: r0.body }, 300); return r0.body; }
-    } catch { }
+    } catch { } finally { PXRACE_N--; }
   }
   try {
     const r = await fetch(url, {
