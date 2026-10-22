@@ -6127,8 +6127,8 @@ async function bfStreams(tmdbId, title, type, s, e, origin, maxh, imdbHint = '',
       else if (gdIsRaw) finalUrl = gdDirect;            // Google-CDN / raw ⇒ সরাসরি (libmpv-তে সিক)
       else {
         // ★ v1.17.8: zip-ই একমাত্র থাকলে আগে FastCloud (সিঙ্গেল-এপি সরাসরি GU) উদ্ধার করি;
-        //   না পেলেই কেবল ডি-ফ্রেম রিলে (শেষ উপায়)।
-        const guR = await bfGuForFid(fid, Math.min(3400, lS() - 150));
+        //   না পেলেই কেবল ডি-ফ্রেম রিলে (শেষ উপায়)। ⏱ সময় কম থাকলে উদ্ধার বাদ (খালি লিস্ট নয়)।
+        const guR = lS() > 2600 ? await bfGuForFid(fid, Math.min(2400, lS() - 1800)) : '';
         if (DBG) console.error('[bfgu] ' + fid + ' rescue=' + (guR ? 'OK ' + guR.slice(-14) : 'none'));
         finalUrl = guR || (pubBase + '/bfz/' + Buffer.from(su).toString('base64url') + '/' +
           (/\.mp4(?:\.zip)?(?:\?|$)/i.test(su) ? 'v.mp4' : 'v.mkv'));
@@ -6139,9 +6139,13 @@ async function bfStreams(tmdbId, title, type, s, e, origin, maxh, imdbHint = '',
     if (failedList.length && got.length < 4) {
       failedList.sort((a, b) => b.fh - a.fh);
       let added = 0;
-      for (const it of failedList) {
+      const guFAll = (lS() > 2600)
+        ? await Promise.all(failedList.slice(0, 3).map(it => bfGuForFid(it.fid, 1400).catch(() => '')))
+        : failedList.slice(0, 3).map(() => '');
+      for (let fi = 0; fi < failedList.length; fi++) {
+        const it = failedList[fi];
         if (added >= 2) break;
-        const guF = lS() > 1400 ? await bfGuForFid(it.fid, Math.min(2400, lS() - 150)) : '';
+        const guF = guFAll[fi] || '';
         if (guF) { got.push({ h: it.fh, url: guF, spec: it.gd.ttl, aud: it.aud.label, _lang: it.aud.langKey }); added++; continue; }
         const lazyUrl = pubBase + '/bfz/fid/' + it.fid + '/' + (/\.mp4/i.test(it.gd.ttl || '') ? 'v.mp4' : 'v.mkv');
         if (seenUrl.has(lazyUrl)) continue;
@@ -6152,15 +6156,20 @@ async function bfStreams(tmdbId, title, type, s, e, origin, maxh, imdbHint = '',
     }
     if (pendingList.length) {
       pendingList.sort((a, b) => b.fh - a.fh);
+      // ★ v1.17.8: সব FastCloud-উদ্ধার **সমান্তরালে** (আগে লুপে একটার পর একটা ⇒ বাজেট শেষ ⇒ ০ কার্ড)
+      const guAll = (lS() > 2800)
+        ? await Promise.all(pendingList.map(it => bfGuForFid(it.fid, Math.min(1800, Math.max(900, lS() - 1600))).catch(() => '')))
+        : pendingList.map(() => '');
       for (let pi = 0; pi < pendingList.length; pi++) {
         const item = pendingList[pi];
+        const guPre = guAll[pi] || '';
         bfCachePut(BF_PENDING_CLOUD, item.fid, { pendingCloud: item.gd.pendingCloud, ttl: item.gd.ttl }, 300);
         // v1.17.0: সব pending-এর cloud-gen ব্যাকগ্রাউন্ডে চালু (আগে শুধু প্রথমটা) — ক্লিকের সময় লিংক ready থাকে
         bfStartCloudGen(item.fid, item.gd.pendingCloud, item.gd.ttl).catch(() => null);
         if (got.filter(g => g.h === item.fh).length < 1) {
           // ★ v1.17.8: pending সারিতেও আগে FastCloud (সিঙ্গেল-এপি সরাসরি GU) খুঁজি —
           //   পেলে লেজি-কার্ড নয়, **সরাসরি** কার্ডই বসে।
-          const guR = lS() > 1400 ? await bfGuForFid(item.fid, Math.min(2600, lS() - 150)) : '';
+          const guR = guPre;
           if (DBG) console.error('[bfgu-pending] ' + item.fid + ' rescue=' + (guR ? 'OK' : 'none'));
           if (guR) {
             got.push({ h: item.fh, url: guR, spec: item.gd.ttl, aud: item.aud.label, _lang: item.aud.langKey });
