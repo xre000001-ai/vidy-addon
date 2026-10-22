@@ -48,6 +48,20 @@ function agentFor(u) {
 
 function inflight(u) { return INFLIGHT.get(u) || 0; }
 
+// ★ v1.17.36 (ইউজার: "ekadik eksathe korle subida hoto na"): **সীমিত-সমান্তরালতা**।
+//   আগে বুটে এক ঢেউয়ে ১৮০টি প্রক্সি একসাথে (প্রতিটি probe + ২টি token/search ডাক) ⇒ ~৩৬০
+//   কনকারেন্ট রিকোয়েস্ট, প্ল্যাটফর্ম+exit-গুলো একসাথে চাপে পড়ে দ্রুত blind/403 হয়ে যেত,
+//   আর বেঞ্চও তত দ্রুত গরম হতো না। এখন worker-পুল: `NX_CONC` (ডিফল্ট ২০)।
+const CONC = Math.max(4, Number(process.env.NX_CONC || 0) || 20);
+let HITS = 0;                                   // API-রিকোয়েস্ট-গণনা (লগে প্রমাণ)
+async function runLimited(items, fn, limit = CONC) {
+  let i = 0;
+  const workers = new Array(Math.min(limit, items.length || 1)).fill(0).map(async () => {
+    while (i < items.length) { const k = i++; await fn(items[k], k); }
+  });
+  await Promise.all(workers);
+}
+
 const LASTOK = new Map();         // r-20261016k (রেজলভার-মানদণ্ড): url → শেষ-প্রমাণ-কখন (চেকার-ঢেউ বা লাইভ-ট্রাফিক)
 function noteGood(u, ms) {
   const s = STATS.get(u) || { ok: 0, fail: 0, lat: null };
@@ -228,6 +242,7 @@ export async function fetchJsonRotating(url, headers, opts = {}) {
 
 async function probe(u) {
   const t0 = Date.now();
+  HITS++;
   try {
     const r = await undiciFetch(
       SITE + '/wefeed-h5api-bff/subject/search-suggest',
@@ -301,17 +316,39 @@ export async function poolOnce(force = false) {
     // own and joins the bench THE SECOND it verifies (the cold window
     // shrinks from ~35s to ~5s); waves of 60 stop early at 28 exits.
     const tested = [];
-    for (let w = 0; w < sample.length && POOL.length < BOOT_TARGET; w += 60) {
-      const wave = sample.slice(w, w + 180); // v2.10.4 (ইউজার): সমান্তরাল-ট্রিপল ৬০→১৮০
-      const r = await Promise.all(wave.map(async (u) => {
+    // ★ v1.17.36: **বীজ-আগে** — seeded (আমাদের-প্রমাণিত) exit-গুলো সরাসরি token-যাচাই দিয়ে
+    //   শুরু (probe বাদ — এক ধাপ কম), দ্রুততম আগে; তারপরই কেবল পাবলিক-স্ক্র্যাপের প্রার্থীরা।
+    //   পুরোটা `runLimited`-এ ⇒ একসাথে সর্বোচ্চ CONC (২০) ডাক।
+    const seedList = seeded ? sample : [];
+    const scrapeList = seeded ? [] : sample;
+    const verifyOne = async (u, fast) => {
+      if (fast) {                                   // বীজ: token-যাচাই-ই যথেষ্ট (probe বাদ)
+        const t0 = Date.now();
+        if (!(await searchVerify(u))) return null;
+        noteGood(u, Date.now() - t0);
+      } else {
         const p0 = await probe(u);
         if (!p0) return null;
         if (!(await searchVerify(u))) return null;
-        noteGood(u, p0[0]);        // seed EWMA with the PROBE round-trip (NX_POOL_FILE exits keep their own live-trained stats)
-        if (!POOL.includes(u) && POOL.length < BENCH_MAX) POOL.push(u);
-        return [p0[0], u];
-      }));
-      tested.push(...r.filter(Boolean));
+        noteGood(u, p0[0]);
+      }
+      if (!POOL.includes(u) && POOL.length < BENCH_MAX) POOL.push(u);
+      return [((STATS.get(u) || {}).lat) || 1200, u];
+    };
+    // ★ v1.17.36: বীজ-যাচাইয়ের **সময়-বাজেট** (ডিফল্ট ২৫সে) — নাহলে মৃত-বীজের লেজ (১৪০-এর
+    //   মধ্যে বেঞ্চে ওঠে ২৭) পুরো পাসকে ~৯০সে ধরে রাখত, আর ওই সময়ে চেকার-ঢেউ (FETCHING-গার্ড)
+    //   একটাও চলত না ⇒ বেঞ্চ যাচাই-হীন হয়ে পড়ে থাকত। বাকিগুলো পরের চেকার-ঢেউয়ে ধীরে যাচাই হয়।
+    const SEED_BUDGET = Math.max(8000, Number(process.env.NX_SEED_BUDGET || 0) || 25000);
+    const tBoot = Date.now();
+    for (const list of [seedList, scrapeList]) {
+      if (!list.length) continue;
+      await runLimited(list, async (u) => {
+        if (POOL.length >= BOOT_TARGET) return;
+        if (list === seedList && Date.now() - tBoot > SEED_BUDGET) return;   // লেজ-কাটা
+        const r = await verifyOne(u, list === seedList);
+        if (r) tested.push(r);
+      });
+      if (POOL.length >= BOOT_TARGET) break;
     }
     tested.sort((a, b) => a[0] - b[0]);
     const verified = tested;
@@ -355,17 +392,25 @@ async function checkerWave() {
   const now = Date.now();
   // r-20261016m2 (সংশোধন — আগের-হিসাব-ভুল-ছিল): ঢেউ=সম্পূর্ণ-ব্যবহারযোগ্য-পুল (প্রতি-ঢেউয়ে-সবাই-স্ক্যান) +
   // gap ৮→৫সে + প্রোব-টাইমআউট ৬→৫সে → চক্র ~৮-১১সে → পুল-৫০-৬৪-এ ~৫০০-৮০০ স্ক্যান/১.৫মিন (ইউজার-লক্ষ্য ৭০০)
+  // ★ v1.17.36 (ইউজার: "ekadik eksathe korle subida hoto na"): আগে **প্রতি ঢেউয়ে পুরো বেঞ্চ**
+  //   (১৬০ × probe+২ ডাক = ~৪৮০ রিকোয়েস্ট) প্রতি ~১০ সেকেন্ডে ⇒ প্ল্যাটফর্ম-চাপ, exit-গুলো
+  //   blind/403 হয়ে বেঞ্চ-দুলুনি। এখন: ঢেউ-প্রতি **স্লাইস** (বেঞ্চের ১/৬, সর্বনিম্ন ১৬, সর্বোচ্চ ৩২),
+  //   সবচেয়ে-পুরনো-প্রমাণ আগে, প্রতি-exit-গ্যাপ ≥ `NX_VERIFY_GAP` (ডিফল্ট ৬০সে) + সীমিত-সমান্তরালতা।
+  const GAP = Math.max(20000, Number(process.env.NX_VERIFY_GAP || 0) || 60000);
+  const sliceN = Math.max(16, Math.min(32, Math.ceil(POOL.length / 6)));
   const wave = POOL.filter(u => { const b = BAD.get(u); return !b || b <= now; })
-    .sort((a, b) => (LASTOK.get(a) || 0) - (LASTOK.get(b) || 0));
+    .filter(u => now - (LASTOK.get(u) || 0) >= GAP)
+    .sort((a, b) => (LASTOK.get(a) || 0) - (LASTOK.get(b) || 0))
+    .slice(0, sliceN);
   if (!wave.length) return;
   CHK++;
   let cok = 0, cblind = 0, cdead = 0;
-  await Promise.all(wave.map(async (u) => {
+  await runLimited(wave, async (u) => {
     const p0 = await probe(u);
     if (!p0) { noteFail(u, 'dead'); cdead++; return; }        // প্রোব-ই-মরা → প্রমাণ-নেই
     if (!(await searchVerify(u))) { noteFail(u, 'block'); cblind++; return; } // জীবিত-কিন্তু-MB-অন্ধ → ৫মিন-বহিষ্কার (কঠোর-অক্ষত)
     noteGood(u, p0[0]); cok++;                                // পূর্ণ-প্রমাণিত → LASTOK-তাজা
-  }));
+  });
   const t2 = Date.now();
   let cut = 0;
   for (let i = POOL.length - 1; i >= 0 && POOL.length > 12; i--) { // r-20261016k: ফ্লোর ৮→১২ (বেঞ্চ-সর্বদা-মোটা)
@@ -375,7 +420,7 @@ async function checkerWave() {
   // কাটা-মেম্বার-পরের-রিফিল-পাসে-আবার-পূর্ণ-যাচাই-দিয়ে-ফিরতে-পারে (রেজলভার-গ্রোয়ার-সমতুল্য দ্বিতীয়-সুযোগ)
   const usable = POOL.filter(u => { const b = BAD.get(u); return !b || b <= Date.now(); }).length;
   if ((usable < BENCH_MAX && Date.now() - TS > 45000) || POOL.length < 20) poolOnce().catch(() => {}); // r-20261016m: ফসল-গেট ৯০→৪৫সে (ম্যাক্স-দিকে-দ্রুত), ফ্লোর ১২→২০
-  if (cut || CHK % 15 === 1) console.log(`[mbchk] wave=${wave.length} ok=${cok} blind=${cblind} dead=${cdead} bench=${POOL.length} cut=${cut}`);
+  if (cut || CHK % 15 === 1) console.log(`[mbchk] wave=${wave.length} ok=${cok} blind=${cblind} dead=${cdead} bench=${POOL.length} cut=${cut} hits=${HITS}`);
   benchSave();
   } finally { chkBusy = false; }
 }
@@ -425,6 +470,7 @@ export function poolStart() {
 export function poolStats() {
   const now = Date.now();
   return {
+    hits: HITS, conc: CONC,
     size: POOL.length,
     healthy: POOL.filter(u => !(BAD.get(u) > now)).length,
     inflight: [...INFLIGHT.entries()].filter(([, n]) => n > 0)

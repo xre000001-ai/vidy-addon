@@ -354,7 +354,7 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=86400', 'Access-Control-Allow-Origin': '*' });
       return res.end(LOGO_BUF);
     }
-    if (u.pathname === '/health') return send(res, 200, { ok: true, version: VERSION, mode: 'direct-mp4', pool: poolStats().healthy, waves: checkerStats().waves, size: poolStats().size }); // waves=মোট-স্ক্যান-ঢেউ (সব-মান-এক্সপোর্টেড-হেল্পার-থেকে)
+    if (u.pathname === '/health') return send(res, 200, { ok: true, version: VERSION, mode: 'direct-mp4', pool: poolStats().healthy, waves: checkerStats().waves, size: poolStats().size, hits: poolStats().hits, conc: poolStats().conc }); // v1.17.36: hits=মোট-API-ডাক (দক্ষতা-প্রমাণ) // waves=মোট-স্ক্যান-ঢেউ (সব-মান-এক্সপোর্টেড-হেল্পার-থেকে)
     if (u.pathname === '/debug/ring') return send(res, 200, RING.slice(-50)); // v2.10.2 রিজলভ-ধাপ-প্রমাণ
     if (u.pathname === '/debug/pool') {
       if (u.searchParams.get('k') !== 'nethex-dbg-7f3a') return send(res, 404, { error: 'not found' });
