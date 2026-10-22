@@ -878,8 +878,8 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     o=tuneCard('tune-bf','bf','BollyFlix','GDFlix/R2 · Multi-audio · direct MKV · auto domain');h.appendChild(o.card);
     chipsInto(o.zone,'Resolutions',st.bfq,RES,rebuild,'',1);
     chipsInto(o.zone,'Audio languages',st.bfl,LANGS,rebuild);
-    /* v1.17.2: ExoPlayer-এ সিক না চললে অ্যাপ নিজে থেকেই libmpv-তে ফলব্যাক করুক */
-    singleInto(o.zone,'ExoPlayer → libmpv fallback','bfexo',[[1,'Auto'],[0,'Off']],rebuild);
+    /* v1.17.9: আলাদা ⚡(libmpv) কার্ড বন্ধ — প্রতি কোয়ালিটিতে একটাই সরাসরি কার্ড।
+       টগলটা রাখা হলো শুধু পুরোনো কনফিগ-লিংক ভাঙা না লাগার জন্য (এখন কোনো প্রভাব নেই)। */
     /* Vidsrc */
     o=tuneCard('tune-vsp','vsp','Vidsrc','Own relay pool · wide catalog');h.appendChild(o.card);
     chipsInto(o.zone,'Resolutions',st.vspq,RES,rebuild,'',1);
