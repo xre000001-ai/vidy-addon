@@ -248,7 +248,7 @@ async function probe(u) {
       SITE + '/wefeed-h5api-bff/subject/search-suggest',
       { method: 'POST', body: JSON.stringify({ keyword: 'a', perPage: 1 }),
         headers: { 'Content-Type': 'application/json', 'User-Agent': UA },
-        dispatcher: agentFor(u), signal: AbortSignal.timeout(5000) }); // r-20261016m2: ৬→৫সে (মৃত-দ্রুত-ছেঁটা — ঢেউ-চক্র-ছোট)
+        dispatcher: agentFor(u), signal: AbortSignal.timeout(3500) }); // v1.17.38: ৫→৩.৫সে (মৃত-দ্রুত-ছেঁটা ⇒ প্রতি-মিনিটে বেশি প্রার্থী)
     return r.status < 400 ? [Date.now() - t0, u] : null;
   } catch { return null; }
 }
@@ -266,7 +266,7 @@ async function searchVerify(u) {
       { method: 'POST', body: JSON.stringify({ keyword: 'a', perPage: 1 }),
         headers: { 'Content-Type': 'application/json', 'User-Agent': UA,
                    'X-Client-Token': ct },
-        dispatcher: agentFor(u), signal: AbortSignal.timeout(6000) });
+        dispatcher: agentFor(u), signal: AbortSignal.timeout(4000) }); // v1.17.38: ৬→৪সে
     const xu = r0.headers.get('x-user') || '';
     const tok = (JSON.parse(xu || '{}').token) || '';
     if (!tok) return false;
@@ -280,7 +280,7 @@ async function searchVerify(u) {
                    Referer: SITE + '/', Accept: 'application/json',
                    'X-Client-Info': '{"timezone":"Africa/Lagos"}',
                    'X-Request-Lang': 'en', 'X-Source': 'h5' },
-        dispatcher: agentFor(u), signal: AbortSignal.timeout(7000) });
+        dispatcher: agentFor(u), signal: AbortSignal.timeout(5000) }); // v1.17.38: ৭→৫সে
     const j = await r1.json().catch(() => null);
     return ((j?.data?.items || []).length) >= 1;
   } catch { return false; }
@@ -301,17 +301,21 @@ export async function poolOnce(force = false) {
     }
   } catch (e) { console.error('[pool] pool-file read failed:', String(e).slice(0, 60)); seeded = null; }
   try {
-    let cand;
-    if (seeded) {
-      cand = seeded.map(x => x.u);
-    } else {
+    // ★ v1.17.38: **বীজ-file থাকলেও আর স্ক্র্যাপ বন্ধ নয়** — আগে seeded হলে `cand` কেবল বীজ-তালিকা
+    //   হতো, ফলে পুরোনো-মৃত-বীজেই চক্র চলত (প্রমাণ: প্রোডে বেঞ্চ ৮-এ আটকে)। এখন বীজ আগে,
+    //   তারপর নতুন পাবলিক-লিস্ট (যদি বেঞ্চ এখনো BOOT_TARGET-এ না পৌঁছায়)।
+    const seedCand = seeded ? seeded.map(x => x.u) : [];
+    if (seedCand.length) { const byU = new Map(seeded.map(x => [x.u, x.ms])); seedCand.sort((a, b) => (byU.get(a) || 9999) - (byU.get(b) || 9999)); }
+    const sample = seedCand.slice(0, SAMPLE);
+    let freshCand = [];
+    if (POOL.length < BOOT_TARGET) {
       const txts = await Promise.all(SRCS.map(u => undiciFetch(u, { signal: AbortSignal.timeout(20000) }).then(r => r.text()).catch(() => '')));
-      cand = [...new Set(txts.join('\n').split('\n').map(s => s.trim())
-        .filter(u => u.startsWith('http://')))];
-      cand.sort(() => Math.random() - 0.5);
+      freshCand = [...new Set(txts.join('\n').split('\n').map(x => x.trim()).filter(u => u.startsWith('http://')))];
+      const have = new Set(seedCand);
+      freshCand = freshCand.filter(u => !have.has(u));
+      freshCand.sort(() => Math.random() - 0.5);
+      freshCand = freshCand.slice(0, Math.max(60, Number(process.env.NX_FRESH_SAMPLE || 0) || 150));
     }
-    if (seeded) { const byU = new Map(seeded.map(x => [x.u, x.ms])); cand.sort((a, b) => (byU.get(a) || 9999) - (byU.get(b) || 9999)); }
-    const sample = cand.slice(0, SAMPLE);
     // v2.7 STREAMING BOOT: every candidate runs probe->verify on its
     // own and joins the bench THE SECOND it verifies (the cold window
     // shrinks from ~35s to ~5s); waves of 60 stop early at 28 exits.
@@ -319,8 +323,8 @@ export async function poolOnce(force = false) {
     // ★ v1.17.36: **বীজ-আগে** — seeded (আমাদের-প্রমাণিত) exit-গুলো সরাসরি token-যাচাই দিয়ে
     //   শুরু (probe বাদ — এক ধাপ কম), দ্রুততম আগে; তারপরই কেবল পাবলিক-স্ক্র্যাপের প্রার্থীরা।
     //   পুরোটা `runLimited`-এ ⇒ একসাথে সর্বোচ্চ CONC (২০) ডাক।
-    const seedList = seeded ? sample : [];
-    const scrapeList = seeded ? [] : sample;
+    const seedList = sample;
+    const scrapeList = freshCand;
     const verifyOne = async (u, fast) => {
       if (fast) {                                   // বীজ: token-যাচাই-ই যথেষ্ট (probe বাদ)
         const t0 = Date.now();
