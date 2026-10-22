@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.17.25'; // v1.17.10: **BollyFlix কার্ড আবার রিলে-ফর্মে — ExoPlayer খুলবে, libmpv সিক করবে** (ইউজার: "app e gie deklam play hoi, but ekhon direct libmpv teh play hocche, seek o hocche na, exo player e play e hoi na … Age toh exo teh open hoto, cholto seek hoto na, libmpv e o choltoh, seek o hotoh. .70 er ager version gulo dekho")। **নিদান**: ১.১৭.৪–১.১৭.৯-এ কার্ড ছিল কাঁচা `video-downloads.googleusercontent.com/ADG…` (GU) লিংক — Google-CDN `Range` মানে না (২০০ পুরো ফাইল), তাই ExoPlayer (ProgressiveMediaPeriod) ইনিশিয়ালাইজই করতে পারে না, আর libmpv চালালেও সিক করতে গেলে ০ থেকে পড়তে হয় ⇒ ইউজারের রিপোর্ট হুবহু মিলে যায়। ১.১৭.০ যুগে ভালো চলত **কারণ কার্ড ছিল আমাদের `/bfz/` ডি-ফ্রেম রিলে** (আসল MKV, `206`+`content-range`+`SeekHead/Cues` অক্ষত)। তাই ফেরত আনলাম: (ক) `.mkv.zip` সোর্স ⇒ `/bfz/` ডি-ফ্রেম (O(1) সিক, সেরা), (খ) raw worker (`.mkv?bytes=` বা bare) ⇒ `/bfz/` পাস-থ্রু Range-প্রক্সি, (গ) শুধু GU ছাড়া কিছু না থাকলে ⇒ **লেজি-কার্ড** `/bfz/fid/<fid>/v.mkv` (ক্লিকে ফ্রেশ রিজলভ, zip পেলে ডি-ফ্রেম, নইলে GU আমাদের সার্ভার দিয়ে—কার্ডে কখনোই কাঁচা GU বসে না)। পাশাপাশি দুটি নতুন বাগ সারানো: (১) `bfServeZip`-এ `?bytes=` নেই এমন raw worker-এ `no-raw-size` ৫০২ ⇒ এখন `bfServeGeneric`-এ যায়; (২) আপস্ট্রিম ৪২৯/৫০৩ ব্লিপে একবার রিট্রাই (৩০০ms)। **যাচাই (লোকাল ১.১৭.১০, My Demon)**: E05 / E16 / E14 / E12 = Exo-UA-তে **২০০ + video/x-matroska**, মাঝ-ফাইল `Range` → **২০৬ + সঠিক content-range**, ১৬/১৬ কার্ড; E16-এর একটিমাত্র ৫০২ ছিল আপস্ট্রিম ব্লিপ, রিট্রাইয়ের পর সব ঠিক। selftest ✓, config.test.js সব-সবুজ, test.js ২০/৪৩ (বেসলাইন)। // v1.17.3: **★ EXO-PLAYER সিক-ফিক্স (BollyFlix)** — ইউজার: "Bollyflix — My Demon is seekable in libmpv but not in Exo. Why? If no solution, make Exo exceed its capabilities so it falls back to libmpv. Keep your mind, test, and debug." (ক) **মূল বাগ ধরা পড়ল**: আমাদের নিজের রিলেই `bfPatchSeekHeadNoCues()` SeekHead-এর **SeekID বাইটস নষ্ট করে দিত** (Cues: 0x1c→0x6c, Tags: 0x12→0x68)। ExoPlayer-এর MatroskaExtractor (release-v2, লাইন 743-744) Cues-এর SeekID চিনেই না ⇒ `cuesContentPosition == INDEX_UNSET` ⇒ প্রথম Cluster-এ `extractorOutput.seekMap(new SeekMap.Unseekable(durationUs))` ⇒ ProgressiveMediaPeriod.seekToUs() → `positionUs = seekMap.isSeekable() ? positionUs : 0` ⇒ **প্রতিটা সিক 0:00-এ ফেরত** (libmpv/FFmpeg SeekHead-এর পয়েন্ট উপেক্ষা করে স্ক্যান করে Cues খুঁজে নেয় ⇒ তাই libmpv-তে ঠিক ছিল)। (খ) **ফাইলের SeekHead আসলে সঠিক** (prod worker ফাইল: Cues SeekPosition=1396336531, +segStart(52) = আসল Cues-এর অবস্থান) ⇒ এখন **SeekID আর নষ্ট করা হয় না**; নতুন `bfSeekFix()` হেড পার্স করে ১৬-বাইট প্রোবে Cues-এর অবস্থান যাচাই করে (সঠিক হলে হেড হাত দেওয়া হয় না = mode 'ok'); SeekPosition সত্যিই ভুল হলে (mode 'rewrite') টেল স্ক্যান করে আসল Cues খুঁজে SeekPosition-এর মান একই width-তে ঠিক করে দেয়। (গ) **"ExoPlayer-কে হারানো" নেট**: নতুন `/bfx/<b64>/v.mkv?x=1` রুট — ExoPlayer/Media3-এর চিহ্ন (UA-তে ExoPlayerLib অথবা `Accept-Encoding: identity`) ধরলে **415** দেয় ⇒ প্লেয়ার ইনিশিয়ালাইজ করতে পারে না ⇒ অ্যাপের "auto-switch engine on startup error" (Nuvio/Stremio, ডিফল্ট ON) নিজে থেকেই **libmpv-তে ফলব্যাক** করে (সেটিংসে টগল করা যায়: `cfg.bfexo=0`)। ডাইরেক্ট GU ফাইলে Range নেই ⇒ ExoPlayer-এ সিক কখনোই হবে না, libmpv-তে হয় — তাই ফলব্যাকই সঠিক। সুরক্ষা: পতাকা শুধু তখনই লাগে যখন **একই রেজোলিউশনে রিলে-বিকল্প কার্ড আছে** ⇒ ExoPlayer-এর জন্য সবসময় একটা চালু কার্ড থাকে। (ঘ) রিলে এখন raw worker (.mkv?bytes=N) ফাইলও ডি-ফ্রেম না করে সরাসরি Range-প্রক্সি করতে পারে। **প্রমাণ (prod worker ফাইল, 1,397,048,595 B)**: রিলে-হেডে Cues SeekID = **0x6b (অক্ষত)** ✔; ExoPlayer-এর seek-for-cues রিকোয়েস্ট (bytes 1396336583-) → **206 + `1c 53 bb 6b`** (আসল Cues) ✔; প্রথম CuePoint (CueTime=105, CueClusterPosition=24943 ⇒ abs 24995) → seek-টার্গেট রিকোয়েস্ট → **206 + `1f 43 b6 75`** (আসল Cluster) ✔ ⇒ **ExoPlayer-এ সিক চলবে**। // v1.17.1: **v1.17.0-এর কোল্ড-রিভিউ + মাস-টেস্ট** (ইউজার: "Revise die dekho balo kore, kono problem ase ni, cool mind e time nie khutie dekho, kono logic/typo/method bug ase kina. Kono kisu jate break na hoi. Mass test koro and debug.")। খুঁজে পাওয়া ৯টি বাগ ও সারানো: (১) **`bfResolveFdlToLoc`-এ প্রক্সি-ফলব্যাক unbounded** — ৩টি প্রক্সি × (open+req) ≈ **১৬s** স্টল করত, কলারের বাজেট উড়ে যেত ⇒ এখন **deadline-বাঁধা** (≤৫.২s)। (২) **GU-যাচাইয় ২.৮s ক্যাপ** একটা ভালো কার্ড ফেলে দিত ⇒ প্রাইমারি যাচাই **৩.৬s**। (৩) **`BF_FID_CACHE` ক্যাশ-পলিউশন** — ১১৬৮-অক্ষরের GU-লিংক '206:' কী হিসেবে জমা হড়ত, ফিড-এন্ট্রি বাদ যেত ⇒ এখন ৩০০+ অক্ষরের লিংক ক্যাশে যায় না। (৪) **pending+GU ফলাফল ক্যাশ হতো না** ⇒ প্রতি রিকোয়েস্টে busycdn বারবার হিট (403-এর ঝুঁকি) ⇒ এখন ক্যাশ হয় (GU মরলে zip-fallback ধরে)। (৫) **`bfStartCloudGen`-এ একাধিক pending একই IP-তে** (gdflix ১০ req/IP লিমিট) ⇒ প্রক্সি-তালিকা এখন **রোটেট** হয়। (৬) **`BF_GU_INFLIGHT` রেফ-কাউন্ট** — আগে শেষ ওয়েটার চলে গেলেই এন্ট্রি মুছে যেত ⇒ ডুপ্লিক busycdn হিট। (৭) **লেজি-রুটে অনির্দিষ্ট সময়** (ক্লাউড-জেন ~৪৪s) CF-১০০s ছাড়াতো পারে ⇒ এখন **৪৬s ক্যাপ + 503** (CF-৫০২ নয়)। (৮) **★ সবচেয়ে গুরুত্বপূর্ণ**: আমাদের সার্ভার-IP Google-র rate-limit-এ পড়লে যাচাই ব্যর্থ হয়, কিন্তু **প্লেয়ারের নিজস্ব IP-তে লিংক ঠিক থাকে** ⇒ লেজি-রুটে যাচাই ব্যর্থ হলে **কখনোই কার্ডকে হার্ড-এররে বদলাব না** (মূল লিংকই দেওয়া হয়)। (৯) `fallbackIsZip` আলাদা ফ্ল্যাগ (আগে সবসময় zip ধরা হতো) + zip-ব্রাঞ্চেও pending-তথ্য + লেজি-রুটে পুরনো GU (৮ মিনিট+) রিজলভ। মাস-টেস্ট: My Demon S01E01–E16 = **৫৩/৫৩ কার্ড প্লেবেবল** (সরাসরি GU + রিলে + লেজি), ৫টি সিনেমা = **২১/২১**, রিলে-সিক (মাঝ-ফাইল Range) = 206 + সঠিক `content-range`, config.test.js সব-সবুজ, test.js ২০/৪৩ (বেসলাইন), selftest ✓ // v1.17.0: **BollyFlix সরাসরি (direct) স্ট্রিম — relay আর লাগবে না** (ইউজার: "Ki kortaso, amader kase proxy pool toh asei rate limit bypass er jonno, ar direct stream diba, movie gula Dekho kibave play hoi bollyflix e, series e o toh single EP gulor gdflix link ase")। পরিষ্কার-পরিচয়: (১) **মিসডায়াগনোসিস** — GDFlix-এর cloud-ওয়ার্কার ফাইল **>২GB হলে raw `.mkv`** (সরাসরি, 206-ক্যাপেবল) আর **≤২GB হলে `.mkv.zip`** (zip!) দেয় — তাই সিরিজ-এপিসোড (<2GB) আগে `/bfz/` ডি-ফ্রেম রিলে-এ ফাঁকে যেত, আর Beamup-এর সামনে Range কেটে যাওয়ায়/403-এ খেলতাই হচ্ছিল না। (২) **আসল সমাধান — GDFlix "Instant DL" চেইন**: `/file/<fid>` → `instant.busycdn.xyz/<token>::<hash>?bytes=<size>` → 302 → `fastdl-one.pages.dev/?url=<GU>` → **`video-downloads.googleusercontent.com` = সরাসরি RAW MKV** (`ct: video/mkv`, magic `1a45dfa3`, content-length = আসল ফাইল সাইজ)। zip নেই ⇒ কার্ডে সরাসরি লেখা যায়, কোনো relay নেই। এখন ক্লাউড-পেজ আর এই চেইন **সমান্তরালে** ফেচ হয় (লেটেন্সি বাড়ে না): raw-worker > GU > zip-relay — GU যাচাই না হলে zip-relay-এ ফিরে যায় (ভাঙা কার্ড কখনো নয়)। (৩) **`bfVerify206` এখন 200+`video/mkv` (Google Range-এ মানে না) গ্রহণ করে**, magic দিয়ে যাচাই করে। (৪) **★ আসল ৫০২-র কারণ ধরা পড়ল**: gdflix-এর `POST action=cloud` আসলে **~৯ সেকেন্ড** লাগে, কিন্তু টাইম-আউট ছিল **৪.৫ সেকেন্ড** ⇒ ক্লাউড কখনোই জেনারেট হতো না ⇒ `/bfz/fid/<fid>/v.mkv` লেজি-কার্ড সবসময় **502** ⇒ "My Demon খেলে না"। এখন POST-টাইম-আউট ১৬s, পোল ৩s, আর তালিকা-বানানোর সময়ই **সব** pending-এর জেনারেশন ব্যাকগ্রাউন্ডে চলে ⇒ ক্লিকে লেজি-কার্ড এখন 206 `video/x-matroska` দেয় (হয়তো ২৮s প্রথমবার, পরে তাৎক্ষণিক) অথবা 302 → সরাসরি GU। (৫) **প্রক্সি-পুল ব্যবহার** — `dl.fastdlserver.site` সরাসরি 403 দিলে প্রক্সি-পুলে আবার চেষ্টা (`bfResolveFdlToLoc`) + busycdn-এর জন্যও প্রক্সি-ফলব্যাক (`bfGuFromInstant`)। (৬) `bfResolveGdflixOne`-এ ক্লাউড-পেজ + GU একসাথে, একই fid-এ একবারই busycdn হিট (`BF_GU_INFLIGHT`), ফাইল-পেজ বাজেট ৫৫%। // v1.16.3: (ক) **RareToons ডাব-নাম কার্ডে ঘোষণা** (ইউজার: "raretoons-এ দুই-ধরনের dub, Muse/Crunchyroll — ভাষার পাশে লিখে দাও") — `twrFetch`-এ `rtDubMap()`: পোস্ট-পাতার `<h4>↓ X DUB ↓</h4>` সেকশন-হেডিং + `WatchMultQuality`/`WatchNow` জিপার-লিংক → 302 `/multiquality/?url=<mq_fid>` → রেজলভার-কার্ডের `/hls/<b64>`-এর `mq_fid`-এর সাথে **exact-match**; পিক্সেলড্রেইন-ফাইলনামের `[Muse Dub]`ও পড়া হয়; কার্ডে `⌗ Hindi · Muse Dub`, bingeGroup-এ ডাব-পৃথক। সত্য-প্রমাণ: AoT S01E01 = `Hindi · Muse Dub` / `Hindi 2 · Anime Times Dub` (তৃতীয়টি unmapped → সৎভাবে কোনো ডাব-দাবি নেই)। সাইটে-বানান-দুটোই (`WatchMultQuality`/`WatchMultiQuality`) সমর্থিত। (খ) **কনফিগ-পেজ: Vidy আর কখনোই deselect-অবরোধ** (ইউজার: "I can't deselect vidy source at all") — পুরোনো `guardV` শুধু `nx` দেখত, তাই MovieBox বন্ধ থাকলেই Vidy বন্ধ করা যেত না; এখন সব উৎস স্বাধীনভাবে বন্ধ হয়, শুধু সব-বন্ধ হলে সতর্কতা-টোস্ট; `mobCnt`-এ খালি-তালিকা = ১৬ সার্ভার (আগে "0 servers armed")। (গ) **BollyFlix ভবিষ্যৎ-পোস্ট-স্বয়ংক্রিয়** — wp-json-ইনডেক্সে নতুন পোস্ট না থাকলে সাইটের `/search/<query>` HTML-ফলাফল ফলব্যাক (`bfPick` একই গেটে যাচাই করে)। // v1.16.2: BollyFlix সিরিজ ও মুভি স্ট্রিমিং পূর্ণ সংস্কার — (১) GDFlix `/cloud/<ts>/<fid>` এ `<2GB` এপিসোডের `.mkv.zip?bytes=<rawSize>` (stored DEFLATE Type-0 ৩২KB ব্লক) `O(1)` `/bfz/<b64>/v.mkv` ডি-ফ্রেমার দিয়ে সরাসরি `.mkv` হিসেবে স্ট্রিম; (২) অ-জেনারেটেড `<button id="cloud">` এ পটভূমিতে `POST action=cloud` + `xhr=1` পোলিং + `GET <redirect>` কমিট এবং `/bfz/fid/<fid>/v.mkv` লেজি-রিজলভার; (৩) `pixeldrain.dev` ও `/pack/<packId>` ও `linksmod.top` সমর্থন; (৪) `S01`/`S02` হেডিং, স্ট্যান্ডঅ্যালোন `S05` পোস্ট-টাইটেল, `Anime Series`/`NetFlix Series` ট্যাগ, `fxRows` ডাইভার্স নির্বাচন, অ্যানিমে কন্টিনিউয়াস এপিসোড (`S02E25`), এবং প্রতি-IP ১০-রিকোয়েস্ট/মিনিট স্লাইডিং রেট-লিমিট গার্ড; (৫) IMDb `/stream/` রুটে `findTmdbInfo` ব্যর্থ হলে `nmP` (`suggName`) ফলব্যাক। // v1.15.99: **rousav (`Greek`, `Spanish`, `German` ইত্যাদি) ও `callisto` বহু-ভাষা প্লেব্যাক সংস্কার** — ইউজার: "Hindi, English, Tamil, Telugu runs smoothly, but Greek, Spanish, German etc wasn't though it seems ok now. But check again and revise carefully"। সরাসরি পরিমাপে ৬টি নির্দিষ্ট ত্রুটি ধরা পড়েছে: (১) **Cloudflare `404 cf=HIT` ক্যাশ-পয়জনিং ও `Origin`-উদ্ধার**: `img.rousav.tech`-এ `Range: bytes=0-1023` দিয়ে `.m3u8` প্রোব করলে বা অরিজিন-গ্লিচে Cloudflare সেই `404` কে `cf=HIT (age=94693s)` হিসেবে ক্যাশ করে রাখে (`track_german.m3u8`, `track_spanish.m3u8`, `track_polish/portuguese/tamil/telugu/turkish.m3u8`, এবং `00000.png`); কিন্তু `Origin: https://vidbolt.xyz` (ও ব্যর্থ হলে `Origin: https://r1.vidbolt.xyz`) দিলে নতুন ক্যাশ-কী দিয়ে তাৎক্ষণিক `200 OK` পাওয়া যায়। (২) **প্রোব-কালে প্লেলিস্ট `MM_WC`-তে ক্যাশ না করা**: `/stream`-এ `mmTrkProbe` ও `mmVarProbe` ৭৫–১০০KB প্লেলিস্ট ডাউনলোড করেও ফেলে দিত, ফলে ইউজার কার্ডে চাপলে `/mm/` ও `/mma/`-তে আবার ১.৫–৪.৬ সেকেন্ড লাগত। (৩) **`/mm/`-এ অপ্রয়োজনীয় `vbest` + `mmVarProbe` অপেক্ষা**: `knownExtAud` হলে `/mm/` এখন ০-১ms-এ `mmMasterForm` রিটার্ন করে এবং পটভূমিতে ভিডিও+অডিও উভয় প্লেলিস্ট ও সেগমেন্ট প্রি-ওয়ার্ম করে (`MM_WC_INFLIGHT` ডিডুপসহ)। (৪) **rousav সেগমেন্টগুলো `/mmr/` লুকঅ্যাহেড প্রিফেচ ও রিলেতে যুক্ত করা (`#EXT-X-MAP` `init.mp4` সহ)**: যাতে ইউজার কখনোই ৪–১৬ সেকেন্ডের `cf=MISS` স্টল বা `00000.png` ৪০৪-এ না পড়েন। (৫) **ডুয়াল-স্ট্রিম (`mmMasterForm` ভিডিও+অডিও) লুকঅ্যাহেড সংঘর্ষ ও ছোট সেগমেন্ট ওয়াচডগ**: `bgInflight` ৬→১২ (যাতে অডিও প্রিফেচ ভিডিও প্রিফেচকে বাতিল না করে) এবং `kbps < 110` চেক শুধু `>600KB` সেগমেন্টে `headersAt` থেকে গণনা (যাতে ৪৫–৮৮KB অডিও সেগমেন্ট কখনোই ভুলবশত কিল না হয়)। (৬) **Vidbolt `callisto` (`dash-hls-bridge.johndoes*.workers.dev`) ৪২৯ ও `NAME="Audio"` বাগ**: ৪২৯ ওয়ার্কারগুলো সচল `johndoesdmc`-তে নরমালাইজ এবং `NAME="Audio"` থাকলে সোর্সের আসল ভাষা (`Arabic`, `Hindi`, `English` ইত্যাদি) বসানো। // v1.15.98: **MM প্লেব্যাক বাফারিং ও 'একটু পর পর ইন্টারনেট ছেড়ে দেয়' সমস্যার স্থায়ী সমাধান** — সরাসরি ও প্রড পরিমাপে ৩টি মূল কারণ ধরা পড়েছে: (ক) `contentpublishing.site`-এ প্রতি ~৮-১০ সেগমেন্টে একটি `cf=MISS` কানেকশন অরিজিন-থ্রটলিংয়ে (`২৩–৬৮ KB/s`, ৪৫–৬৯ সেকেন্ড!) আটকে যায় অথবা মাঝপথে (`got=37KB/1360KB`) সকেট বন্ধ করে দেয়; আগে `up.pipe(res)`-এ `'close'` হ্যান্ডলার বা Range-রিজিউম না থাকায় ক্লায়েন্টের সংযোগ ০ KB/s-এ ঝুলে থাকত। (খ) স্ট্রিমিং চলাকালীন প্রতি ৮–১৮ সেকেন্ডে পটভূমির `pxCheckerWave` (৮৪ সকেট) + `mmCheckerWave` (৮৪ সকেট) + `enrichPool` (১২০ সকেট + ৪টি প্রক্সি-তালিকা ডাউনলোড + `fs.writeFileSync`) কন্টেইনারের সিপিইউ ও নেটওয়ার্ক জ্যাম করত। (গ) প্লেয়ার সেগমেন্ট চাওয়ার পর ফেচ শুরু হওয়ায় অরিজিনের ধীরগতি সরাসরি ইউজারের ফোনে পৌঁছাত। সমাধান: (১) **ইন-মেমরি লুকঅ্যাহেড প্রিফেচ (`MMR_MEM`, পরবর্তী ৩টি সেগমেন্ট = ৩০ সেকেন্ড ভিডিও Beamup RAM-এ অগ্রীম লোড)** + **স্ট্যাগার্ড Cloudflare এজ-ওয়ার্মার (`mmWarmEdge`, পরবর্তী ৪..৬ সেগমেন্টে ১-বাইট `Range: bytes=0-0` পাঠিয়ে আগেভাগেই `cf=HIT` করা)** — পরীক্ষায় ২১/২১ সেগমেন্টের ১৯টিই প্লেয়ার চাওয়ার আগে ১০০% RAM-এ প্রস্তুত (`playerWait=0ms`, `cf=HIT` গতি `২৫–৭৫ MB/s`); (২) **স্মার্ট স্টল-রিজিউমিং পাম্প**: কোনো সেগমেন্টে ডেটা-গ্যাপ (`>2.4s`), ধীরগতি (`<110 KB/s`), বা অসম্পূর্ণ ক্লোজ (`received < total`) ঘটলে সাথে সাথে নতুন সকেটে `Range: bytes=${received}-` দিয়ে বাকি অংশ নিরবচ্ছিন্নভাবে জোড়া লাগানো; (৩) **অ্যাক্টিভ-স্ট্রিমিং গার্ড (`MMR_ACTIVE_UNTIL`)**: প্লেব্যাক চলাকালীন পটভূমির প্রক্সি-চেকার ও এনরিচ-ওয়েভ স্থগিত এবং অ্যাসিঙ্ক ফাইল-রাইট। // v1.15.93: (ক) **Movies4u আগের মতোই সরাসরি** — ইউজার: "Movies4u age jemon chilo direct temon e valo chilo, oita oi file er problem ager motoi kore daw"। v1.15.91/92-এর /m4h/ + /m4i/ (init-এ Cues) রাউটিং সরিয়ে মুভি ও সিরিজ দুই পথেই `url: x.url` ফিরিয়ে আনা হলো। /m4h/ ও /m4i/ এন্ডপয়েন্ট দুটো কোডে রয়ে গেছে (অব্যবহৃত) — ভবিষ্যতে প্রয়োজনে সক্রিয় করা যাবে। (খ) **কনফিগ-পেজ: ভাষা-ছাঁকনিতে দেশের-পতাকা ব্যাজ + ওপরে সংক্ষিপ্ত-কোড** — ইউজার: "country er flag tar upore short name"; "Indiar Hindi, Tamil, telugu, malayam joto language ase India er flag er upore short code alada alada"; "Bangladesh er Bangla obossoi attach korba"। ভাষা ১৭ → **৩৯**; ভারতীয় ৬ ভাষা (HIN/TAM/TEL/MAL/KAN/MAR) একই ভারতীয় পতাকা ভাগ করে, কোড আলাদা; বাংলাদেশের বাংলা = BAN (বাংলাদেশ-পতাকা)। আরবি/মাল্টি/অরিজিনাল = নিরপেক্ষ ব্যাজ (কোনো একক দেশের পতাকা নেই)। সব পতাকা **ইনলাইন SVG** (কোনো বাহ্যিক-ছবি/নেটওয়ার্ক নেই — স্যান্ডবক্স-প্রিভিউতেও দেখা যাবে)। সার্ভারে MM_LNAME প্রসারিত (marathi/sindhi/nepali/sinhala/punjabi/gujarati/odia/assamese/bhojpuri) যাতে নতুন কী-গুলো আসলেই ছাঁকনি-কাজ করে। যাচাই: ৩৯/৩৯ বৈধ পতাকা-এসভিজি, কোড সব অনন্য, config.test.js সব-সবুজ //  // v1.15.92: Movies4u **সিক-সংস্কার ৩** (ইউজার: "Na exo teh seek hocche na") — v1.15.91-এর /m4h/ কেন কাজ করেনি: `#EXT-X-MAP` এ ছিল শুধু MKV-হেডার [0,cut) — **Cues ছিল না**। ফলে MatroskaExtractor কোনো সিক-সূচকই পায়নি → আগের মতোই `SeekMap.Unseekable` → প্রতি সিক ০:০০-এ। এখন নতুন `/m4i/`: init = [0,cut) **+ Cues-এর একটি কপি**, আর ক্লাস্টার-অফসেট **অপরিবর্তিত** (ফাইলে কিছুই সরানো হয়নি — তাই অফসেট-সংশোধনের প্রয়োজন নেই)। ExoPlayer init পড়ার সময়েই Cues পেয়ে যায় → প্রথম Cluster-এর **আগেই** সঠিক সিক-মানচিত্র → সিক চলে। Segment-আকারও প্যাচ করা হয় (init-এ Cues যোগ হওয়ায় ঘোষিত আকার বাড়ে)। সুবিধা: সেগমেন্টগুলো `#EXT-X-BYTERANGE`-এ সরাসরি CDN-এ → আমাদের **ভিডিও-ব্যান্ডউইথ শূন্য**, আর v1.15.91-এ ধরা-পড়া প্রান্তিক-প্রক্সির Range-খোঁয়ানো সমস্যা এড়ানো যায়। যাচাই (২ ফাইল): init-এর উপরের-স্তর `SeekHead, Info, Tracks, **Cues**` (init-এ কোনো Cluster নেই), **CuePoint ৬/৬ আসল Cluster-এ পয়েন্ট করে** (HTTP ২০৬ + 0x1F43B675), সেগমেন্ট-রেঞ্জও Cluster-এ শুরু। পাশাপাশি ইউজার-প্রশ্ন "libmpv-এ চালানো যায়?"-এর উত্তর তদন্ত করে জানা গেল: Nuvio-তে প্লেয়ার-ইঞ্জিন **ইউজার-সেটিং** (ExoPlayer / Libmpv / Auto) এবং Auto হলে **কনটেন্ট** দিয়ে ঠিক হয় (-anime→libmpv, HDR/DV→ExoPlayer, বাকি সব→ExoPlayer) — অ্যাডন থেকে `behaviorHints` দিয়ে এটি বদলানো যায় না (প্রমাণ: nuvio.wiki/settings/player + NuvioMobile PR#2192)। তাই সমাধান হলো ExoPlayer-এই সিক চালানো // 
+const VERSION = '1.17.26'; // v1.17.26: **বিরতি-পরবর্তী সংস্কার — ভাঙা HLS বাদ + লেটেন্সি** (ইউজার: "Na thik hoi nai, thik na hole ei unssekable file badh daw, jonjat clear koro, revise daw, and Dekho stream fetch e etoh time lagbe keno, 4-5s e howar kotha")। (১) **v1.17.22–25-এর byte-chunk HLS সম্পূর্ণ প্রত্যাহার** (রুট /bfzh/*, BFH হেল্পার, কার্ড-এমিশন) — কারণ প্রমাণিত: ৪MiB টুকরো **Cluster-সীমানায় নয়** (seg167 শুরু `cae0d0fc…` = কোনো EBML এলিমেন্ট-হেডার নয়) ⇒ MatroskaExtractor সেগমেন্টের শুরুতেই ফ্রেমিং হারায় ⇒ প্লে/সিক ভাঙে; বৈধ MKV-HLS চাইলে সেগমেন্ট Cluster-সীমানায় + init-এ Cues (#EXT-X-MAP) লাগবে। কার্ড আগের কাজ-করা ফর্মে (ডাইরেক্ট CDN / `/bfz/` ডি-ফ্রেম রিলে, ২০৬+content-range)। ডিবাগ রুট `/bfz/_rt` ও `[bfh]` ট্রেস সরানো। (২) **লেটেন্সি ৮–৯.৭সে → ৪.২–৪.৭সে**: (ক) vidy-ঢেউ ৬.৫সে জিম্মি করত (`ok=0/16`-ও পূর্ণ বাজেট) ⇒ ধাপে-ধাপে-হারভেস্ট (ok≥3@৩সে, ok≥1@৪.২সে, ok=0@৪সে), (খ) `withSources` আগে vidy-কার্ডের ৩–৪সে খেয়ে তারপর অন্য সোর্স দেখত ⇒ **সব সোর্স-রেস এখন সমান্তরালে শুরু**, ৬+ কার্ড হলে ৪.৬৫সে-তে ও পরম ৫.২সে-তে কাট, (গ) BollyFlix অভ্যন্তরীণ বাজেট ৯.৪→৪.৪সে + সারি-রিজলভ `Promise.race`-এ সময়-বাঁধা (আগে `[bf] cards=4 @8671ms`)। কাটা সোর্স ব্যাকগ্রাউন্ডে শেষ হয়ে ক্যাশে জমে ⇒ পরের ট্যাপে পূর্ণ। (৩) **/stream ফলাফল-ক্যাশ** — একই (পথ+কনফিগ) ২মিন (আংশিক ২৫সে); খালি ফল কখনো ক্যাশ নয়; ডিপ্লয়-মাত্রই অকার্যকর (কী-তে VERSION)। মাপা: ১০টি এপি ঠান্ডা ৪.২–৪.৭সে, উষ্ণ **১ms**; BF কার্ড ৯/১০ এপিতে প্রথম-উত্তরেই; `/bfz/` কার্ডে mid-file `Range` → ২০৬ + সঠিক content-range। config.test.js সব-সবুজ, selftest ✓, test.js ২০/৪৩ (বেসলাইন)। // v1.17.10: **BollyFlix কার্ড আবার রিলে-ফর্মে — ExoPlayer খুলবে, libmpv সিক করবে** (ইউজার: "app e gie deklam play hoi, but ekhon direct libmpv teh play hocche, seek o hocche na, exo player e play e hoi na … Age toh exo teh open hoto, cholto seek hoto na, libmpv e o choltoh, seek o hotoh. .70 er ager version gulo dekho")। **নিদান**: ১.১৭.৪–১.১৭.৯-এ কার্ড ছিল কাঁচা `video-downloads.googleusercontent.com/ADG…` (GU) লিংক — Google-CDN `Range` মানে না (২০০ পুরো ফাইল), তাই ExoPlayer (ProgressiveMediaPeriod) ইনিশিয়ালাইজই করতে পারে না, আর libmpv চালালেও সিক করতে গেলে ০ থেকে পড়তে হয় ⇒ ইউজারের রিপোর্ট হুবহু মিলে যায়। ১.১৭.০ যুগে ভালো চলত **কারণ কার্ড ছিল আমাদের `/bfz/` ডি-ফ্রেম রিলে** (আসল MKV, `206`+`content-range`+`SeekHead/Cues` অক্ষত)। তাই ফেরত আনলাম: (ক) `.mkv.zip` সোর্স ⇒ `/bfz/` ডি-ফ্রেম (O(1) সিক, সেরা), (খ) raw worker (`.mkv?bytes=` বা bare) ⇒ `/bfz/` পাস-থ্রু Range-প্রক্সি, (গ) শুধু GU ছাড়া কিছু না থাকলে ⇒ **লেজি-কার্ড** `/bfz/fid/<fid>/v.mkv` (ক্লিকে ফ্রেশ রিজলভ, zip পেলে ডি-ফ্রেম, নইলে GU আমাদের সার্ভার দিয়ে—কার্ডে কখনোই কাঁচা GU বসে না)। পাশাপাশি দুটি নতুন বাগ সারানো: (১) `bfServeZip`-এ `?bytes=` নেই এমন raw worker-এ `no-raw-size` ৫০২ ⇒ এখন `bfServeGeneric`-এ যায়; (২) আপস্ট্রিম ৪২৯/৫০৩ ব্লিপে একবার রিট্রাই (৩০০ms)। **যাচাই (লোকাল ১.১৭.১০, My Demon)**: E05 / E16 / E14 / E12 = Exo-UA-তে **২০০ + video/x-matroska**, মাঝ-ফাইল `Range` → **২০৬ + সঠিক content-range**, ১৬/১৬ কার্ড; E16-এর একটিমাত্র ৫০২ ছিল আপস্ট্রিম ব্লিপ, রিট্রাইয়ের পর সব ঠিক। selftest ✓, config.test.js সব-সবুজ, test.js ২০/৪৩ (বেসলাইন)। // v1.17.3: **★ EXO-PLAYER সিক-ফিক্স (BollyFlix)** — ইউজার: "Bollyflix — My Demon is seekable in libmpv but not in Exo. Why? If no solution, make Exo exceed its capabilities so it falls back to libmpv. Keep your mind, test, and debug." (ক) **মূল বাগ ধরা পড়ল**: আমাদের নিজের রিলেই `bfPatchSeekHeadNoCues()` SeekHead-এর **SeekID বাইটস নষ্ট করে দিত** (Cues: 0x1c→0x6c, Tags: 0x12→0x68)। ExoPlayer-এর MatroskaExtractor (release-v2, লাইন 743-744) Cues-এর SeekID চিনেই না ⇒ `cuesContentPosition == INDEX_UNSET` ⇒ প্রথম Cluster-এ `extractorOutput.seekMap(new SeekMap.Unseekable(durationUs))` ⇒ ProgressiveMediaPeriod.seekToUs() → `positionUs = seekMap.isSeekable() ? positionUs : 0` ⇒ **প্রতিটা সিক 0:00-এ ফেরত** (libmpv/FFmpeg SeekHead-এর পয়েন্ট উপেক্ষা করে স্ক্যান করে Cues খুঁজে নেয় ⇒ তাই libmpv-তে ঠিক ছিল)। (খ) **ফাইলের SeekHead আসলে সঠিক** (prod worker ফাইল: Cues SeekPosition=1396336531, +segStart(52) = আসল Cues-এর অবস্থান) ⇒ এখন **SeekID আর নষ্ট করা হয় না**; নতুন `bfSeekFix()` হেড পার্স করে ১৬-বাইট প্রোবে Cues-এর অবস্থান যাচাই করে (সঠিক হলে হেড হাত দেওয়া হয় না = mode 'ok'); SeekPosition সত্যিই ভুল হলে (mode 'rewrite') টেল স্ক্যান করে আসল Cues খুঁজে SeekPosition-এর মান একই width-তে ঠিক করে দেয়। (গ) **"ExoPlayer-কে হারানো" নেট**: নতুন `/bfx/<b64>/v.mkv?x=1` রুট — ExoPlayer/Media3-এর চিহ্ন (UA-তে ExoPlayerLib অথবা `Accept-Encoding: identity`) ধরলে **415** দেয় ⇒ প্লেয়ার ইনিশিয়ালাইজ করতে পারে না ⇒ অ্যাপের "auto-switch engine on startup error" (Nuvio/Stremio, ডিফল্ট ON) নিজে থেকেই **libmpv-তে ফলব্যাক** করে (সেটিংসে টগল করা যায়: `cfg.bfexo=0`)। ডাইরেক্ট GU ফাইলে Range নেই ⇒ ExoPlayer-এ সিক কখনোই হবে না, libmpv-তে হয় — তাই ফলব্যাকই সঠিক। সুরক্ষা: পতাকা শুধু তখনই লাগে যখন **একই রেজোলিউশনে রিলে-বিকল্প কার্ড আছে** ⇒ ExoPlayer-এর জন্য সবসময় একটা চালু কার্ড থাকে। (ঘ) রিলে এখন raw worker (.mkv?bytes=N) ফাইলও ডি-ফ্রেম না করে সরাসরি Range-প্রক্সি করতে পারে। **প্রমাণ (prod worker ফাইল, 1,397,048,595 B)**: রিলে-হেডে Cues SeekID = **0x6b (অক্ষত)** ✔; ExoPlayer-এর seek-for-cues রিকোয়েস্ট (bytes 1396336583-) → **206 + `1c 53 bb 6b`** (আসল Cues) ✔; প্রথম CuePoint (CueTime=105, CueClusterPosition=24943 ⇒ abs 24995) → seek-টার্গেট রিকোয়েস্ট → **206 + `1f 43 b6 75`** (আসল Cluster) ✔ ⇒ **ExoPlayer-এ সিক চলবে**। // v1.17.1: **v1.17.0-এর কোল্ড-রিভিউ + মাস-টেস্ট** (ইউজার: "Revise die dekho balo kore, kono problem ase ni, cool mind e time nie khutie dekho, kono logic/typo/method bug ase kina. Kono kisu jate break na hoi. Mass test koro and debug.")। খুঁজে পাওয়া ৯টি বাগ ও সারানো: (১) **`bfResolveFdlToLoc`-এ প্রক্সি-ফলব্যাক unbounded** — ৩টি প্রক্সি × (open+req) ≈ **১৬s** স্টল করত, কলারের বাজেট উড়ে যেত ⇒ এখন **deadline-বাঁধা** (≤৫.২s)। (২) **GU-যাচাইয় ২.৮s ক্যাপ** একটা ভালো কার্ড ফেলে দিত ⇒ প্রাইমারি যাচাই **৩.৬s**। (৩) **`BF_FID_CACHE` ক্যাশ-পলিউশন** — ১১৬৮-অক্ষরের GU-লিংক '206:' কী হিসেবে জমা হড়ত, ফিড-এন্ট্রি বাদ যেত ⇒ এখন ৩০০+ অক্ষরের লিংক ক্যাশে যায় না। (৪) **pending+GU ফলাফল ক্যাশ হতো না** ⇒ প্রতি রিকোয়েস্টে busycdn বারবার হিট (403-এর ঝুঁকি) ⇒ এখন ক্যাশ হয় (GU মরলে zip-fallback ধরে)। (৫) **`bfStartCloudGen`-এ একাধিক pending একই IP-তে** (gdflix ১০ req/IP লিমিট) ⇒ প্রক্সি-তালিকা এখন **রোটেট** হয়। (৬) **`BF_GU_INFLIGHT` রেফ-কাউন্ট** — আগে শেষ ওয়েটার চলে গেলেই এন্ট্রি মুছে যেত ⇒ ডুপ্লিক busycdn হিট। (৭) **লেজি-রুটে অনির্দিষ্ট সময়** (ক্লাউড-জেন ~৪৪s) CF-১০০s ছাড়াতো পারে ⇒ এখন **৪৬s ক্যাপ + 503** (CF-৫০২ নয়)। (৮) **★ সবচেয়ে গুরুত্বপূর্ণ**: আমাদের সার্ভার-IP Google-র rate-limit-এ পড়লে যাচাই ব্যর্থ হয়, কিন্তু **প্লেয়ারের নিজস্ব IP-তে লিংক ঠিক থাকে** ⇒ লেজি-রুটে যাচাই ব্যর্থ হলে **কখনোই কার্ডকে হার্ড-এররে বদলাব না** (মূল লিংকই দেওয়া হয়)। (৯) `fallbackIsZip` আলাদা ফ্ল্যাগ (আগে সবসময় zip ধরা হতো) + zip-ব্রাঞ্চেও pending-তথ্য + লেজি-রুটে পুরনো GU (৮ মিনিট+) রিজলভ। মাস-টেস্ট: My Demon S01E01–E16 = **৫৩/৫৩ কার্ড প্লেবেবল** (সরাসরি GU + রিলে + লেজি), ৫টি সিনেমা = **২১/২১**, রিলে-সিক (মাঝ-ফাইল Range) = 206 + সঠিক `content-range`, config.test.js সব-সবুজ, test.js ২০/৪৩ (বেসলাইন), selftest ✓ // v1.17.0: **BollyFlix সরাসরি (direct) স্ট্রিম — relay আর লাগবে না** (ইউজার: "Ki kortaso, amader kase proxy pool toh asei rate limit bypass er jonno, ar direct stream diba, movie gula Dekho kibave play hoi bollyflix e, series e o toh single EP gulor gdflix link ase")। পরিষ্কার-পরিচয়: (১) **মিসডায়াগনোসিস** — GDFlix-এর cloud-ওয়ার্কার ফাইল **>২GB হলে raw `.mkv`** (সরাসরি, 206-ক্যাপেবল) আর **≤২GB হলে `.mkv.zip`** (zip!) দেয় — তাই সিরিজ-এপিসোড (<2GB) আগে `/bfz/` ডি-ফ্রেম রিলে-এ ফাঁকে যেত, আর Beamup-এর সামনে Range কেটে যাওয়ায়/403-এ খেলতাই হচ্ছিল না। (২) **আসল সমাধান — GDFlix "Instant DL" চেইন**: `/file/<fid>` → `instant.busycdn.xyz/<token>::<hash>?bytes=<size>` → 302 → `fastdl-one.pages.dev/?url=<GU>` → **`video-downloads.googleusercontent.com` = সরাসরি RAW MKV** (`ct: video/mkv`, magic `1a45dfa3`, content-length = আসল ফাইল সাইজ)। zip নেই ⇒ কার্ডে সরাসরি লেখা যায়, কোনো relay নেই। এখন ক্লাউড-পেজ আর এই চেইন **সমান্তরালে** ফেচ হয় (লেটেন্সি বাড়ে না): raw-worker > GU > zip-relay — GU যাচাই না হলে zip-relay-এ ফিরে যায় (ভাঙা কার্ড কখনো নয়)। (৩) **`bfVerify206` এখন 200+`video/mkv` (Google Range-এ মানে না) গ্রহণ করে**, magic দিয়ে যাচাই করে। (৪) **★ আসল ৫০২-র কারণ ধরা পড়ল**: gdflix-এর `POST action=cloud` আসলে **~৯ সেকেন্ড** লাগে, কিন্তু টাইম-আউট ছিল **৪.৫ সেকেন্ড** ⇒ ক্লাউড কখনোই জেনারেট হতো না ⇒ `/bfz/fid/<fid>/v.mkv` লেজি-কার্ড সবসময় **502** ⇒ "My Demon খেলে না"। এখন POST-টাইম-আউট ১৬s, পোল ৩s, আর তালিকা-বানানোর সময়ই **সব** pending-এর জেনারেশন ব্যাকগ্রাউন্ডে চলে ⇒ ক্লিকে লেজি-কার্ড এখন 206 `video/x-matroska` দেয় (হয়তো ২৮s প্রথমবার, পরে তাৎক্ষণিক) অথবা 302 → সরাসরি GU। (৫) **প্রক্সি-পুল ব্যবহার** — `dl.fastdlserver.site` সরাসরি 403 দিলে প্রক্সি-পুলে আবার চেষ্টা (`bfResolveFdlToLoc`) + busycdn-এর জন্যও প্রক্সি-ফলব্যাক (`bfGuFromInstant`)। (৬) `bfResolveGdflixOne`-এ ক্লাউড-পেজ + GU একসাথে, একই fid-এ একবারই busycdn হিট (`BF_GU_INFLIGHT`), ফাইল-পেজ বাজেট ৫৫%। // v1.16.3: (ক) **RareToons ডাব-নাম কার্ডে ঘোষণা** (ইউজার: "raretoons-এ দুই-ধরনের dub, Muse/Crunchyroll — ভাষার পাশে লিখে দাও") — `twrFetch`-এ `rtDubMap()`: পোস্ট-পাতার `<h4>↓ X DUB ↓</h4>` সেকশন-হেডিং + `WatchMultQuality`/`WatchNow` জিপার-লিংক → 302 `/multiquality/?url=<mq_fid>` → রেজলভার-কার্ডের `/hls/<b64>`-এর `mq_fid`-এর সাথে **exact-match**; পিক্সেলড্রেইন-ফাইলনামের `[Muse Dub]`ও পড়া হয়; কার্ডে `⌗ Hindi · Muse Dub`, bingeGroup-এ ডাব-পৃথক। সত্য-প্রমাণ: AoT S01E01 = `Hindi · Muse Dub` / `Hindi 2 · Anime Times Dub` (তৃতীয়টি unmapped → সৎভাবে কোনো ডাব-দাবি নেই)। সাইটে-বানান-দুটোই (`WatchMultQuality`/`WatchMultiQuality`) সমর্থিত। (খ) **কনফিগ-পেজ: Vidy আর কখনোই deselect-অবরোধ** (ইউজার: "I can't deselect vidy source at all") — পুরোনো `guardV` শুধু `nx` দেখত, তাই MovieBox বন্ধ থাকলেই Vidy বন্ধ করা যেত না; এখন সব উৎস স্বাধীনভাবে বন্ধ হয়, শুধু সব-বন্ধ হলে সতর্কতা-টোস্ট; `mobCnt`-এ খালি-তালিকা = ১৬ সার্ভার (আগে "0 servers armed")। (গ) **BollyFlix ভবিষ্যৎ-পোস্ট-স্বয়ংক্রিয়** — wp-json-ইনডেক্সে নতুন পোস্ট না থাকলে সাইটের `/search/<query>` HTML-ফলাফল ফলব্যাক (`bfPick` একই গেটে যাচাই করে)। // v1.16.2: BollyFlix সিরিজ ও মুভি স্ট্রিমিং পূর্ণ সংস্কার — (১) GDFlix `/cloud/<ts>/<fid>` এ `<2GB` এপিসোডের `.mkv.zip?bytes=<rawSize>` (stored DEFLATE Type-0 ৩২KB ব্লক) `O(1)` `/bfz/<b64>/v.mkv` ডি-ফ্রেমার দিয়ে সরাসরি `.mkv` হিসেবে স্ট্রিম; (২) অ-জেনারেটেড `<button id="cloud">` এ পটভূমিতে `POST action=cloud` + `xhr=1` পোলিং + `GET <redirect>` কমিট এবং `/bfz/fid/<fid>/v.mkv` লেজি-রিজলভার; (৩) `pixeldrain.dev` ও `/pack/<packId>` ও `linksmod.top` সমর্থন; (৪) `S01`/`S02` হেডিং, স্ট্যান্ডঅ্যালোন `S05` পোস্ট-টাইটেল, `Anime Series`/`NetFlix Series` ট্যাগ, `fxRows` ডাইভার্স নির্বাচন, অ্যানিমে কন্টিনিউয়াস এপিসোড (`S02E25`), এবং প্রতি-IP ১০-রিকোয়েস্ট/মিনিট স্লাইডিং রেট-লিমিট গার্ড; (৫) IMDb `/stream/` রুটে `findTmdbInfo` ব্যর্থ হলে `nmP` (`suggName`) ফলব্যাক। // v1.15.99: **rousav (`Greek`, `Spanish`, `German` ইত্যাদি) ও `callisto` বহু-ভাষা প্লেব্যাক সংস্কার** — ইউজার: "Hindi, English, Tamil, Telugu runs smoothly, but Greek, Spanish, German etc wasn't though it seems ok now. But check again and revise carefully"। সরাসরি পরিমাপে ৬টি নির্দিষ্ট ত্রুটি ধরা পড়েছে: (১) **Cloudflare `404 cf=HIT` ক্যাশ-পয়জনিং ও `Origin`-উদ্ধার**: `img.rousav.tech`-এ `Range: bytes=0-1023` দিয়ে `.m3u8` প্রোব করলে বা অরিজিন-গ্লিচে Cloudflare সেই `404` কে `cf=HIT (age=94693s)` হিসেবে ক্যাশ করে রাখে (`track_german.m3u8`, `track_spanish.m3u8`, `track_polish/portuguese/tamil/telugu/turkish.m3u8`, এবং `00000.png`); কিন্তু `Origin: https://vidbolt.xyz` (ও ব্যর্থ হলে `Origin: https://r1.vidbolt.xyz`) দিলে নতুন ক্যাশ-কী দিয়ে তাৎক্ষণিক `200 OK` পাওয়া যায়। (২) **প্রোব-কালে প্লেলিস্ট `MM_WC`-তে ক্যাশ না করা**: `/stream`-এ `mmTrkProbe` ও `mmVarProbe` ৭৫–১০০KB প্লেলিস্ট ডাউনলোড করেও ফেলে দিত, ফলে ইউজার কার্ডে চাপলে `/mm/` ও `/mma/`-তে আবার ১.৫–৪.৬ সেকেন্ড লাগত। (৩) **`/mm/`-এ অপ্রয়োজনীয় `vbest` + `mmVarProbe` অপেক্ষা**: `knownExtAud` হলে `/mm/` এখন ০-১ms-এ `mmMasterForm` রিটার্ন করে এবং পটভূমিতে ভিডিও+অডিও উভয় প্লেলিস্ট ও সেগমেন্ট প্রি-ওয়ার্ম করে (`MM_WC_INFLIGHT` ডিডুপসহ)। (৪) **rousav সেগমেন্টগুলো `/mmr/` লুকঅ্যাহেড প্রিফেচ ও রিলেতে যুক্ত করা (`#EXT-X-MAP` `init.mp4` সহ)**: যাতে ইউজার কখনোই ৪–১৬ সেকেন্ডের `cf=MISS` স্টল বা `00000.png` ৪০৪-এ না পড়েন। (৫) **ডুয়াল-স্ট্রিম (`mmMasterForm` ভিডিও+অডিও) লুকঅ্যাহেড সংঘর্ষ ও ছোট সেগমেন্ট ওয়াচডগ**: `bgInflight` ৬→১২ (যাতে অডিও প্রিফেচ ভিডিও প্রিফেচকে বাতিল না করে) এবং `kbps < 110` চেক শুধু `>600KB` সেগমেন্টে `headersAt` থেকে গণনা (যাতে ৪৫–৮৮KB অডিও সেগমেন্ট কখনোই ভুলবশত কিল না হয়)। (৬) **Vidbolt `callisto` (`dash-hls-bridge.johndoes*.workers.dev`) ৪২৯ ও `NAME="Audio"` বাগ**: ৪২৯ ওয়ার্কারগুলো সচল `johndoesdmc`-তে নরমালাইজ এবং `NAME="Audio"` থাকলে সোর্সের আসল ভাষা (`Arabic`, `Hindi`, `English` ইত্যাদি) বসানো। // v1.15.98: **MM প্লেব্যাক বাফারিং ও 'একটু পর পর ইন্টারনেট ছেড়ে দেয়' সমস্যার স্থায়ী সমাধান** — সরাসরি ও প্রড পরিমাপে ৩টি মূল কারণ ধরা পড়েছে: (ক) `contentpublishing.site`-এ প্রতি ~৮-১০ সেগমেন্টে একটি `cf=MISS` কানেকশন অরিজিন-থ্রটলিংয়ে (`২৩–৬৮ KB/s`, ৪৫–৬৯ সেকেন্ড!) আটকে যায় অথবা মাঝপথে (`got=37KB/1360KB`) সকেট বন্ধ করে দেয়; আগে `up.pipe(res)`-এ `'close'` হ্যান্ডলার বা Range-রিজিউম না থাকায় ক্লায়েন্টের সংযোগ ০ KB/s-এ ঝুলে থাকত। (খ) স্ট্রিমিং চলাকালীন প্রতি ৮–১৮ সেকেন্ডে পটভূমির `pxCheckerWave` (৮৪ সকেট) + `mmCheckerWave` (৮৪ সকেট) + `enrichPool` (১২০ সকেট + ৪টি প্রক্সি-তালিকা ডাউনলোড + `fs.writeFileSync`) কন্টেইনারের সিপিইউ ও নেটওয়ার্ক জ্যাম করত। (গ) প্লেয়ার সেগমেন্ট চাওয়ার পর ফেচ শুরু হওয়ায় অরিজিনের ধীরগতি সরাসরি ইউজারের ফোনে পৌঁছাত। সমাধান: (১) **ইন-মেমরি লুকঅ্যাহেড প্রিফেচ (`MMR_MEM`, পরবর্তী ৩টি সেগমেন্ট = ৩০ সেকেন্ড ভিডিও Beamup RAM-এ অগ্রীম লোড)** + **স্ট্যাগার্ড Cloudflare এজ-ওয়ার্মার (`mmWarmEdge`, পরবর্তী ৪..৬ সেগমেন্টে ১-বাইট `Range: bytes=0-0` পাঠিয়ে আগেভাগেই `cf=HIT` করা)** — পরীক্ষায় ২১/২১ সেগমেন্টের ১৯টিই প্লেয়ার চাওয়ার আগে ১০০% RAM-এ প্রস্তুত (`playerWait=0ms`, `cf=HIT` গতি `২৫–৭৫ MB/s`); (২) **স্মার্ট স্টল-রিজিউমিং পাম্প**: কোনো সেগমেন্টে ডেটা-গ্যাপ (`>2.4s`), ধীরগতি (`<110 KB/s`), বা অসম্পূর্ণ ক্লোজ (`received < total`) ঘটলে সাথে সাথে নতুন সকেটে `Range: bytes=${received}-` দিয়ে বাকি অংশ নিরবচ্ছিন্নভাবে জোড়া লাগানো; (৩) **অ্যাক্টিভ-স্ট্রিমিং গার্ড (`MMR_ACTIVE_UNTIL`)**: প্লেব্যাক চলাকালীন পটভূমির প্রক্সি-চেকার ও এনরিচ-ওয়েভ স্থগিত এবং অ্যাসিঙ্ক ফাইল-রাইট। // v1.15.93: (ক) **Movies4u আগের মতোই সরাসরি** — ইউজার: "Movies4u age jemon chilo direct temon e valo chilo, oita oi file er problem ager motoi kore daw"। v1.15.91/92-এর /m4h/ + /m4i/ (init-এ Cues) রাউটিং সরিয়ে মুভি ও সিরিজ দুই পথেই `url: x.url` ফিরিয়ে আনা হলো। /m4h/ ও /m4i/ এন্ডপয়েন্ট দুটো কোডে রয়ে গেছে (অব্যবহৃত) — ভবিষ্যতে প্রয়োজনে সক্রিয় করা যাবে। (খ) **কনফিগ-পেজ: ভাষা-ছাঁকনিতে দেশের-পতাকা ব্যাজ + ওপরে সংক্ষিপ্ত-কোড** — ইউজার: "country er flag tar upore short name"; "Indiar Hindi, Tamil, telugu, malayam joto language ase India er flag er upore short code alada alada"; "Bangladesh er Bangla obossoi attach korba"। ভাষা ১৭ → **৩৯**; ভারতীয় ৬ ভাষা (HIN/TAM/TEL/MAL/KAN/MAR) একই ভারতীয় পতাকা ভাগ করে, কোড আলাদা; বাংলাদেশের বাংলা = BAN (বাংলাদেশ-পতাকা)। আরবি/মাল্টি/অরিজিনাল = নিরপেক্ষ ব্যাজ (কোনো একক দেশের পতাকা নেই)। সব পতাকা **ইনলাইন SVG** (কোনো বাহ্যিক-ছবি/নেটওয়ার্ক নেই — স্যান্ডবক্স-প্রিভিউতেও দেখা যাবে)। সার্ভারে MM_LNAME প্রসারিত (marathi/sindhi/nepali/sinhala/punjabi/gujarati/odia/assamese/bhojpuri) যাতে নতুন কী-গুলো আসলেই ছাঁকনি-কাজ করে। যাচাই: ৩৯/৩৯ বৈধ পতাকা-এসভিজি, কোড সব অনন্য, config.test.js সব-সবুজ //  // v1.15.92: Movies4u **সিক-সংস্কার ৩** (ইউজার: "Na exo teh seek hocche na") — v1.15.91-এর /m4h/ কেন কাজ করেনি: `#EXT-X-MAP` এ ছিল শুধু MKV-হেডার [0,cut) — **Cues ছিল না**। ফলে MatroskaExtractor কোনো সিক-সূচকই পায়নি → আগের মতোই `SeekMap.Unseekable` → প্রতি সিক ০:০০-এ। এখন নতুন `/m4i/`: init = [0,cut) **+ Cues-এর একটি কপি**, আর ক্লাস্টার-অফসেট **অপরিবর্তিত** (ফাইলে কিছুই সরানো হয়নি — তাই অফসেট-সংশোধনের প্রয়োজন নেই)। ExoPlayer init পড়ার সময়েই Cues পেয়ে যায় → প্রথম Cluster-এর **আগেই** সঠিক সিক-মানচিত্র → সিক চলে। Segment-আকারও প্যাচ করা হয় (init-এ Cues যোগ হওয়ায় ঘোষিত আকার বাড়ে)। সুবিধা: সেগমেন্টগুলো `#EXT-X-BYTERANGE`-এ সরাসরি CDN-এ → আমাদের **ভিডিও-ব্যান্ডউইথ শূন্য**, আর v1.15.91-এ ধরা-পড়া প্রান্তিক-প্রক্সির Range-খোঁয়ানো সমস্যা এড়ানো যায়। যাচাই (২ ফাইল): init-এর উপরের-স্তর `SeekHead, Info, Tracks, **Cues**` (init-এ কোনো Cluster নেই), **CuePoint ৬/৬ আসল Cluster-এ পয়েন্ট করে** (HTTP ২০৬ + 0x1F43B675), সেগমেন্ট-রেঞ্জও Cluster-এ শুরু। পাশাপাশি ইউজার-প্রশ্ন "libmpv-এ চালানো যায়?"-এর উত্তর তদন্ত করে জানা গেল: Nuvio-তে প্লেয়ার-ইঞ্জিন **ইউজার-সেটিং** (ExoPlayer / Libmpv / Auto) এবং Auto হলে **কনটেন্ট** দিয়ে ঠিক হয় (-anime→libmpv, HDR/DV→ExoPlayer, বাকি সব→ExoPlayer) — অ্যাডন থেকে `behaviorHints` দিয়ে এটি বদলানো যায় না (প্রমাণ: nuvio.wiki/settings/player + NuvioMobile PR#2192)। তাই সমাধান হলো ExoPlayer-এই সিক চালানো // 
 // v1.15.91-বি: v1.15.91-বি: **প্রক্সি পথ প্রড-এ কাজ করে না** — প্রান্তিক-প্রক্সি Range হেডার খুলে ফেলে (নিদান: `curl -H "Range: bytes=100000-100999"` → `HTTP/2 200` + `x-m4p-rng: none`; HTTP/1.1-তেও একই)। তাই আমাদের সার্ভার দিয়ে প্রক্সি করলে ক্লায়েন্টের কোনো রেঞ্জ-অনুরোধই টিকে না → /m4p/ দিয়ে সিক অসম্ভব। চূড়ান্ত সমাধান **/m4h/**: আমরা শুধু একটি ছোট HLS প্লেলিস্ট দিই, সেগমেন্টগুলো `#EXT-X-BYTERANGE`-এ **সরাসরি CDN-এ** পয়েন্ট করে — ExoPlayer নিজেই CDN-এ রেঞ্জ পাঠায় (সেখানে ২০৬ চলে)। ফলে আমাদের ব্যান্ডউইথ **শূন্য** এবং Range-খোঁয়ানো প্রান্তিক-প্রক্সি কোনো সমস্যা করে না। `#EXT-X-MAP` = MKV-হেডার [0,cut) (Tracks/CodecPrivate), প্রতি সেগমেন্ট = CuePoint-এর Cluster-সীমানা (কী-ফ্রেম → স্বাধীনভাবে ডিকোড-যোগ্য); CuePoint একত্রীকরণ ≈৬ সে/সেগমেন্ট। যাচাই (২ ফাইল): ৮০৩/৭৯৯ সেগমেন্ট, #EXTM3U প্রথম লাইনে, VOD+ENDLIST+MAP; MAP-রেঞ্জ HTTP ২০৬ হুবহু আকার EBML✅ Tracks✅; **সেগমেন্ট-সীমানা ৬/৬ আসল Cluster** (HTTP ২০৬ + 0x1F43B675); `cut + ΣBYTERANGE = ৪৬,২৫৩,৪০৭৮` = সঠিক ফাইল-আকার (কোনো ফাঁক/ওভারল্যাপ নেই)
 // v1.15.91: v1.15.91: দুটি ইউজার-রিপোর্ট — (ক) **Movies4u ExoPlayer-সিক মৃত** ("Movies4u does not work seek when it plays on exo player", libmpv-তে ঠিকই চলে)। মূল কারণ ExoPlayer-এর MatroskaExtractor: `case ID_CLUSTER: if (!sentSeekMap) { if (seekForCuesEnabled && …) seekForCues = true; else extractorOutput.seekMap(new SeekMap.Unseekable(durationUs)); }` — অর্থাৎ **প্রথম Cluster-এ পৌঁছানোর আগেই Cues পড়া না থাকলে** ExoPlayer "অসিক-যোগ্য" ঘোষণা করে, আর ProgressiveMediaPeriod.seekToUs()-এ `positionUs = seekMap.isSeekable() ? positionUs : 0` → **প্রতি সিক ০:০০-এ ফেরত যায়**। Cues সবসময় ফাইলের একদম **শেষে** (পরিমাপ: Cues@18,120,319,734 / 16.88GB) — mpv/FFmpeg তা পড়তে পারে, ExoPlayer পারে না (FLAG_DISABLE_SEEK_FOR_CUES)। মাপকাঠি: যে-সব উৎস ExoPlayer-এ সিক চলে (Multimovies, Miami) সবাই **HLS**; Movies4u-ই একমাত্র প্রগতিশীল-MKV সোর্স — নিদর্শন মিলে গেল। সমাধান (`/m4p/`): Cues-এলিমেন্ট হেডারের পরে, প্রথম Cluster-এর **আগে** সরানো, আর সব CueClusterPosition + delta (নাহলে সিক ভুল অবস্থানে যায়)। Segment-আকার প্যাচ + রেঞ্জ-সচেতন স্ট্রিমিং (prefix / Cues / লেজ—তিন-খণ্ড)। যাচাই (৩টি ফাইল, ০.৪৩/০.৮৬/০.৯৬ GB): উপরের-স্তর `SeekHead, Info, Tracks, **Cues**, Cluster…`; Cues@33146 বনাম প্রথম-Cluster@84656; **CuePoint ১২/১২ আসল Cluster-এ পয়েন্ট করে** (HTTP ২০৬ + 0x1F43B675)। HLS-কার্ড অস্পৃষ্ট (শুধু kind==='file' রূপান্তরিত)। (খ) **Multimovies ভাষা-কার্ড কম দেখানো** ("multimovies has a more lot of audio varients, please show them all") — পরিমাপ: Demon Slayer rousav মাস্টার **১৬** অডিও-ট্র্যাক ঘোষণা করে, **১৩টি জীবিত**; কিন্তু ক্যাপ MM_MAXLANG=৬ / MM_SCANTRK=১২ → মাত্র ৬টি দেখানো হতো (Greek/Italian/Polish/Portuguese/Russian/Tamil/Telugu কখনোই আসত না)। ক্যাপ ৬→২৪, ১২→২৪, ভ্যারিয়েন্ট ২০→৬০। ফল: Demon Slayer ২০→**৫৪** কার্ড/১৭ ভাষা, The Runner ১৮→**৩৬-৩৯**/১২ ভাষা (Kannada/Malayalam/Hungarian/Arabic নতুন)। যাচাই: test.js ২০/৪৩, config.test.js সব-সবুজ, বাংলা=০/১৮২, #EXTM3U প্রথম লাইনে ৯৩/৯৩ //  // v1.15.90: Multimovies **অডিও-ভাষা সংস্কার** (ইউজার: "Eta toh Chinese audio howar Kotha but Hindi audio dei … etar English ta o Hindi audio set Kore, Greek, German e Kono audio nai")। তিনটি স্বতন্ত্র ত্রুটি, প্রতিটি PMT-প্রমাণিত: (ক) **ভাষা-ভিত্তিক মাক্সড ভ্যারিয়েন্ট বাছাই হয় না** — .urlset/CDN ভ্যারিয়েন্ট-নামেই ভাষা এনকোড করে (`index-f3-v1-a1`=हिन्दी, `a2`=English, `a3`=日本語, `a4`=తెలుగు, `a5`=தமிழ்)। প্রমাণ: ৫টি ভ্যারিয়েন্টের AAC-PID(257)-হ্যাশ **৫/৫ ভিন্ন**। কিন্তু আমরা সব কার্ডে একই `a1` পাঠাচ্ছিলাম → প্রতিটি ভাষার কার্ডেই हिन्दी বাজত। নতুন `mmPickVarLang(pl, base, wantH, alang)`: মাস্টারের অডিও-তালিকায় ভাষার ক্রমিক N বের করে `-a1`→`-aN` করে (HTTP ২০০ যাচাইসহ)। (খ) **`#EXT-X-MEDIA` MEDIA-প্লেলিস্টে অর্থহীন** — rousav-এর ভিডিওতে কোনো অডিও নেই (PMT = `[0x1b]`), অডিও আলাদা `track_*.m3u8`-এ; কিন্তু আমরা ইনলাইন MEDIA-প্লেলিস্টে TYPE=AUDIO ট্যাগ লিখছিলাম, যা প্লেয়ার **সম্পূর্ণ উপেক্ষা করে** → নিঃশব্দ। নতুন `mmMasterForm()`: ভিডিও মাক্সড না হলে সঠিক এক-ভ্যারিয়েন্ট MASTER-প্লেলিস্ট (AUDIO="a0" দ্বারা যুক্ত)। (গ) **অডিও-সেগমেন্টে api_key পৌঁছায় না** — track_*.m3u8-এর সেগমেন্ট আপেক্ষিক (`track_czech/00000.png`) আর api_key শুধু প্লেলিস্ট-ইউআরএলে → প্লেয়ারের রিজলভ করা সেগমেন্ট **৪০৪** (পরীক্ষায় ৬/৬ ভাষাতেই)। নতুন `/mma/<b64>/a.m3u8` ইনলাইনার: absolute + keyed সেগমেন্ট (আর প্রয়োজনে Referer-রিলে)। সংশোধিত ভিত্তি: `mmTsHasAudio` ছিল ত্রুটিপূর্ণ — PMT-পিআইডি PAT থেকে না বের করে "যেকোনো PUSI = PMT" ধরত, আর 0x06 (প্রাইভেট-ডেটা) কে অডিও গণ্য করত; তাই অডিওবিহীন rousav-কেও "মাক্সড" দাবি করা হতো। `mmVarProbe` শুধু **প্রথম** সেগমেন্ট দেখত — কিন্তু অনেক উৎসের ০-নম্বর সেগমেন্ট lead-in (PMT `[0x1b,0x0f]`, কিন্তু বাস্তবে কোনো অডিও নেই; The Runner seg 0 বনাম seg 1..10); এখন ৩টি নমুনা। যাচাই: Demon Slayer ৫ ভাষায় ৫/৫ স্বতন্ত্র মাক্সড অডিও; rousav-সব কার্ডে PMT=0xf অডিও (৫-৬/৬ সেগমেন্ট); test.js ২০/৪৩; config.test.js সব-সবুজ; বাংলা=০ //  // v1.15.89: Multimovies **দ্বিতীয় গভীর-নিরীক্ষা** — ইউজার: "video length dekhai 10s, sese hoi abar por theke 10s suru kore … aje maje audio o thake na"। তিনটি স্বতন্ত্র ত্রুটি, প্রতিটি প্রমাণ-সহ: (ক) **#EXTM3U প্রথম লাইনে ছিল না** — HLS-স্পেসিফিকেশনে #EXTM3U অবশ্যই প্রথম লাইন; আমরা মাস্টারের ট্যাগ-ব্লক (TYPE=AUDIO / I-FRAME-STREAM-INF) তার **আগে** জুড়ে দিচ্ছিলাম। পরীক্ষায় ১৬/১৬ MM-কার্ডেই #EXTM3U ৪ নম্বর (Demon Slayer) থেকে ৩৮ নম্বর (The Runner) লাইনে — প্লেয়ার প্লেলিস্ট অগ্রাহ্য/অডিও-ট্র্যাক হারাতো। আগের যাচাইয়ে ধরা পড়েনি কারণ সেখানে শুধু "#EXTM3U আছে কি" দেখা হতো, **কোন লাইনে** তা নয়। নতুন `mmM3UJoin(tags, body)` ট্যাগ-ব্লক #EXTM3U-এর পরে বসায়; `mmMiniBuild`-এর মাস্টার-আউটপুটেও #EXTM3U যোগ (আগে সেটিতে #EXTM3U-ই ছিল না)। (খ) **CDN Referer দাবি করে, প্লেয়ার পাঠায় না** — dd2stliwt0bc.homechefrecipes.sbs (.urlset): Referer ছাড়া **০/২০** ৪০৪, Referer সহ **২০/২০** ২০০; img.rousav.tech Referer ছাড়াই ১০/১০। নতুন `mmNeedsRef(u)` হোস্ট-ভিত্তিক (৩০মিন ক্যাশ) সনাক্তকরণ → প্রয়োজনীয় হোস্টের মিডিয়া আমাদের /mmr/ রিলে দিয়ে (রিলে সবসময় সঠিক Referer যোগ করে), প্রয়োজন না হলে সরাসরি CDN — কোনো অতিরিক্ত ব্যান্ডউইথ-খরচ নেই। যাচাই: Demon Slayer-এর ৪টি .urlset কার্ড রিলে-কৃত, rousav কার্ড ও The Runner সরাসরি। (গ) **বেস৬৪-প্যাডিং ('=') রেগেক্সে ছিল না** → কপি/পেস্টে প্যাডিং যোগ হলে ২০০-এর বদলে ৪০৪ (প্রমাণ: ইউজারের ইউআরএল "…8amE=/mini.m3u8" → ৮/৮ বার ৪০৪; '=' বাদ দিলেই ২০০)। /mm/ ও /mmr/ দুটোতেই '=' এখন বৈধ। যাচাই: ৩৮/৩৮ কার্ডে #EXTM3U প্রথম লাইনে; ENDLIST শেষ লাইনে; রিলে-কৃত সেগমেন্ট ৬/৬ HTTP ২০৬/২০০ video/mp2t মাক্সড-অডিও; অডিও-প্লেলিস্ট HTTP ২০০ (৯৩০ EXTINF); test.js ২০/৪৩ বেসলাইন; config.test.js সব-সবুজ; বাংলা=০ //  // v1.15.88: Multimovies গভীর-নিরীক্ষা + **single-audio সংস্কার** (ইউজার: "Demob slayer infinity castle … fast hls gulo pelam na, the runner e single audio fast hls gulo pelam na, multi audio play problem hoi")। (ক) **নকল কোয়ালিটি-কার্ড বন্ধ**: `woHasAudioGrp` শাখা প্রতি কোয়ালিটিতে একটি করে কার্ড দিত, কিন্তু সবার `url` একই (পুরো মাস্টার) — প্রমাণ: Demon Slayer ১৩১১০৩১-এ ৩টি কার্ড (1080/720/480) যাদের URL **হুবহু অভিন্ন** (`…v51t5m9qymh5_,l,n,h,.urlset/master.txt`)। (খ) **মাল্টি-অডিও সমস্যার মূল**: rousav মাস্টার ১৬-২০টি আলাদা অডিও-ট্র্যাক ঘোষণা করে, কিন্তু প্লেয়ারকে সেগুলো আলাদাভাবে টানতে হয় — আর The Runner-এর track_english/spa/fra/pol/por/tam/tel/tha/tur **৪০৪**; Demon Slayer .urlset-এর ভিডিও-ভ্যারিয়েন্ট আসলে **মাক্সড** (H.264+AAC একই TS-এ — PMT-স্ক্যানে প্রমাণিত)। এখন **প্রতি কোয়ালিটি × প্রতি ভাষা = একটি single-audio কার্ড** (mini + `alang`-পিন: মাস্টারে শুধু ওই একটি অডিও-ট্র্যাক থাকে)। (গ) **প্রোব-ভিত্তিক সততা**: `mmVarProbe` (ভ্যারিয়েন্ট জীবিত + TS-এ অডিও মাক্সড কি — ৪KB রেঞ্জ-ফেচ) ও `mmTrkProbe` (অডিও-ট্র্যাক জীবিত), দুটোতেই **দ্বৈত-নিশ্চিতকরণ** — rousav/CDN-এর 'নোড-লটারি'তে ভাগ্যবান-নোড মিথ্যা-জীবিত দেখায় (প্রমাণ: track_english একবার ২০০, পরের ১৫ বার ৪০৪)। মিথ্যা-মাল্টি-অডিও মাস্টারে আর 'N Audio' দাবি নেই; মাক্সড ভ্যারিয়েন্ট থাকলে সরাসরি সেটিই (দ্রুততম), নইলে সৎ শূন্য। (ঘ) **অন্যান্য**: ডিডুপ-কী'তে `alang` (নাহলে ৬ ভাষা-কার্ড অভিন্ন-কী হয়ে ৫টি বাদ পড়ত — প্রমাণ `[mmvbd] out=6` → `variants=1`); `_lang`-এ ISO-কোড→ইংরেজি-নাম ম্যাপার (`mmLangBlob`) — mml=['hindi'] আগে ০ কার্ড দিত, এখন ৩; MM কার্ড-ক্যাপ ১৬→২০; decodeURIComponent-সহ কোনো মিড-লাইন কমেন্ট নেই। যাচাই: test.js ২০/৪৩ (বেসলাইন), config.test.js সব-সবুজ, বাংলা=০, Demon Slayer ২০ কার্ড (হিন্দি/ইংলিশ/জাপানি/তেলুগু/তামিল × ১০৮০/৭২০/৪৮০), The Runner ০→৬ (চেক/জার্মান/হিন্দি/হাঙ্গেরিয়ান/ইতালিয়ান/জাপানি — সব জীবিত), প্রতি কার্ডে অডিও-ট্র্যাক=১, সেগমেন্ট HTTP ২০৬ video/mp2t মাক্সড-অডিও //  // v1.15.87: স্কাইমুভিজ-সাইট গভীর-নিরীক্ষা + স্কোরার-মেরামত। (ক) **'/movie/'-প্রিফিক্স-বাগ (বড়)**: skyStreams-এ posts = "/movie/Slug-…", কিন্তু স্কোরার সরাসরি nrm(p) করত → n = "movie jaws 1975 …" → `n === Tn` ও `n.startsWith(Tn+' ')` দুটোই **মৃত কোড** (n কখনোই টাইটেল দিয়ে শুরু হয় না)। বহু-শব্দ-টাইটেল বেঁচেছিল শুধু `n.includes(' '+Tn+' ')` (১১০) শাখায়; **এক-শব্দ-টাইটেলের (Jaws/Rocky/Alien/Chernobyl/Lucifer) কোনো শাখাই থাকত না → sc=0 → সব সময় ০ কার্ড**। প্রমাণ: Jaws(৫৭৮) → no-match posts=6 (সাইটে ৪× Jaws-1975 থেকেও); এখন ১× Jaws.1975 720p, Rocky(১৩৬৬) ০→৪ (Rocky.1976.*), Alien(৩৪৮) ০→৪ (Alien.1979.*)। (খ) **বছর-রেজেক্সে 19xx** (আগে শুধু 20xx) — Godfather-সার্চে Part II(1974)/Part III(1990)-এর বছর-যাচাই-ই হত না; এখন সঠিক ১৯৭২ +৪০, ভুল ১৯৭৪/১৯৯০ −৩০। সিরিজে বছর-দণ্ড **নেই** (প্রমাণ: স্লাগের বছর = সিজন-বছর — Breaking Bad S01=(2008)…S05=(2012), first_air_date নয়)। (গ) **এক-শব্দ-টাইটেলে দ্বৈত-নিশ্চিতকরণ** (প্রিফিক্স-মিল এখন সক্রিয়, তাই ভুল-টাইটেল-ঝুঁকি নতুন) — টাইটেলের ঠিক-পরের টোকেন হতে হবে ৪-অঙ্কের-বছর | সিজন-চিহ্ন | রেজোলিউশন | স্ট্রিং-শেষ, **এবং** মুভি=বছর-মিল / সিরিজ=সিজন-মিল। প্রমাণ (পরের-টোকেন): সঠিক → Jaws→1975, Alien→1979, Rocky→1976, Chernobyl→2019, Lucifer→2016/2017/2018; ভুল → Dark→"fantasies"(Dark-Fantasies-2010), Rocky→"handsome"/"mental", Alien→"predator", Jaws→"3d"(Jaws-3D-1983)। ফল: Dark S01E01 আগে দিত **ভুল** Dark.Hole.S01.COMPLETE → এখন ০ (সৎ শূন্য)। (ঘ) decodeURIComponent try/catch (lone '%'-স্লাগে URIError → সোর্স-মৃত্যু ঠেকানো)। পরীক্ষিত: test.js ২০/৪৩ (বেসলাইন), config.test.js সব-সবুজ, স্বাধীনতা-ম্যাট্রিক্স v1.15.86-এর সাথে হুবহু মিল (ডিফল্ট Sky[1080,720,720,480]/M4u[2160,1080,1080,720,720,720]; sky=0→Sky[]; skyr=720→Sky[720,720,480]; m4ur=720→M4u[720,720,480,720]; m4u=0→M4u[]; Pengu=0) //  // v1.15.86: (ক) **Pengu-সোর্স সম্পূর্ণ সরানো** (ইউজার: "No pengu please") — penguStreams/pengResolve/PENGU_BASE/PENGU_CFG কোড-থেকেই মুছে ফেলা, সাথে cfg-কী peng/pengr/pengq/pengl, কনফিগ-পেজের Pengu-কার্ড ও UNIFY_SRV-এন্ট্রি। (খ) **Sky Movies = আসল SkymoviesHD, এখন সম্পূর্ণ স্বাধীন সোর্স** — নিজস্ব মাস্টার-সুইচ (sky), নিজস্ব রেজো-ক্যাপ (skyr), নিজস্ব কোয়ালিটি/ভাষা-ফিল্টার (skyq/skyl), নিজস্ব bingeGroup 'sky|'। আগে Sky-কে Pengu-সুইচ ও **m4ur** (মুভিজ4ইউ-এর সেটিং) দিয়ে চালানো হত — এবং skyStreams-এর bingeGroup ছিল 'peng|' (পেঙ্গু-এর সাথে হুবহু একই), ফলে স্কাই-কার্ড 'Pengu' লেবেল পেত। প্রমাণ: sky=0 → শুধু স্কাই বন্ধ; skyr=720 → শুধু স্কাই ক্যাপ (মুভিজ4ইউ-এর 2160 অক্ষুণ্ণ); m4ur=720 → শুধু মুভিজ4ইউ ক্যাপ (স্কাই-এর 1080 অক্ষুণ্ণ)। (গ) **SkymoviesHD ডোমেইন-আপডেটার** — সাইট বারবার ডোমেইন বদলায়; ঘোষক-পাতা skybap.site (প্রমাণিত: সেখান থেকে new1.skymovieshd.clinic লিংক) থেকে প্রার্থী-ডোমেইন নিয়ে **যাচাই** (search.php + /movie/*.html) করে SKY_BASE বসানো হয়; বুটে + প্রতি-৬ঘণ্টায় রিফ্রেশ, সার্চ-ব্যর্থ হলে জোর-রিফ্রেশ-পুনঃচেষ্টা। যাচাই বাধ্যতামূলক — ঘোষক-পাতার টেক্সটে পুরনো মৃত ডোমেইন (skymovieshd.in/.com) থাকে, সেগুলো সঠিকভাবে বাতিল হয় (প্রমাণিত)  // v1.15.85: (ক) কার্ড-টেক্সট থেকে বাংলা সম্পূর্ণ সরানো — "ⓘ সম্পূর্ণ সিজন (এক-ফাইলে) — Ep 1 থেকে শুরু" → "ⓘ Full season in one file — starts at Ep 1" (Movies4u/Sky/unifyCards — ৩ জায়গা)। (খ) Sky-মিরর-ডুপ্লিকেট বন্ধ: একই হাবে pixeldrain যে-রেজো দিয়েছে, সেই রেজোতে signed-S3/workers-মিরর আর ঢোকে না। প্রমাণ: Shawshank-এ ৬ কার্ডের ২ জোড়া ছিল **হুবহু একই ফাইল** (pd ২.৬১GB = S3 ২.৬১GB, ৪৮০-তেও তাই) — অথচ ৬টির কার্ড-টেক্সট অভিন্ন, ব্যবহারকারী পার্থক্য বুঝতেই পারত না → ৬→৪। (গ) Sky-সার্চ/স্কোরার-এ অ্যাপোস্ট্রোফি-স্বাভাবিকীকরণ: "Schindler's List" সার্চে ০ পোস্ট, "Schindlers List"-এ ১ — অ্যাপোস্ট্রোফি সার্চ ভেঙে দিত; স্কোরারেও অতিরিক্ত-টোকেন-দণ্ডে স্কোর ৩৩ (<৬০, বাতিল) → এখন ১২০ (মিল)। (ঘ) S3/ফলব্যাক-রেজো এখন স্লাগ-লেবেল নয়, আসল ফাইলনাম থেকে — প্রমাণ: Godfather-স্লাগ "720p" কিন্তু ফাইল 1080p/৩.৪২GB (আগে 720 ভুল-লেবেল)  // v1.15.84: workers.dev আর বাদ নয় (পরিমাপিত — সিক-যোগ্য)। প্রমাণ: সরাসরি-ফাইল workers.dev-এ মাঝ-রেঞ্জে HTTP 206, content-type video/x-matroska, ১৭.৫/২৪.৮ GB; টোকেন t=0/60/180/360/600s-এ বহাল। নিরাপত্তা: .m3u8 বাদ (সেকেন্ডেই 404), text/*-কনটেন্ট-টাইপ বাতিল, শুধু মিডিয়া-এক্সটেনশন-যুক্ত ফাইলনাম, রেজো কেবল পরিচিত-সিঁড়ি থেকে (ভুল-লেবেল-নিষিদ্ধ), অন্তর্বর্তী 403-এ একবার পুনঃচেষ্টা। ফল: Sikandar-2025-এ 0→2×2160 (আগে সর্বোচ্চ 1080)  // v1.15.83: সিজন-প্যাক-ফলব্যাক (হুবহু SxxExx-মিল-থাকলে সেটাই; না-থাকলে সিজন-নিশ্চিত 'S01…' প্যাক — লেবেলে "· S1 Pack" + "ⓘ সম্পূর্ণ সিজন (এক-ফাইলে) — Ep 1 থেকে শুরু")। প্রমাণ: Kon Yashwant Pansare (2026) S01 শুধু-প্যাক, 2160p-কপিতে pixeldrain×2+signed-S3×2 (206, সিক-যোগ্য) — আগে হুবহু-শর্তে সম্পূর্ণ বাতিল হত। ভুল-সিজন কখনো নয় (ssn !== SE → বাতিল; S02E01-এ S01-প্যাক যায় না — পরীক্ষিত)  // v1.15.82: Sky + Movies4u সিরিজ-পথ (হাবক্লাউড-পাতার-শিরোনামে SxxExx মিল — প্রতি-এপিসোড; ভুল-এপিসোড-নিষিদ্ধ, সিজন-জিপ-বাদ) + 4K (মৃত-S3/FSL-শাখা-জীবিত → 2160p-কার্ড; ভুল-h4-লেবেলে 4K-মিরর-বাতিল-হত) + hits[0]-অন্ধ-গ্রহণ-বন্ধ (বছর-সচেতন m4uPick — Superman-২০২৫-এ hits[0] ছিল Superman-১৯৭৮ = ভুল-টাইটেল) + m4ur/mmr-ক্যাপে 2160  // কনফিগ-পেজ-বাগ-মেরামত (৫-ট্যাব): সার্ভার-টাইল-বুটে-রিড্র, "None"=ফ্লিট-বন্ধ (খালি=সব-চুক্তি), Reset-এ-চিপ-রিড্র, flab-<em>-আক্ষরিক-লেখা, Jump-টগল+লেবেল, Sky-প্রিভিউ-m4ur-লিক, rtsrv-দুটোই-বাদ-সম্মান // v1.15.80: RT-দ্বিতীয়-সার্ভার (WN/pixeldrain)-পুনরুদ্ধার: é-ডিঅ্যাকসেন্ট+রেস-মার্জ+PD-inline+per-সার্ভার-টগল (rtsrv)
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
@@ -5960,7 +5960,7 @@ async function bfStreams(tmdbId, title, type, s, e, origin, maxh, imdbHint = '',
   if (!tmdbId && !imdbHint) return [];
   const isTv = type === 'series';
   const SE = Math.max(1, parseInt(s, 10) || 1), EP = Math.max(1, parseInt(e, 10) || 1);
-  const tS = Date.now(); const WS = 9400; const lS = () => Math.max(250, WS - (Date.now() - tS)); // v1.17.1: ৮.৬s→৯.৪s (গ্লোবাল uniLeft ৯.৬s-এর মধ্যেই)
+  const tS = Date.now(); const WS = 4400; const lS = () => Math.max(250, WS - (Date.now() - tS)); // ★ v1.17.26 (ইউজার: "4-5s e howar kotha"): ৯.৪s→৫.২s — BF একাই গোটা উত্তরের সময় ঠিক করত
   const pubBase = String(origin || VSP_PUB || 'https://3404d3c5dc63-vidy.baby-beamup.club').replace(/\/+$/, '');
   try {
     const T = String(title || '').trim() || (typeof tmdbId === 'number' && tmdbId > 0 ? await nameForTmdb(tmdbId, isTv ? 'series' : 'movie').catch(() => '') : '');
@@ -5979,6 +5979,7 @@ async function bfStreams(tmdbId, title, type, s, e, origin, maxh, imdbHint = '',
       await bfDomRefresh(true).catch(() => '');
       srTxt = await bfText(BF_BASE + '/wp-json/wp/v2/posts?search=' + encodeURIComponent(sq) + '&orderby=relevance&_fields=id,link,title&per_page=8', BF_BASE + '/', Math.min(3400, lS()));
     }
+    if (DBG) console.error('[bft] search @' + (Date.now() - tS) + 'ms');
     let posts = [];
     try { posts = JSON.parse(srTxt || '[]'); } catch { posts = []; }
     const Y = await yP;
@@ -6094,20 +6095,23 @@ async function bfStreams(tmdbId, title, type, s, e, origin, maxh, imdbHint = '',
     const seenUrl = new Set();
     const pendingList = [];
     const failedList = []; // v1.17.7: রিজলভ-ব্যর্থ সারি → লেজি-কার্ড
-    await Promise.all(pickRows.map(async (row, idx) => {
+    // ★ v1.17.26: সারি-রিজলভ **সময়-বাঁধা** — আগে lS() শুধু সারি-শুরুতে দেখা হত, শেষ-সারিটা
+    //   ৪.৫সে বাজেট নিয়ে মোট ৮সে-ও ছাড়িয়ে যেত (মাপা: `[bf] cards=4 @8671ms`)।
+    await Promise.race([
+      Promise.all(pickRows.map(async (row, idx) => {
       if (lS() < 1100) return;
       const loc = await bfResolveFdlToLoc(row.fdl, Math.min(2800, lS()));
       let fid = loc.fid;
       if (!fid && loc.packId && isTv && lS() > 1500) {
         fid = await bfExpandPack(loc.packId, SE, EP, Math.min(3200, lS()));
       }
-      if (DBG) console.error('[bfrow] ' + tmdbId + ' ep=' + EP + ' fid=' + (fid || '-') + ' lS=' + lS());
+      if (DBG) console.error('[bfrow] @' + (Date.now() - tS) + 'ms ' + tmdbId + ' ep=' + EP + ' fid=' + (fid || '-') + ' lS=' + lS());
       if (!fid || lS() < 850) return;
       // ★ v1.17.9: fid পেলেই FastCloud (সরাসরি GU) লুকআপ **ব্যাকগ্রাউন্ডে** শুরু — বাকি কাজের সাথে
       //   ওভারল্যাপ হয়, তাই কার্ড বানানোর সময় প্রায় তৈরি থাকে ⇒ zip-রিলেতে নামতে হয় না।
       const guP = bfGuForFid(fid, 3200).catch(() => '');
       const gd = await bfResolveGdflixSmart(fid, idx, Math.min(8200, Math.max(1400, lS() - 400)));
-      if (DBG) console.error('[bfrow] ' + tmdbId + ' fid=' + fid + ' gd=' + (gd ? (gd.dead ? 'DEAD' : (gd.pendingCloud && !gd.streamUrl ? 'PENDING' : (gd.isZip ? 'ZIP ' : 'RAW ') + String(gd.streamUrl).slice(0, 58))) : 'null'));
+      if (DBG) console.error('[bfrow] @' + (Date.now() - tS) + 'ms ' + tmdbId + ' fid=' + fid + ' gd=' + (gd ? (gd.dead ? 'DEAD' : (gd.pendingCloud && !gd.streamUrl ? 'PENDING' : (gd.isZip ? 'ZIP ' : 'RAW ') + String(gd.streamUrl).slice(0, 58))) : 'null'));
       if (!gd || gd.dead) { // v1.17.7: রিজলভ-ব্যর্থ ⇒ লেজি-কার্ডের জন্য জমা রাখি (খালি এপিসোড নয়)
         if (fid) failedList.push({ fid, fh: (row.rh || 720), gd: { ttl: '' }, aud: bfAudInfo(String(row.htxt || ''), hit.raw) });
         return;
@@ -6135,7 +6139,7 @@ async function bfStreams(tmdbId, title, type, s, e, origin, maxh, imdbHint = '',
         const v2 = await bfVerify206(gd.fallbackUrl, gd.fallbackIsZip !== false, Math.min(2400, lS()));
         if (v2 && !seenUrl.has(v2.url)) v = v2;
       }
-      if (DBG) console.error('[bfrow] ' + tmdbId + ' fid=' + fid + ' verify=' + (v ? 'OK ' + String(v.url).slice(0, 58) : 'FAIL') + ' lS=' + lS());
+      if (DBG) console.error('[bfrow] @' + (Date.now() - tS) + 'ms ' + tmdbId + ' fid=' + fid + ' verify=' + (v ? 'OK ' + String(v.url).slice(0, 58) : 'FAIL') + ' lS=' + lS());
       if ((!v || seenUrl.has(v.url)) && gd.pendingCloud && !gd.pendingCloud.done) {
         // v1.17.0: সরাসরি লিংক ব্যর্থ + cloud pending ⇒ lazy (background-gen) কার্ড
         pendingList.push({ fid, fh, gd: Object.assign({}, gd, { streamUrl: '' }), row, aud });
@@ -6182,15 +6186,13 @@ async function bfStreams(tmdbId, title, type, s, e, origin, maxh, imdbHint = '',
       const directSrc = [su, zipAlt, guAlt].filter(Boolean).find((u) =>
         !/\.zip(?:\?|$)/i.test(u) && !/googleusercontent\.com/i.test(u) &&
         (/\.(?:mkv|mp4|m4v|webm)(?:\?|$)/i.test(u) || /pub-[a-z0-9]+\.r2\.dev|pixeldrain\.(?:dev|com)\/api\/file/i.test(u)));
-      // ★ v1.17.25 (রিভাইজ B): **zip-সোর্সের ৪৮০p কার্ড** এখন HLS-প্লেলিস্ট (`/bfzh/…/master.m3u8`)।
-      //   কারণ হোস্ট Range-হেডার মোছে ও প্রতি-path ৪ ঘণ্টা ক্যাশ করে ⇒ রিলেতে সিক অসম্ভব; আর
-      //   সেগমেন্ট-URL-এ রেঞ্জ path-এ থাকে ⇒ ক্যাশ/Range কিছুই সিক আটকাতে পারে না।
-      //   ⚠️ ধাপে ধাপে: আপাতত শুধু ৪৮০p (সবচেয়ে কম-risk), বাকি কোয়ালিটি আগের মতোই।
-      const hlsSrc = vIsZip ? su : (zipAlt || '');
+      // ★ v1.17.26: v1.17.25-এর **HLS কার্ড সম্পূর্ণ বাদ** (ইউজার: "Na thik hoi nai … ei
+      //   unssekable file badh daw")। কারণ প্রমাণিত: ৪ MiB বাইট-টুকরো **Cluster-সীমানায় নয়**
+      //   (seg167 শুরু `cae0d0fc…`, কোনো EBML এলিমেন্ট-হেডার নয়) ⇒ MatroskaExtractor সেগমেন্টের
+      //   শুরুতেই এলিমেন্ট-ফ্রেমিং হারায় ⇒ প্লে/সিক দুটোই ভাঙে। MKV-over-HLS বৈধ হতে হলে সেগমেন্ট
+      //   **Cluster-সীমানায়** কাটতে হবে + `#EXT-X-MAP` init-এ Cues থাকতে হবে — সেটা আলাদা কাজ।
+      //   তাই আপাতত কার্ড আগের (কাজ-করা) ফর্মেই: ডাইরেক্ট CDN / `/bfz/` ডি-ফ্রেম রিলে।
       if (directSrc) finalUrl = directSrc;                 // ★ ডাইরেক্ট CDN — প্লেয়ার নিজেই টানে
-      else if (hlsSrc && String(fh) === '480') {
-        finalUrl = pubBase + '/bfzh/' + Buffer.from(hlsSrc).toString('base64url') + '/master.m3u8?c=' + Date.now().toString(36);
-      }
       else if (vIsZip || zipAlt) finalUrl = relayOf(vIsZip ? su : zipAlt);
       else if (rawWorker) finalUrl = relayOf(su);
       // ★ v1.17.14: শুধু GU থাকলে **লেজি নয় — সোজা GU-র রিলে কার্ড** (তালিকা-বানানোর সময়ই
@@ -6204,7 +6206,9 @@ async function bfStreams(tmdbId, title, type, s, e, origin, maxh, imdbHint = '',
       }
       if (!finalUrl) return;
       got.push({ h: fh, url: finalUrl, spec: gd.ttl, aud: aud.label, _lang: aud.langKey });
-    }));
+      })),
+      new Promise(r => setTimeout(r, Math.max(120, WS - 500 - (Date.now() - tS))))
+    ]);
     // ★ v1.17.7: কোনো সারির রিজলভ/যাচাই পুরো ব্যর্থ হলে **লেজি-কার্ড** (ক্লিকে রিজলভ) — খালি এপিসোড নয়
     if (failedList.length && got.length < 4) {
       failedList.sort((a, b) => b.fh - a.fh);
@@ -6307,24 +6311,50 @@ function dvOfDesc(d) { // desc থেকে-HDR-ধরন:
   return 'HDR';
 }
 async function withSources(cardsP, srcs, cfg, t0) {
+  // ★ v1.17.26: **সোর্স-রেস আগে শুরু, vidy-কার্ডের অপেক্ষা পরে** — আগে vidy ৩–৪ সে খেয়ে ফেলত,
+  //   তারপর অন্য সোর্সদের দিকে তাকানো হত ⇒ হারভেস্ট-ঘড়িও ৩ সে দেরিতে শুরু হয়ে মোট ৫.৭সে-তে ঠেকত।
+  //   এখন দুটোই সমান্তরাল: vidy + ৯ সোর্স একসাথে দৌড়ায়, ৬ কার্ড হলেই গ্রেস-শেষে উত্তর।
+  const live = (srcs || []).filter(x => x && x.p && !(cfg && cfg[x.key] === 0));
+  let errFlag = false, cutFlag = false, _watch = null, _cutP = null, outsP = null;
+  if (live.length) {
+    // ⚠️ v1.17.26-কড়াকড়ি: শুধু "৬ কার্ড হয়েছে" দেখে কাটা যাবে না — Multimovies ১.৫সে-তে
+    //   ২৬ কার্ড দেয়, তাতে BollyFlix (৩–৪সে) কেটে যেত আর BF কার্ডই হারিয়ে যেত (মাপা: BF=0)।
+    //   তাই **ন্যূনতম ৪সে** অপেক্ষা (SB), তারপর কার্ড-থাকলে কাট; যাই হোক ৫.৬সে-তে কাট।
+    const MIN_WAIT_MS = 4650, HARD_CAP_MS = 5200, HARVEST_N = 6;
+    let lit = 0, fireCut = null;
+    _cutP = new Promise(r => { fireCut = r; });
+    _watch = setInterval(() => {
+      if (cutFlag) return;
+      const el2 = Date.now() - t0;
+      if ((el2 >= MIN_WAIT_MS && lit >= HARVEST_N) || el2 >= HARD_CAP_MS) { cutFlag = true; try { fireCut(true); } catch (e) { } }
+    }, 100);
+    if (_watch.unref) _watch.unref();
+    const track = x => x.p.then(v => {
+      if (v && v.length) lit += v.length;
+      return v;
+    }, () => { errFlag = true; return null; });
+    const uniLeft0 = Math.max(0, Math.min(NXDEADLINE, 9600) - (Date.now() - t0));
+    outsP = Promise.all(live.map(x => Promise.race([
+      track(x),
+      new Promise(r => setTimeout(() => r(null), uniLeft0)),
+      _cutP.then(() => null)
+    ]))).finally(() => clearInterval(_watch));
+  }
   const cLeft = Math.max(500, 9200 - (Date.now() - t0));
   const cards = await Promise.race([
     cardsP.catch(e => { if (DBG) console.error('[srcdbg] cardsP died: ' + String(e && e.message || e).slice(0, 90)); return []; }),
     new Promise(r => setTimeout(() => r([]), cLeft))
   ]);
-  const live = (srcs || []).filter(x => x && x.p && !(cfg && cfg[x.key] === 0));
-  if (!live.length) return cards; // সব-বন্ধ → শূন্য-অপেক্ষা
+  if (DBG) console.error('[srcdbg] vidy-cards settled @' + (Date.now() - t0) + 'ms n=' + (cards || []).length);
+  if (!live.length) { if (_watch) clearInterval(_watch); return cards; } // সব-বন্ধ → শূন্য-অপেক্ষা
   try {
     const el = Date.now() - t0;
     // v1.14.6 ঐক্যবদ্ধ-১ম-ক্লিক-সময়সীমা (ইউজার-টপ-অগ্রাধিকার: প্রতি-নির্বাচিত-সোর্স-১ম-ক্লিকেই):
     // সব-লাইভ-সোর্স-একই-পরম-সীমা ~৯.৬সে (রুট-সেফটি ১১.৯সে/এজ-কাট ১২সে-র-ভেতরে) — যে-সোর্স-আগে-সেটল
     // উত্তর-তার-পরেই (দ্রুত-ক্ষেত্রে ২-৫সে), ধীর-সোর্স-কাটা-পড়ার-আগে-সর্বোচ্চ-সময়-পায়।
     const uniLeft = Math.max(0, Math.min(NXDEADLINE, 9600) - el); // v1.15.99: ৯.৬সে যাতে Beamup প্রক্সির ১২সে কাটঅফের আগে সবসময় ২+ সেকেন্ড হাতে থাকে
-    let errFlag = false; // v1.15.3: সোর্স-ত্রুটি (রিবিল্ড/নেটওয়ার্ক) ≠ সত্যিকারের-খালি — আংশিক-গণ্য হোক
-    const outs = await Promise.all(live.map(x => Promise.race([
-      x.p.catch(() => { errFlag = true; return []; }),
-      new Promise(r => setTimeout(() => r(null), uniLeft))
-    ])));
+    // v1.15.3: সোর্স-ত্রুটি (রিবিল্ড/নেটওয়ার্ক) ≠ সত্যিকারের-খালি — আংশিক-গণ্য হোক (errFlag উপরে ঘোষিত)
+    const outs = await outsP;
     const seenFileU = new Set(); // v1.15.50: sky/m4u-একই-ফাইল-ডুপ-কাটার-সেট
     let all = cards.slice();
     for (let i = 0; i < live.length; i++) {
@@ -6375,7 +6405,7 @@ async function withSources(cardsP, srcs, cfg, t0) {
     }
     if (DBG) console.error('[srcdbg] withSources el=' + el + 'ms uniLeft=' + uniLeft + 'ms → ' + all.length + ' কার্ড (partial=' + !!all.$partial + ') সোর্স=' + live.map((x2, i2) => x2.key + ':' + (outs[i2] ? outs[i2].length : 'কাটা')).join(','));
 
-    all.$partial = outs.some(v => v === null) || errFlag; // v1.15.3: কাটা-বা-ত্রুটিজ-সোর্স → ৩০মিন-নয়-৯০সে-ক্যাশ (পরের-ট্যাপে-সম্পূর্ণ-আপগ্রেড)
+    all.$partial = outs.some(v => v === null) || errFlag || cutFlag; // v1.15.3: কাটা-বা-ত্রুটিজ-সোর্স → ৩০মিন-নয়-৯০সে-ক্যাশ (পরের-ট্যাপে-সম্পূর্ণ-আপগ্রেড)
     return all;
   } catch (e) { if (DBG) console.error('[srcdbg] ERR ' + String(e && e.message).slice(0, 80)); return cards; }
 }
@@ -6556,7 +6586,14 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
       const el2 = Date.now() - t0;
       // স্তর-১: ব্যাপক-সাফল্য (≥৬-ওকে) → ২.২সে-থেকেই-ঝুলন্ত-কাট
       // স্তর-২: প্রায়-সবাই-বসে-গেছে (≤২-ঝুলন্ত) + অন্তত-১-ওকে + ৩.৯সে → শেষ-জিদ্দিদের-কাটো (সাধারণত-ধীর-giant, যে-শেষে-err/empty-ই-দেয় — অপেক্ষা-নিষ্ফল)
-      if (pend.size && el2 >= 2200 && (okWave >= 6 || (okWave >= 1 && el2 >= 3900 && allow.length - pend.size >= allow.length - 2))) {
+      // ★ v1.17.26 (ইউজার: "4-5s e howar kotha"): ভিডি-ঢেউ পুরো ৬সে জিম্মি করত ⇒ ধাপে-ধাপে-হারভেস্ট:
+      //   ৩+ সার্ভার-ঠিক থাকলেই ৩সে-তে, ১টা-ঠিক থাকলেই ৪.২সে-তে বাকি-ঝুলন্তগুলো কাটা পড়ে (শাস্তি নেই —
+      //   তারা ব্যাকগ্রাউন্ডে শেষ হয়ে SRV_CACHE-এ জমে ⇒ পরের ট্যাপে পাওয়া যায়)।
+      if (pend.size && el2 >= 2200 && (okWave >= 6
+        || (okWave === 0 && el2 >= 4000)   // একটাও সার্ভার-ঠিক নেই ⇒ আর-অপেক্ষা নিষ্ফল (রে-সব-খালি)
+        || (okWave >= 3 && el2 >= 3000)
+        || (okWave >= 1 && el2 >= 4200)
+        || (okWave >= 1 && el2 >= 3900 && allow.length - pend.size >= allow.length - 2))) {
         if (DBG) console.error('[t1g] TIGHTEN ok=' + okWave + ' cut=' + pend.size + ' at ' + el2 + 'ms');
         for (const [srv2, f2] of Array.from(pend)) { pend.delete(srv2); f2({ srv: srv2, late: true }); }
       }
@@ -6829,12 +6866,41 @@ async function unifyCards(cards, meta) { // শুধু-টেক্সট-ব�
     return cards;
   } catch { return cards; }
 }
-function sendStreams(res, skey, plog, ms, cards, ua) {
+// ★ v1.17.26: **/stream/ ফলাফল-ক্যাশ** (ইউজার: "stream fetch e etoh time lagbe keno, 4-5s e howar kotha")।
+//   প্লেয়ার একই তালিকা বারবার চায় (প্লে-পেজ খোলা / ফিরে-আসা / ব্যাক) — আগে প্রতিবারই পুরো স্ক্যান।
+//   নীতি: **খালি ফল কখনো ক্যাশ নয়**; আংশিক (কাটা) ফল ছোট TTL — দেরিতে-আসা সোর্স শিগগির যোগ হয়;
+//   ডিপ্লয়ের সাথে সাথে অকার্যকর (কী-তে VERSION)।
+const STREAM_RES_CACHE = new Map();
+const STREAM_RES_MAX = 240;
+function sresKey(plog, cfg) {
+  let sig = '';
+  try { sig = JSON.stringify(cfg || {}); } catch (e) { sig = ''; }
+  return String(plog).split(' [')[0] + '|' + sig + '|' + VERSION;
+}
+function sresGet(k) {
+  const e = STREAM_RES_CACHE.get(k);
+  if (!e) return null;
+  if (e.exp <= Date.now()) { STREAM_RES_CACHE.delete(k); return null; }
+  return e;
+}
+function sresPut(k, body, partial) {
+  if (!body || body.length < 24) return;
+  try { if (!JSON.parse(body).streams.length) return; } catch (e) { return; }
+  STREAM_RES_CACHE.set(k, { body, exp: Date.now() + (partial ? 25000 : 120000) });
+  if (STREAM_RES_CACHE.size > STREAM_RES_MAX) {
+    const now = Date.now();
+    for (const [kk, vv] of STREAM_RES_CACHE) if (vv.exp <= now) STREAM_RES_CACHE.delete(kk);
+    while (STREAM_RES_CACHE.size > STREAM_RES_MAX) STREAM_RES_CACHE.delete(STREAM_RES_CACHE.keys().next().value);
+  }
+}
+function sendStreams(res, skey, plog, ms, cards, ua, cfg) {
   const partial = !!(cards && cards.$partial);
   const n = (cards || []).length; // v1.15.8: কোনো-stash-নেই — প্রতি-উত্তর-তাজা
   logReq(plog, ms, n, null, ua);
+  const body = JSON.stringify({ streams: stripCards(cards) });
+  sresPut(sresKey(plog, cfg), body, partial);
   res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'cache-control': 'no-store' });
-  return res.end(JSON.stringify({ streams: stripCards(cards) }));
+  return res.end(body);
 }
 
 function sendFile2(res, name) {
@@ -6875,6 +6941,16 @@ const server = http.createServer((req, res) => {
         res.writeHead(200, { 'content-type': 'image/png', 'access-control-allow-origin': '*', 'cache-control': 'public, max-age=86400' });
         return res.end(lb);
       } catch (eL) { return sendJson(res, 404, { error: 'no rt logo' }); }
+    }
+    // ★ v1.17.26: /stream/-ফলাফল ক্যাশ-হিট (৯০s–২মিন) — প্লেয়ারের বারবার-চাওয়া তাৎক্ষণিক।
+    //   খালি ফল কখনো ক্যাশ হয় না; আংশিক ফল ২৫ সে-তে মেয়াদোত্তীর্ণ ⇒ দেরিতে-আসা সোর্সও যোগ হয়।
+    if (req.method === 'GET' && (p.startsWith('/stream/') || p.startsWith('/probe/stream/'))) {
+      const hit = sresGet(sresKey(p, cfg));
+      if (hit) {
+        logReq(p, 0, 0, 'cache-hit', RVA);
+        res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'cache-control': 'no-store', 'x-vidy-cache': 'hit' });
+        return res.end(hit.body);
+      }
     }
     if (p === '/_health') return sendJson(res, 200, { ok: 1, version: VERSION, pool: POOL.length, pxbench: POOL.filter(c => PX_SITE.has(c.px)).length, pxbf: PX_BF.size, memo: memo.size, nx: NEXBASE ? 1 : 0, nxpool: NXBENCH, nxwaves: NXWAVES, nxsize: NXSIZE, tw: TWBASE ? 1 : 0, rt: RTBASE ? 1 : 0, vsp: VSP_POOL.length }); // v1.15.71: vsp=Vidsrc-পুল-আকার // v1.15.18: pxbench=সাইট-প্রমাণিত-বেঞ্চ (v1.15.8: nxpool=MB-বেঞ্চ)
     if (p === '/_pool') return sendJson(res, 200, POOL.map(c => Object.assign({}, c, PX_RUN.get(c.px) || {}))); // v1.15.0: রানটাইম-স্বাস্থ্য-সহ
@@ -7182,15 +7258,6 @@ const server = http.createServer((req, res) => {
       } catch { try { res.writeHead(502); } catch { } return res.end('m4p'); }
     })();
 
-    if (p === '/bfz/_rt') {
-      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', 'access-control-allow-origin': '*' });
-      return res.end(JSON.stringify({
-        range: String(req.headers.range || '-'),
-        ua: String(req.headers['user-agent'] || '-').slice(0, 30),
-        ae: String(req.headers['accept-encoding'] || '-').slice(0, 20),
-        xr: String(req.headers['x-forwarded-for'] || '-').slice(0, 20)
-      }));
-    }
     const bfzFidM = p.match(/^\/bfz\/fid\/([A-Za-z0-9]+)(?:\/c\/[a-z0-9]+)?\/v\.(?:mkv|mp4)$/);
     if (bfzFidM) return (async () => {
       try {
@@ -7250,54 +7317,7 @@ const server = http.createServer((req, res) => {
     })();
 
 
-    // ★ v1.17.22: HLS-প্লেলিস্ট + প্রতি-সেগমেন্ট আলাদা URL (nonce-সহ) — হোস্টের Range-কাটা ও
-    //   ৪-ঘণ্টা per-URL ক্যাশ দুটোকেই পাশ কাটায়।
-    const bfhPlM = p.match(/^\/bfzh\/([A-Za-z0-9_=-]{8,2400})\/master\.m3u8$/);
-    if (bfhPlM) return (async () => {
-      let tgt = '';
-      try { tgt = Buffer.from(bfhPlM[1], 'base64url').toString('utf8'); } catch { }
-      if (!tgt || !/^https?:\/\//i.test(tgt)) { res.writeHead(400); return res.end('bad-bfzh'); }
-      if (DBG) console.error('[bfh] pl start');
-      const meta = await bfBfhMeta(tgt).catch((e) => (console.error('[bfh] meta err ' + e.message), null));
-      if (DBG) console.error('[bfh] meta=' + JSON.stringify(meta && { r: meta.rawSize, z: meta.zip, d: meta.durSec }));
-      if (!meta) { res.writeHead(502); return res.end('meta'); }
-      const nonce = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
-      // ★ v1.17.23: nginx-এর `Host` = শুধু অ্যাপ-নাম (`3404d3c5dc63-vidy`); পাবলিক হোস্ট আসে
-      //   `x-forwarded-host`-এ। আগেরটা ব্যবহারে প্লেলিস্টের URL ভাঙছিল।
-      const bfhHost = String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim();
-      const bfhProto = String(req.headers['x-forwarded-proto'] || 'https').split(',')[0].trim();
-      // হোস্ট-হেডার এই প্লাটফর্মে ভাঙা (শুধু অ্যাপ-নাম আসে) ⇒ **relative** URI ই দিই; প্লেয়ার
-      // প্লেলিস্টের origin ধরে নিজেই পূর্ণ ঠিকানা বানায় (RFC 8216 স্ট্যান্ডার্ড)।
-      const bfhBase = '';
-      let body = '';
-      try { body = bfBfhPlaylist(bfhBase, bfhPlM[1], nonce, meta); } catch (e) { console.error('[bfh] pl build err ' + e.message); }
-      if (DBG) console.error('[bfh] pl bytes=' + body.length + ' chunk=' + BFH_CHUNK);
-      res.writeHead(200, {
-        'content-type': 'application/vnd.apple.mpegurl',
-        'content-length': String(Buffer.byteLength(body)),
-        'cache-control': 'no-store', 'cdn-cache-control': 'no-store',
-        'access-control-allow-origin': '*'
-      });
-      return res.end(body);
-    })();
-
-    const bfhSegM = p.match(/^\/bfzh\/([A-Za-z0-9_=-]{8,2400})\/c\/[a-z0-9]+\/s(\d{1,5})\.(?:mkv|mp4)$/);
-    if (bfhSegM) return (async () => {
-      let tgt = '';
-      try { tgt = Buffer.from(bfhSegM[1], 'base64url').toString('utf8'); } catch { }
-      if (!tgt || !/^https?:\/\//i.test(tgt)) { res.writeHead(400); return res.end('bad-bfzh'); }
-      const meta = await bfBfhMeta(tgt).catch(() => null);
-      if (!meta) { res.writeHead(502); return res.end('meta'); }
-      const k = parseInt(bfhSegM[2], 10) || 0;
-      const start = k * BFH_CHUNK;
-      if (start >= meta.rawSize) { res.writeHead(416, { 'content-range': 'bytes */' + meta.rawSize }); return res.end(); }
-      const end = Math.min(start + BFH_CHUNK - 1, meta.rawSize - 1);
-      // ⚠️ রেঞ্জটা path থেকে — হেডারের উপর নির্ভরশীল নয়
-      const keep = req.headers.range;
-      req.headers.range = 'bytes=' + start + '-' + end;
-      try { return await bfServeZip(req, res, tgt); }
-      finally { req.headers.range = keep; }
-    })();
+    // ★ v1.17.26: /bfzh/ HLS রুট সরানো হয়েছে (উপরের নোট দেখুন)।
 
     const bfzM = p.match(/^\/bfz\/([A-Za-z0-9_=-]{8,2400})(?:\/c\/[a-z0-9]+)?\/v\.(?:mkv|mp4)$/);
     if (bfzM) return (async () => {
@@ -7409,7 +7429,7 @@ const server = http.createServer((req, res) => {
       const azP = !(cfg && cfg.az === 0) ? azStreams(Number(m[1]), 'movie', 0, 0, cfg && cfg.azq || []).catch(() => []) : null; // v1.15.76: AniZone
       kickSubs('tmdb' + m[1], 'movie', null, null, cfg);
       return withDeadline(withSources(vOn ? getSources(Number(m[1]), 'movie', null, null, '', cfg, tp) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: bfP, key: 'bf' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0), 11900 /* v1.15.26 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
-cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'movie', s: 0, e: 0 }).then(u => sendStreams(res, req.url, p, Date.now() - t0, u, RVA)); },
+cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'movie', s: 0, e: 0 }).then(u => sendStreams(res, req.url, p, Date.now() - t0, u, RVA, cfg)); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }
     if ((m = p.match(/^\/stream\/series\/tmdb(\d+):?(?:(\d+):(\d+))?\.json$/))) {
@@ -7430,7 +7450,7 @@ cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'movie', s: 0, e: 0 }
       twRtPrewarm(tp, 'series', Number(m[2] || 1), Number(m[3] || 1));
       kickSubs('tmdb' + m[1], 'series', Number(m[2] || 1), Number(m[3] || 1), cfg);
       return withDeadline(withSources(vOn ? getSources(Number(m[1]), 'tv', Number(m[2] || 1), Number(m[3] || 1), '', cfg, tp) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: bfP, key: 'bf' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0), 11900 /* v1.15.26 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
-cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'series', s: Number(m[2] || 1), e: Number(m[3] || 1) }).then(u => sendStreams(res, req.url, p, Date.now() - t0, u, RVA)); },
+cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'series', s: Number(m[2] || 1), e: Number(m[3] || 1) }).then(u => sendStreams(res, req.url, p, Date.now() - t0, u, RVA, cfg)); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }
     if ((m = p.match(/^\/stream\/movie\/(tt\d+)\.json$/))) {
@@ -7451,7 +7471,7 @@ cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'series', s: Number(m
       const azP = !(cfg && cfg.az === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? azStreams(info.id, 'movie', 0, 0, cfg && cfg.azq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.76: AniZone
       kickSubs(m[1], 'movie', null, null, cfg);
       return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'movie', null, null, info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: bfP, key: 'bf' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0), 11900 /* v1.15.26 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
-cards => { Promise.all([infoP, nmP]).then(([info, nm]) => unifyCards(cards, { tmdbId: info && info.id, title: (info && info.name) || nm, type: 'movie', s: 0, e: 0, year: info && info.year })).then(u => sendStreams(res, req.url, p, Date.now() - t0, u, RVA)); },
+cards => { Promise.all([infoP, nmP]).then(([info, nm]) => unifyCards(cards, { tmdbId: info && info.id, title: (info && info.name) || nm, type: 'movie', s: 0, e: 0, year: info && info.year })).then(u => sendStreams(res, req.url, p, Date.now() - t0, u, RVA, cfg)); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }
     if ((m = p.match(/^\/stream\/series\/(tt\d+):(\d+):(\d+)\.json$/))) {
@@ -7474,7 +7494,7 @@ cards => { Promise.all([infoP, nmP]).then(([info, nm]) => unifyCards(cards, { tm
       twRtPrewarm(nmP, 'series', Number(m[2]), Number(m[3]));
       kickSubs(m[1], 'series', Number(m[2]), Number(m[3]), cfg);
       return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'tv', Number(m[2]), Number(m[3]), info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: bfP, key: 'bf' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0), 11900 /* v1.15.26 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
-cards => { Promise.all([infoP, nmP]).then(([info, nm]) => unifyCards(cards, { tmdbId: info && info.id, title: (info && info.name) || nm, type: 'series', s: Number(m[2]), e: Number(m[3]), year: info && info.year })).then(u => sendStreams(res, req.url, p, Date.now() - t0, u, RVA)); },
+cards => { Promise.all([infoP, nmP]).then(([info, nm]) => unifyCards(cards, { tmdbId: info && info.id, title: (info && info.name) || nm, type: 'series', s: Number(m[2]), e: Number(m[3]), year: info && info.year })).then(u => sendStreams(res, req.url, p, Date.now() - t0, u, RVA, cfg)); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }
     if ((m = p.match(/^\/stream\/series\/(tt\d+)\.json$/))) { // সেফটি-নেট: s:e-ছাড়া কল → S1E1
@@ -7497,7 +7517,7 @@ cards => { Promise.all([infoP, nmP]).then(([info, nm]) => unifyCards(cards, { tm
       twRtPrewarm(nmP, 'series', 1, 1);
       kickSubs(m[1], 'series', 1, 1, cfg);
       return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'tv', 1, 1, info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: bfP, key: 'bf' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0), 11900 /* v1.15.26 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
-cards => { Promise.all([infoP, nmP]).then(([info, nm]) => unifyCards(cards, { tmdbId: info && info.id, title: (info && info.name) || nm, type: 'series', s: 1, e: 1, year: info && info.year })).then(u => sendStreams(res, req.url, p + ' [no-s:e]', Date.now() - t0, u, RVA)); },
+cards => { Promise.all([infoP, nmP]).then(([info, nm]) => unifyCards(cards, { tmdbId: info && info.id, title: (info && info.name) || nm, type: 'series', s: 1, e: 1, year: info && info.year })).then(u => sendStreams(res, req.url, p + ' [no-s:e]', Date.now() - t0, u, RVA, cfg)); },
         e => { logReq(p + ' [no-s:e]', Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }
     // ── subtitles-রিসোর্স (MovieBox-সাবটাইটেল-ট্র্যাক — এমবেডেড-চাইল্ডের-/subtitles-প্রক্সি) ──
@@ -7659,175 +7679,7 @@ setInterval(() => { nxBenchHealth(); }, 15000).unref();
 })();
 
 
-// ================= v1.17.22: HLS + byte-segment relay (fights the host's 4h per-URL cache) =================
-// হোস্ট প্রতি-path রেসপন্স ৪ ঘণ্টা ধরে রাখে এবং `Range` হেডার **মুছে ফেলে** (প্রমাণ: /bfz/_rt)।
-// সমাধান: এক ফাইলের বদলে **প্রতি সেগমেন্টের আলাদা URL** — রেঞ্জটা path-এ বাঁকা করে দেওয়া হয়,
-// প্লেয়ার Range হেডার পাঠালেও পাঠাক, আমাদের দরকার নেই। প্রতিটা URL-ই নতুন ক্যাশ-কী ⇒ সিক ঠিক।
-const BFH_CHUNK = 4 * 1024 * 1024;                    // ৪ MiB raw MKV per segment
-function bfMkvDurationSec(buf) {                       // EBML Info → Duration (0x4489, float)
-  try {
-    for (let i = 0; i + 12 < buf.length; i++) {
-      if (buf[i] !== 0x44 || buf[i + 1] !== 0x89) continue;
-      const len = buf[i + 2] & 0x80 ? 1 : buf[i + 2] & 0x40 ? 2 : buf[i + 2] & 0x20 ? 3 : buf[i + 2] & 0x10 ? 4 : 8;
-      const at = i + 2 + len;
-      const sizeVal = len === 1 ? (buf[i + 2] & 0x7f) : 0;   // ছোট সাইজ (১-বাইট descriptor)
-      for (const width of (sizeVal === 4 ? [4, 8] : [8, 4])) {
-        if (at + width > buf.length) continue;
-        const d = width === 4 ? buf.readFloatBE(at) : buf.readDoubleBE(at);
-        if (d > 30 && d < 60 * 60 * 6) return d;            // ৩০সে–৬ঘণ্টা = বিশ্বাসযোগ্য
-      }
-    }
-  } catch { }
-  return 0;
-}
-
-// EBML ছোট-পাঠক: id + vint-size
-function bfEbmlAt(buf, i) {
-  if (i >= buf.length) return null;
-  const f = buf[i];
-  const idLen = f & 0x80 ? 1 : f & 0x40 ? 2 : f & 0x20 ? 3 : f & 0x10 ? 4 : 0;
-  if (!idLen || i + idLen >= buf.length) return null;
-  const id = buf.slice(i, i + idLen).toString('hex');
-  const sf = buf[i + idLen];
-  const szLen = sf & 0x80 ? 1 : sf & 0x40 ? 2 : sf & 0x20 ? 3 : sf & 0x10 ? 4 : sf & 0x08 ? 5 : sf & 0x04 ? 6 : sf & 0x02 ? 7 : sf & 0x01 ? 8 : 0;
-  if (!szLen || i + idLen + szLen > buf.length) return null;
-  let size = 0, unknown = true;
-  for (let k = 0; k < szLen; k++) {
-    const byte = buf[i + idLen + k];
-    size = size * 256 + (k === 0 ? byte & ((1 << (8 - szLen)) - 1) : byte);
-  }
-  const allOnes = (() => { let v = buf[i + idLen] & ((1 << (8 - szLen)) - 1); for (let k = 1; k < szLen; k++) v = v * 256 + buf[i + idLen + k]; const max = Math.pow(2, 7 * szLen) - 1; return v === max; })();
-  unknown = allOnes;
-  return { id, idLen, szLen, size, unknown, dataAt: i + idLen + szLen };
-}
-// SeekHead → Info → Duration (আসল দৈর্ঘ্য; EXTINF-এর জন্য দরকার)
-// ★ শুধু Info-এলিমেন্টের ভেতরের ০x4489 পড়ি (পুরো হেডে স্ক্যান করলে অন্য এলিমেন্টের বাইট-মিলে
-//   ভুল দৈর্ঘ্য আসে — E16-এ ৮১০সে এসেছিল, আসল ~৬৫ মিনিট)। সাথে বিটরেট-স্যানিটি চেক।
-async function bfMkvDurationDeep(zipUrl, meta, getRange) {
-  // Duration = টাইমকোড-ইউনিটে; আসল সেকেন্ড = Duration × TimecodeScale(0x2AD7B1, ডিফল্ট 1e6 ns) / 1e9
-  const parseDur = (buf, from, to) => {
-    const lo = Math.max(0, from | 0), hi = Math.min(buf.length, to | 0);
-    let scale = 0;
-    for (let i = lo; i + 8 < hi; i++) {                       // TimecodeScale
-      if (buf[i] === 0x2a && buf[i + 1] === 0xd7 && buf[i + 2] === 0xb1) {
-        const szB = buf[i + 3];
-        const sz = szB & 0x7f;
-        if ((szB & 0x80) && sz >= 1 && sz <= 8 && i + 4 + sz <= hi) {
-          let v = 0;
-          for (let k = 0; k < sz; k++) v = v * 256 + buf[i + 4 + k];
-          if (v >= 1000 && v <= 1e9) scale = v;
-        }
-      }
-    }
-    if (!scale) scale = 1000000;                              // Matroska ডিফল্ট
-    for (let i = lo; i + 8 < hi; i++) {
-      if (buf[i] !== 0x44 || buf[i + 1] !== 0x89) continue;
-      const szB = buf[i + 2];
-      if (!(szB & 0x80)) continue;
-      const sz = szB & 0x7f;
-      if (sz !== 4 && sz !== 8) continue;
-      const raw = sz === 4 ? buf.readFloatBE(i + 3) : buf.readDoubleBE(i + 3);
-      if (!(raw > 0 && raw < 1e9)) continue;
-      const v = raw * scale / 1e9;                            // সেকেন্ড
-      if (!(v > 29 && v < 6 * 3600)) continue;
-      const mbps = (meta.rawSize * 8) / v / 1e6;
-      if (mbps > 0.3 && mbps < 90) return v;                  // বিটরেট-স্যানিটি
-    }
-    return 0;
-  };
-  try {
-    const head = await getRange(0, Math.min(262143, meta.rawSize - 1));
-    if (!head || head.length < 64) return 0;
-    // Segment-এর ডেটা শুরু
-    let segData = -1, p = 0;
-    for (let n = 0; n < 6 && p < head.length; n++) {
-      const e = bfEbmlAt(head, p);
-      if (!e) break;
-      if (e.id === '18538067') { segData = e.dataAt; break; }
-      if (e.unknown) break;
-      p = e.dataAt + e.size;
-    }
-    if (segData < 0) return 0;
-    let infoPos = -1;
-    // (ক) Segment-এর প্রথম এলিমেন্টগুলো ঘেঁষে Info / SeekHead
-    let q = segData;
-    for (let n = 0; n < 8 && q < head.length; n++) {
-      const e = bfEbmlAt(head, q);
-      if (!e) break;
-      if (e.id === '114d9b74') {                       // SeekHead
-        const end = Math.min(head.length, e.dataAt + Math.max(e.size, 0));
-        for (let i = e.dataAt; i + 12 < end; i++) {
-          if (head[i] !== 0x53 || head[i + 1] !== 0xab) continue;   // SeekID
-          const idLenB = head[i + 4];
-          const idLen = (idLenB & 0x80) ? (idLenB & 0x7f) : 4;
-          const sid = head.slice(i + 5, i + 5 + idLen).toString('hex');
-          if (sid !== '1549a966') continue;
-          const sp = head.indexOf(Buffer.from('53ac', 'hex'), i);
-          if (sp < 0) continue;
-          const se = bfEbmlAt(head, sp);
-          if (!se || se.unknown) continue;
-          let v = 0;
-          for (let k = 0; k < se.size && se.dataAt + k < head.length; k++) v = v * 256 + head[se.dataAt + k];
-          if (v > 0) infoPos = segData + v;
-        }
-      }
-      if (e.id === '1549a966' && !e.unknown) { infoPos = e.dataAt; break; }   // Info (absolute)
-      if (e.unknown) break;
-      q = e.dataAt + e.size;
-    }
-    // (খ) Info-এর ভেতরে ডিউরেশন
-    if (infoPos > 0) {
-      const win = await getRange(infoPos, Math.min(infoPos + 511, meta.rawSize - 1));
-      if (win && win.length > 16) {
-        const d = parseDur(win, 0, win.length);
-        if (d) return d;
-      }
-    }
-    // (গ) শেষ চেষ্টা: হেডের ভেতরে (বিটরেট-স্যানিটি সহ)
-    return parseDur(head, 0, head.length);
-  } catch { return 0; }
-}
-async function bfBfhMeta(zipUrl) {
-  const e = bfCacheGet(BFZ_META, zipUrl, 6 * 3600 * 1000);
-  if (e) {
-    if (!e.durSec || !(e.durSec > 60)) {           // ক্যাশে ডিউরেশন নেই ⇒ একবার মেপে নিই
-      try {
-        e.durSec = await bfMkvDurationDeep(zipUrl, e, (a, b) => bfRawRange(zipUrl, e, a, b));
-        bfCachePut(BFZ_META, zipUrl, e, 3600);
-      } catch { e.durSec = 0; }
-    }
-    return e;
-  }
-  // bfServeZip-ই meta বসায়; এখানে হালকা পথে নিজেই বানাই
-  const r0 = await fetch(zipUrl, { headers: { 'User-Agent': UA, Range: 'bytes=0-65535' }, signal: AbortSignal.timeout(9000) });
-  const b0 = Buffer.from(await r0.arrayBuffer());
-  const rawSize = Number((zipUrl.match(/[?&]bytes=(\d+)/i) || [])[1] || 0);
-  if (!rawSize || b0.length < 30) return null;
-  let meta;
-  if (/\.zip\b|\.zip\?/i.test(zipUrl)) {
-    if (b0.readUInt32LE(0) !== 0x04034b50) return null;
-    meta = { dataStart: 30 + b0.readUInt16LE(26) + b0.readUInt16LE(28), rawSize, zip: true };
-    meta.durSec = await bfMkvDurationDeep(zipUrl, meta, (a, b) => bfRawRange(zipUrl, meta, a, b));
-  } else {
-    meta = { dataStart: 0, rawSize, zip: false };
-    meta.durSec = await bfMkvDurationDeep(zipUrl, meta, (a, b) => bfRawRange(zipUrl, meta, a, b));
-  }
-  bfCachePut(BFZ_META, zipUrl, meta, 3600);
-  return meta;
-}
-function bfBfhPlaylist(base, b64, nonce, meta) {
-  const segs = Math.ceil(meta.rawSize / BFH_CHUNK);
-  const total = meta.durSec && meta.durSec > 60 ? meta.durSec : 24 * 60;   // ডিউরেশন না পেলে ২৪ মিনিট
-  const per = total / segs;
-  const lines = ['#EXTM3U', '#EXT-X-VERSION:4', '#EXT-X-PLAYLIST-TYPE:VOD',
-    '#EXT-X-INDEPENDENT-SEGMENTS', '#EXT-X-TARGETDURATION:' + Math.ceil(per)];
-  for (let k = 0; k < segs; k++) {
-    lines.push('#EXTINF:' + per.toFixed(3) + ',');
-    lines.push((base || '') + '/bfzh/' + b64 + '/c/' + nonce + '/s' + k + '.mkv');   // base='' ⇒ relative (HLS-স্ট্যান্ডার্ড)
-  }
-  lines.push('#EXT-X-ENDLIST');
-  return lines.join('\n') + '\n';
-}
+// v1.17.26: v1.17.22–25-এর BFH (byte-chunk HLS) ব্লক সরানো হয়েছে — ভাঙা পদ্ধতি, প্রত্যাহৃত।
 
 // ---------- selftest ----------
 if (process.argv[2] === 'selftest') {
