@@ -395,11 +395,25 @@ export function benchSave(force = false) {
   LAST_SAVE = Date.now();
   try {
     const now = Date.now();
-    const rows = POOL.filter(u => !(BAD.get(u) > now))
+    const live = POOL.filter(u => !(BAD.get(u) > now))
       .map(u => ({ px: String(u).replace(/^http:\/\//, ''), ms: Math.round((STATS.get(u) || {}).lat || 1500) }))
       .filter(x => /^[\w.-]+:\d{2,5}$/.test(x.px))
-      .sort((a, b) => a.ms - b.ms).slice(0, 140);
-    if (rows.length < 6) return;                       // অর্ধেক-মরা-বেঞ্চ কখনো সেভ নয়
+      .sort((a, b) => a.ms - b.ms);
+    if (live.length < 6) return;                       // অর্ধেক-মরা-বেঞ্চ কখনো সেভ নয়
+    // ★ v1.17.35: **মার্জ** — আগে চাইল্ড ফাইলটা মুছে শুধু নিজের ছোট live-বেঞ্চ লিখত
+    //   (প্রমাণ: ডিপ্লয়ের পর ১৪০-বীজ → ৮-এ নেমে যেত) ⇒ এখন পুরোনো+নতুন একসাথে, দ্রুততম আগে।
+    const merged = new Map();
+    try {
+      for (const x of JSON.parse(fs.readFileSync(out, 'utf8'))) {
+        const px = String(x && (x.px || x));
+        if (/^[\w.-]+:\d{2,5}$/.test(px)) merged.set(px, { px, ms: Number(x.ms) || 1500 });
+      }
+    } catch { }
+    for (const r of live) {
+      const old = merged.get(r.px);
+      if (!old || r.ms < old.ms) merged.set(r.px, r);
+    }
+    const rows = [...merged.values()].sort((a, b) => a.ms - b.ms).slice(0, 160);
     fs.writeFileSync(out, JSON.stringify(rows));
   } catch { }
 }
