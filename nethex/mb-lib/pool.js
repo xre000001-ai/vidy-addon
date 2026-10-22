@@ -29,9 +29,9 @@ const SRCS = ['https://api.proxyscrape.com/v4/free-proxy-list/get?request=displa
               'https://raw.githubusercontent.com/TheSpeedX/PROXY-LIST/master/http.txt',
               'https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt',
               'https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/protocols/http/data.txt']; // proxifly: পৃথক-http-মডিউল, প্রতি-৫মিনিটে-যাচাইকৃত (ইউজার-প্রস্তাব)
-const BENCH_MAX = 128;             // v2.10.4 (ইউজার): ক্যাপ-ডাবল ৬৪→১২৮             // r-20261016m (ইউজার: 'ম্যাক্স-পর্যন্ত'): বেঞ্চ-ক্যাপ ৩২→৬৪ — ঝড়ে-অর্ধেক-মরলেও-৩২-থাকে
-const SAMPLE = 400;               // candidates probed per pass (২০০→৪০০)
-const BOOT_TARGET = 96;           // v2.10.4 (ইউজার): বুট-টার্গেট-ডাবল ৪৮→৯৬           // boot stops once this many exits are in (২৮→৪৮)
+const BENCH_MAX = Math.max(32, Number(process.env.NX_BENCH_MAX || 0) || 128); // v1.17.31: env-টিউনেবল (অ্যাডন ১৬০ পাঠায়)             // v2.10.4 (ইউজার): ক্যাপ-ডাবল ৬৪→১২৮             // r-20261016m (ইউজার: 'ম্যাক্স-পর্যন্ত'): বেঞ্চ-ক্যাপ ৩২→৬৪ — ঝড়ে-অর্ধেক-মরলেও-৩২-থাকে
+const SAMPLE = Math.max(100, Number(process.env.NX_SAMPLE || 0) || 400);               // candidates probed per pass (২০০→৪০০)
+const BOOT_TARGET = Math.max(24, Number(process.env.NX_BOOT_TARGET || 0) || 96);           // v2.10.4 (ইউজার): বুট-টার্গেট-ডাবল ৪৮→৯৬           // boot stops once this many exits are in (২৮→৪৮)
 const POOL = [];                  // the ready bench, fastest first
 const BAD = new Map();            // url -> benched-until (ms epoch)
 const STATS = new Map();          // url -> {ok, fail, lat}
@@ -329,6 +329,7 @@ export async function poolOnce(force = false) {
       if (!POOL.includes(u)) BAD.set(u, Date.now() + 90000); // এক-পাস-বাদ (৯০সে) — পরের-পাসেই-পুনঃযাচাই
     }
     console.log(`[pool] bench=${POOL.length} healthy=${poolStats().healthy}`);
+    benchSave();
     // thin bench right after boot -> more passes immediately (up to 3)
     if (POOL.length < 24 && POOL.__passes < 3) {
       POOL.__passes = (POOL.__passes || 0) + 1;
@@ -375,6 +376,7 @@ async function checkerWave() {
   const usable = POOL.filter(u => { const b = BAD.get(u); return !b || b <= Date.now(); }).length;
   if ((usable < BENCH_MAX && Date.now() - TS > 45000) || POOL.length < 20) poolOnce().catch(() => {}); // r-20261016m: ফসল-গেট ৯০→৪৫সে (ম্যাক্স-দিকে-দ্রুত), ফ্লোর ১২→২০
   if (cut || CHK % 15 === 1) console.log(`[mbchk] wave=${wave.length} ok=${cok} blind=${cblind} dead=${cdead} bench=${POOL.length} cut=${cut}`);
+  benchSave();
   } finally { chkBusy = false; }
 }
 export function checkerStats() { return { waves: CHK }; } // v2.10.2: CHK-তাল-বাইরে-দৃশ্যমান (server.js-/health-এর-জন্য)
@@ -383,6 +385,24 @@ function checkerStart() {
   loop();
 }
 
+// ★ v1.17.31: যাচাই-করা বেঞ্চ **ফাইলে ফিরিয়ে লেখা** (`NX_POOL_OUT`) — রিস্টার্টের পর প্রথম
+//   অনুরোধেই গরম-বেঞ্চ (আগে প্রতিবার পাবলিক-স্ক্র্যাপ + ভেরিফাই ⇒ ঠান্ডা-উইন্ডোতে MB কার্ড ০)।
+let LAST_SAVE = 0;
+export function benchSave(force = false) {
+  const out = process.env.NX_POOL_OUT;
+  if (!out) return;
+  if (!force && Date.now() - LAST_SAVE < 45000) return;
+  LAST_SAVE = Date.now();
+  try {
+    const now = Date.now();
+    const rows = POOL.filter(u => !(BAD.get(u) > now))
+      .map(u => ({ px: String(u).replace(/^http:\/\//, ''), ms: Math.round((STATS.get(u) || {}).lat || 1500) }))
+      .filter(x => /^[\w.-]+:\d{2,5}$/.test(x.px))
+      .sort((a, b) => a.ms - b.ms).slice(0, 140);
+    if (rows.length < 6) return;                       // অর্ধেক-মরা-বেঞ্চ কখনো সেভ নয়
+    fs.writeFileSync(out, JSON.stringify(rows));
+  } catch { }
+}
 export function poolStart() {
   poolOnce(true);
   checkerStart(); // r-20261016k: ২৪ঘণ্টা-জাগ্রত ঢেউ (৯০সে-পূর্ণ-পাসের-বদলে — রেজলভারের-মতো; রিফিল-পাস-চেকার-থেকেই)

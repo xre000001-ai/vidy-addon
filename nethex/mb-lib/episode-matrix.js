@@ -196,7 +196,10 @@ export async function run(params) {
   const captionVariants = streamResults
     .filter((r) => r.streams.length > 0)
     .sort((a, b) => (b.dub.original ? 1 : 0) - (a.dub.original ? 1 : 0));
-  const captionLists = await Promise.all(
+  // ★ v1.17.32: ক্যাপশন-স্টেপ **স্ট্রিম-উত্তরকে আটকে রাখত** (variantCaptions প্রতিটার জন্য আলাদা
+  //   BFF-রাউন্ডট্রিপ) — অ্যাডনের দরকার শুধু streams; সাবটাইটেল আসে আলাদা `/subtitles` রুটে।
+  //   তাই সর্বোচ্চ `NX_CAP_MS` (ডিফল্ট ৯০০ms) অপেক্ষা, না এলে সাব-লাইন ছাড়াই ফল।
+  const capP = Promise.all(
     captionVariants.map((r) => {
       const free = r.streams
         .filter((s) => s.url && !s.vipLocked)
@@ -210,7 +213,11 @@ export async function run(params) {
         String(chosen?.id || "")
       );
     })
-  );
+  ).catch(() => []);
+  const captionLists = await Promise.race([
+    capP,
+    new Promise(r => setTimeout(() => r([]), Math.max(200, Number(process.env.NX_CAP_MS || 0) || 900)))
+  ]);
   const seenLan = new Set();
   const subtitles = [];
   for (const list of captionLists) {

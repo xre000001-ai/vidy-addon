@@ -268,7 +268,9 @@ async function resolve(type, imdb, season, episode) {
   const exact = streams.filter(st => { const nm = nmOf(st); return !nm || nm === t || t.startsWith(nm) || nm.startsWith(t); });
   const rest = streams.filter(st => !exact.includes(st));
   if (process.env.NMDEBUG) console.error('[nx] done +' + (Date.now() - tR0) + 'ms cards=' + (exact.length + rest.length));
-  return [...exact, ...rest].slice(0, 16);
+  // ★ v1.17.32 (ইউজার: "MovieBox sob stream dibe toh"): ক্যাপ ১৬ → ৪০ (env: NX_CARD_CAP) —
+  //   আগে প্রতি টাইটেলে ১৬-এর পরের সব কোয়ালিটি/ভাষা-ভ্যারিয়েন্ট **চুপচাপ বাদ** পড়ত।
+  return [...exact, ...rest].slice(0, Math.max(8, Number(process.env.NX_CARD_CAP || 0) || 40));
 }
 // ---- v2.9.3 card format: the OLD MovieBox glass spec --------------------
 const CODEC_LABEL = { hevc: "HEVC", h265: "HEVC", h264: "H.264", avc: "H.264", av1: "AV1" };
