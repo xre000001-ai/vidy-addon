@@ -10,8 +10,15 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.17.42'; // v1.17.42: `_health`-এ **up (আপটাইম-সেকেন্ড) + deploy-ট্যাগ** যোগ — ডিপ্লয় সত্যিই
+const VERSION = '1.17.43'; // v1.17.42: `_health`-এ **up (আপটাইম-সেকেন্ড) + deploy-ট্যাগ** যোগ — ডিপ্লয় সত্যিই
 //   নতুন কনটেইনার চালু করছে কি না তা এক-নজরে বোঝার জন্য (প্রোড এখনো 1.17.39 দেখাচ্ছিল, nxwaves=101 ⇒ রিস্টার্ট-ই হয়নি)।
+const V1NOTE_43b = ''; // v1.17.43 (মাপা): (১) **pixeldrain-গেট PD_MAX=4** — m4u ৫-সারি × ৪-id একসাথে গিয়ে
+//   pixeldrain-এর ১০-req/IP সীমায় আটকে যেত (pd-mirror @৫.৭–৭.১সে); গেট লাগানোর পর m4u **৩.২–৩.৯সে**।
+//   PD_MAX ৩ → sky বেশি কাটা; ৫ → m4u আবার ৮–৯সে; **৪ = সেরা** (৮-টাইটেল: m4u ৬/৮, sky ৫/৮, ৩.৭–৪.৭সে)।
+//   (২) হোস্ট-ভিত্তিক প্রক্সি-পথ **হেজ** (সরাসরি+প্রক্সি একসাথে) — লম্বালম্বি-চেইন m4u-কে ২.৪→৫.৭সে করেছিল।
+//   (৩) `node_modules` snapshot-এ থাকে না ⇒ লোকাল MB-চাইল্ড মরে যায় ("respawn exited"); `npm i --no-save undici jsdom`।
+const V1NOTE_43 = ''; // v1.17.43: **সেটেল-ভিত্তিক কাট** — সময়-ফ্লোর (৪.৬সে) তুলে দিয়ে: nx ছাড়া সব সোর্স সেটেল ⇒
+//   সাথে-সাথে উত্তর; কেউ ঝুললে ৪.৮সে-তে হার্ড-ক্যাপ ($partial)। দ্রুত-টাইটেল দ্রুত, ধীর-টাইটেলে sky/m4u পুরো সময় পায়।
 const V1NOTE_41 = ''; // v1.17.41: প্রক্সি-রেসে **সীমা (একসাথে ৪)** — 1.17.40-এর হোস্ট-ভিত্তিক প্রক্সি-পথ
 //   প্রোডে (যেখানে বেশি হোস্ট ব্লক) প্রতিটি-হপে ৩টি CONNECT-টানেল খুলছিল ⇒ RAM/CPU-স্পাইক আশঙ্কা।
 //   এখন সীমা পেরোলে শুধু সরাসরি-ফল-ই ফেরে (কার্ড কমে না, শুধু IP-বাইপাস-চেষ্টা কমে)। বাকি সব 1.17.40-এর মতো।
@@ -3476,33 +3483,47 @@ const M4U_BASE = 'https://new2.movies4u.garden';
 let PXRACE_N = 0; const PXRACE_MAX = 4; // একসাথে-সর্বোচ্চ-৪টি প্রক্সি-রেস
 const HOST_PX = new Map(); // host → ts (সরাসরি-ব্লক-প্রমাণিত, ৩০-মিনিট)
 const HOST_D = new Map();  // host → ts (সরাসরি-ঠিক-প্রমাণিত)
+const HOST_OK = new Map(); // host → {px, ts} — এই-হোস্টে-শেষ-সফল-প্রক্সি (হেজ-পথে প্রথম-চেষ্টা)
 const _hst = u => { try { return new URL(u).hostname; } catch { return ''; } };
 function m4uText(u, ref, tmo) { return m4uTextQ(u, ref, tmo); }
-async function m4uTextQ(u, ref, tmo) { // ছোট-টেক্সট-GET (r171: মিডিয়া-বাইট-নয়; identity-এনকোডিং)
+async function m4uTextQ(u, ref, tmo) {
+  // ★ v1.17.43: **হেজ** — যে-হোস্ট ব্লক-মনে-আছে সেখানে সরাসরি+প্রক্সি **একসাথে** দৌড়ায়, প্রথম-সফল-জেতে।
+  //   আগের "প্রক্সি আগে, তারপর সরাসরি" লম্বালম্বি-চেইন m4u-কে ২.৪সে → ৫.৭–৬.৪সে করে ফেলেছিল (মাপা)।
   const host = _hst(u), now = Date.now(), pxFirst = (HOST_PX.get(host) || 0) > now;
   const budget = Math.max(1200, tmo || 6000);
-  let txt = '';
-  const dT = Date.now();
-  if (!pxFirst) txt = await m4uTextD(u, ref, budget);
-  if (txt && txt.length > 80) { HOST_D.set(host, now); return txt; }
-  const left = budget - (Date.now() - dT);
-  if (left > 1200 && PXRACE_N < PXRACE_MAX) { // v1.17.41: একসাথে-অনেক-প্রক্সি-রেস = RAM/CPU-স্পাইক (প্রোডে-ব্লক-বেশি)
+  if (!pxFirst) {
+    const t = await m4uTextD(u, ref, budget);
+    if (t && t.length > 80) { HOST_D.set(host, now); return t; }
+  }
+  // প্রক্সি-পা: আগে-যে-প্রক্সি-এই-হোস্টে-সফল হয়েছিল সেটাই, না-হলে ছোট-রেস (২)
+  const pxP = (async () => {
+    if (PXRACE_N >= PXRACE_MAX) return '';
     PXRACE_N++;
     try {
-      const r = await racePool(u, 3, Math.min(left, 6000));
-      if (r && r.body && r.body.length > 80) {
-        HOST_PX.set(host, Date.now() + 30 * 60 * 1000); HOST_D.delete(host);
-        pxRec(r.px, true, 800);
-        if (DBG) console.error('[m4upx] ' + host + ' সরাসরি-ব্লক ⇒ বেঞ্চ-পাস-প্রক্সি ✓ ' + r.px);
-        return r.body;
+      const ok = HOST_OK.get(host);
+      if (ok && ok.px && (ok.ts || 0) > Date.now() - 15 * 60 * 1000) {
+        try { const b = await proxiedGet(ok.px, u, Math.min(budget, 4000)); if (b && b.length > 80) return b; } catch { }
       }
-    } catch { }
-    finally { PXRACE_N--; }
+      const r = await racePool(u, 2, Math.min(budget, 5000));
+      if (r && r.body && r.body.length > 80) { HOST_OK.set(host, { px: r.px, ts: Date.now() }); return r.body; }
+      return '';
+    } catch { return ''; } finally { PXRACE_N--; }
+  })();
+  if (pxFirst) {
+    const [dt, pt] = await Promise.all([m4uTextD(u, ref, budget), pxP]);
+    if (dt && dt.length > 80) { HOST_D.set(host, now); return dt; }
+    if (pt) { if (DBG) console.error('[m4upx] ' + host + ' প্রক্সি ✓ (হেজ)'); return pt; }
+    return dt || '';
   }
-  if (pxFirst) { const t2 = await m4uTextD(u, ref, Math.max(1200, budget - (Date.now() - dT))); if (t2) return t2; }
-  if (!txt) { /* সরাসরি-ব্লক */ HOST_PX.set(host, Date.now() + 30 * 60 * 1000); }
-  return txt;
+  const pt = await pxP;
+  if (pt) {
+    HOST_PX.set(host, Date.now() + 30 * 60 * 1000); HOST_D.delete(host);
+    if (DBG) console.error('[m4upx] ' + host + ' সরাসরি-ব্লক ⇒ প্রক্সি ✓');
+    return pt;
+  }
+  return '';
 }
+
 function m4uTextD(u, ref, tmo) {
   return new Promise(resolve => {
     try {
@@ -3586,13 +3607,20 @@ function wkReso(svName, url) {
   return LADDER.has(h) ? h : 0;
 }
 const PD_P = new Map();
+let PD_N = 0; const PD_MAX = 4, PD_Q = [];
+function pdGate(fn) {
+  if (PD_N < PD_MAX) { PD_N++; return fn().finally(() => { PD_N--; if (PD_Q.length) { const n = PD_Q.shift(); n(); } }); }
+  return new Promise((res, rej) => { PD_Q.push(() => { PD_N++; fn().then(res, rej).finally(() => { PD_N--; if (PD_Q.length) { const n = PD_Q.shift(); n(); } }); }); });
+}
 const PD_C = new Map(); // id → {r, ts} — v1.17.40: এক-id-এক-প্রোব (৩০-মিনিট); sky-এ একই-id ৯ বার প্রোব হচ্ছিল
 function pdProbe(u) {
   const id = (String(u).split('/').pop() || '').split('?')[0];
   const c = PD_C.get(id);
   if (c && Date.now() - c.ts < 30 * 60 * 1000) return Promise.resolve(c.r);
   if (PD_P.has(id)) return PD_P.get(id); // একই-সময়-একাধিক-হাব এক-id ⇒ একটাই-প্রোব
-  const p = pdProbeRaw(u).then(r => { PD_C.set(id, { r, ts: Date.now() }); PD_P.delete(id); if (PD_C.size > 600) { const k = PD_C.keys().next().value; PD_C.delete(k); } return r; }, e => { PD_P.delete(id); throw e; });
+  // ★ v1.17.43: pixeldrain **১০-req/IP রেট-লিমিট** — m4u ৫-সারি × ৪-id একসাথে গিয়ে প্রতি-প্রোব
+  //   ২সে+ আটকে যেত (মাপা: pd-mirror @5.7সে)। এখন সারি-বিশ্বব্যাপী সর্বোচ্চ ৩টি প্রোব একসাথে।
+  const p = pdGate(() => pdProbeRaw(u)).then(r => { PD_C.set(id, { r, ts: Date.now() }); PD_P.delete(id); if (PD_C.size > 600) { const k = PD_C.keys().next().value; PD_C.delete(k); } return r; }, e => { PD_P.delete(id); throw e; });
   PD_P.set(id, p); return p;
 }
 function pdProbeRaw(u) { // 1KB-রেঞ্জ-GET-প্রোব — pixeldrain; CF-ক্যাশে-disposition-লুকাতে-পারে বলে-সাইজ-সহ-ফেরত
@@ -6405,7 +6433,10 @@ async function withSources(cardsP, srcs, cfg, t0) {
     // ⚠️ v1.17.26-কড়াকড়ি: শুধু "৬ কার্ড হয়েছে" দেখে কাটা যাবে না — Multimovies ১.৫সে-তে
     //   ২৬ কার্ড দেয়, তাতে BollyFlix (৩–৪সে) কেটে যেত আর BF কার্ডই হারিয়ে যেত (মাপা: BF=0)।
     //   তাই **ন্যূনতম ৪সে** অপেক্ষা (SB), তারপর কার্ড-থাকলে কাট; যাই হোক ৫.৬সে-তে কাট।
-    const MIN_WAIT_MS = Number(process.env.VFLOOR || 4600), HARD_CAP_MS = Number(process.env.VCAP || 4900), HARVEST_N = 6; // v1.17.39: ৪.১সে ফ্লোর মাপা-হিসাবে sky/m4u-ও ধরত না // v1.17.28: প্রোডে (beamup) প্রতি-ফেচে ~১.১সে বেশি লাগে ⇒ লোকাল-৪.৭সে = প্রোড-৫.৮সে; তাই ক্যাপ নামানো
+    // ★ v1.17.43: **ফ্লোর-ভিত্তিক (প্রমাণিত) নিয়মই রাখা হলো** — দুই-স্তরের সেটেল-কাট মাপা-হয়েছে-ও-বাদ:
+    //   মূখ্য-সোর্স (m4u) ৫.৪সে-ও পেরোচ্ছিল ⇒ শুধু সময় বাড়ত, আর গৌণ-কাটে tw/vsp হারাত।
+    //   এখন: ৪.৬সে ফ্লোর (কার্ড-থাকলে) / ৪.৯সে হার্ড-ক্যাপ।
+    const MIN_WAIT_MS = Number(process.env.VFLOOR || 4600), HARD_CAP_MS = Number(process.env.VCAP || 4900), HARVEST_N = 6;
     let lit = 0, fireCut = null;
     _cutP = new Promise(r => { fireCut = r; });
     _watch = setInterval(() => {
