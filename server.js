@@ -12,6 +12,12 @@ const { URL, URLSearchParams } = require('url');
 
 const VERSION = '1.17.43'; // v1.17.42: `_health`-এ **up (আপটাইম-সেকেন্ড) + deploy-ট্যাগ** যোগ — ডিপ্লয় সত্যিই
 //   নতুন কনটেইনার চালু করছে কি না তা এক-নজরে বোঝার জন্য (প্রোড এখনো 1.17.39 দেখাচ্ছিল, nxwaves=101 ⇒ রিস্টার্ট-ই হয়নি)।
+const V1NOTE_43c = ''; // v1.17.43 (মাপা, চূড়ান্ত): pixeldrain-গেট **PD_MAX=6** সেরা — ২-রাউন্ড/১৬-রিকোয়েস্ট A/B:
+//   PD_MAX=4 → avg 4.15s, m4u 10/16, sky 9/16 · **PD_MAX=6 → avg 3.68s, m4u 14/16, sky 11/16** · PD_MAX=8 → avg 4.17s।
+//   m4u-সারিতে pd-id ৪→২ + ১-সফলেই-থামা। বাদ-পড়া পরীক্ষা: sky-হাবে pd ১-করা (২য় id-ই জীবিত ⇒ কার্ড হারায়),
+//   PD_MAX=10 (প্রতিপ্রোব ২সে+), দুই-স্তরের সেটেল-কাট।
+//   ⚠️ `/stream`-ক্যাশ-কী=**pathname** ⇒ `cb` দিয়ে ফ্রেশ-মাপা যেত না; এখন `?fresh=1` ক্যাশ-পড়া/লেখা দুটোই বন্ধ করে।
+//   ⚠️ Multimovies-এর n=0 এখন ১.৭সে-তেই — সোর্স-সাইটই খালি দিচ্ছে (সময়-কাট নয়), আমাদের রিগ্রেশন নয়।
 const V1NOTE_43b = ''; // v1.17.43 (মাপা): (১) **pixeldrain-গেট PD_MAX=4** — m4u ৫-সারি × ৪-id একসাথে গিয়ে
 //   pixeldrain-এর ১০-req/IP সীমায় আটকে যেত (pd-mirror @৫.৭–৭.১সে); গেট লাগানোর পর m4u **৩.২–৩.৯সে**।
 //   PD_MAX ৩ → sky বেশি কাটা; ৫ → m4u আবার ৮–৯সে; **৪ = সেরা** (৮-টাইটেল: m4u ৬/৮, sky ৫/৮, ৩.৭–৪.৭সে)।
@@ -3607,7 +3613,7 @@ function wkReso(svName, url) {
   return LADDER.has(h) ? h : 0;
 }
 const PD_P = new Map();
-let PD_N = 0; const PD_MAX = 4, PD_Q = [];
+let PD_N = 0; const PD_MAX = 6, PD_Q = [];
 function pdGate(fn) {
   if (PD_N < PD_MAX) { PD_N++; return fn().finally(() => { PD_N--; if (PD_Q.length) { const n = PD_Q.shift(); n(); } }); }
   return new Promise((res, rej) => { PD_Q.push(() => { PD_N++; fn().then(res, rej).finally(() => { PD_N--; if (PD_Q.length) { const n = PD_Q.shift(); n(); } }); }); });
@@ -3620,10 +3626,17 @@ function pdProbe(u) {
   if (PD_P.has(id)) return PD_P.get(id); // একই-সময়-একাধিক-হাব এক-id ⇒ একটাই-প্রোব
   // ★ v1.17.43: pixeldrain **১০-req/IP রেট-লিমিট** — m4u ৫-সারি × ৪-id একসাথে গিয়ে প্রতি-প্রোব
   //   ২সে+ আটকে যেত (মাপা: pd-mirror @5.7সে)। এখন সারি-বিশ্বব্যাপী সর্বোচ্চ ৩টি প্রোব একসাথে।
+  const _q0 = Date.now();
   const p = pdGate(() => pdProbeRaw(u)).then(r => { PD_C.set(id, { r, ts: Date.now() }); PD_P.delete(id); if (PD_C.size > 600) { const k = PD_C.keys().next().value; PD_C.delete(k); } return r; }, e => { PD_P.delete(id); throw e; });
-  PD_P.set(id, p); return p;
+  PD_P.set(id, p); if (DBG) p.then(r => console.error('[pdd] ' + id + ' wait=' + (Date.now() - _q0) + 'ms alive=' + (r && r.alive) + ' n=' + PD_N + ' q=' + PD_Q.length), () => {}); return p;
 }
-function pdProbeRaw(u) { // 1KB-রেঞ্জ-GET-প্রোব — pixeldrain; CF-ক্যাশে-disposition-লুকাতে-পারে বলে-সাইজ-সহ-ফেরত
+function pdProbeRaw(u) {
+  const _t0 = Date.now();
+  const pr = pdProbeRaw0(u);
+  if (DBG) pr.then(r => console.error('[pdr] ' + String(u).split('/').pop() + ' dur=' + (Date.now() - _t0) + 'ms alive=' + (r && r.alive)));
+  return pr;
+}
+function pdProbeRaw0(u) { // 1KB-রেঞ্জ-GET-প্রোব — pixeldrain; CF-ক্যাশে-disposition-লুকাতে-পারে বলে-সাইজ-সহ-ফেরত
   return new Promise(resolve => {
     try {
       const req = https.get(u, { headers: { 'User-Agent': UA, 'Range': 'bytes=0-1023', 'Connection': 'close' }, timeout: 5000 }, res => {
@@ -4115,14 +4128,14 @@ async function m4uStreams(tmdbId, title, type, s, e, origin, maxh) { // maxh: cf
       //   রেজো শুধু পরিচিত-সিঁড়ি (2160/1440/1080/720/540/480/360) থেকে — নইলে কার্ড-ই নয় (ভুল-লেবেল-নিষিদ্ধ)।
       // কখনোই-নয়: gpdl/pixel.hubcloud → cryptonewz.online-এ বিজ্ঞাপন-রিডাইরেক্ট (ফাইল-ই নয়, সিক-নয় — আলাদা কারণ), Buzz, Telegram।
       const s3s = [...new Set((gpage.match(/https?:\/\/[a-z0-9.-]+\/[^"'\s<>]*X-Amz-Signature=[A-Za-z0-9%]+/g) || []).map(z => z.replace(/&amp;/g, '&')))]; // FSL + FSL v2 — যেকোনো-signed-S3-হোস্ট
-      const pdIds = [...new Set((gpage.match(/pixeldrain\.dev\/u\/([A-Za-z0-9]+)/g) || []).map(z => z.split('/u/')[1]))].slice(0, 4); // বাটন+var pxl (DMCA-লুকানো-আসল-লিঙ্ক-সহ)
+      const pdIds = [...new Set((gpage.match(/pixeldrain\.dev\/u\/([A-Za-z0-9]+)/g) || []).map(z => z.split('/u/')[1]))].slice(0, 2); // v1.17.43: ৪→২ (pd-প্রোব-সংখ্যা অর্ধেক; মিরর-কার্ড S3/workers থেকে আসে)xl (DMCA-লুকানো-আসল-লিঙ্ক-সহ)
       let furl = '', fdec = '', fsrc = '';
       // ১) pixeldrain-মিরর — unsigned+HEAD-200, সব-প্লেয়ারে-সিক:
       if (pdIds.length && left() > 1500) {
         let wantRes = '';
         if (s3s[0]) { const pv0 = await m4uAlive(s3s[0]).catch(() => null); wantRes = ((pv0 && pv0.name || '').match(/(\d{3,4})\s*p/i) || [])[1] || ''; }
         if (!wantRes) wantRes = (r.lbl.match(/(\d{3,4})\s*p/i) || [])[1] || '';
-        for (let qi = 0; qi < pdIds.length && left() > 1200 && cands.length < 2; qi++) { // পরপর-প্রোব; মিল=রেজো-অথবা-হুবহু-সাইজ; v1.15.51: ২-ম্যাচ-পর্যন্ত (আগে-১-এ-ব্রেক)
+        for (let qi = 0; qi < pdIds.length && left() > 1200 && cands.length < 1; qi++) { // v1.17.43: একটি-সফল-ই-যথেষ্ট // পরপর-প্রোব; মিল=রেজো-অথবা-হুবহু-সাইজ; v1.15.51: ২-ম্যাচ-পর্যন্ত (আগে-১-এ-ব্রেক)
           const pv = await pdProbe('https://pixeldrain.dev/api/file/' + pdIds[qi]).catch(() => null);
           if (DBG) console.error('[m4u]   pd[' + qi + '] alive=' + (pv && pv.alive) + ' total=' + (pv && pv.total) + ' name=' + ((pv && pv.name) || '').slice(0, 40));
           if (!pv || !pv.alive) continue;
@@ -4586,7 +4599,7 @@ async function skyStreams(tmdbId, title, type, s, e, origin, maxh) {
           })().catch(() => []) : Promise.resolve([]);
           // v1.17.40: pd-প্রোব **সিরিয়াল-ই রাখা হলো** — সমান্তরালে pixeldrain রেট-লিমিট করে (১০-req/IP):
           //   মাপা — সমান্তরালে sky ৩.৯সে → ৫.৪–৭.৭সে (উল্টো ধীর)। ক্যাশ+ইন-ফ্লাইট-ডিডিউপই যথেষ্ট।
-          for (const pdi of pds.slice(0, 2)) {
+          for (const pdi of pds.slice(0, 2)) { // ⚠️ হাব-প্রতি ১ করার পরীক্ষা **বাদ** — দ্বিতীয়-id-ই অনেক সময় জীবিত, ১ করলে sky-কার্ড হারায়
             if (lS() < 2200) break;
             const pu = 'https://pixeldrain.dev/api/file/' + pdi;
             const pv = await pdProbe(pu).catch(() => null);
@@ -7035,7 +7048,7 @@ function sendStreams(res, skey, plog, ms, cards, ua, cfg) {
   const n = (cards || []).length; // v1.15.8: কোনো-stash-নেই — প্রতি-উত্তর-তাজা
   logReq(plog, ms, n, null, ua);
   const body = JSON.stringify({ streams: stripCards(cards) });
-  sresPut(sresKey(plog, cfg), body, partial);
+  try { if (String(plog).indexOf('fresh=1') < 0) sresPut(sresKey(plog, cfg), body, partial); } catch (e) { }
   res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'cache-control': 'no-store' });
   return res.end(body);
 }
@@ -7081,7 +7094,10 @@ const server = http.createServer((req, res) => {
     }
     // ★ v1.17.26: /stream/-ফলাফল ক্যাশ-হিট (৯০s–২মিন) — প্লেয়ারের বারবার-চাওয়া তাৎক্ষণিক।
     //   খালি ফল কখনো ক্যাশ হয় না; আংশিক ফল ২৫ সে-তে মেয়াদোত্তীর্ণ ⇒ দেরিতে-আসা সোর্সও যোগ হয়।
-    if (req.method === 'GET' && (p.startsWith('/stream/') || p.startsWith('/probe/stream/'))) {
+    // ★ v1.17.43: ডায়াগনস্টিক বাইপাস — `?fresh=1` থাকলে /stream-ক্যাশ পড়া-লেখা দুটোই বন্ধ।
+    //   (ক্যাশ-কী=pathname ⇒ `cb` দিয়ে আর ফ্রেশ-মাপা যেত না; আগের কিছু "ফ্রেশ" পরিমাপ আসলে ক্যাশ-হিট ছিল।)
+    const FRESH = (() => { try { return new URL(req.url, 'http://x').searchParams.get('fresh') === '1'; } catch (e) { return false; } })();
+    if (!FRESH && req.method === 'GET' && (p.startsWith('/stream/') || p.startsWith('/probe/stream/'))) {
       const hit = sresGet(sresKey(p, cfg));
       if (hit) {
         logReq(p, 0, 0, 'cache-hit', RVA);
