@@ -6073,6 +6073,9 @@ async function bfStreams(tmdbId, title, type, s, e, origin, maxh, imdbHint = '',
       }
       if (DBG) console.error('[bfrow] ' + tmdbId + ' ep=' + EP + ' fid=' + (fid || '-') + ' lS=' + lS());
       if (!fid || lS() < 850) return;
+      // ★ v1.17.9: fid পেলেই FastCloud (সরাসরি GU) লুকআপ **ব্যাকগ্রাউন্ডে** শুরু — বাকি কাজের সাথে
+      //   ওভারল্যাপ হয়, তাই কার্ড বানানোর সময় প্রায় তৈরি থাকে ⇒ zip-রিলেতে নামতে হয় না।
+      const guP = bfGuForFid(fid, 3200).catch(() => '');
       const gd = await bfResolveGdflixSmart(fid, idx, Math.min(8200, Math.max(1400, lS() - 400)));
       if (DBG) console.error('[bfrow] ' + tmdbId + ' fid=' + fid + ' gd=' + (gd ? (gd.dead ? 'DEAD' : (gd.pendingCloud && !gd.streamUrl ? 'PENDING' : (gd.isZip ? 'ZIP ' : 'RAW ') + String(gd.streamUrl).slice(0, 58))) : 'null'));
       if (!gd || gd.dead) { // v1.17.7: রিজলভ-ব্যর্থ ⇒ লেজি-কার্ডের জন্য জমা রাখি (খালি এপিসোড নয়)
@@ -6128,7 +6131,9 @@ async function bfStreams(tmdbId, title, type, s, e, origin, maxh, imdbHint = '',
       else {
         // ★ v1.17.8: zip-ই একমাত্র থাকলে আগে FastCloud (সিঙ্গেল-এপি সরাসরি GU) উদ্ধার করি;
         //   না পেলেই কেবল ডি-ফ্রেম রিলে (শেষ উপায়)। ⏱ সময় কম থাকলে উদ্ধার বাদ (খালি লিস্ট নয়)।
-        const guR = lS() > 2600 ? await bfGuForFid(fid, Math.min(2400, lS() - 1800)) : '';
+        const guR = (lS() > 1200)
+          ? await Promise.race([guP, new Promise(r2 => setTimeout(() => r2(''), Math.max(600, Math.min(2600, lS() - 900))))])
+          : '';
         if (DBG) console.error('[bfgu] ' + fid + ' rescue=' + (guR ? 'OK ' + guR.slice(-14) : 'none'));
         finalUrl = guR || (pubBase + '/bfz/' + Buffer.from(su).toString('base64url') + '/' +
           (/\.mp4(?:\.zip)?(?:\?|$)/i.test(su) ? 'v.mp4' : 'v.mkv'));
