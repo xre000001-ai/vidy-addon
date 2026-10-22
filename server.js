@@ -7174,6 +7174,15 @@ const server = http.createServer((req, res) => {
       } catch { try { res.writeHead(502); } catch { } return res.end('m4p'); }
     })();
 
+    if (p === '/bfz/_rt') {
+      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', 'access-control-allow-origin': '*' });
+      return res.end(JSON.stringify({
+        range: String(req.headers.range || '-'),
+        ua: String(req.headers['user-agent'] || '-').slice(0, 30),
+        ae: String(req.headers['accept-encoding'] || '-').slice(0, 20),
+        xr: String(req.headers['x-forwarded-for'] || '-').slice(0, 20)
+      }));
+    }
     const bfzFidM = p.match(/^\/bfz\/fid\/([A-Za-z0-9]+)(?:\/c\/[a-z0-9]+)?\/v\.(?:mkv|mp4)$/);
     if (bfzFidM) return (async () => {
       try {
