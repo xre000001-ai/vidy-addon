@@ -1,6 +1,6 @@
 {
   "name": "vidy-addon",
-  "version": "1.17.6",
+  "version": "1.17.7",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
