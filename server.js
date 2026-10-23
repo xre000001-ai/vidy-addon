@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.17.58';
+const VERSION = '1.17.59';
 const V1NOTE_47 = 'v1.17.47 (ইউজার: "stream cut kore fast na — 6-8s laguk, sob stream asuk") — হারভেস্ট-কাট বাতিল: আগে ৪.৬সে-এ ৬-কার্ড-হলেই কাট, ৪.৯সে হার্ড-ক্যাপ ⇒ দেরিতে-আসা সোর্সের কার্ড ফেলত। এখন **সব লাইভ-সোর্স সেটেল হলেই ফেরা**, নইলে ৭.৮সে ক্যাপ (Beamup ১২সে-সীমার ভিতরে)। সাথে: nx ৫.১→৭.২সে (MB আর কাটা পড়ে না), mm/m4u ৭.০সে সব-সাইট, hm-রেস ৩.২→৬.৬সে (কোল্ড-চেইনও একই রেসপন্সে), m4u-তে ৩ pd-id + ২ জীবিত মিরর (আগে ১ম-সফলেই-থামা), sky-তে ৩ pd-id/hub, PD_MAX env-নব। মাপা (১৬ রিকোয়েস্ট, লোকাল): avg 5.52s · সর্বোচ্চ 6.66s (আগে 3.75s-কাট-সংস্করণে ৮২৪ কার্ড), HindMovie ৮/১৬ (আগে ৩/১৬), MB ১৬/১৬, mm ১৬/১৬, m4u ১৪/১৬, sky ১২/১৬, কার্ড ৮৩৯ ⇒ **কার্ড কমেনি, বেড়েছে**।';
 
 const V1NOTE_48 = 'v1.17.48 (ইউজার: "M4u thik koro, Hindi movie add koro, configuration page ta o thik koro") — ★ কনফিগ-পেজ-মেরামত: SRC-তালিকা থেকেই সুইচ-বাইন্ড (bf সরানোর পর bindSwitch-এ null.classList-এ পুরো IIFE থেমে যেত ⇒ tune-কার্ড/সেভ/প্রিভিউ কিছুই রেন্ডার হতো না) + bindSwitch-এ null-গার্ড; HindMovie প্যানেল + tune-hm কার্ড যোগ। ★ Movies4u: একাধিক সার্চ-হিট-চেষ্টা (per_page 12), আর্টিকেল-বাদ-দিয়ে-পুনঃসার্চ, modpro-শাখা এখন আসলেই চলে (post খালি থাকলে lastPost দিয়ে) — মৃত-মিরর Range-প্রমাণ ছাড়া কার্ড-নয়। ★ প্রতি-সারি-deadline: এক-সারির-ঢিলামিতে সব-কার্ড বাতিল হতো (3 Idiots ৮.৬সে→৪.৭সে)। ★ HindMovie: 404/410-এ প্রক্সি-পুল-বন্ধ (Silence ১২.২সে→৬.১সে, কার্ড-আসে)। বেঞ্চ: avg ৪.৭৪সে (আগে ৫.৫২), max ৭.০২, m4u ১৪/১৬, HM ৮/১৬, Sky ১৪/১৬।';const V1NOTE_46 = 'v1.17.46 (HindMovie নতুন সোর্স): live search (REST → HTML ফলব্যাক, বছর-মুক্ত কুয়েরি) → পোস্ট (IMDb-id গার্ড) → mvlink (মুভি) / mvlink /web/<id> (সিজন×কোয়ালিটি) → hshare → hcloud b64 → workers.dev direct MKV (২০৬, সিক-যোগ্য)। ক্যাশ ৬ঘণ্টা (search/post/mvlink/final); ডিরেক্ট আগে, 403/429/5xx-তে পুল-রেস। ব্যাচ .zip কখনো কার্ড নয়। hmRace ৩.২s ⇒ কোল্ড-চেইন রেসপন্স আটকায় না, পেছনে ক্যাশ ভরে। মাপা (১৬ রিকোয়েস্ট): avg 3.75s, MB 15/16, mm 16/16, m4u 14/16, sky 13/16, hm 3/16 (হলিউড-ক্লাসিক বেঞ্চে; সিরিজে BB/GoT S1E1 = ৩ কার্ড)।';
@@ -679,7 +679,7 @@ function mmRacePool(url, n, timeoutMs) { // racePool's twin over the multimovies
 const PX_BASE_N = 34, PX_CAP = 308, POOL_FILE = path.join(__dirname, 'vidy_proxy_pool.json');
 // ★ v1.17.56: vidy-প্রশিক্ষণের কাঁচা-সরবরাহ — enrich-এর প্রতিটি *নতুন* প্রার্থী এখানে জমে,
 //   vidySweep শুধু POOL (≈১৯০) নয়, এই তাজা-তালিকাও সেশন-যাচাই করে ⇒ verified আর স্যাচুরেট করে না।
-const PX_RAW = []; const PX_RAW_SEEN = new Set(); const PX_RAW_CAP = Number(process.env.PXRAWCAP || 4000);
+const PX_RAW = []; const PX_RAW_SEEN = new Set(); const PX_RAW_CAP = Number(process.env.PXRAWCAP || 20000);
 function pxRawPush(list) {
   for (const px of list) { if (PX_RAW.length >= PX_RAW_CAP) break; if (PX_RAW_SEEN.has(px)) continue; PX_RAW_SEEN.add(px); PX_RAW.push(px); }
 } // v1.15.68 (ইউজার): ২×-স্কেল — ক্যাপ ১৫৪→৩০৮, বেস ১৭→৩৪
@@ -688,7 +688,7 @@ async function enrichPool() {
   if (_training || process.env.PX_ENRICH === '0' || !POOL.length || Date.now() < MMR_ACTIVE_UNTIL) return;
   // ★ v1.17.56: verified-pool পূর্ণ না হওয়া পর্যন্ত এনরিচ ছোট-বিরতিতে (৯০সে→৩০সে) — POOL-ই
   //   vidy-verified-এর কাঁচামাল; POOL না-বাড়লে verified স্যাচুরেট করে (মাপা: ৩.৫ মিনিটে ৭৩→৮০ থেমে যেত)।
-  const _gap = (VIDY_OK.size < Number(process.env.VPXMAX || 220)) ? Number(process.env.PXGAP || 30000) : 90000;
+  const _gap = (VIDY_OK.size < Number(process.env.VPXMAX || 500)) ? Number(process.env.PXGAP || 30000) : 90000;
   if (POOL.length >= 180 && Date.now() - _lastEnrich < _gap) return; // v1.15.98: প্রতি ১৮ সেকেন্ডে এনরিচ-ঝড় রোধ (কমপক্ষে ৯০সে বিরতি)
   _training = true; _lastEnrich = Date.now();
   try {
@@ -1052,7 +1052,7 @@ async function vidySweep(n) {
   if (vidySweepBusy) return; vidySweepBusy = true;
   try {
     const now = Date.now();
-    if (VIDY_OK.size >= Number(process.env.VPXMAX || 220)) { vidyVSave(); return; } // যথেষ্ট verified ⇒ নতুন স্ক্যান বন্ধ
+    if (VIDY_OK.size >= Number(process.env.VPXMAX || 500)) { vidyVSave(); return; } // যথেষ্ট verified ⇒ নতুন স্ক্যান বন্ধ
     const free = px => !VIDY_OK.has(px) && (now - (VIDY_TRIED.get(px) || 0)) > 30 * 60 * 1000;
     const poolC = POOL.filter(c => free(c.px)).sort((a, b) => pxScore(a.px, a.ms) - pxScore(b.px, b.ms)).map(c => c.px);
     // ★ v1.17.56: POOL শেষ হলে enrich-এর তাজা-প্রার্থী-তালিকা (PX_RAW) থেকে যাচাই চলবে — পুল স্যাচুরেট হয় না।
@@ -1084,7 +1084,7 @@ async function vidySweep(n) {
     }
     if (DBG && (vidySweepBusy || true)) console.error('[vsweep] tried=' + cands.length + ' ok=' + _ok + ' verified=' + VIDY_OK.size + ' raw=' + PX_RAW.length + ' pool=' + POOL.length);
     // পুরোনো verified-দের মাঝে-মাঝে পুনঃযাচাই (৩০মিন+) — বাদ-পড়া সরিয়ে ফেলি
-    const stale = [...VIDY_OK.entries()].filter(([, v]) => v.ts && Date.now() - v.ts > 30 * 60 * 1000).slice(0, 6);
+    const stale = [...VIDY_OK.entries()].filter(([, v]) => v.ts && Date.now() - v.ts > Number(process.env.PXFRESH || 240000)).slice(0, Number(process.env.PXVRE || 12)); // ★ v1.17.59: তাজা-রাখা
     await Promise.all(stale.map(async ([px]) => {
       if (!vpxTake(px)) return;
       try { await vySlot(2500); } catch (e) { vpxFree(px); return; }
@@ -1096,7 +1096,7 @@ async function vidySweep(n) {
   } finally {
     setTimeout(() => {
       vidySweepBusy = false;
-      const full = VIDY_OK.size >= Number(process.env.VPXMAX || 220);
+      const full = VIDY_OK.size >= Number(process.env.VPXMAX || 500);
       vidySweepNext(full ? 30000 : Number(process.env.VPXNI || 9000));
     }, 1200);
   }
@@ -1132,7 +1132,12 @@ function vidyScore(px) {
 }
 let vidyRR = 0;   // ★ সার্ভার-ভিত্তিক রাউন্ড-রবিন: প্রতিটি সার্ভার আলাদা verified IP পায় (কোটা ছড়ায়)
 function vidyVerifiedPick(n, offset) {
-  const all = [...VIDY_OK.keys()].sort((a, b) => vidyScore(a) - vidyScore(b)); // সেরা-আগে
+  // ★ v1.17.59 (ইউজার: "proxy jodi age thekei condition mene bench hoye thake, sob stream asar kotha"):
+  //   verified-তাৎপর্য **সময়সীমিত** — vidy প্রতি IP-তে ২–৪ কল দেয়, তাই ২০ মিনিট-পুরোনো "verified" নোড
+  //   কার্যত মৃত। এখন FRSH(৪মিন)-এর ভিতরে যাচাই-হওয়া নোড আগে; বাকিরা শুধু ফলব্যাক।
+  const FRSH = Number(process.env.PXFRESH || 240000), now = Date.now();
+  const rank = px => { const e = VIDY_OK.get(px) || {}; const fresh = e.ts && (now - e.ts) < FRSH ? 0 : 1; return fresh * 1e6 + vidyScore(px); };
+  const all = [...VIDY_OK.keys()].sort((a, b) => rank(a) - rank(b)); // তাজা-সেরা আগে
   if (!all.length) return pxsPick('vidy:any', n, null);
   const out = [], N = all.length, start = ((vidyRR + (offset || 0)) % N + N) % N; // সার্ভার-ভেদে ভিন্ন সূচনা
   for (let i = 0; i < n && i < N; i++) out.push(all[(start + i * Math.max(1, Math.floor(N / 16))) % N]);
