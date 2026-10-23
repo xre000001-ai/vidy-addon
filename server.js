@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.24.1';
+const VERSION = '1.24.2';
 const V1NOTE_47 = 'v1.17.47 (ইউজার: "stream cut kore fast na — 6-8s laguk, sob stream asuk") — হারভেস্ট-কাট বাতিল: আগে ৪.৬সে-এ ৬-কার্ড-হলেই কাট, ৪.৯সে হার্ড-ক্যাপ ⇒ দেরিতে-আসা সোর্সের কার্ড ফেলত। এখন **সব লাইভ-সোর্স সেটেল হলেই ফেরা**, নইলে ৭.৮সে ক্যাপ (Beamup ১২সে-সীমার ভিতরে)। সাথে: nx ৫.১→৭.২সে (MB আর কাটা পড়ে না), mm/m4u ৭.০সে সব-সাইট, hm-রেস ৩.২→৬.৬সে (কোল্ড-চেইনও একই রেসপন্সে), m4u-তে ৩ pd-id + ২ জীবিত মিরর (আগে ১ম-সফলেই-থামা), sky-তে ৩ pd-id/hub, PD_MAX env-নব। মাপা (১৬ রিকোয়েস্ট, লোকাল): avg 5.52s · সর্বোচ্চ 6.66s (আগে 3.75s-কাট-সংস্করণে ৮২৪ কার্ড), HindMovie ৮/১৬ (আগে ৩/১৬), MB ১৬/১৬, mm ১৬/১৬, m4u ১৪/১৬, sky ১২/১৬, কার্ড ৮৩৯ ⇒ **কার্ড কমেনি, বেড়েছে**।';
 
 const V1NOTE_48 = 'v1.17.48 (ইউজার: "M4u thik koro, Hindi movie add koro, configuration page ta o thik koro") — ★ কনফিগ-পেজ-মেরামত: SRC-তালিকা থেকেই সুইচ-বাইন্ড (bf সরানোর পর bindSwitch-এ null.classList-এ পুরো IIFE থেমে যেত ⇒ tune-কার্ড/সেভ/প্রিভিউ কিছুই রেন্ডার হতো না) + bindSwitch-এ null-গার্ড; HindMovie প্যানেল + tune-hm কার্ড যোগ। ★ Movies4u: একাধিক সার্চ-হিট-চেষ্টা (per_page 12), আর্টিকেল-বাদ-দিয়ে-পুনঃসার্চ, modpro-শাখা এখন আসলেই চলে (post খালি থাকলে lastPost দিয়ে) — মৃত-মিরর Range-প্রমাণ ছাড়া কার্ড-নয়। ★ প্রতি-সারি-deadline: এক-সারির-ঢিলামিতে সব-কার্ড বাতিল হতো (3 Idiots ৮.৬সে→৪.৭সে)। ★ HindMovie: 404/410-এ প্রক্সি-পুল-বন্ধ (Silence ১২.২সে→৬.১সে, কার্ড-আসে)। বেঞ্চ: avg ৪.৭৪সে (আগে ৫.৫২), max ৭.০২, m4u ১৪/১৬, HM ৮/১৬, Sky ১৪/১৬।';const V1NOTE_46 = 'v1.17.46 (HindMovie নতুন সোর্স): live search (REST → HTML ফলব্যাক, বছর-মুক্ত কুয়েরি) → পোস্ট (IMDb-id গার্ড) → mvlink (মুভি) / mvlink /web/<id> (সিজন×কোয়ালিটি) → hshare → hcloud b64 → workers.dev direct MKV (২০৬, সিক-যোগ্য)। ক্যাশ ৬ঘণ্টা (search/post/mvlink/final); ডিরেক্ট আগে, 403/429/5xx-তে পুল-রেস। ব্যাচ .zip কখনো কার্ড নয়। hmRace ৩.২s ⇒ কোল্ড-চেইন রেসপন্স আটকায় না, পেছনে ক্যাশ ভরে। মাপা (১৬ রিকোয়েস্ট): avg 3.75s, MB 15/16, mm 16/16, m4u 14/16, sky 13/16, hm 3/16 (হলিউড-ক্লাসিক বেঞ্চে; সিরিজে BB/GoT S1E1 = ৩ কার্ড)।';
@@ -1040,7 +1040,10 @@ function srcPool(key) { let m = SPOOL.get(key); if (!m) { m = new Map(); SPOOL.s
 function spoolLoad() {
   try {
     const j = JSON.parse(fs.readFileSync(SPOOL_FILE, 'utf8')) || {};
-    for (const k of Object.keys(j)) for (const px of Object.keys(j[k] || {})) srcPool(k).set(px, { ms: j[k][px].ms || 3000, ok: 1, fail: 0, ts: 0, ban: 0 });
+    // ★ v1.24.2 (মাপা: ডিপ্লয়ের পর প্রথম অনুরোধ ১৫-১৯সে — লোড-হওয়া নোডের ts=0 ⇒ 'বাসি' ⇒ কিছুই সার্ভ হয় না):
+    //   ফাইল থেকে লোড-হওয়া নোড এখনই ব্যবহারযোগ্য (ts = ১ মিনিট আগে), আর ৩০সে পরেই রি-ভেরিফাই শুরু।
+    const _t0 = Date.now() - 60000;
+    for (const k of Object.keys(j)) for (const px of Object.keys(j[k] || {})) srcPool(k).set(px, { ms: j[k][px].ms || 3000, ok: 1, fail: 0, ts: _t0, ban: 0 });
     if (process.env.VDBG) console.error('[spool] লোড ' + SPOOL.size + ' পুল, মোট ' + [...SPOOL.values()].reduce((a, m) => a + m.size, 0) + ' নোড');
   } catch (e) { }
 }
@@ -1118,7 +1121,7 @@ async function spoolTrain() {
   try {
     // ★ v1.24.1 (মাপা: ডিপ্লয়ের পর প্রথম ~২ মিনিটে gateway 504 / ১৭সে উত্তর — বুট-ঝড়):
     //   বুটের প্রথম ৯০সে কোনো ব্যাকগ্রাউন্ড ট্রেইনিং নয়।
-    if (process.uptime() < Number(process.env.SPBOOT || 90)) return;
+    if (process.uptime() < Number(process.env.SPBOOT || 30)) return;
     if (Date.now() - LAST_STREAM_AT < 3000) { if (DBG) console.error('[spool] সার্ভিং চলছে — এই চক্র বাদ'); return; }
     // ১) তাজা-নোড কম হলে নতুন প্রার্থী **সমান্তরালে** যাচাই (লক্ষ্য ৯ নোড/সোর্স)
     for (const k of Object.keys(SRC_PROBE)) {
@@ -1131,7 +1134,7 @@ async function spoolTrain() {
       for (const c of POOL) if (!m.has(c.px) && cands.indexOf(c.px) < 0) cands.push(c.px);       // (গ) পুল
       for (const px of PX_RAW) if (cands.length < 600 && !m.has(px) && cands.indexOf(px) < 0) cands.push(px);
       const usable = cands.filter(px => Date.now() - (SPOOL_TRIED.get(k + '|' + px) || 0) > 10 * 60 * 1000);
-      const batch = usable.slice(0, Number(process.env.SPBATCH || 10));
+      const batch = usable.slice(0, process.uptime() < 150 ? Number(process.env.SPBATCHBOOT || 4) : Number(process.env.SPBATCH || 10));
       if (!batch.length) continue;
       const res = await Promise.all(batch.map(px => spoolCheck(k, px)));
       if (DBG) console.error('[spool] ' + k + ' tried=' + batch.length + ' ok=' + res.filter(Boolean).length + ' fresh=' + [...srcPool(k).values()].filter(e => spoolFresh(e)).length + '/' + SPOOL_TGT);
@@ -1243,7 +1246,7 @@ async function vidySweep(n) {
   if (vidySweepBusy) return; vidySweepBusy = true;
   try {
     const now = Date.now();
-    if (process.uptime() < Number(process.env.VSBOOT || 45)) { vidySweepBusy = false; vidySweepNext(15000); return; } // v1.24.1: বুট-ঝড়
+    if (process.uptime() < Number(process.env.VSBOOT || 12)) { vidySweepBusy = false; vidySweepNext(15000); return; } // v1.24.1: বুট-ঝড়
     // ★★ v1.21.2 (ইউজার: "proxy eto kom keno je 1st try e hobe na" — মাপা কারণ): বুটে লোড-হওয়া
     //   নোডগুলোর ts=0 ⇒ সবাই "বাসি"; আর sweeper ইউজার-অনুরোধের সময় **পুরো বন্ধ** হয়ে যেত
     //   (LAST_STREAM_AT গেট), তাই ট্র্যাফিক-চলাকালীন একটাও নোড তাজা হতো না ⇒ প্রথম চেষ্টায় ব্যর্থ।
