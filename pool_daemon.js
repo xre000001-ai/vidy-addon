@@ -8,6 +8,14 @@ const PER_CYCLE = Number(process.env.DN || 3000);    // ★ প্রতি ৫ 
 const CYCLE_MS = Number(process.env.DMS || 300000);
 const MSMAX = Number(process.env.MSMAX || 3500);     // শুধু দ্রুত-পাস (সার্ভিং-বাজেটে ফেরে)
 const OUT = path.join(__dirname, 'vidy_px_verified.json');
+// ★ v1.24.0 (মাপা পাস-হার, আমাদের টার্গেটে): proxmint 47.5% · monosans 32.5% · litport 17.5% · thordata 10%
+//   বাকি সব ০–৭.৫% ⇒ গুণমান-তালিকা আলাদা রাখি, চক্রে সেগুলো আগে নিই।
+const QLISTS = [
+  'https://raw.githubusercontent.com/proxmint/free-proxy-list/main/proxies/http.txt',
+  'https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt',
+  'https://raw.githubusercontent.com/litportnet/free-proxy-list/live/proxies/http.txt',
+  'https://raw.githubusercontent.com/Thordata/awesome-free-proxy-list/main/proxies/http.txt'
+];
 const LISTS = [
   'https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&protocol=http&proxy_format=ipport&format=text&timeout=5000',
   'https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&protocol=http&proxy_format=ipport&format=text&timeout=5000&supports_https=true',
@@ -77,10 +85,15 @@ function saveVer(found) {
   for (;;) {
     const t0 = Date.now();
     // ১) ৩০০০ নতুন HTTP-প্রক্সি জোগাড়
-    const txts = await Promise.all(LISTS.map(get));
-    const all = [...new Set((txts.join('\n').match(/\b\d{1,3}(?:\.\d{1,3}){3}:\d{2,5}\b/g) || []))];
-    for (let i = all.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); const w = all[i]; all[i] = all[j]; all[j] = w; }
-    const fresh = all.filter(x => !seen.has(x)).slice(0, PER_CYCLE);
+    const [qtxts, txts] = await Promise.all([Promise.all(QLISTS.map(get)), Promise.all(LISTS.map(get))]);
+    const rx = /\b\d{1,3}(?:\.\d{1,3}){3}:\d{2,5}\b/g;
+    const qset = new Set((qtxts.join('\n').match(rx) || []));
+    const all = [...new Set((txts.join('\n').match(rx) || []).concat([...qset]))];
+    const qfirst = all.filter(x => qset.has(x)), rest = all.filter(x => !qset.has(x));
+    for (let i = qfirst.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); const w = qfirst[i]; qfirst[i] = qfirst[j]; qfirst[j] = w; }
+    for (let i = rest.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); const w = rest[i]; rest[i] = rest[j]; rest[j] = w; }
+    const ordered = qfirst.concat(rest);
+    const fresh = ordered.filter(x => !seen.has(x)).slice(0, PER_CYCLE);
     fresh.forEach(x => seen.add(x));
     console.log('[daemon] চক্র: তালিকা-নোড=' + all.length + ' নতুন=' + fresh.length + ' verified-আগে=' + Object.keys(readVer()).length);
     // ২) CONNECT-যাচাই (২০ কর্মী)
