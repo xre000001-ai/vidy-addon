@@ -11,7 +11,8 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.17.46';
+const VERSION = '1.17.47';
+const V1NOTE_47 = 'v1.17.47 (ইউজার: "stream cut kore fast na — 6-8s laguk, sob stream asuk") — হারভেস্ট-কাট বাতিল: আগে ৪.৬সে-এ ৬-কার্ড-হলেই কাট, ৪.৯সে হার্ড-ক্যাপ ⇒ দেরিতে-আসা সোর্সের কার্ড ফেলত। এখন **সব লাইভ-সোর্স সেটেল হলেই ফেরা**, নইলে ৮.২সে ক্যাপ (Beamup ১২সে-সীমার ভিতরে)। সাথে: nx ৫.১→৭.৯সে (MB আর কাটা পড়ে না), mm ৭.৬সে, m4u ৭.৫সে সব-সাইট, hm-রেস ৩.২→৭.২সে (কোল্ড-চেইনও একই রেসপন্সে), m4u-তে ৩ pd-id + ২ জীবিত মিরর (আগে ১ম-সফলেই-থামা), sky-তে ৩ pd-id/hub, PD_MAX env-নব। মাপা (১৬ রিকোয়েস্ট, লোকাল): avg 5.64s (আগে 3.75s), কার্ড ৮৪১ (আগে ৮২৪), HindMovie ৭/১৬ (আগে ৩/১৬), MB ১৫/১৬, mm ১৬/১৬, m4u ১৪/১৬, sky ১৪/১৬ ⇒ **কার্ড কমেনি, বেড়েছে**।';
 const V1NOTE_46 = 'v1.17.46 (HindMovie নতুন সোর্স): live search (REST → HTML ফলব্যাক, বছর-মুক্ত কুয়েরি) → পোস্ট (IMDb-id গার্ড) → mvlink (মুভি) / mvlink /web/<id> (সিজন×কোয়ালিটি) → hshare → hcloud b64 → workers.dev direct MKV (২০৬, সিক-যোগ্য)। ক্যাশ ৬ঘণ্টা (search/post/mvlink/final); ডিরেক্ট আগে, 403/429/5xx-তে পুল-রেস। ব্যাচ .zip কখনো কার্ড নয়। hmRace ৩.২s ⇒ কোল্ড-চেইন রেসপন্স আটকায় না, পেছনে ক্যাশ ভরে। মাপা (১৬ রিকোয়েস্ট): avg 3.75s, MB 15/16, mm 16/16, m4u 14/16, sky 13/16, hm 3/16 (হলিউড-ক্লাসিক বেঞ্চে; সিরিজে BB/GoT S1E1 = ৩ কার্ড)।';
 const V1NOTE_45 = 'v1.17.45 (mm T0+T2): ইনডেক্স-হোস্ট-ক্যাশ (মৃত ৩০মি / DNS-মৃত ৬ঘণ্টা) + DNS fast-fail (০.০২s) + ইনডেক্স-fetch ক্যাপ ২.২s ⇒ mm-এর সিরিজ n=0 কমল (GoT S1E1 0→5; mm সেটেল ৫.৮s→১.৫–২.৫s)। মাপা (১৬-রিকোয়েস্ট, লোকাল): avg 3.39s (আগে 3.75s), mm 16/16, m4u 14/16, sky 13/16, MB 16/16, BF 0।'; // v1.17.42: `_health`-এ **up (আপটাইম-সেকেন্ড) + deploy-ট্যাগ** যোগ — ডিপ্লয় সত্যিই
 //   নতুন কনটেইনার চালু করছে কি না তা এক-নজরে বোঝার জন্য (প্রোড এখনো 1.17.39 দেখাচ্ছিল, nxwaves=101 ⇒ রিস্টার্ট-ই হয়নি)।
@@ -2823,7 +2824,7 @@ async function mmVidbolt(tmdbId, isSeries, s, e, ms) { // v1.15.28: the vidbolt 
           if (!sc2 || !sc2.url || oseen.has(sc2.url)) continue;
           if (!mmAlive.get(sc2.url)) continue; // v1.15.56: মৃত-মাস্টার → কার্ড-নেই (প্লেয়ার-ঘোরানো-নিষিদ্ধ)
           const lang2 = String(sc2.language || '').trim();
-          if ((langSeen.get(lang2) || 0) >= 2) continue; // প্রতি-ভাষা-সর্বোচ্চ-২ (মিরর-বিস্ফোরণ-নয়)
+          if ((langSeen.get(lang2) || 0) >= 2) continue; // প্রতি-ভাষা-সর্বোচ্চ-২ (মিরর-বিস্ফোরণ-নয়) // প্রতি-ভাষা-সর্বোচ্চ-২ (মিরর-বিস্ফোরণ-নয়)
           langSeen.set(lang2, (langSeen.get(lang2) || 0) + 1);
           const hq2 = parseInt(String(sc2.quality || ''), 10) || hq0 || 0;
           if (i2 === 0 && pl && pl.indexOf('#EXTM') >= 0) continue; // sc0-প্রমাণ-পাস → ওর-কার্ড উপরেই-গেছে (whole/variants)
@@ -3016,7 +3017,7 @@ function hmCard(T, epLine, h, url, fn) {
   };
 }
 function hmRace(p, ms) { // v1.17.46: কোল্ড-চেইন ৫–১২s — রেসপন্স আটকাবে না, পেছনে ক্যাশ ভরতে থাকবে
-  return Promise.race([Promise.resolve(p).catch(() => []), new Promise(r => setTimeout(() => r([]), ms || 3200))]);
+  return Promise.race([Promise.resolve(p).catch(() => []), new Promise(r => setTimeout(() => r([]), ms || 7200))]); // v1.17.47: hm কোল্ড-চেইনও এই রেসপন্সেই আসবে
 }
 async function hmPool(items, n, fn) { // ★ mvlink-এ >৩ সমান্তরালে গেলে সাইট ভুল-পেজ ফেরায় (মাপা) — তাই সীমিত
   const out = new Array(items.length); let i = 0;
@@ -3132,7 +3133,7 @@ async function hmStreams(tmdbId, title, type, s, e, origin, maxh) {
 
 async function mmStreams(tmdbId, title, type, s, e, origin, maxh, rel) { // v1.15.54: rel=MM-মিডিয়া-সার্ভার-রিলে // v1.15.28: Multimovies source — vidout index + vidbolt resolve; origin: mini-master URLs; maxh: MM-রেজোলিউশন-ছাঁকনি (v1.15.39, 0=সব)
   if (!tmdbId) return [];
-  const t3 = Date.now(); const WOB = 9000; const left = () => Math.max(300, WOB - (Date.now() - t3));
+  const t3 = Date.now(); const WOB = 7600; const left = () => Math.max(300, WOB - (Date.now() - t3)); // v1.17.47: ৮.২সে ক্যাপের ভিতরে সেটেল
   try {
     const isSeries = type === 'series';
     const u = isSeries ? (WOBASE + '/hls/tv/' + tmdbId + '/S' + (parseInt(s, 10) || 1) + '.json') : (WOBASE + '/hls/movie/' + tmdbId);
@@ -3904,7 +3905,7 @@ function wkReso(svName, url) {
   return LADDER.has(h) ? h : 0;
 }
 const PD_P = new Map();
-let PD_N = 0; const PD_MAX = 6, PD_Q = [];
+let PD_N = 0; const PD_MAX = Number(process.env.PDMAX || 6), PD_Q = []; // v1.17.47: env-নব bs A/B-র জন্য
 function pdGate(fn) {
   if (PD_N < PD_MAX) { PD_N++; return fn().finally(() => { PD_N--; if (PD_Q.length) { const n = PD_Q.shift(); n(); } }); }
   return new Promise((res, rej) => { PD_Q.push(() => { PD_N++; fn().then(res, rej).finally(() => { PD_N--; if (PD_Q.length) { const n = PD_Q.shift(); n(); } }); }); });
@@ -4310,7 +4311,7 @@ function m4pWrap(u, origin) { // কার্ড-ইউআরএল → আম�
 async function m4uStreams(tmdbId, title, type, s, e, origin, maxh) { // maxh: cfg.m4ur রেজো-ছাঁকনি (0=সব); HLS-সিক-প্রথম + সরাসরি-MKV
   if (!tmdbId) return []; // v1.15.82: মুভি + সিরিজ (আগে type!=='movie'-তে সিরিজ-শূন্য ছিল)
   if (type === 'series') return m4uSeries(tmdbId, title, s, e, origin, maxh); // সিরিজ = নিজস্ব-পথ (মুভি-কোড-অস্পৃষ্ট — ভাঙার-ঝুঁকি-না)
-  const t3 = Date.now(); const WOB = 8600; const left = () => Math.max(250, WOB - (Date.now() - t3));
+  const t3 = Date.now(); const WOB = 7500; const left = () => Math.max(250, WOB - (Date.now() - t3)); // v1.17.47: ৮.২সে ক্যাপের ভিতরে
   try {
     const T = String(title || '').trim() || (await nameForTmdb(tmdbId, 'movie').catch(() => ''));
     if (!T) return [];
@@ -4522,7 +4523,7 @@ async function m4uStreams(tmdbId, title, type, s, e, origin, maxh) { // maxh: cf
 // তাই: পোস্ট → সব-m4ulinks (সমান্তরাল) → সব-hubcloud (সমান্তরাল, শিরোনাম-পড়া) → SxxExx-মিল → gamerxyt → সরাসরি-ফাইল।
 async function m4uSeries(tmdbId, title, s, e, origin, maxh) {
   const SE = Math.max(1, parseInt(s, 10) || 1), EP = Math.max(1, parseInt(e, 10) || 1);
-  const t3 = Date.now(); const WOB = 8600; const left = () => Math.max(250, WOB - (Date.now() - t3));
+  const t3 = Date.now(); const WOB = 7500; const left = () => Math.max(250, WOB - (Date.now() - t3)); // v1.17.47: ৮.২সে ক্যাপের ভিতরে
   try {
     const T = String(title || '').trim() || (await nameForTmdb(tmdbId, 'series').catch(() => ''));
     if (!T) return [];
@@ -4588,15 +4589,17 @@ async function m4uSeries(tmdbId, title, s, e, origin, maxh) {
       const pds = [...new Set((gp.match(/pixeldrain\.dev\/u\/([A-Za-z0-9]+)/g) || []).map(z => z.split('/u/')[1]))];
       const s3s = [...new Set((gp.match(/https?:\/\/[a-z0-9.-]+\/[^"'<> ]*X-Amz-Signature=[A-Za-z0-9%]+/g) || []).map(z => z.replace(/&amp;/g, '&')))];
       if (DBG) console.error('[m4us]   gamerxyt bytes=' + gp.length + ' pd=' + pds.length + ' s3=' + s3s.length + ' left=' + left());
-      for (const pdi of pds.slice(0, 2)) {
-        if (left() < 1500) break;
+      // ★ v1.17.47: প্রতি-সারিতে ২ → ৩ pd-প্রোব এবং **২টি জীবিত মিরর** পর্যন্ত (আগে ১ম-সফলেই-থামা
+      //   = ইচ্ছাকৃত কার্ড-কাটছাঁট)। সময় এখন ৮.২সে-বাজেটে আছে, তাই দ্বিতীয় মিররও নেওয়া হয়।
+      let pdGot = 0;
+      for (const pdi of pds.slice(0, 3)) {
+        if (left() < 1500 || pdGot >= 2) break;
         const pu = 'https://pixeldrain.dev/api/file/' + pdi;
         const pv = await pdProbe(pu).catch(() => null);
         if (!pv || !pv.alive) continue;
         const ph = resOfName(pv.name) || mt.h;
         if (maxh && ph && ph > maxh) continue;
-        if (!seenU.has(pu)) { seenU.add(pu); out.push({ h: ph, url: pu, spec: (pv.name || mt.spec).replace(/\+/g, ' ') }); }
-        break;
+        if (!seenU.has(pu)) { seenU.add(pu); out.push({ h: ph, url: pu, spec: (pv.name || mt.spec).replace(/\+/g, ' ') }); pdGot++; }
       }
       if (!out.some(o => o.h === mt.h) && s3s.length && left() > 1500) {
         for (const s3 of s3s.slice(0, 2)) {
@@ -4890,7 +4893,7 @@ async function skyStreams(tmdbId, title, type, s, e, origin, maxh) {
           })().catch(() => []) : Promise.resolve([]);
           // v1.17.40: pd-প্রোব **সিরিয়াল-ই রাখা হলো** — সমান্তরালে pixeldrain রেট-লিমিট করে (১০-req/IP):
           //   মাপা — সমান্তরালে sky ৩.৯সে → ৫.৪–৭.৭সে (উল্টো ধীর)। ক্যাশ+ইন-ফ্লাইট-ডিডিউপই যথেষ্ট।
-          for (const pdi of pds.slice(0, 2)) { // ⚠️ হাব-প্রতি ১ করার পরীক্ষা **বাদ** — দ্বিতীয়-id-ই অনেক সময় জীবিত, ১ করলে sky-কার্ড হারায়
+          for (const pdi of pds.slice(0, 3)) { // v1.17.47: ২→৩ (৮.২সে-বাজেটে ৩য় pd-id-ও প্রোব হয়; ১ করার পরীক্ষা **বাদ** — দ্বিতীয়-id-ই অনেক সময় জীবিত, ১ করলে sky-কার্ড হারায়
             if (lS() < 2200) break;
             const pu = 'https://pixeldrain.dev/api/file/' + pdi;
             const pv = await pdProbe(pu).catch(() => null);
@@ -4927,7 +4930,7 @@ async function skyStreams(tmdbId, title, type, s, e, origin, maxh) {
     const perRes = new Map(); const fin = [];
     for (const x of pool.slice().sort((a, b) => (b.h - a.h) || (b.pd - a.pd))) { // প্রতি-রেজো-সর্বোচ্চ-২ (pd-আগে), মোট-৫ — রেজো-বৈচিত্র্য-রক্ষা:
       const cN = perRes.get(x.h) || 0;
-      if (cN >= 2) continue;
+      if (cN >= 2) continue; // v1.17.47-পরীক্ষা: ৩ করা হয়েছিল — লাভ নেই (মাপা) ⇒ ২-ই থাকে
       perRes.set(x.h, cN + 1);
       fin.push(x);
       if (fin.length >= 8) break; // v1.15.51: 5→8 (প্রতি-রেজো-২-র-সাথে-সাইটের-৪-ভ্যারিয়েন্ট-ঢোকে)
@@ -6746,20 +6749,26 @@ async function withSources(cardsP, srcs, cfg, t0) {
     // ★ v1.17.43: **ফ্লোর-ভিত্তিক (প্রমাণিত) নিয়মই রাখা হলো** — দুই-স্তরের সেটেল-কাট মাপা-হয়েছে-ও-বাদ:
     //   মূখ্য-সোর্স (m4u) ৫.৪সে-ও পেরোচ্ছিল ⇒ শুধু সময় বাড়ত, আর গৌণ-কাটে tw/vsp হারাত।
     //   এখন: ৪.৬সে ফ্লোর (কার্ড-থাকলে) / ৪.৯সে হার্ড-ক্যাপ।
-    const MIN_WAIT_MS = Number(process.env.VFLOOR || 4600), HARD_CAP_MS = Number(process.env.VCAP || 4900), HARVEST_N = 6;
-    let lit = 0, fireCut = null;
+    // ★ v1.17.47 (ইউজার: "stream cut kore fast na — 6-8s laguk, sob stream asuk"):
+    //   পুরনো "৬ কার্ড হলেই ৪.৬সে-এ কাট" নিয়ম **বাতিল** — সেটাই দেরিতে-আসা সোর্সের
+    //   (sky/m4u/hm/nx) কার্ড ফেলে দিত। এখন: **সব লাইভ-সোর্স সেটেল হলেই ফেরা**,
+    //   নইলে শুধু ৮.২সে হার্ড-ক্যাপ (Beamup-এর ১২সে-কাটঅফের ভিতরে)।
+    const MIN_WAIT_MS = Number(process.env.VFLOOR || 1200), HARD_CAP_MS = Number(process.env.VCAP || 8200);
+    let lit = 0, settled = 0, fireCut = null;
     _cutP = new Promise(r => { fireCut = r; });
     _watch = setInterval(() => {
       if (cutFlag) return;
       const el2 = Date.now() - t0;
-      if ((el2 >= MIN_WAIT_MS && lit >= HARVEST_N) || el2 >= HARD_CAP_MS) { cutFlag = true; try { fireCut(true); } catch (e) { } }
-    }, 100);
+      if (el2 >= HARD_CAP_MS) { cutFlag = true; try { fireCut(true); } catch (e) { } } // ক্যাপ: যা এসেছে তাই
+      else if (el2 >= MIN_WAIT_MS && settled >= live.length) { cutFlag = true; try { fireCut(true); } catch (e) { } } // সব সেটেল → আর অপেক্ষা নয়
+    }, 60);
     if (_watch.unref) _watch.unref();
     const track = x => x.p.then(v => {
       if (v && v.length) lit += v.length;
-      if (DBG) console.error('[srcsettle] ' + x.key + ' @' + (Date.now() - t0) + 'ms n=' + ((v || []).length));
+      settled++;
+      if (DBG) console.error('[srcsettle] ' + x.key + ' @' + (Date.now() - t0) + 'ms n=' + ((v || []).length) + ' (' + settled + '/' + live.length + ')');
       return v;
-    }, () => { errFlag = true; if (DBG) console.error('[srcsettle] ' + x.key + ' ERR @' + (Date.now() - t0) + 'ms'); return null; });
+    }, () => { errFlag = true; settled++; if (DBG) console.error('[srcsettle] ' + x.key + ' ERR @' + (Date.now() - t0) + 'ms (' + settled + '/' + live.length + ')'); return null; });
     const uniLeft0 = Math.max(0, Math.min(NXDEADLINE, 9600) - (Date.now() - t0));
     // ★ v1.17.29: **nx (MovieBox)-এর নিজস্ব কাট-ঘড়ি** — child-এর রিজলভ ৪–৮ সে নেয়, তাই সাধারণ
     //   হারভেস্ট-কাটে (৪.১ সে) কেটে যেত ⇒ "MovieBox নেই" দেখাত। এখন nx পায় `NX_FIRST_MS` পর্যন্ত
@@ -6767,7 +6776,7 @@ async function withSources(cardsP, srcs, cfg, t0) {
     // ★ v1.17.34: **অভিযোজিত-উইন্ডো বাতিল** (মাপা: প্রোডে ৬.২সে-ও MB আনত না, শুধু উত্তর
     //   ৭–৮সে হয়ে যেত)। এখন সবসময় ৫.১সে — MB দেরিতে এলে ব্যাকগ্রাউন্ডে ক্যাশে জমে, আর
     //   ওই ফল `$partial` হয় ⇒ আমাদের /stream-ক্যাশ ১২সে-তেই মেয়াদোত্তীর্ণ ⇒ দ্বিতীয় ট্যাপে MB পুরো।
-    const nxFirstWait = 5100;
+    const nxFirstWait = Math.min(7900, Number(process.env.NXW || 7900)); // v1.17.47: MB আর কাটা পড়বে না (আগে ৫.১সে)
     const nxCutP = new Promise(r => setTimeout(() => r(true), Math.max(0, Math.min(uniLeft0, nxFirstWait - (Date.now() - t0)))));
     outsP = Promise.all(live.map(x => Promise.race([
       track(x),
@@ -7404,7 +7413,7 @@ const server = http.createServer((req, res) => {
         return res.end(hit.body);
       }
     }
-    if (p === '/_health') return sendJson(res, 200, { ok: 1, version: VERSION, up: Math.round(process.uptime()), deploy: 'v1.17.46', pool: POOL.length, pxbench: POOL.filter(c => PX_SITE.has(c.px)).length, pxbf: PX_BF.size, memo: memo.size, nx: NEXBASE ? 1 : 0, nxpool: NXBENCH, nxwaves: NXWAVES, nxsize: NXSIZE, tw: TWBASE ? 1 : 0, rt: RTBASE ? 1 : 0, vsp: VSP_POOL.length }); // v1.15.71: vsp=Vidsrc-পুল-আকার // v1.15.18: pxbench=সাইট-প্রমাণিত-বেঞ্চ (v1.15.8: nxpool=MB-বেঞ্চ)
+    if (p === '/_health') return sendJson(res, 200, { ok: 1, version: VERSION, up: Math.round(process.uptime()), deploy: 'v1.17.47', pool: POOL.length, pxbench: POOL.filter(c => PX_SITE.has(c.px)).length, pxbf: PX_BF.size, memo: memo.size, nx: NEXBASE ? 1 : 0, nxpool: NXBENCH, nxwaves: NXWAVES, nxsize: NXSIZE, tw: TWBASE ? 1 : 0, rt: RTBASE ? 1 : 0, vsp: VSP_POOL.length }); // v1.15.71: vsp=Vidsrc-পুল-আকার // v1.15.18: pxbench=সাইট-প্রমাণিত-বেঞ্চ (v1.15.8: nxpool=MB-বেঞ্চ)
     if (p === '/mbpool.json') { try { const b = fs.readFileSync(MB_POOL_FILE); res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', 'access-control-allow-origin': '*' }); return res.end(b); } catch (e) { return sendJson(res, 200, []); } } // v1.17.34: child-যাচাই করা MB-বেঞ্চ (ডিপ্লয়-বীজ-হালনাগাদের জন্য)
     if (p === '/_pool') return sendJson(res, 200, POOL.map(c => Object.assign({}, c, PX_RUN.get(c.px) || {}))); // v1.15.0: রানটাইম-স্বাস্থ্য-সহ
     if (p === '/_nxring') { if (!NEXBASE) return sendJson(res, 200, { off: 1 }); directGet(NEXBASE + '/debug/ring', 4000).then(b => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(b); }).catch(() => { res.writeHead(200, { 'content-type': 'application/json' }); res.end('{"err":1}'); }); return; } // v2.10.2 চাইল্ড-রিজলভ-ধাপ-প্রমাণ
