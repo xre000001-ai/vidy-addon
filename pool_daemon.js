@@ -48,7 +48,8 @@ function pxFetch(px, url, timeoutMs) {
       s.removeListener('data', onD);
       if (!/^HTTP\/1\.[01] 200/.test(buf.slice(0, i).toString('latin1'))) return bail(new Error('refused'));
       const t = tls.connect({ socket: s, servername: u.hostname, rejectUnauthorized: false }, () => {
-        t.write('GET ' + (u.pathname + u.search) + ' HTTP/1.1\r\nHost: ' + u.hostname + '\r\nUser-Agent: ' + UA + '\r\nAccept: */*\r\nConnection: close\r\n\r\n');
+        const VH = (u.hostname === 'api.wecollege.net') ? 'Referer: https://www.vidy.st/\r\nOrigin: https://www.vidy.st\r\n' : ''; // ★ v1.21.9: vidy-API হেডার ছাড়া ৪০৩ (মাপা) — নইলে ডেমনের যাচাই ০%
+        t.write('GET ' + (u.pathname + u.search) + ' HTTP/1.1\r\nHost: ' + u.hostname + '\r\nUser-Agent: ' + UA + '\r\nAccept: */*\r\n' + VH + 'Connection: close\r\n\r\n');
         const ch = []; t.on('data', x => ch.push(x));
         t.on('end', () => { clearTimeout(to); const b = Buffer.concat(ch); const st = +(b.toString('latin1', 9, 13)); const k = b.indexOf('\r\n\r\n'); resolve({ st, body: b.slice(k + 4).toString('utf8') }); });
         t.on('error', bail);
