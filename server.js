@@ -11,13 +11,15 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.17.53';
+const VERSION = '1.17.55';
 const V1NOTE_47 = 'v1.17.47 (ইউজার: "stream cut kore fast na — 6-8s laguk, sob stream asuk") — হারভেস্ট-কাট বাতিল: আগে ৪.৬সে-এ ৬-কার্ড-হলেই কাট, ৪.৯সে হার্ড-ক্যাপ ⇒ দেরিতে-আসা সোর্সের কার্ড ফেলত। এখন **সব লাইভ-সোর্স সেটেল হলেই ফেরা**, নইলে ৭.৮সে ক্যাপ (Beamup ১২সে-সীমার ভিতরে)। সাথে: nx ৫.১→৭.২সে (MB আর কাটা পড়ে না), mm/m4u ৭.০সে সব-সাইট, hm-রেস ৩.২→৬.৬সে (কোল্ড-চেইনও একই রেসপন্সে), m4u-তে ৩ pd-id + ২ জীবিত মিরর (আগে ১ম-সফলেই-থামা), sky-তে ৩ pd-id/hub, PD_MAX env-নব। মাপা (১৬ রিকোয়েস্ট, লোকাল): avg 5.52s · সর্বোচ্চ 6.66s (আগে 3.75s-কাট-সংস্করণে ৮২৪ কার্ড), HindMovie ৮/১৬ (আগে ৩/১৬), MB ১৬/১৬, mm ১৬/১৬, m4u ১৪/১৬, sky ১২/১৬, কার্ড ৮৩৯ ⇒ **কার্ড কমেনি, বেড়েছে**।';
 
 const V1NOTE_48 = 'v1.17.48 (ইউজার: "M4u thik koro, Hindi movie add koro, configuration page ta o thik koro") — ★ কনফিগ-পেজ-মেরামত: SRC-তালিকা থেকেই সুইচ-বাইন্ড (bf সরানোর পর bindSwitch-এ null.classList-এ পুরো IIFE থেমে যেত ⇒ tune-কার্ড/সেভ/প্রিভিউ কিছুই রেন্ডার হতো না) + bindSwitch-এ null-গার্ড; HindMovie প্যানেল + tune-hm কার্ড যোগ। ★ Movies4u: একাধিক সার্চ-হিট-চেষ্টা (per_page 12), আর্টিকেল-বাদ-দিয়ে-পুনঃসার্চ, modpro-শাখা এখন আসলেই চলে (post খালি থাকলে lastPost দিয়ে) — মৃত-মিরর Range-প্রমাণ ছাড়া কার্ড-নয়। ★ প্রতি-সারি-deadline: এক-সারির-ঢিলামিতে সব-কার্ড বাতিল হতো (3 Idiots ৮.৬সে→৪.৭সে)। ★ HindMovie: 404/410-এ প্রক্সি-পুল-বন্ধ (Silence ১২.২সে→৬.১সে, কার্ড-আসে)। বেঞ্চ: avg ৪.৭৪সে (আগে ৫.৫২), max ৭.০২, m4u ১৪/১৬, HM ৮/১৬, Sky ১৪/১৬।';const V1NOTE_46 = 'v1.17.46 (HindMovie নতুন সোর্স): live search (REST → HTML ফলব্যাক, বছর-মুক্ত কুয়েরি) → পোস্ট (IMDb-id গার্ড) → mvlink (মুভি) / mvlink /web/<id> (সিজন×কোয়ালিটি) → hshare → hcloud b64 → workers.dev direct MKV (২০৬, সিক-যোগ্য)। ক্যাশ ৬ঘণ্টা (search/post/mvlink/final); ডিরেক্ট আগে, 403/429/5xx-তে পুল-রেস। ব্যাচ .zip কখনো কার্ড নয়। hmRace ৩.২s ⇒ কোল্ড-চেইন রেসপন্স আটকায় না, পেছনে ক্যাশ ভরে। মাপা (১৬ রিকোয়েস্ট): avg 3.75s, MB 15/16, mm 16/16, m4u 14/16, sky 13/16, hm 3/16 (হলিউড-ক্লাসিক বেঞ্চে; সিরিজে BB/GoT S1E1 = ৩ কার্ড)।';
 
 const V1NOTE_49 = 'v1.17.49 (ইউজার: "Hdhub name e ekta stremio addon ase oita kintu ei hubcloud kore easily — website ta balo kore khutie dekho") — ★ নতুন সোর্স HDHub4u (hd): বেস ghdhub.org (একই পোস্ট new8-এ ad-funnel, এখানে hubcloud.ist/drive), সার্চ থিমের search.php (Typesense-ধাঁচের, imdb_id ইনডেক্স ⇒ tt-দিয়ে ঠিক পোস্ট), চেইন post → hblinks.lol/archives বা hubdrive.bar/file (পেজ-শিরোনামেই আসল ফাইলনাম) → hubcloud → gamerxyt → pixeldrain/signed-S3/workers.dev, এবং Range-প্রমাণ (206+non-html) ছাড়া কার্ড নয়। মাপা: হিন্দি ৭/৭ টাইটেলে কার্ড (জাওয়ান ২১৬০p, ডরোথি ৫ কার্ড), avg ~৬.০সে। কনফিগ-পেজে ১২তম সোর্স (কার্ড+tune+save+white-list)।';const V1NOTE_45 = 'v1.17.45 (mm T0+T2): ইনডেক্স-হোস্ট-ক্যাশ (মৃত ৩০মি / DNS-মৃত ৬ঘণ্টা) + DNS fast-fail (০.০২s) + ইনডেক্স-fetch ক্যাপ ২.২s ⇒ mm-এর সিরিজ n=0 কমল (GoT S1E1 0→5; mm সেটেল ৫.৮s→১.৫–২.৫s)। মাপা (১৬-রিকোয়েস্ট, লোকাল): avg 3.39s (আগে 3.75s), mm 16/16, m4u 14/16, sky 13/16, MB 16/16, BF 0।'; // v1.17.42: `_health`-এ **up (আপটাইম-সেকেন্ড) + deploy-ট্যাগ** যোগ — ডিপ্লয় সত্যিই
 
+const V1NOTE_55 = 'v1.17.55 (ইউজার: "movies4u and vidy er nijer kotha… sobgulo parallel, proxy pool always active, fastest condition passed") — ★ **মাপা সত্য**: vidy-API-র নিজস্ব শর্ত — (ক) ডিরেক্ট IP → **429** (৩–৫ কলে), (খ) সাধারণ ডেটাসেন্টার-প্রক্সি → **403**, (গ) ৪৫টি "জীবিত" নোডের মধ্যে **১৪টি** সত্যিকারের vidy-সেশন (seed+sources একই IP) পাস করে ⇒ vidy-কার্ডের আসল সীমা = **verified vidy-pool**, পুল-আকার নয়। তাই: (১) **verified vidy-pool** (`vidy_px_verified.json`, বুটে লোড) — প্রতি ২৫সে-তে ৬০ নোড স্ক্যান, পাস-করা নোড সেভ, ব্যর্থ ৩০মিন-কুলডাউন (এখন ৫৩ verified, লক্ষ্য ১৫০)। (২) vidy-ফেচ = **സব parallel**: direct-সেশন + সিড-নোড + verified-পুল, **রাউন্ড-রবিন** (প্রতি সার্ভার আলাদা IP ⇒ কোটা ছড়ায়), প্রথম সম্পূর্ণ-সফল সেশন জেতে, বাজেট ৮সে। (৩) প্রতি-প্রক্সি **সিড-ক্যাশ ২৫সে** (এক IP-তে একটাই সিড ⇒ কল অর্ধেক)। (৪) vidy-র নিজের ৯৬-সকেট এজেন্ট (শেয়ার্ড ৩২-সকেট-লাইনে ১৫টি সার্ভার vidy-timeout হতো)। (৫) m4u: racePool(2) → **per-host পুল ৪ নোড**, pixeldrain/hdProbe direct-মৃত হলে পুল-পুনঃযাচাই, প্রতি-সোর্স ব্যান ৯০সে + ৪৫সে warm-loop ⇒ **m4u সিরিজে ১–৬ → ৪২–৪৬ কার্ড** (মাপা), মুভিতে ৬। মাপা (একক ইনস্ট্যান্স, ঠান্ডা+গরম): vidy ৬–৭/১৬ সার্ভার (আগে ০–৩), m4u ৬/৪২/৪২/৬/৪২/৪২, hd ৫ (Shawshank) · ৩ (Reacher), মোট কার্ড ৩৩–৬১, লেটেন্সি ৩.৩–৯.৩সে (গরম ~৪সে)।';// v1.17.55
+const V1NOTE_54 = 'v1.17.54 (ইউজার: "movies4u and vidy er nijer kotha… sobgulo parallel e cholbe, proxy pool always active, fastest proxy use hobe condition passed") — ★ **মাপা রোগ**: vidy-র ১৬ সার্ভার **একই sticky প্রক্সি** দিয়ে যেত আর hedge একই নোডে ডুপ-কল করত ⇒ লগে `hedge-dead` **৩৬ বার**, এক রিকোয়েস্টে স্ট্রিম-দেওয়া সার্ভার **৩/১৫ · ১/৮ · ০/১৬**। m4u-তে `racePool(…,2)` = মাত্র ২ নোড, pixeldrain/hdProbe পুলই ব্যবহার করত না ⇒ ভুল "pd dead"। **সমাধান — per-source proxy pool**: কী = `vidy:<সার্ভার>` / `m4u:<হোস্ট>` / `pd` / `hd:<হোস্ট>` / `wk` / `gx`; প্রতিটা কী-র নিজের EWMA-latency + ok/fail, ২ ব্যর্থতায় ৯০সে কোয়ারেন্টিন, আর প্রতি-রেসে গ্লোবাল site-verified পুল থেকে exploration ⇒ **pool সবসময় সক্রিয়**। vidy এখন একই সার্ভারে **৩টি ভিন্ন নোড** race (৭সে), m4u **৪ নোড**, pixeldrain-প্রোব ও hdProbe direct-মৃত হলে পুল দিয়ে পুনঃযাচাই (ভুল-নেগুলো বন্ধ)। ৪৫সে-ওয়ার্ম-লুপ কম-প্রমাণিত কী গরম রাখে; `/_pxsrc`-এ লাইভ স্কোর।';// v1.17.54
 const V1NOTE_53 = 'v1.17.53 (ইউজার: "Sob source ja ase arki, timeout 12s koro") — ★ সব সোর্স-বাজেট ১২সে-ঘরে: প্রতি-সোর্স ক্যাপ VSCAP ১০.২→**১১.৫সে**, হারভেস্ট-ক্যাপ VCAP ১১→**১১.৫সে**, nx-প্রথম-অপেক্ষা ৯→**১১সে**, নেটহেক্স HTTP-টাইমআউট ৮.৫→**১১সে**, সোর্স-সীমা ১০.৮→**১১.৫সে**, রুট-ডেডলাইন ১২.৬→**১১.৯সে** (Beamup এজ-কাট ~১২সে-র নিচে রাখা — নইলে উত্তর প্ল্যাটফর্মেই কেটে যেত)। প্রসঙ্গ: আগে প্রোড-পুল-রিপোর্ট — ১৬৫ লাইভ, ৩০ site-ভেরিফায়েড, ৯৭% কখনো-সফল, ৫৫টি ≤১.৫সে, মৃত মাত্র ৪।';// v1.17.53
 const V1NOTE_52 = 'v1.17.52 (ইউজার: "Oi source gulo ki results cache kore rakhche… No cache for any source and mass test koro, 1 try teh sob stream lagbe") — ★ **মাপা মূল কারণ (মাস-টেস্ট, ১০–১২ টাইটেল × ২–৩ চেষ্টা)**: (১) পুরো-রেসপন্স-ক্যাশ STREAM_RES_CACHE — আংশিক ফল ১২সে, পূর্ণ-ফল ২ মিনিট ধরে **হুবহু** ফিরত ⇒ রিফ্রেশেও একই কম-তালিকা (মাপা: ২য় চেষ্টা ০.০সে-তে একই কার্ড)। (২) হারভেস্ট-ক্যাপ ৭.৮সে — nx/ott/tw/sky এর বেশি সময় নিলে কাটা পড়ত, আর *কোনটা* কাটবে তা প্রতি-ট্যাপে বদলাত ⇒ "একবার এটা মিস, আরেকবার ওটা মিস"। **সমাধান**: (ক) সব সোর্স-ফল ক্যাশ নিষ্ক্রিয় — STREAM_RES_CACHE, NXCACHE, HM_S/P/M/F, HD_S/P, VSP_MEMO, OTT_MEMO, AZ_MEMO, RT_FID_CACHE, BF_*, NetHex-খালি-কুলডাউন (`NOCACHE=0` = পুরোনো আচরণ)। (খ) ক্যাপ ৭.৮→১১সে, nx-প্রথম-অপেক্ষা ৭.২→৯সে, সোর্স-সীমা ৯.৬→১০.৮সে, রুট ১১.৯→১২.৬সে। (গ) **প্রতি-সোর্স ক্যাপ ১০.২সে** — একটি ঝুলন্ত সোর্স আর পুরো তালিকাকে টেনে ধরে না (টাইমার ক্লিয়ার হয়, ভুল লগ নেই)। (ঘ) গতি: toonworld/raretoons-এর TMDB-alt-টাইটেল অপেক্ষা ১.২সে-ক্যাপ (০-ফল কেসে ১০সে+ ঝুলত), NetHex-এর ২৫সে-টাইমআউট → ৮.৫সে আর ব্যর্থ fresh-রিট্রাই ৪.২→১.২সে (শিশুর fresh-রিজলভ ~২২সে, তাই ওই ৪সে শুধু অপচয় ছিল)। **ফল (মাস-টেস্ট)**: কার্ড/টাইটেল ২৬–৬০ → ৩৭–১০০; ০.০সে-ক্যাশ-রিপ্লে ০; az/tw/rt এখন অ্যানিমে-টাইটেলে নিয়মিত আসে (আগে ০)। বাকি ভ্যারিয়েন্স শুধু upstream: MovieBox শিশু ঠান্ডা টাইটেলে ১০–২০সে নেয় ⇒ nx মাঝে-মাঝে অনুপস্থিত, কিন্তু **রিফ্রেশে সঙ্গে-সঙ্গে নতুন চেষ্টা** হয় (আগের মতো ২ মিনিট আটকে থাকে না)।';// v1.17.52
 const V1NOTE_51 = 'v1.17.51 — ★ দুই কাজ: (১) **joshapp→boldb→gdshine চেইন সম্পূর্ণ বাদ** (ইউজার-নির্দেশ: "fully remove koro… kisu break jate na hoi") — মাপা প্রমাণ: dbk/link সবসময় backup server is off, তাই মৃত-পথে অপেক্ষা/রিট্রাই করে সময় নষ্ট হচ্ছিল; hm এখন শুধু mvlink.blog → hshare.lol → hcloud.ink → *.workers.dev (Range-প্রমাণিত ২০৬), কোনোটিতেই mvlink না-থাকলে সৎ-শূন্য। কনফিগ-পেজে জশ/গ্ডশাইন রেফারেন্স ছিলই না (গ্রেপ-ক্লিন)। (২) **HDHub4u সিরিজ-পাথ** (আগে type=series → [] স্টাব ছিল) — মাপা গঠন: পোস্টে PACK (পুরো সিজন) ও "Single Episode Links: EPiSODE n" দুই-ধরনের লিঙ্ক; প্যাক বাদ (একক-এপিসোড কার্ড নয়), প্রতি-এপিসোড র্যাপার hblinks.lol/archives → hubcloud.ist/drive → ফাইল-প্রুফ; কোয়ালিটি র‍্যাপার-টাইটেলে থাকে না, hubcloud ফাইলনাম থেকে পড়ি; ৩টি সিরিজ-হ্যান্ডলার { p: null, key: hd } → hdP বাইন্ড, hdq রেজো-ছাঁকনি অপরিবর্তিত (সিরিজেও কাজ করে)।';
@@ -785,13 +787,16 @@ function vidyDecrypt(b64ct, seed, tmdbId) {
 // ---------- fetch (direct + CONNECT-প্রক্সি) ----------
 const HAGENT = new http.Agent({ keepAlive: true, maxSockets: 32 }); // কানেকশন-পুনঃব্যবহার — ঠান্ডা-কল-দ্রুত
 const SAGENT = new https.Agent({ keepAlive: true, maxSockets: 32 });
+// ★ v1.17.54: vidy-সেশন-ট্রাফিকের নিজের এজেন্ট — শেয়ার্ড ৩২-সকেটে ১৬ সার্ভার × সেশন-জব লাইনে দাঁড়িয়ে
+//   'vidy-timeout' হতো (মাপা: miami ১.৬সে-তে সফল, বাকি ১৫টি ৮সে-তে টাইমআউট)
+const VAGENT = new https.Agent({ keepAlive: true, maxSockets: 96, maxFreeSockets: 32, keepAliveMsecs: 10000 });
 const HAGENTP = new http.Agent({ keepAlive: false, maxSockets: 16 }); // প্রোব-একবার-ই-চলে — ক্লিন-ক্লোজ
 const SAGENTP = new https.Agent({ keepAlive: false, maxSockets: 16 });
-function directGet(url, timeoutMs, _re, _hop) {
+function directGet(url, timeoutMs, _re, _hop, _ag) {
   return new Promise((resolve, reject) => {
     const u = new URL(url);
     const mod = u.protocol === 'http:' ? http : https;
-    const req = mod.get(url, { headers: { 'User-Agent': UA, 'Accept': '*/*' }, timeout: timeoutMs, agent: u.protocol === 'http:' ? HAGENT : SAGENT }, res => {
+    const req = mod.get(url, { headers: { 'User-Agent': UA, 'Accept': '*/*' }, timeout: timeoutMs, agent: _ag || (u.protocol === 'http:' ? HAGENT : SAGENT) }, res => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
         res.resume();
         if ((_hop || 0) >= 4) return reject(Object.assign(new Error('redirect-loop'), { code: 310 })); // লুপিং-রিডাইরেক্ট-স্টপ
@@ -809,7 +814,7 @@ function directGet(url, timeoutMs, _re, _hop) {
     req.on('timeout', () => { req.destroy(new Error('timeout')); });
     req.on('error', e => {
       // keep-alive-সকেট-নিঃশব্দে-মরলে (NAT/মিডলবক্স) নতুন-সকেট-দিয়ে-এক-বার-অটো-পুনঃচেষ্টা:
-      if (req.reusedSocket && !_re && (e.code === 'ECONNRESET' || e.code === 'EPIPE')) return resolve(directGet(url, timeoutMs, 1));
+      if (req.reusedSocket && !_re && (e.code === 'ECONNRESET' || e.code === 'EPIPE')) return resolve(directGet(url, timeoutMs, 1, 0, _ag));
       reject(e);
     });
   });
@@ -826,7 +831,7 @@ function dechunk(buf) {
   }
   return Buffer.concat(out);
 }
-function proxiedGet(px, url, timeoutMs) {
+function proxiedGet(px, url, timeoutMs, hdrs) {
   return new Promise((resolve, reject) => {
     const u = new URL(url);
     const ci = px.indexOf(':');
@@ -845,7 +850,9 @@ function proxiedGet(px, url, timeoutMs) {
       const head = buf.slice(0, i).toString('latin1');
       if (!/^HTTP\/1\.[01] 200/.test(head)) return bail(new Error('proxy-refused'));
       const tl = tls.connect({ socket: sock, servername: u.hostname, rejectUnauthorized: false }, () => {
-        tl.write('GET ' + (u.pathname + u.search) + ' HTTP/1.1\r\nHost: ' + u.hostname + '\r\nUser-Agent: ' + UA + '\r\nAccept: */*\r\nConnection: close\r\n\r\n');
+        let _hx = 'GET ' + (u.pathname + u.search) + ' HTTP/1.1\r\nHost: ' + u.hostname + '\r\nUser-Agent: ' + UA + '\r\nAccept: */*\r\nConnection: close\r\n';
+        if (hdrs) for (const hk of Object.keys(hdrs)) _hx += hk + ': ' + hdrs[hk] + '\r\n';
+        tl.write(_hx + '\r\n');
         const chunks = [buf.slice(i + 4)];
         let headTxt = '';
         let hdrDone = false;
@@ -874,6 +881,221 @@ function proxiedGet(px, url, timeoutMs) {
       tl.once('error', bail);
     };
     sock.on('data', onData);
+  });
+}
+// ================= v1.17.54: per-source proxy pool (ইউজার: "proxy pool always active, fastest proxy use hobe condition passed") =================
+// ★ কেন: আগে vidy-র **১৬ সার্ভার একই sticky প্রক্সি** দিয়ে যেত আর hedge-ও একই নোডে ডুপ-কল করত
+//   (মাপা: `[t1g] … hedge-dead` ৩৬ বার, এক রিকোয়েস্টে স্ট্রিম-দেওয়া সার্ভার ৩/১৫ · ১/৮ · ০/১৬)।
+//   m4u-তে racePool(…, 2) = মাত্র ২ নোড, আর pixeldrain/hdProbe পুলই ব্যবহার করত না ⇒ ভুল 'dead'।
+//   এখন: **কী = সোর্স/হোস্ট**; প্রতিটা কী-র নিজের স্কোর (EWMA ms + ok/fail), ব্যান ৯০সে,
+//   আর সবসময় গ্লোবাল good-পুল থেকে exploration যোগ হয় ⇒ pool সবসময় সক্রিয়।
+const PXS = new Map(); // key -> {m: Map(px->{ok,fail,ms,lastOk,lastFail,ban}), url, ts}
+const PXS_MAXK = 400;
+function pxsKeyOf(url, hint) {
+  if (hint) return hint;
+  let h = ''; try { h = new URL(url).hostname; } catch (e) { }
+  h = String(h).replace(/^www\./, '');
+  if (/pixeldrain/.test(h)) return 'pd';
+  if (/gamerxyt/.test(h)) return 'gx';
+  if (/hubcloud|hubdrive|hubcdn|hblinks/.test(h)) return 'hub';
+  if (/workers\.dev$/.test(h)) return 'wk';
+  if (/movies4u/.test(h)) return 'm4u:site';
+  return 'host:' + h;
+}
+function pxsState(key) {
+  let st = PXS.get(key);
+  if (!st) { if (PXS.size > PXS_MAXK) PXS.delete(PXS.keys().next().value); st = { m: new Map(), url: '', ts: Date.now() }; PXS.set(key, st); }
+  st.ts = Date.now(); return st;
+}
+function pxsRec(key, px, ok, ms) {
+  const st = pxsState(key), e = st.m.get(px) || { ok: 0, fail: 0, ms: 0, lastOk: 0, lastFail: 0, ban: 0, cons: 0 };
+  if (ok) { e.ok++; e.cons = 0; e.ms = e.ms ? Math.round(e.ms * 0.65 + ms * 0.35) : ms; e.lastOk = Date.now(); }
+  else { e.fail++; e.cons++; e.lastFail = Date.now(); if (e.cons >= 2) e.ban = Date.now() + 90000; } // ২ ব্যর্থতায় ৯০সে কোয়ারেন্টিন
+  st.m.set(px, e);
+  if (st.m.size > 700) { const k0 = st.m.keys().next().value; st.m.delete(k0); }
+}
+function pxsRank(key) {
+  const st = PXS.get(key), now = Date.now(), out = [];
+  if (st) for (const [px, e] of st.m) {
+    if (e.ban > now) continue;                                  // কোয়ারেন্টিনে
+    const rec = e.lastOk && now - e.lastOk < 20 * 60 * 1000;
+    const sc = (rec ? 0 : 20000) + (e.ms || 9999) + e.fail * 300 - Math.min(e.ok, 10) * 100;
+    out.push({ px, sc, known: true });
+  }
+  out.sort((a, b) => a.sc - b.sc);
+  return out.map(z => z.px);
+}
+function pxsPick(key, n, seedPx) {
+  const own = pxsRank(key), out = [];
+  const push = px => { if (px && out.indexOf(px) < 0) out.push(px); };
+  if (seedPx) push(seedPx);                                     // sticky-নোড আগে (সিড-পথ)
+  own.slice(0, n).forEach(push);                                // এই সোর্সে প্রমাণিত দ্রুততম
+  // ★ সবসময়-সক্রিয়: গ্লোবাল good-পুল থেকে exploration (বেঞ্চ-পাস = সাইটে-যেতে-পারে)
+  const good = POOL.filter(c => PX_SITE.has(c.px)).sort((a, b) => pxScore(a.px, a.ms) - pxScore(b.px, b.ms));
+  for (let i = 0; i < good.length && out.length < n + 1; i++) push(good[i].px);
+  if (out.length < n) { const any = POOL.slice().sort((a, b) => pxScore(a.px, a.ms) - pxScore(b.px, b.ms)); for (let i = 0; i < any.length && out.length < n; i++) push(any[i].px); }
+  return out.slice(0, Math.max(1, n));
+}
+// প্রথম-সফল জেতে (সব একসাথে দৌড়ায়); ব্যর্থগুলো স্কোরে দাগ খায় ⇒ পরের বার আর ডাকা হয় না
+function pxsGet(url, opt) {
+  const o = opt || {};
+  const key = pxsKeyOf(url, o.key), n = Math.max(1, o.n || 3), tmo = o.tmo || 6000;
+  const st = pxsState(key); if (!st.url) st.url = url;
+  const cands = pxsPick(key, n, o.seedPx);
+  if (!cands.length) return Promise.reject(new Error('pxs-empty'));
+  if (DBG && process.env.VPXDBG) console.error('[pxsrc] ' + key + ' → ' + cands.join(','));
+  return new Promise((resolve, reject) => {
+    let done = false, fails = 0;
+    const to = setTimeout(() => { if (!done) { done = true; reject(new Error('pxs-timeout')); } }, tmo);
+    for (const px of cands) {
+      const t0 = Date.now();
+      proxiedGet(px, url, tmo, o.headers).then(body => {
+        if (done) { pxsRec(key, px, true, Date.now() - t0); return; }
+        done = true; clearTimeout(to);
+        pxsRec(key, px, true, Date.now() - t0);
+        if (DBG) console.error('[pxsrc] ' + key + ' ✓ ' + px + ' ' + (Date.now() - t0) + 'ms');
+        resolve(body);
+      }).catch(() => {
+        pxsRec(key, px, false, Date.now() - t0);
+        if (++fails >= cands.length && !done) { done = true; clearTimeout(to); reject(new Error('pxs-allfail')); }
+      });
+    }
+  });
+}
+// pool সবসময় সক্রিয়: প্রতি ৪৫সে-তে সাম্প্রতিক কী-গুলোতে কম-প্রমাণিত থাকলে ব্যাকগ্রাউন্ডে গরম করে
+let pxsWarmBusy = false;
+const pxsWarmTimer = setInterval(() => {
+  if (pxsWarmBusy) return; pxsWarmBusy = true;
+  try {
+    const now = Date.now(), todo = [];
+    for (const [k, st] of PXS) {
+      if (now - st.ts > 10 * 60 * 1000) { PXS.delete(k); continue; }   // ১০মিন নিষ্ক্রিয় কী বাদ
+      if (!st.url || !/^https?:/.test(st.url)) continue;
+      let live = 0; for (const [, e] of st.m) if (e.lastOk && now - e.lastOk < 3 * 60 * 1000) live++;
+      if (live < 2) todo.push([k, st.url]);
+      if (todo.length >= 3) break;
+    }
+    for (const [k, u] of todo) pxsGet(u, { key: k, n: 3, tmo: 7000 }).catch(() => { });
+  } finally { setTimeout(() => { pxsWarmBusy = false; }, 2000); }
+}, 45000);
+if (pxsWarmTimer.unref) pxsWarmTimer.unref();
+// ★ v1.17.54 পরিমার্জিত (লগ-প্রমাণ): vidy **সিড আর sources একই IP থেকে** চায় —
+//   ভিন্ন-নোডে সোর্স কল করলে `http_401` / `decrypt failed: bad seed or tampered payload`।
+//   তাই race হয় **নোড-সেশনে**: প্রতি নোডে (১) seed, (২) sources — দুটোই সেই IP দিয়ে; প্রথম সম্পূর্ণ-সফল সেশন জেতে।
+const SEED_PX = new Map(); // px:mediaId -> {seed,ts} — ★ একই প্রক্সি-IP-তে একই মিডিয়ার সিড ২৫সে পুনঃব্যবহার (কোটা বাঁচে)
+async function seedViaPx(px, tmdbId, tmo) {
+  const ck = px + ':' + tmdbId, hit = SEED_PX.get(ck);
+  if (hit && Date.now() - hit.ts < 25000) return hit.seed;
+  const b = await proxiedGet(px, API + '/seed?mediaId=' + tmdbId, tmo || 6000);
+  const j = JSON.parse(b); if (!j.seed) throw new Error('seed-empty');
+  SEED_PX.set(ck, { seed: j.seed, ts: Date.now() });
+  if (SEED_PX.size > 800) SEED_PX.delete(SEED_PX.keys().next().value);
+  return j.seed;
+}
+function vidySessionP(px, o, tmo) {
+  const t0 = Date.now();
+  return seedViaPx(px, o.tmdbId, tmo).then(seed => {
+    const q = Object.assign({}, o.q, { seed: seed });
+    const u = API + '/' + o.srv + '/sources?' + new URLSearchParams(q).toString();
+    return proxiedGet(px, u, tmo).then(ct => {
+      pxsRec('vidy:' + o.srv, px, true, Date.now() - t0);   // কন্ডিশন-পাস = seed+sources দুটোই
+      if (DBG) console.error('[vses] ' + o.srv + ' ✓ ' + px + ' ' + (Date.now() - t0) + 'ms');
+      return { ct: ct, seed: seed, px: px };
+    });
+  }).catch(e => { pxsRec('vidy:' + o.srv, px, false, Date.now() - t0); pxsRec('vidy:seed', px, false, Date.now() - t0); throw e; });
+}
+// ===== v1.17.54 (মাপা): vidy-API-এর নিজস্ব কন্ডিশন =====
+// মাপা (২৩-১০-২০২৬): ডিরেক্ট IP → **৪২৯** (৩–৫ কলে), ডেটাসেন্টার-প্রক্সি → **৪০৩**,
+// আর ৪৫টি "জীবিত" নোডের মধ্যে **১৪টি** সত্যিকারের vidy-সেশন (seed+sources একই IP) পাস করে।
+// তাই vidy-কার্ডের চাবি = **verified vidy-pool**, আর কোটার চাপ ছড়াতে প্রতি সার্ভারে আলাদা IP।
+const VIDY_OK = new Map();            // px -> {ms, ts, fails}  (verified: seed+sources একই IP)
+const VIDY_TRIED = new Map();         // px -> ts (ব্যর্থ-চেষ্টার ৩০মিন-কুলডাউন, নইলে একই মৃতগুলোই ঘুরত)
+function vidyVKey() { return 'vidy_px_verified.json'; }
+function vidyVLoad() {
+  try { const j = JSON.parse(require('fs').readFileSync(require('path').join(__dirname, vidyVKey()), 'utf8'));
+    for (const k of Object.keys(j || {})) VIDY_OK.set(k, { ms: j[k].ms || 3000, ts: 0, fails: 0 });
+    if (DBG) console.error('[vpx] লোড ' + VIDY_OK.size + ' verified');
+  } catch (e) { }
+}
+function vidyVSave() {
+  try { const o = {}; for (const [k, v] of VIDY_OK) o[k] = { ms: v.ms }; require('fs').writeFileSync(require('path').join(__dirname, vidyVKey()), JSON.stringify(o)); } catch (e) { }
+}
+async function vidySession(px) { // এক IP-তে seed+sources — সত্যিকারের কন্ডিশন-পাস
+  const t0 = Date.now();
+  const b = await proxiedGet(px, API + '/seed?mediaId=278', 4500);
+  const seed = JSON.parse(b).seed; if (!seed) throw new Error('seed-empty');
+  const body = await proxiedGet(px, API + '/miami/sources?' + new URLSearchParams({ mediaType: 'movie', tmdbId: '278', enc: '2', seed: seed, title: '' }), 4500);
+  if (!body || body.length < 200) throw new Error('short');
+  return Date.now() - t0;
+}
+let vidySweepBusy = false;
+async function vidySweep(n) {
+  if (vidySweepBusy) return; vidySweepBusy = true;
+  try {
+    const now = Date.now();
+    if (VIDY_OK.size >= Number(process.env.VPXMAX || 150)) { vidyVSave(); return; } // যথেষ্ট verified ⇒ নতুন স্ক্যান বন্ধ
+    const cands = POOL.filter(c => !VIDY_OK.has(c.px) && (now - (VIDY_TRIED.get(c.px) || 0)) > 30 * 60 * 1000)
+      .sort((a, b) => pxScore(a.px, a.ms) - pxScore(b.px, b.ms)).slice(0, n || 18);
+    await Promise.all(cands.map(async c => {
+      try { const ms = await vidySession(c.px); VIDY_OK.set(c.px, { ms: ms, ts: Date.now(), fails: 0 }); if (DBG) console.error('[vpx] + ' + c.px + ' ' + ms + 'ms'); }
+      catch (e) { VIDY_TRIED.set(c.px, Date.now()); }
+    }));
+    // পুরোনো verified-দের মাঝে-মাঝে পুনঃযাচাই (৩০মিন+) — বাদ-পড়া সরিয়ে ফেলি
+    const stale = [...VIDY_OK.entries()].filter(([, v]) => v.ts && Date.now() - v.ts > 30 * 60 * 1000).slice(0, 6);
+    await Promise.all(stale.map(async ([px]) => {
+      try { const ms = await vidySession(px); VIDY_OK.set(px, { ms: ms, ts: Date.now(), fails: 0 }); }
+      catch (e) { const v = VIDY_OK.get(px) || {}; v.fails = (v.fails || 0) + 1; if (v.fails >= 2) { VIDY_OK.delete(px); if (DBG) console.error('[vpx] - ' + px); } else VIDY_OK.set(px, v); }
+    }));
+    vidyVSave();
+  } finally { setTimeout(() => { vidySweepBusy = false; }, 1500); }
+}
+vidyVLoad();
+setTimeout(() => vidySweep(Number(process.env.VPXW || 60)), 2500);
+const vidySweepTimer = setInterval(() => vidySweep(Number(process.env.VPXW || 60)), 25000); if (vidySweepTimer.unref) vidySweepTimer.unref();
+let vidyRR = 0;   // ★ সার্ভার-ভিত্তিক রাউন্ড-রবিন: প্রতিটি সার্ভার আলাদা verified IP পায় (কোটা ছড়ায়)
+function vidyVerifiedPick(n, offset) {
+  const arr = [...VIDY_OK.entries()].sort((a, b) => (a[1].ms || 9999) - (b[1].ms || 9999)).map(z => z[0]);
+  if (!arr.length) return pxsPick('vidy:any', n, null);
+  const out = [];
+  for (let i = 0; i < n; i++) out.push(arr[(vidyRR + i) % arr.length]);
+  vidyRR = (vidyRR + Math.max(1, n)) % arr.length;
+  return out;
+}
+function vidyDirectSession(o, tmo) { // ডিরেক্ট-সেশনও একজন রেসার (429 না-খাওয়া পর্যন্ত দ্রুততম)
+  const t0 = Date.now();
+  return directGet(API + '/seed?mediaId=' + o.tmdbId, tmo, 0, 0, VAGENT).then(b => {
+    const seed = JSON.parse(b).seed; if (!seed) throw new Error('seed-empty');
+    const u = API + '/' + o.srv + '/sources?' + new URLSearchParams(Object.assign({}, o.q, { seed: seed })).toString();
+    return directGet(u, tmo, 0, 0, VAGENT).then(ct => { pxsRec('vidy:' + o.srv, '@direct', true, Date.now() - t0); return { ct: ct, seed: seed, px: '@direct' }; });
+  }).catch(e => { pxsRec('vidy:' + o.srv, '@direct', false, Date.now() - t0); throw e; });
+}
+function vidySessionWithSeed(px, o, tmo) { // সিড আগেই আছে ⇒ শুধু sources, সেই একই IP-তে (কোটা বাঁচে)
+  const t0 = Date.now();
+  const u = API + '/' + o.srv + '/sources?' + new URLSearchParams(Object.assign({}, o.q, { seed: (o.sc && o.sc.seed) || '' })).toString();
+  return proxiedGet(px, u, tmo).then(ct => {
+    pxsRec('vidy:' + o.srv, px, true, Date.now() - t0);
+    return { ct: ct, seed: (o.sc && o.sc.seed) || '', px: px };
+  }).catch(e => { pxsRec('vidy:' + o.srv, px, false, Date.now() - t0); throw e; });
+}
+function vidyFetch(o) { // ★ সব একসাথে: direct + verified-pool (প্রতি সার্ভারে আলাদা IP), প্রথম সম্পূর্ণ-সফল জেতে
+  const TOT = Number(process.env.PXVT || 8000), N = Number(process.env.PXVN || 3);
+  const t0 = Date.now(), left = () => Math.max(900, TOT - (Date.now() - t0));
+  const sc = o.sc || {};
+  const off = (typeof o.srv === 'string' ? o.srv.charCodeAt(0) + o.srv.length : 0);
+  const jobs = [vidyDirectSession(o, Math.min(left(), 4000))];
+  if (sc.via === 'proxy' && sc.px) jobs.push(vidySessionWithSeed(sc.px, o, Math.min(left(), 2500)));
+  vidyVerifiedPick(N, off).forEach((px, i) => {
+    jobs.push(new Promise((res, rej) => setTimeout(() => vidySessionP(px, o, Math.min(left(), 4500)).then(res, rej), 200 + i * 400)));
+  });
+  return new Promise((resolve, reject) => {
+    let done = false, fails = 0;
+    const to = setTimeout(() => { if (!done) { done = true; reject(new Error('vidy-timeout')); } }, left());
+    for (const j of jobs) j.then(r => {
+      if (!done) { done = true; clearTimeout(to); resolve(r); }   // প্রথম সম্পূর্ণ-সফল সেশন
+    }).catch(e => {
+      if (DBG && process.env.VJDBG) console.error('[vjob] ' + o.srv + ' ' + String(e && e.message).slice(0, 40));
+      if (++fails >= jobs.length && !done) { done = true; clearTimeout(to); reject(new Error('vidy-allfail')); }
+    });
   });
 }
 function racePool(url, n, timeoutMs) {
@@ -3873,6 +4095,14 @@ async function hdSearch(imdb, title, year, ms) { // → {url, title} | null
   return v;
 }
 function hdProbe(u, ms) { // Range-প্রমাণ: 206/200 + non-html + Content-Range/আকার
+  const direct = hdProbeD(u, ms);
+  return direct.then(r => { // ★ v1.17.54: direct মৃত ⇒ আমাদের IP-ব্লক হতে পারে — পুল দিয়ে একবার
+    if (r && r.ok) return r;
+    return pxsGet(u, { key: 'hd:' + pxsKeyOf(u), n: Number(process.env.PXHN || 2), tmo: Math.max(1500, Math.min(4000, ms)) })
+      .then(b => (b && b.length > 200) ? { ok: true, ct: 'pool', cr: '' } : r).catch(() => r);
+  });
+}
+function hdProbeD(u, ms) {
   return fetch(u, { headers: { 'User-Agent': UA, Range: 'bytes=0-1023' }, signal: AbortSignal.timeout(Math.max(900, ms)) })
     .then(r => {
       const ct = String(r.headers.get('content-type') || '').toLowerCase();
@@ -4133,8 +4363,9 @@ async function m4uTextQ(u, ref, tmo) {
       if (ok && ok.px && (ok.ts || 0) > Date.now() - 15 * 60 * 1000) {
         try { const b = await proxiedGet(ok.px, u, Math.min(budget, 4000)); if (b && b.length > 80) return b; } catch { }
       }
-      const r = await racePool(u, 2, Math.min(budget, 5000));
-      if (r && r.body && r.body.length > 80) { HOST_OK.set(host, { px: r.px, ts: Date.now() }); return r.body; }
+      // ★ v1.17.54: ২ → ৪ নোড + এই হোস্টের নিজের স্কোর (দ্রুততম-কন্ডিশন-পাস আগে)
+      const body2 = await pxsGet(u, { key: 'm4u:' + host, n: Number(process.env.PXMN || 4), tmo: Math.min(budget, 5000), seedPx: (ok && ok.px) || null }).catch(() => '');
+      if (body2 && body2.length > 80) { HOST_OK.set(host, { px: null, ts: Date.now() }); return body2; }
       return '';
     } catch { return ''; } finally { PXRACE_N--; }
   })();
@@ -4255,7 +4486,13 @@ function pdProbe(u) {
 }
 function pdProbeRaw(u) {
   const _t0 = Date.now();
-  const pr = pdProbeRaw0(u);
+  // ★ v1.17.54: direct-প্রোব 'dead' বললে পুল দিয়ে একবার যাচাই — vidy-পুল থেকে ভিন্ন IP, ভুল-নেগেটিভ কমে
+  const pr = pdProbeRaw0(u).then(r => {
+    if (r && r.alive) return r;
+    return pxsGet(u, { key: 'pd', n: Number(process.env.PXPN || 3), tmo: 4500 })
+      .then(b => (b && b.length > 200) ? { alive: true, name: '', total: 0, via: 'pool' } : r)
+      .catch(() => r);
+  });
   if (DBG) pr.then(r => console.error('[pdr] ' + String(u).split('/').pop() + ' dur=' + (Date.now() - _t0) + 'ms alive=' + (r && r.alive)));
   return pr;
 }
@@ -7381,8 +7618,9 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
         const u = API + '/' + srv + '/sources?' + new URLSearchParams(q).toString();
         // v1.11.2 FETCH-HEDGE: আটকে-যাওয়া-আপস্ট্রিম-উত্তরের (phoenix 4.9s, dallas/tampa 7.5s+) +2.5সে-পরে-আরেক-টা-একই-কল;
         // প্রথম-সফল-টা-জেতে, হেরে-যাওয়া-টা-বাদ। প্রতি-সার্ভার-এখনো-এক-স্ক্যান-ফল-দেয়।
-        const ct = await hedge2(() => pathGet(u, sc.via, sc.px, 5000), () => pathGet(u, sc.via, sc.px, 5000), 2500, 5200); // v1.17.39: ১২.৫সে হার্ড-ডেডলাইন ছিল নিছক সকেট-দখল (কাট সবসময় ≤৪.২সে)
-        const j = JSON.parse(vidyDecrypt(ct, sc.seed, tmdbId));
+        const vr = await vidyFetch({ srv: srv, tmdbId: tmdbId, q: q, sc: sc }); // ★ v1.17.54: নোড-সেশন রেস (seed+sources একই IP)
+        const ct = vr.ct; // v1.17.39: ১২.৫সে হার্ড-ডেডলাইন ছিল নিছক সকেট-দখল (কাট সবসময় ≤৪.২সে)
+        const j = JSON.parse(vidyDecrypt(ct, vr.seed, tmdbId)); // ★ সেশন-সিড দিয়েই ডিক্রিপ্ট (ভিন্ন-নোড-ডিক্রিপ্ট-ত্রুটি শেষ)
         if (DBG) console.error('[t1g] ' + srv + ' fetch=' + (Date.now() - tS) + 'ms n=' + (j.sources || []).length + ' | jkeys=' + Object.keys(j).join(',') + ' | s0=' + JSON.stringify((j.sources || [])[0] || {}).slice(0, 220) + (j.audios ? ' | audios=' + JSON.stringify(j.audios).slice(0, 200) : '') + (j.audio ? ' | audio=' + JSON.stringify(j.audio).slice(0, 120) : ''));
         if (DBG && j.playlist) console.error('[t1g] ' + srv + ' PLAYLIST=' + JSON.stringify(j.playlist).slice(0, 500));
         if (!j.sources || !j.sources.length) {
@@ -7912,6 +8150,16 @@ const server = http.createServer((req, res) => {
     }
     if (p === '/_health') return sendJson(res, 200, { ok: 1, version: VERSION, up: Math.round(process.uptime()), deploy: 'v' + VERSION, pool: POOL.length, pxbench: POOL.filter(c => PX_SITE.has(c.px)).length, pxbf: PX_BF.size, memo: memo.size, nx: NEXBASE ? 1 : 0, nxpool: NXBENCH, nxwaves: NXWAVES, nxsize: NXSIZE, tw: TWBASE ? 1 : 0, rt: RTBASE ? 1 : 0, vsp: VSP_POOL.length }); // v1.15.71: vsp=Vidsrc-পুল-আকার // v1.15.18: pxbench=সাইট-প্রমাণিত-বেঞ্চ (v1.15.8: nxpool=MB-বেঞ্চ)
     if (p === '/mbpool.json') { try { const b = fs.readFileSync(MB_POOL_FILE); res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', 'access-control-allow-origin': '*' }); return res.end(b); } catch (e) { return sendJson(res, 200, []); } } // v1.17.34: child-যাচাই করা MB-বেঞ্চ (ডিপ্লয়-বীজ-হালনাগাদের জন্য)
+    if (p === '/_pxsrc') { // ★ v1.17.54: সোর্স-ভিত্তিক পুলের অবস্থা (রিপোর্ট/ডায়াগনস্টিক)
+      const out = {};
+      for (const [k, st] of PXS) {
+        const now = Date.now(), arr = [];
+        for (const [px, e] of st.m) arr.push({ px: px, ok: e.ok, fail: e.fail, ms: e.ms, banned: e.ban > now });
+        arr.sort((a, b) => (a.banned - b.banned) || ((a.ms || 9999) - (b.ms || 9999)));
+        out[k] = { url: String(st.url || '').slice(0, 90), known: arr.length, top: arr.slice(0, 5) };
+      }
+      return sendJson(res, 200, { keys: Object.keys(out).length, pool: POOL.length, site: PX_SITE.size, src: out });
+    }
     if (p === '/_pool') return sendJson(res, 200, POOL.map(c => Object.assign({}, c, PX_RUN.get(c.px) || {}))); // v1.15.0: রানটাইম-স্বাস্থ্য-সহ
     if (p === '/_nxring') { if (!NEXBASE) return sendJson(res, 200, { off: 1 }); directGet(NEXBASE + '/debug/ring', 4000).then(b => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(b); }).catch(() => { res.writeHead(200, { 'content-type': 'application/json' }); res.end('{"err":1}'); }); return; } // v2.10.2 চাইল্ড-রিজলভ-ধাপ-প্রমাণ
     if (p === '/_log') return sendJson(res, 200, reqLog.slice(-40).reverse());
