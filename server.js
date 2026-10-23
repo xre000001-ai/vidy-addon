@@ -2988,6 +2988,7 @@ async function hmPost(url, ms) { // পোস্ট-পেজ → {imdb, mv:[], 
   const v = {
     imdb: (t.match(/imdb\.com\/title\/(tt\d+)/) || [])[1] || '',
     mv: [...new Set(((t.match(/mvlink\.blog\/(\d+)/g) || []).map(z => z.split('/').pop())))],
+    josh: [...new Set(((t.match(/links\.joshapp\.blog\/(\d+)/g) || []).map(z => z.split('/').pop())))], // v1.17.48: নতুন-চেইন (boldb→gdshine→Google-Drive/Photos — সিক-যোগ্য-ফাইল-নয়)
     web: [...new Set(((t.match(/mvlink\.blog\/web\/(\d+)/g) || []).map(z => z.split('/').pop())))],
     title: (t.match(/<title>([^<]*)<\/title>/) || [])[1] || ''
   };
@@ -3058,6 +3059,7 @@ async function hmStreams(tmdbId, title, type, s, e, origin, maxh) {
       hmSet(HM_S, 'q:' + T.toLowerCase(), posts);
     }
     const imdb = await Promise.race([imdbP, new Promise(r => setTimeout(() => r(''), 800))]);
+    if (DBG) console.error('[hmT] searched @' + (Date.now() - T0) + 'ms posts=' + posts.length);
     const infos = await Promise.all(posts.slice(0, 4).map(u => hmPost(u, Math.min(1800, left())).catch(() => null)));
     let idx = -1;
     if (imdb) idx = infos.findIndex(x => x && x.imdb === imdb);          // ★ শক্তিশালী গার্ড: IMDb id মিলতেই হবে
@@ -3067,12 +3069,23 @@ async function hmStreams(tmdbId, title, type, s, e, origin, maxh) {
       idx = infos.findIndex(x => x && norm(x.title).indexOf(tn) >= 0);
     }
     if (idx < 0) { if (DBG) console.error('[hm] no-imdb-match "' + T + '" got=' + infos.map(x => x && x.imdb).join(',')); return []; }
+    if (DBG) console.error('[hmT] post-matched @' + (Date.now() - T0) + 'ms');
     const post = posts[idx], info = infos[idx];
     const epLine = isTv ? ('\u29e0 S' + SE + 'E' + EP) : '\u29e0 Movie';
     const cards = []; const seen = new Set();
     if (!isTv) {
-      const mv = info.mv.slice(0, 4); // ৪টি কোয়ালিটি-পেজই যথেষ্ট
-      if (!mv.length) { if (DBG) console.error('[hm] no-mvlink "' + T + '"'); return []; }
+      // ★ v1.17.48 (মাপা ২৩-১০-২০২৬): সাইট নতুন পোস্টগুলো `links.joshapp.blog/<id>` → `boldb.site` →
+      //   `gdshine.org` (Google-Drive) / Google-Photos-শেয়ার-এ সরিয়েছে — এগুলো **সিক-যোগ্য-সরাসরি-ফাইল নয়**,
+      //   তাই কার্ড-হয়-না (সৎ-শূন্য)। পুরোনো `mvlink.blog` পোস্টেও একই টাইটেল থাকতে পারে ⇒ শুধু প্রথম
+      //   পোস্টে আটকে না-গিয়ে IMDb-মেলা **সব** পোস্ট ঘুরি।
+      const candIdx = [idx].concat(infos.map((x, i) => i).filter(i => i !== idx && infos[i] && (!imdb || infos[i].imdb === imdb)));
+      let mv = [], mvi = -1;
+      for (const ci of candIdx) { const mm2 = (infos[ci] && infos[ci].mv) || []; if (mm2.length) { mv = mm2.slice(0, 4); mvi = ci; break; } }
+      if (!mv.length) {
+        const anyJosh = infos.some(x => x && x.josh && x.josh.length);
+        if (DBG) console.error('[hm] ' + (anyJosh ? 'drive-only (joshapp chain, no seekable mirror)' : 'no-mvlink') + ' "' + T + '"');
+        return [];
+      }
       const toks = T.toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/).filter(z => z.length > 2 && z !== 'the' && z !== 'and');
       const mtoks = T.toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/).filter(z => z.length > 2 && z !== 'the' && z !== 'and');
       const okTitle = ttl => { const z = String(ttl || '').toLowerCase(); return !mtoks.length || mtoks.filter(t => z.indexOf(t) >= 0).length >= Math.min(2, mtoks.length); };
@@ -3088,8 +3101,10 @@ async function hmStreams(tmdbId, title, type, s, e, origin, maxh) {
         if (!okTitle(ttl)) { if (DBG) console.error('[hm] mv-title-mismatch …' + ttl.slice(0, 26)); continue; } // সাইটের ভুল-পেজ গার্ড
         for (const id of x.ids) if (!seen.has(id)) { seen.add(id); cand.push({ id: id, h: resOfName(id) || resOfName(x.title) || 0 }); }
       }
+      if (DBG) console.error('[hmT] mv-pages @' + (Date.now() - T0) + 'ms ids=' + cand.length);
       const flt = (maxh ? cand.filter(x => x.h && x.h <= maxh) : cand).sort((a, b) => b.h - a.h).slice(0, 2);
       const fin = await Promise.all(flt.map(x => hmFinal(x.id, Math.min(4200, left())).catch(() => '')));
+      if (DBG) console.error('[hmT] hs-finals @' + (Date.now() - T0) + 'ms ok=' + fin.filter(Boolean).length);
       for (let i = 0; i < flt.length; i++) {
         const u = fin[i]; if (!u || hmIsDead(u)) continue;
         const fn = decodeURIComponent(String(u).split('/').pop() || '');
