@@ -480,7 +480,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
   var SUBS=[[1,'On'],[0,'No subs']];
 
   /* ─────────── state (server-contract keys) ─────────── */
-  var st={v:1,q:[],sub:1,srv:SRVS.map(function(x){return x[0];}),nx:1,nxq:[],nxl:[],rt:1,rtl:[],rtq:[],tw:1,twq:[],twl:[],mm:1,mmr:0,mmq:[],mml:[],m4u:1,m4ur:0,m4uq:[],m4ul:[],sky:1,skyr:0,hm:1,hmr:0,skyq:[],hmq:[],skyl:[],hml:[],vsp:1,vspq:[],vspl:[],ott:1,ottq:[],ottl:[],az:1,azq:[],azl:[],rtsrv:[]}; /* rtsrv: খালি=MQ+Pixeldrain-দুটোই (সার্ভার-চুক্তি: খালি=সব) */
+  var st={v:1,q:[],sub:1,srv:SRVS.map(function(x){return x[0];}),nx:1,nxq:[],nxl:[],rt:1,rtl:[],rtq:[],tw:1,twq:[],twl:[],mm:1,mmr:0,mmq:[],mml:[],m4u:1,m4ur:0,m4uq:[],m4ul:[],sky:1,skyr:0,hm:1,hmr:0,skyq:[],hmq:[],skyl:[],hml:[],hd:1,hdr:0,hdq:[],hdl:[],vsp:1,vspq:[],vspl:[],ott:1,ottq:[],ottl:[],az:1,azq:[],azl:[],rtsrv:[]}; /* rtsrv: খালি=MQ+Pixeldrain-দুটোই (সার্ভার-চুক্তি: খালি=সব) */
 
   /* source definitions: [key, tile, tileBg, tileFg, name, badge, badgeCls, blurb, hasTune] */
   var SRC=[
@@ -492,6 +492,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     ['m4u','M4U','linear-gradient(135deg,#252012,#19150c)','#e8d48a','Movies4u','MKV · 4K · HDR','', 'HDR10+/DV · Atmos · direct MKV',1],
     ['sky','SM','linear-gradient(135deg,#0f2436,#0a1826)','#7fd4ff','Sky Movies','SMHD','', 'SkymoviesHD · GDFlix/HubCloud · direct MKV',1],
     ['hm','HM','linear-gradient(135deg,#2b1a12,#1d120c)','#ffb98a','HindMovie','Hindi · Direct MKV','new', 'Live search · dual-audio · seekable MKV',1],
+    ['hd','HD','linear-gradient(135deg,#1b2a1a,#12200f)','#a8f0a0','HDHub4u','Hindi · HubCloud','new', 'IMDb-index search → hubcloud → Range-proven MKV',1],
     ['vsp','VS','linear-gradient(135deg,#1b2337,#121826)','#a9b8e8','Vidsrc','HLS · Eng','', 'Own relay pool · wide catalog',1],
     ['ott','AT','linear-gradient(135deg,#102a26,#0b1d1a)','#7fe0cc','AsianTV','HLS · K/C/J/Thai','', 'Dramas & movies · embedded subs',1],
     ['az','AZ','linear-gradient(135deg,#221a33,#171122)','#c9b8ff','AniZone','HLS · Anime','new','Anime series & movies · multi-language subs',1]
@@ -602,6 +603,13 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
       if(st.skyl.length)c.skyl=st.skyl.slice();
     }
 
+    // ★ v1.17.49: HDHub4u
+    if(st.hd===0)c.hd=0;
+    else{
+      if(st.hdq.length)c.hdq=st.hdq.slice().sort(function(a,b){return b-a;});
+      else if(st.hdr)c.hdr=st.hdr;
+      if(st.hdl.length)c.hdl=st.hdl.slice();
+    }
     // ★ v1.17.48: HindMovie-ব্লক ছিল না ⇒ UI-তে বন্ধ করলেও সার্ভারে hm চালু-ই থাকত, আর hmq/hml ফিল্টারও পাঠাত না
     if(st.hm===0)c.hm=0;
     else{
@@ -869,6 +877,11 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     o=tuneCard('tune-hm','hm','HindMovie','Dub/dual-audio · direct MKV · live search');h.appendChild(o.card);
     chipsInto(o.zone,'Resolutions',st.hmq,RES,rebuild,'',1);
     chipsInto(o.zone,'Audio languages',st.hml,LANGS,rebuild);
+    /* HDHub4u — v1.17.49: search.php (imdb_id ইনডেক্স) → hubcloud → Range-প্রমাণিত MKV */
+    o=tuneCard('tune-hd','hd','HDHub4u','Hindi/Hindi-dubbed · hubcloud · pixeldrain/S3 proven');
+    h.appendChild(o.card);
+    chipsInto(o.zone,'Resolutions',st.hdq,RES,rebuild,'',1);
+    chipsInto(o.zone,'Audio languages',st.hdl,LANGS,rebuild);
     /* BollyFlix — v1.17.44: সোর্স বাদ (zip+relay ⇒ seek/play সমস্যা); v1.17.48: বাকি-পড়া চিপ-কোডও সরানো */
     /* v1.17.9: আলাদা ⚡(libmpv) কার্ড বন্ধ — প্রতি কোয়ালিটিতে একটাই সরাসরি কার্ড।
        টগলটা রাখা হলো শুধু পুরোনো কনফিগ-লিংক ভাঙা না লাগার জন্য (এখন কোনো প্রভাব নেই)। */
