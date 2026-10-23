@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.22.6';
+const VERSION = '1.22.5';
 const V1NOTE_47 = 'v1.17.47 (ইউজার: "stream cut kore fast na — 6-8s laguk, sob stream asuk") — হারভেস্ট-কাট বাতিল: আগে ৪.৬সে-এ ৬-কার্ড-হলেই কাট, ৪.৯সে হার্ড-ক্যাপ ⇒ দেরিতে-আসা সোর্সের কার্ড ফেলত। এখন **সব লাইভ-সোর্স সেটেল হলেই ফেরা**, নইলে ৭.৮সে ক্যাপ (Beamup ১২সে-সীমার ভিতরে)। সাথে: nx ৫.১→৭.২সে (MB আর কাটা পড়ে না), mm/m4u ৭.০সে সব-সাইট, hm-রেস ৩.২→৬.৬সে (কোল্ড-চেইনও একই রেসপন্সে), m4u-তে ৩ pd-id + ২ জীবিত মিরর (আগে ১ম-সফলেই-থামা), sky-তে ৩ pd-id/hub, PD_MAX env-নব। মাপা (১৬ রিকোয়েস্ট, লোকাল): avg 5.52s · সর্বোচ্চ 6.66s (আগে 3.75s-কাট-সংস্করণে ৮২৪ কার্ড), HindMovie ৮/১৬ (আগে ৩/১৬), MB ১৬/১৬, mm ১৬/১৬, m4u ১৪/১৬, sky ১২/১৬, কার্ড ৮৩৯ ⇒ **কার্ড কমেনি, বেড়েছে**।';
 
 const V1NOTE_48 = 'v1.17.48 (ইউজার: "M4u thik koro, Hindi movie add koro, configuration page ta o thik koro") — ★ কনফিগ-পেজ-মেরামত: SRC-তালিকা থেকেই সুইচ-বাইন্ড (bf সরানোর পর bindSwitch-এ null.classList-এ পুরো IIFE থেমে যেত ⇒ tune-কার্ড/সেভ/প্রিভিউ কিছুই রেন্ডার হতো না) + bindSwitch-এ null-গার্ড; HindMovie প্যানেল + tune-hm কার্ড যোগ। ★ Movies4u: একাধিক সার্চ-হিট-চেষ্টা (per_page 12), আর্টিকেল-বাদ-দিয়ে-পুনঃসার্চ, modpro-শাখা এখন আসলেই চলে (post খালি থাকলে lastPost দিয়ে) — মৃত-মিরর Range-প্রমাণ ছাড়া কার্ড-নয়। ★ প্রতি-সারি-deadline: এক-সারির-ঢিলামিতে সব-কার্ড বাতিল হতো (3 Idiots ৮.৬সে→৪.৭সে)। ★ HindMovie: 404/410-এ প্রক্সি-পুল-বন্ধ (Silence ১২.২সে→৬.১সে, কার্ড-আসে)। বেঞ্চ: avg ৪.৭৪সে (আগে ৫.৫২), max ৭.০২, m4u ১৪/১৬, HM ৮/১৬, Sky ১৪/১৬।';const V1NOTE_46 = 'v1.17.46 (HindMovie নতুন সোর্স): live search (REST → HTML ফলব্যাক, বছর-মুক্ত কুয়েরি) → পোস্ট (IMDb-id গার্ড) → mvlink (মুভি) / mvlink /web/<id> (সিজন×কোয়ালিটি) → hshare → hcloud b64 → workers.dev direct MKV (২০৬, সিক-যোগ্য)। ক্যাশ ৬ঘণ্টা (search/post/mvlink/final); ডিরেক্ট আগে, 403/429/5xx-তে পুল-রেস। ব্যাচ .zip কখনো কার্ড নয়। hmRace ৩.২s ⇒ কোল্ড-চেইন রেসপন্স আটকায় না, পেছনে ক্যাশ ভরে। মাপা (১৬ রিকোয়েস্ট): avg 3.75s, MB 15/16, mm 16/16, m4u 14/16, sky 13/16, hm 3/16 (হলিউড-ক্লাসিক বেঞ্চে; সিরিজে BB/GoT S1E1 = ৩ কার্ড)।';
@@ -1020,7 +1020,7 @@ if (pxsWarmTimer.unref) pxsWarmTimer.unref();
 let LAST_SRC = null;   // ★ v1.22.2: শেষ অনুরোধে প্রতি-সোর্স ফল (prod-ডায়াগনস্টিক)
 const SPOOL = new Map();          // srcKey -> Map(px -> {ms, ok, fail, ts, ban})
 const SPOOL_FILE = require('path').join(__dirname, 'src_pools.json');
-const SPOOL_TGT = Number(process.env.SPTGT || 6);   // প্রতি সোর্সে লক্ষ্য-ভেরিফায়েড নোড
+const SPOOL_TGT = Number(process.env.SPTGT || 9);   // v1.23.0: প্রতি সোর্সে ৯টি তাজা-যাচাই নোড (ইউজার: ৮-১০)   // প্রতি সোর্সে লক্ষ্য-ভেরিফায়েড নোড
 const SPOOL_TRIED = new Map();    // `${srcKey}|${px}` -> ts (ব্যর্থ-কুলডাউন ২০মিন)
 function srcPool(key) { let m = SPOOL.get(key); if (!m) { m = new Map(); SPOOL.set(key, m); } return m; }
 function spoolLoad() {
@@ -1041,7 +1041,7 @@ function spoolPick(key, n, seedPx) {
   const m = srcPool(key), now = Date.now(), out = [];
   const push = px => { if (px && out.indexOf(px) < 0) out.push(px); };
   if (seedPx) push(seedPx);
-  const cand = [...m.entries()].filter(([, e]) => !(e.ban > now)).sort((a, b) => ((b[1].ok || 0) - (a[1].ok || 0)) * 1000 + (a[1].ms || 9999) - (b[1].ms || 9999));
+  const cand = [...m.entries()].filter(([, e]) => spoolFresh(e)).sort((a, b) => (b[1].ok || 0) - (a[1].ok || 0) || (a[1].ms || 9999) - (b[1].ms || 9999));
   // ★ ছড়ানো-নমুনা (Multimovies-ধাঁচ): প্রথম কয়েকটা নয়, পুরো ব্যান্ড জুড়ে
   const want = Math.min(cand.length, n);
   for (let i = 0; i < want; i++) push(cand[Math.floor(i * cand.length / want)][0]);
@@ -1075,45 +1075,62 @@ function srcKeyFor(pxKey) {
   return k || 'misc';
 }
 // প্রতি-সোর্স ট্রেইনার: যেই নোড ওই সাইটে সত্যিই ২০০ দেয়, সেটাই সেই সোর্সের পুলে ঢোকে
+// v1.23.0 (মাপা: ৯টি "verified" নোডের ৮-৯টিই পরের কলেই timeout — "proxy fetch thikmotoh hocche na"):
+//   আগের যাচাই ছিল একবার-২০০-হলেই-হল (৪০ বাইটের error পেজও পাস করত)। এখন প্রতি সোর্সে আসল API-কল
+//   + কনটেন্ট-মার্কার + ন্যূনতম দৈর্ঘ্য, আর পুরোনো নোড পুনঃযাচাই হয় — তাজা না হলে সার্ভ করে না।
 const SRC_PROBE = {
-  hm: () => HM_BASE + '/wp-json/wp/v2/search?search=inception&per_page=1',
-  hd: () => HD_BASE + '/',
-  m4u: () => M4U_BASE + '/',
-  sky: () => SKY_ANNOUNCERS[0],
-  az: () => AZ_BASE + '/',
-  ott: () => OTT_HOSTS[0] + '/vod/search?page=1&keyword=inception'
+  hm: { u: () => HM_BASE + '/wp-json/wp/v2/search?search=inception&per_page=1', min: 200, mark: /"id"|"slug"|"title"/ },
+  hd: { u: () => HD_BASE + '/', min: 3000, mark: /hdhub|post_title|movies|download/i },
+  m4u: { u: () => M4U_BASE + '/', min: 3000, mark: /movies4u|post|href/i },
+  sky: { u: () => SKY_ANNOUNCERS[0], min: 1000, mark: /sky|movie|href/i },
+  az: { u: () => AZ_BASE + '/', min: 3000, mark: /anizone|anime|href/i },
+  ott: { u: () => OTT_HOSTS[0] + '/vod/search?page=1&keyword=inception', min: 60, mark: /vod|[\{]/i }
 };
+function spoolFresh(e) { return !!e && (e.ok || 0) > 0 && (!e.ban || e.ban <= Date.now()) && (Date.now() - (e.ts || 0) < Number(process.env.SPFRESH || 600000)); }
 let spoolBusy = false;
+async function spoolCheck(k, px) { // এক নোড → ওই সোর্সের আসল API-কল, মার্কার+দৈর্ঘ্য যাচাই
+  const spec = SRC_PROBE[k]; if (!spec) return false;
+  const t0 = Date.now();
+  try {
+    const b = await proxiedGet(px, spec.u(), Number(process.env.SPTMO || 5000));
+    const good = !!b && b.length >= spec.min && spec.mark.test(b);
+    spoolRec(k, px, good, Date.now() - t0);
+    if (good && DBG) console.error('[spool] + ' + k + ' ' + px + ' ' + (Date.now() - t0) + 'ms ' + b.length + 'B');
+    return good;
+  } catch (e) { spoolRec(k, px, false, 0); return false; }
+}
 async function spoolTrain() {
   if (spoolBusy) return; spoolBusy = true;
   try {
-    if (Date.now() - LAST_STREAM_AT < 4000) return;            // সার্ভিং-এর সময় চাপ নয়
-    const keys = Object.keys(SRC_PROBE);
-    for (const k of keys) {
+    if (Date.now() - LAST_STREAM_AT < 3000) { if (DBG) console.error('[spool] সার্ভিং চলছে — এই চক্র বাদ'); return; }
+    // ১) তাজা-নোড কম হলে নতুন প্রার্থী **সমান্তরালে** যাচাই (লক্ষ্য ৯ নোড/সোর্স)
+    for (const k of Object.keys(SRC_PROBE)) {
       const m = srcPool(k);
-      const live = [...m.values()].filter(e => !(e.ban > Date.now())).length;
-      if (live >= Number(process.env.SPMIN || 5)) continue; // prod-মাপা: শুধু ছিদ্র ভরা, নইলে CPU/নেট চাপ
-      const url = SRC_PROBE[k](); if (!url) continue;
-      const cands = POOL.concat(PX_RAW.map(px => ({ px: px })))
-        .map(c => c.px).filter(px => px && !m.has(px) && (Date.now() - (SPOOL_TRIED.get(k + '|' + px) || 0) > 20 * 60 * 1000));
-      let tried = 0;
-      for (let i = 0; i < cands.length && tried < Number(process.env.SPTRY || 2); i++) {
-        const px = cands[cands.length - 1 - i];   // পেছন থেকে = কম-ব্যবহৃত নোড
-        if (!px) continue; tried++;
-        const t0 = Date.now();
-        try {
-          const b = await proxiedGet(px, url, Number(process.env.SPTMO || 4500));
-          if (b && b.length > 40) { spoolRec(k, px, true, Date.now() - t0); if (DBG) console.error('[spool] + ' + k + ' ' + px + ' ' + (Date.now() - t0) + 'ms'); }
-          else spoolRec(k, px, false, 0);
-        } catch (e) { spoolRec(k, px, false, 0); }
-      }
-      if (DBG) console.error('[spool] ' + k + ' verified=' + srcPool(k).size + '/' + SPOOL_TGT);
+      const fresh = [...m.values()].filter(e => spoolFresh(e)).length;
+      if (fresh >= Number(process.env.SPMIN || 6)) continue;
+      const cands = [];
+      for (const px of VIDY_OK.keys()) if (!m.has(px)) cands.push(px);                          // (ক) vidy-প্রমাণিত নোড
+      for (const c of POOL.filter(c => PX_SITE.has(c.px))) if (!m.has(c.px) && cands.indexOf(c.px) < 0) cands.push(c.px); // (খ) site-proven
+      for (const c of POOL) if (!m.has(c.px) && cands.indexOf(c.px) < 0) cands.push(c.px);       // (গ) পুল
+      for (const px of PX_RAW) if (cands.length < 600 && !m.has(px) && cands.indexOf(px) < 0) cands.push(px);
+      const usable = cands.filter(px => Date.now() - (SPOOL_TRIED.get(k + '|' + px) || 0) > 10 * 60 * 1000);
+      const batch = usable.slice(0, Number(process.env.SPBATCH || 10));
+      if (!batch.length) continue;
+      const res = await Promise.all(batch.map(px => spoolCheck(k, px)));
+      if (DBG) console.error('[spool] ' + k + ' tried=' + batch.length + ' ok=' + res.filter(Boolean).length + ' fresh=' + [...srcPool(k).values()].filter(e => spoolFresh(e)).length + '/' + SPOOL_TGT);
     }
+    // ২) পুরোনো নোড পুনঃযাচাই — একবার-পাস করা নোড চিরকাল "verified" থাকে না
+    const oldest = [];
+    for (const [k, m] of SPOOL) {
+      const arr = [...m.entries()].filter(([, e]) => !(e.ban > Date.now())).sort((a, b) => (a[1].ts || 0) - (b[1].ts || 0));
+      for (const [px] of arr.slice(0, 2)) oldest.push([k, px]);
+    }
+    await Promise.all(oldest.slice(0, Number(process.env.SPREV || 12)).map(([k, px]) => spoolCheck(k, px)));
     spoolSave();
   } finally { spoolBusy = false; }
 }
 spoolLoad();
-setTimeout(() => { spoolTrain(); setInterval(() => { spoolTrain(); }, Number(process.env.SPNI || 45000)).unref?.(); }, 25000).unref?.();
+setTimeout(() => { spoolTrain(); setInterval(() => { spoolTrain(); }, Number(process.env.SPNI || 90000)).unref?.(); }, 25000).unref?.();
 // ★ v1.17.54 পরিমার্জিত (লগ-প্রমাণ): vidy **সিড আর sources একই IP থেকে** চায় —
 //   ভিন্ন-নোডে সোর্স কল করলে `http_401` / `decrypt failed: bad seed or tampered payload`।
 //   তাই race হয় **নোড-সেশনে**: প্রতি নোডে (১) seed, (২) sources — দুটোই সেই IP দিয়ে; প্রথম সম্পূর্ণ-সফল সেশন জেতে।
@@ -7820,7 +7837,7 @@ async function withSources(cardsP, srcs, cfg, t0) {
     //   পুরনো "৬ কার্ড হলেই ৪.৬সে-এ কাট" নিয়ম **বাতিল** — সেটাই দেরিতে-আসা সোর্সের
     //   (sky/m4u/hm/nx) কার্ড ফেলে দিত। এখন: **সব লাইভ-সোর্স সেটেল হলেই ফেরা**,
     //   নইলে শুধু ৮.২সে হার্ড-ক্যাপ (Beamup-এর ১২সে-কাটঅফের ভিতরে)।
-    const MIN_WAIT_MS = Number(process.env.VFLOOR || 1200), HARD_CAP_MS = Number(process.env.VCAP || 7200); // v1.17.52: ৭.৮সে-ক্যাপেই sky/hm/m4u/nx কাটা পড়ত ⇒ ১০.৫সে
+    const MIN_WAIT_MS = Number(process.env.VFLOOR || 1200), HARD_CAP_MS = Number(process.env.VCAP || 9400); // v1.17.52: ৭.৮সে-ক্যাপেই sky/hm/m4u/nx কাটা পড়ত ⇒ ১০.৫সে
     let lit = 0, settled = 0, fireCut = null;
     _cutP = new Promise(r => { fireCut = r; });
     _watch = setInterval(() => {
@@ -7833,7 +7850,7 @@ async function withSources(cardsP, srcs, cfg, t0) {
     // ★ v1.17.56: **গৌণ-সোর্সের নিজস্ব ছোট-ক্যাপ** — ott/tw/rt/az বসে-থাকলে পুরো উত্তর ১১.৫সে-দেয়ালে
     //   গিয়ে ঠেকত (প্রোড-লগে জোড়ায়-জোড়ায় 11.5s), অথচ ওরা কার্ড দিচ্ছিল না (n=0)। এখন ৬.৫সে।
     // ★ v1.20.2 (মাপা: ৮.২সে-র কারণ ছিল hm — ০ কার্ড দিয়ে ৮.২সে পর্যন্ত ধরে রাখত; tw/rt তেমনই)
-    const SRC_CAP_MAP = { ott: 7000, tw: 7000, rt: 7000, az: 7000, hm: 7200, vsp: 7000, nx: 7200, m4u: 7200, sky: 7200 }; // ★ v1.22.3: prod-মাপা — এই সোর্সগুলো prod-এ ৭-৮সে নেয়, আগের ক্যাপে তারা সবসময় 'cut' হতো
+    const SRC_CAP_MAP = { ott: 8500, tw: 8500, rt: 8500, az: 9200, hm: 8800, vsp: 8500, nx: 9000, m4u: 9000, sky: 8800, mm: 9200 }; // ★ v1.22.3: prod-মাপা — এই সোর্সগুলো prod-এ ৭-৮সে নেয়, আগের ক্যাপে তারা সবসময় 'cut' হতো
     const SRC_CAP_MS = Number(process.env.VSCAP || 8200); // v1.17.58: 9.3s-cap-e prod-e 10.2-10.6s hoi (edge-er kache) // ★ v1.17.52: প্রতি-সোর্স-ক্যাপ — একটি ঝুলন্ত সোর্স (ott/tw/nx) পুরো তালিকাকে ক্যাপে টেনে নিত
     const track = x => { // ★ v1.17.52: টাইমার ক্লিয়ার হয় — নইলে সেটেল হওয়া সোর্সের জন্যও ভুল '[srccap]' ছাপ পড়ত
       let _tm = null;
@@ -7853,7 +7870,7 @@ async function withSources(cardsP, srcs, cfg, t0) {
     // ★ v1.17.34: **অভিযোজিত-উইন্ডো বাতিল** (মাপা: প্রোডে ৬.২সে-ও MB আনত না, শুধু উত্তর
     //   ৭–৮সে হয়ে যেত)। এখন সবসময় ৫.১সে — MB দেরিতে এলে ব্যাকগ্রাউন্ডে ক্যাশে জমে, আর
     //   ওই ফল `$partial` হয় ⇒ আমাদের /stream-ক্যাশ ১২সে-তেই মেয়াদোত্তীর্ণ ⇒ দ্বিতীয় ট্যাপে MB পুরো।
-    const nxFirstWait = Math.min(Number(process.env.NXW || 7200), 9200); // ★ v1.22.2: prod-এ MB ৯.২সে ধরে উত্তর টানত (মাপা ৯.৪সে) ⇒ ৭সে // v1.17.52: ৭.২সে-এ MB প্রায়ই কাটা পড়ত // v1.17.47: MB আর কাটা পড়বে না (আগে ৫.১সে)
+    const nxFirstWait = Math.min(Number(process.env.NXW || 9000), 9500); // ★ v1.22.2: prod-এ MB ৯.২সে ধরে উত্তর টানত (মাপা ৯.৪সে) ⇒ ৭সে // v1.17.52: ৭.২সে-এ MB প্রায়ই কাটা পড়ত // v1.17.47: MB আর কাটা পড়বে না (আগে ৫.১সে)
     const nxCutP = new Promise(r => setTimeout(() => r(true), Math.max(0, Math.min(uniLeft0, nxFirstWait - (Date.now() - t0)))));
     outsP = Promise.all(live.map(x => Promise.race([
       track(x),
@@ -8159,7 +8176,7 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
     //   কারণ vidy-কার্ড শেষ হওয়ার জন্য অপেক্ষা করত)। এখন vidy-ধাপের **কঠিন কাট VPICK=4.5সে**:
     //   যা এসেছে তাই নিয়ে উত্তর; বাকি সার্ভারগুলো পেছনে শেষ হয়ে **মাইক্রো-ক্যাশ (৬০সে) ও ৩০মিন-ক্যাশ** ভরে
     //   ⇒ পরের ট্যাপে ওগুলো সঙ্গে সঙ্গে আসে। মানে "প্রথম ট্যাপ ৫–৬সে, রিফ্রেশ ০.২সে, সার্ভার বাড়তেই থাকে"।
-    const VPICK = Number(process.env.VPICK || 6800); // ★ v1.22.0: ৬.৮সে — vidy ৪.২-৪.৫সে-তেই শেষ, বাকি সোর্স (m4u/sky/hm) ৫-৬.৪সে-তে আসে; এখন তারা সত্যিই কার্ড দেয়
+    const VPICK = Number(process.env.VPICK || 9000); // v1.23.0 (ইউজার: beshi somoy dao) — দেরিতে-আসা সোর্সও কার্ড দেবে // ★ v1.22.0: ৬.৮সে — vidy ৪.২-৪.৫সে-তেই শেষ, বাকি সোর্স (m4u/sky/hm) ৫-৬.৪সে-তে আসে; এখন তারা সত্যিই কার্ড দেয়
     const part = [];
     const allP = Promise.all(allow.map(s2 => budget(s2).then(r => { part.push(r); return r; })));
     const picked = await Promise.race([allP, new Promise(r => setTimeout(() => r(null), VPICK))]);
@@ -8739,7 +8756,7 @@ const server = http.createServer((req, res) => {
       const now = Date.now(), out = {};
       for (const k of ['m4u', 'hd', 'hm', 'sky', 'az', 'ott', 'mm', 'vidy', 'vsp', 'nx', 'tw', 'rt']) {
         const m = SPOOL.get(k); const arr = m ? [...m.entries()] : [];
-        out[k] = { verified: arr.filter(([, e]) => !(e.ban > now)).length, total: arr.length, best: arr.filter(([, e]) => !(e.ban > now)).sort((a, b) => (a[1].ms || 9999) - (b[1].ms || 9999)).slice(0, 3).map(x => x[0] + ' ' + x[1].ms + 'ms') };
+        out[k] = { verified: arr.filter(([, e]) => !(e.ban > now)).length, total: arr.length, best: arr.filter(([, e]) => spoolFresh(e)).sort((a, b) => (a[1].ms || 9999) - (b[1].ms || 9999)).slice(0, 3).map(x => x[0] + ' ' + x[1].ms + 'ms') };
       }
       out._vidy = { verified: VIDY_OK.size, pool: POOL.length, site: PX_SITE.size };
       return sendJson(res, 200, out);
@@ -9235,7 +9252,7 @@ const server = http.createServer((req, res) => {
       const ottP = !(cfg && cfg.ott === 0) ? ottStreams(Number(m[1]), 'movie', 0, 0, cfg && cfg.ottq || []).catch(() => []) : null; // v1.15.72: AsianTV
       const azP = !(cfg && cfg.az === 0) ? azStreams(Number(m[1]), 'movie', 0, 0, cfg && cfg.azq || []).catch(() => []) : null; // v1.15.76: AniZone
       kickSubs('tmdb' + m[1], 'movie', null, null, cfg);
-      return withDeadline(withSources(vOn ? getSources(Number(m[1]), 'movie', null, null, '', cfg, tp) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: hmP, key: 'hm' }, { p: hdP, key: 'hd' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0), 9000 /* v1.22.4: 11.9s deadline + unify/network-e prod-e 12.4s-e theke chilo => 10.2s: NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
+      return withDeadline(withSources(vOn ? getSources(Number(m[1]), 'movie', null, null, '', cfg, tp) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: hmP, key: 'hm' }, { p: hdP, key: 'hd' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0), 11500 /* v1.23.0: 11.9s deadline + unify/network-e prod-e 12.4s-e theke chilo => 10.2s: NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
 cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'movie', s: 0, e: 0 }).then(u => sendStreams(res, req.url, p, Date.now() - t0, u, RVA, cfg)); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }
@@ -9258,7 +9275,7 @@ cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'movie', s: 0, e: 0 }
       if (nxOn) nxPrewarm('series', String(m[1]), Number(m[2] || 1), Number(m[3] || 1));
       twRtPrewarm(tp, 'series', Number(m[2] || 1), Number(m[3] || 1));
       kickSubs('tmdb' + m[1], 'series', Number(m[2] || 1), Number(m[3] || 1), cfg);
-      return withDeadline(withSources(vOn ? getSources(Number(m[1]), 'tv', Number(m[2] || 1), Number(m[3] || 1), '', cfg, tp) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: hmP, key: 'hm' }, { p: hdP, key: 'hd' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0), 9500 /* v1.22.4 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
+      return withDeadline(withSources(vOn ? getSources(Number(m[1]), 'tv', Number(m[2] || 1), Number(m[3] || 1), '', cfg, tp) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: hmP, key: 'hm' }, { p: hdP, key: 'hd' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0), 11500 /* v1.23.0 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
 cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'series', s: Number(m[2] || 1), e: Number(m[3] || 1) }).then(u => sendStreams(res, req.url, p, Date.now() - t0, u, RVA, cfg)); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }
@@ -9281,7 +9298,7 @@ cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'series', s: Number(m
       const ottP = !(cfg && cfg.ott === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? ottStreams(info.id, 'movie', 0, 0, cfg && cfg.ottq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.72: AsianTV
       const azP = !(cfg && cfg.az === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? azStreams(info.id, 'movie', 0, 0, cfg && cfg.azq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.76: AniZone
       kickSubs(m[1], 'movie', null, null, cfg);
-      return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'movie', null, null, info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: hmP, key: 'hm' }, { p: hdP, key: 'hd' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0), 9500 /* v1.22.4 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
+      return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'movie', null, null, info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: hmP, key: 'hm' }, { p: hdP, key: 'hd' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0), 11500 /* v1.23.0 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
 cards => { if (DBG) console.error('[rt] cards-ready @' + (Date.now() - t0) + 'ms n=' + (cards || []).length); Promise.all([infoP, nmP]).then(([info, nm]) => { if (DBG) console.error('[rt] info/nm ready @' + (Date.now() - t0) + 'ms'); return unifyCards(cards, { tmdbId: info && info.id, title: (info && info.name) || nm, type: 'movie', s: 0, e: 0, year: info && info.year }); }).then(u => { if (DBG) console.error('[rt] sending @' + (Date.now() - t0) + 'ms'); sendStreams(res, req.url, p, Date.now() - t0, u, RVA, cfg); }); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }
@@ -9305,7 +9322,7 @@ cards => { if (DBG) console.error('[rt] cards-ready @' + (Date.now() - t0) + 'ms
       if (nxOn) nxPrewarm('series', m[1], Number(m[2]), Number(m[3]));
       twRtPrewarm(nmP, 'series', Number(m[2]), Number(m[3]));
       kickSubs(m[1], 'series', Number(m[2]), Number(m[3]), cfg);
-      return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'tv', Number(m[2]), Number(m[3]), info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: hmP, key: 'hm' }, { p: hdP, key: 'hd' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0), 9500 /* v1.22.4 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
+      return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'tv', Number(m[2]), Number(m[3]), info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: hmP, key: 'hm' }, { p: hdP, key: 'hd' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0), 11500 /* v1.23.0 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
 cards => { Promise.all([infoP, nmP]).then(([info, nm]) => unifyCards(cards, { tmdbId: info && info.id, title: (info && info.name) || nm, type: 'series', s: Number(m[2]), e: Number(m[3]), year: info && info.year })).then(u => sendStreams(res, req.url, p, Date.now() - t0, u, RVA, cfg)); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }
