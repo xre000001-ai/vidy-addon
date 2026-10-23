@@ -5,12 +5,14 @@
 const http = require('http');
 const https = require('https');
 const net = require('net');
+const dns = require('dns'); // v1.17.45: mm T0-র DNS-প্রি-চেক (মৃত-ডোমেইন ~২০ms-এ)
 const tls = require('tls');
 const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.17.44'; // v1.17.42: `_health`-এ **up (আপটাইম-সেকেন্ড) + deploy-ট্যাগ** যোগ — ডিপ্লয় সত্যিই
+const VERSION = '1.17.45';
+const V1NOTE_45 = 'v1.17.45 (mm T0+T2): ইনডেক্স-হোস্ট-ক্যাশ (মৃত ৩০মি / DNS-মৃত ৬ঘণ্টা) + DNS fast-fail (০.০২s) + ইনডেক্স-fetch ক্যাপ ২.২s ⇒ mm-এর সিরিজ n=0 কমল (GoT S1E1 0→5; mm সেটেল ৫.৮s→১.৫–২.৫s)। মাপা (১৬-রিকোয়েস্ট, লোকাল): avg 3.39s (আগে 3.75s), mm 16/16, m4u 14/16, sky 13/16, MB 16/16, BF 0।'; // v1.17.42: `_health`-এ **up (আপটাইম-সেকেন্ড) + deploy-ট্যাগ** যোগ — ডিপ্লয় সত্যিই
 //   নতুন কনটেইনার চালু করছে কি না তা এক-নজরে বোঝার জন্য (প্রোড এখনো 1.17.39 দেখাচ্ছিল, nxwaves=101 ⇒ রিস্টার্ট-ই হয়নি)।
 const V1NOTE_43c = ''; // v1.17.43 (মাপা, চূড়ান্ত): pixeldrain-গেট **PD_MAX=6** সেরা — ২-রাউন্ড/১৬-রিকোয়েস্ট A/B:
 //   PD_MAX=4 → avg 4.15s, m4u 10/16, sky 9/16 · **PD_MAX=6 → avg 3.68s, m4u 14/16, sky 11/16** · PD_MAX=8 → avg 4.17s।
@@ -2631,7 +2633,7 @@ async function mmVidbolt(tmdbId, isSeries, s, e, ms) { // v1.15.28: the vidbolt 
   const vT0 = Date.now(); const vLeft = cap => Math.max(350, Math.min(cap, (ms || 6500) - (Date.now() - vT0)));
   try {
     const q = isSeries ? ('type=tv&id=' + tmdbId + '&season=' + (parseInt(s, 10) || 1) + '&episode=' + (parseInt(e, 10) || 1)) : ('type=movie&id=' + tmdbId);
-    const out = []; const oseen = new Set();
+    const out = []; const oseen = new Set(); let softSrcs = null; // v1.17.45 (T2): সফট-ব্লক-ড্র-এর সোর্স-মনে-রাখা
     const push = (h, url, ref, mp4, lang, aud, mini, k, alang, xl) => { const kk = k || url; if (url && kk && !oseen.has(kk)) { oseen.add(kk); out.push({ h: h | 0, url: url, ref: ref, mp4: mp4 ? 1 : 0, lang: lang || '', aud: aud || '', mini: mini ? 1 : 0, vbq: mini ? q : '', alang: alang || '', _lang: xl || lang || '' }); } }; // v1.15.88: alang/_lang
     for (let draw = 0; draw < 3; draw++) { // a dead draw (0 results) retries after 450ms — different servers serve the rotation
       let j = null;
@@ -2658,9 +2660,13 @@ async function mmVidbolt(tmdbId, isSeries, s, e, ms) { // v1.15.28: the vidbolt 
       }
       const h0 = hlsS[0];
       if (h0 && /api_key=(&|$)/.test(h0.url)) { // v1.15.38: a resolve fetched through a flagged IP comes back soft-blocked with an EMPTY api_key — a keyless rousav master is dead weight; discard the draw
-        if (DBG) console.error('[vbd] empty-key resolve, draw ' + draw + ' discarded');
-        if (draw < 2) await new Promise(r3 => setTimeout(r3, 450));
-        continue;
+        // v1.17.45 (T2): মাপা — এই সফট-ব্লক **IP-নির্ভর নয়** (ডিরেক্ট + ৩ ফ্রি-প্রক্সি + ১২–১৩টি সোর্স, সবই খালি;
+        // id 23483/389)। তাই শেষ-ড্র-এর সোর্সগুলো ফেলে না দিয়ে মনে রাখি — নিচে bridge-worker
+        // (dash-hls-bridge) পথে ওগুলো ডিরেক্টই ২০০ + #EXTM3U দেয় (০.১১–০.৩৪s, হাতে প্রমাণিত)।
+        if (DBG) console.error('[vbd] empty-key resolve, draw ' + draw + (draw < 2 ? ' discarded' : ' kept-for-bridge'));
+        if (!softSrcs || !softSrcs.length) softSrcs = srcs.slice();
+        if (draw < 2) { await new Promise(r3 => setTimeout(r3, 450)); continue; }
+        break;
       }
       await Promise.all(mp4S.map(async sc => {
         const uu = sc.url;
@@ -2838,9 +2844,94 @@ async function mmVidbolt(tmdbId, isSeries, s, e, ms) { // v1.15.28: the vidbolt 
       }
       break; // a productive draw is enough
     }
+    // ─── v1.17.45 (T2): bridge-worker ফলব্যাক ────────────────────────────────
+    // রিজলভ সফট-ব্লকড আর কোনো ড্র থেকে কার্ড আসেনি — ওই সোর্সগুলোর bridge URL নিজেই মাস্টার দেয়
+    // (মাপা: ২০০ + #EXTM3U, ০.১১–০.৩৪s; mp4 সোর্স ২০৬, ftyp/moov = সিক-যোগ্য)।
+    // শুধু n=0 অবস্থায় চলে ⇒ স্বাভাবিক পথের সময়/আচরণ অপরিবর্তিত।
+    if (!out.length && softSrcs && softSrcs.length) {
+      try {
+        const cand = softSrcs.filter(x => x && /^https?:/.test(x.url || '')).slice(0, 4);
+        if (cand.length) {
+          const bodies = await Promise.all(cand.map(x => mmPoolText(x.url, vLeft(2600)).catch(() => '')));
+          for (let i = 0; i < cand.length && !out.length; i++) {
+            const b = bodies[i] || '';
+            if (b.indexOf('#EXTM') < 0) continue;
+            const sc = cand[i];
+            const hq = parseInt(String(sc.quality || ''), 10) || 0;
+            const lang = String(sc.language || '').trim();
+            const vls = mmVarList(b, sc.url);
+            if (vls.length) {
+              const pv = await mmVarProbe(vls[0].uri, VB_REF, Math.min(2200, vLeft(2400)), false).catch(() => null);
+              if (!pv || !pv.alive) { if (DBG) console.error('[vbdT2] dead first-variant, skip'); continue; } // মৃত-মাস্টার → কার্ড নয়
+            }
+            if (woHasAudioGrp(b) && vls.length) {
+              const trks = mmAudTracks(b);
+              const aKey = (trks[0] && trks[0].key) || 'audio';
+              const vm = new Map();
+              for (const v of vls) if (!vm.has(v.h)) vm.set(v.h, v.uri);
+              for (const [h2, u2] of [...vm.entries()].sort((a, b2) => b2[0] - a[0]).slice(0, 4)) {
+                if (!MM_MUX.has(u2)) MM_MUX.set(u2, 0);
+                push(h2, sc.url, VB_REF, 0, lang, '', 1, 'sb_' + i + '_' + h2, aKey, mmLangBlob({ key: lang.toLowerCase(), lang: lang, name: lang }));
+              }
+            } else {
+              push(hq, sc.url, VB_REF, 0, lang, '', 0, 'sb_' + i);
+            }
+            mmPut(MM_MC, sc.url, b);
+            if (DBG) console.error('[vbdT2] bridge-fallback cards=' + out.length + ' …' + String(sc.url).slice(-38));
+          }
+        }
+      } catch { }
+    }
     if (DBG) console.error('[mmvbd] out=' + out.length + ' (draw-শেষ) q=' + q);
     return out;
   } catch { return []; }
+}
+// ─── v1.17.45: mm T0 — ইনডেক্স-হোস্ট স্বাস্থ্য ───────────────────────────────
+// মাপা (৪০-নমুনা): hls/* ইনডেক্সের হোস্টগুলোর **৩২% DNS-লেভেলে মৃত** (০.০২s-এ ধরা পড়ে),
+// ১০% HTTP 404, ৫৮% জীবিত (মিডিয়ান ০.১২s)। মৃত-হোস্টে বারবার খরচ করাই সময় নষ্ট +
+// "n=0"-এর বড় অংশ। ⇒ পজিটিভ/নেগেটিভ-ক্যাশ + সমান্তরাল DNS-প্রমাণ।
+const MM_HC = new Map();               // host → { d: 1=alive 2=dead, ts, dns }
+const MM_HC_DEAD = 30 * 60 * 1000;     // ডেড হোস্ট ৩০ মিনিট বাদ
+const MM_HC_DNS = 6 * 3600 * 1000;     // DNS-মৃত ডোমেইন ৬ ঘণ্টা বাদ
+function mmHost(url) { try { return new URL(String(url)).hostname; } catch { return ''; } }
+function mmHostDead(u) {
+  const h = mmHost(u); if (!h) return false;
+  const c = MM_HC.get(h);
+  if (!c || c.d !== 2) return false;
+  return (Date.now() - c.ts) < (c.dns ? MM_HC_DNS : MM_HC_DEAD);
+}
+function mmHostMark(u, kind, dnsDead) {
+  const h = mmHost(u); if (!h) return;
+  if (MM_HC.size > 4000) MM_HC.clear();
+  const c = MM_HC.get(h);
+  if (kind === 0 && c && c.d === 2) return;            // মৃত-ভার্ডিক্ট সহজে মুছবে না
+  if (kind === 1) { MM_HC.set(h, { d: 1, ts: Date.now(), dns: 0 }); return; }
+  MM_HC.set(h, { d: 2, ts: Date.now(), dns: dnsDead ? 1 : 0 });
+}
+function mmDnsLive(host, ms) { // 1=পায়, 0=পায় না, null=অনিশ্চিত (টাইমআউট)
+  return new Promise(res => {
+    if (!host) return res(null);
+    let done = false;
+    const to = setTimeout(() => { if (!done) { done = true; res(null); } }, ms || 300);
+    try {
+      dns.lookup(host, { family: 4 }, (e, a) => { if (done) return; done = true; clearTimeout(to); res(e ? 0 : (a ? 1 : 0)); });
+    } catch { if (!done) { done = true; clearTimeout(to); res(null); } }
+  });
+}
+// তালিকা: ক্যাশড-মৃত বাদ → নতুন-হোস্টে সমান্তরাল DNS (সর্বোচ্চ ৩২০ms) → আবার বাদ
+async function mmServersLive(servers) {
+  if (!servers.length) return servers;
+  const out = servers.filter(u => !mmHostDead(u));
+  const unk = out.filter(u => { const c = MM_HC.get(mmHost(u)); return !c || !c.d; });
+  if (unk.length) {
+    await Promise.race([
+      Promise.all(unk.map(async u => { const r = await mmDnsLive(mmHost(u), 300); if (r === 0) mmHostMark(u, 2, true); else if (r === 1) mmHostMark(u, 1); })),
+      new Promise(r2 => setTimeout(r2, 320))
+    ]);
+  }
+  const fin = out.filter(u => !mmHostDead(u));
+  if (DBG && fin.length !== servers.length) console.error('[mmT0] hosts ' + servers.length + ' → ' + fin.length);
+  return fin;
 }
 async function mmStreams(tmdbId, title, type, s, e, origin, maxh, rel) { // v1.15.54: rel=MM-মিডিয়া-সার্ভার-রিলে // v1.15.28: Multimovies source — vidout index + vidbolt resolve; origin: mini-master URLs; maxh: MM-রেজোলিউশন-ছাঁকনি (v1.15.39, 0=সব)
   if (!tmdbId) return [];
@@ -2857,8 +2948,11 @@ async function mmStreams(tmdbId, title, type, s, e, origin, maxh, rel) { // v1.1
       if (isSeries) { const d = (() => { try { return JSON.parse(idxTxt); } catch { return null; } })(); const ep = String(parseInt(e, 10) || 1); if (d && typeof d[ep] === 'string') servers = [d[ep]]; } // the exact episode only
       else { const txt = idxTxt.trim(); if (txt && /^https?:/.test(txt)) servers = txt.split('\n').map(z => z.trim()).filter(z => /^https?:\/\//.test(z)).slice(0, 6); } // v1.15.51: সব-সার্ভার-লাইন (আগে শুধু-১ম-লাইন — বাকি single-audio-সার্ভার হারাত)
     }
-    servers = servers.slice(0, 6);
-    const lists = servers.length ? await Promise.all(servers.map(su => woFetch(su, Math.min(6500, left())).then(x => x.ok ? x.text() : '').catch(() => ''))) : [];
+    servers = await mmServersLive(servers.slice(0, 6)); // v1.17.45 (T0): মৃত-হোস্ট আগেই বাদ
+    const lists = servers.length ? await Promise.all(servers.map(su => woFetch(su, Math.min(2200, left())).then(x => { // v1.17.45: জীবিত-হোস্টের মিডিয়ান ০.১২s ⇒ ২.২s-ক্যাপই যথেষ্ট
+      if (!x.ok) { if (x.status === 404 || x.status === 410) mmHostMark(su, 2, true); return ''; } // ডোমেইন-গায়েব → ৬ঘণ্টা
+      mmHostMark(su, 1); return x.text();
+    }).catch(() => { mmHostMark(su, 2, false); return ''; }))) : [];
     const seen = new Set(); const raws = [];
     for (let i = 0; i < lists.length; i++) {
       const pl = lists[i];
@@ -7111,7 +7205,7 @@ const server = http.createServer((req, res) => {
         return res.end(hit.body);
       }
     }
-    if (p === '/_health') return sendJson(res, 200, { ok: 1, version: VERSION, up: Math.round(process.uptime()), deploy: 'v1.17.43', pool: POOL.length, pxbench: POOL.filter(c => PX_SITE.has(c.px)).length, pxbf: PX_BF.size, memo: memo.size, nx: NEXBASE ? 1 : 0, nxpool: NXBENCH, nxwaves: NXWAVES, nxsize: NXSIZE, tw: TWBASE ? 1 : 0, rt: RTBASE ? 1 : 0, vsp: VSP_POOL.length }); // v1.15.71: vsp=Vidsrc-পুল-আকার // v1.15.18: pxbench=সাইট-প্রমাণিত-বেঞ্চ (v1.15.8: nxpool=MB-বেঞ্চ)
+    if (p === '/_health') return sendJson(res, 200, { ok: 1, version: VERSION, up: Math.round(process.uptime()), deploy: 'v1.17.45', pool: POOL.length, pxbench: POOL.filter(c => PX_SITE.has(c.px)).length, pxbf: PX_BF.size, memo: memo.size, nx: NEXBASE ? 1 : 0, nxpool: NXBENCH, nxwaves: NXWAVES, nxsize: NXSIZE, tw: TWBASE ? 1 : 0, rt: RTBASE ? 1 : 0, vsp: VSP_POOL.length }); // v1.15.71: vsp=Vidsrc-পুল-আকার // v1.15.18: pxbench=সাইট-প্রমাণিত-বেঞ্চ (v1.15.8: nxpool=MB-বেঞ্চ)
     if (p === '/mbpool.json') { try { const b = fs.readFileSync(MB_POOL_FILE); res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', 'access-control-allow-origin': '*' }); return res.end(b); } catch (e) { return sendJson(res, 200, []); } } // v1.17.34: child-যাচাই করা MB-বেঞ্চ (ডিপ্লয়-বীজ-হালনাগাদের জন্য)
     if (p === '/_pool') return sendJson(res, 200, POOL.map(c => Object.assign({}, c, PX_RUN.get(c.px) || {}))); // v1.15.0: রানটাইম-স্বাস্থ্য-সহ
     if (p === '/_nxring') { if (!NEXBASE) return sendJson(res, 200, { off: 1 }); directGet(NEXBASE + '/debug/ring', 4000).then(b => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(b); }).catch(() => { res.writeHead(200, { 'content-type': 'application/json' }); res.end('{"err":1}'); }); return; } // v2.10.2 চাইল্ড-রিজলভ-ধাপ-প্রমাণ
