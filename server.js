@@ -6927,7 +6927,11 @@ async function withSources(cardsP, srcs, cfg, t0) {
         const mmAllow = qToList(cfg && cfg.mmq);
         const mmSel = Array.isArray(cfg && cfg.mml) ? cfg.mml : [];
         all = all.concat(v.filter(z => qPass(z, mmAllow) && rtLangPass(z, mmSel)));
-      } else if (live[i].key === 'sky' || live[i].key === 'm4u' || live[i].key === 'bf') { // v1.15.50: Arctic-সোর্সগুলোর-মধ্যে-একই-ফাইল-ডুপ-কাটা (একই-path ভিন্ন-সিগনেচার-ও-ডুপ-ই):
+      } else if (live[i].key === 'hm') { // ★ v1.17.48: HindMovie-নিজের রেজো/ভাষা-ছাঁকনি (আগে cfg.hmq/hml পাঠানোই হতো না)
+        const hmAllow = qToList(cfg && cfg.hmq);
+        const hmSel = Array.isArray(cfg && cfg.hml) ? cfg.hml : [];
+        all = all.concat(v.filter(z => qPass(z, hmAllow) && rtLangPass(z, hmSel)));
+      } else if (live[i].key === 'sky' || live[i].key === 'm4u') { // v1.15.50: Arctic-সোর্সগুলোর-মধ্যে-একই-ফাইল-ডুপ-কাটা (একই-path ভিন্ন-সিগনেচার-ও-ডুপ-ই):
         const famKey = live[i].key; // Sky=skyq/skyl, Movies4u=m4uq/m4ul, BollyFlix=bfq/bfl
         const famAllow = qToList(cfg && cfg[famKey + 'q']);
         const famSel = Array.isArray(cfg && cfg[famKey + 'l']) ? cfg[famKey + 'l'] : [];

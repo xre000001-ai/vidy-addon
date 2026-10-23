@@ -480,7 +480,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
   var SUBS=[[1,'On'],[0,'No subs']];
 
   /* ─────────── state (server-contract keys) ─────────── */
-  var st={v:1,q:[],sub:1,srv:SRVS.map(function(x){return x[0];}),nx:1,nxq:[],nxl:[],rt:1,rtl:[],rtq:[],tw:1,twq:[],twl:[],mm:1,mmr:0,mmq:[],mml:[],m4u:1,m4ur:0,m4uq:[],m4ul:[],sky:1,skyr:0,hm:1,hmr:0,skyq:[],hmq:[],skyl:[],hml:[],bf:1,bfr:0,bfq:[],bfl:[],bfexo:1,vsp:1,vspq:[],vspl:[],ott:1,ottq:[],ottl:[],az:1,azq:[],azl:[],rtsrv:[]}; /* rtsrv: খালি=MQ+Pixeldrain-দুটোই (সার্ভার-চুক্তি: খালি=সব) */
+  var st={v:1,q:[],sub:1,srv:SRVS.map(function(x){return x[0];}),nx:1,nxq:[],nxl:[],rt:1,rtl:[],rtq:[],tw:1,twq:[],twl:[],mm:1,mmr:0,mmq:[],mml:[],m4u:1,m4ur:0,m4uq:[],m4ul:[],sky:1,skyr:0,hm:1,hmr:0,skyq:[],hmq:[],skyl:[],hml:[],vsp:1,vspq:[],vspl:[],ott:1,ottq:[],ottl:[],az:1,azq:[],azl:[],rtsrv:[]}; /* rtsrv: খালি=MQ+Pixeldrain-দুটোই (সার্ভার-চুক্তি: খালি=সব) */
 
   /* source definitions: [key, tile, tileBg, tileFg, name, badge, badgeCls, blurb, hasTune] */
   var SRC=[
@@ -543,11 +543,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
       if(o.skyr)st.skyr=({2160:2160,1080:1080,720:720,480:480})[o.skyr]||0;
       if(o.skyq)st.skyq=numL(o.skyq,[2160,1080,720,480]);
       if(o.skyl)st.skyl=strL(o.skyl,LK);
-      if(o.bf===0)st.bf=0;
-      if(o.bfexo===0)st.bfexo=0;
-      if(o.bfr)st.bfr=({2160:2160,1080:1080,720:720,480:480})[o.bfr]||0;
-      if(o.bfq)st.bfq=numL(o.bfq,[2160,1080,720,480]);
-      if(o.bfl)st.bfl=strL(o.bfl,LK);
+      /* v1.17.48: BollyFlix (bf) বাদ — পুরোনো কনফিগে bf-কী থাকলেও উপেক্ষা হবে (পুরোনো-লিংক-ভাঙে-না) */
 
       if(o.vsp===0)st.vsp=0;
       if(o.vspq)st.vspq=numL(o.vspq,[2160,1080,720,480,360]);
@@ -605,13 +601,14 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
       else if(st.skyr)c.skyr=st.skyr;
       if(st.skyl.length)c.skyl=st.skyl.slice();
     }
-    if(st.bf===0)c.bf=0;
+
+    // ★ v1.17.48: HindMovie-ব্লক ছিল না ⇒ UI-তে বন্ধ করলেও সার্ভারে hm চালু-ই থাকত, আর hmq/hml ফিল্টারও পাঠাত না
+    if(st.hm===0)c.hm=0;
     else{
-      if(st.bfq.length)c.bfq=st.bfq.slice().sort(function(a,b){return b-a;});
-      else if(st.bfr)c.bfr=st.bfr;
-      if(st.bfl.length)c.bfl=st.bfl.slice();
+      if(st.hmq.length)c.hmq=st.hmq.slice().sort(function(a,b){return b-a;});
+      else if(st.hmr)c.hmr=st.hmr;
+      if(st.hml.length)c.hml=st.hml.slice();
     }
-    if(st.bfexo===0)c.bfexo=0; /* v1.17.2: ExoPlayer-এ libmpv-ফলব্যাক বন্ধ */
     if(st.vsp===0)c.vsp=0;
     else{
       if(st.vspq.length)c.vspq=st.vspq.slice();
@@ -872,9 +869,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     o=tuneCard('tune-hm','hm','HindMovie','Dub/dual-audio · direct MKV · live search');h.appendChild(o.card);
     chipsInto(o.zone,'Resolutions',st.hmq,RES,rebuild,'',1);
     chipsInto(o.zone,'Audio languages',st.hml,LANGS,rebuild);
-    /* BollyFlix — v1.17.44: সোর্স বাদ (zip+relay ⇒ seek/play সমস্যা) */
-    chipsInto(o.zone,'Resolutions',st.bfq,RES,rebuild,'',1);
-    chipsInto(o.zone,'Audio languages',st.bfl,LANGS,rebuild);
+    /* BollyFlix — v1.17.44: সোর্স বাদ (zip+relay ⇒ seek/play সমস্যা); v1.17.48: বাকি-পড়া চিপ-কোডও সরানো */
     /* v1.17.9: আলাদা ⚡(libmpv) কার্ড বন্ধ — প্রতি কোয়ালিটিতে একটাই সরাসরি কার্ড।
        টগলটা রাখা হলো শুধু পুরোনো কনফিগ-লিংক ভাঙা না লাগার জন্য (এখন কোনো প্রভাব নেই)। */
     /* Vidsrc */
@@ -937,10 +932,10 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     $('pvPh').textContent='\u25a5 '+(st.skyq.length?Math.max.apply(null,st.skyq):2160)+' \u25a5'; /* v1.15.81: নিজের-ডিফল্ট (আগে ভুলে Movies4u-র-m4ur-দেখাত) */
     $('pvPt').textContent='\u29c9 Deadpool & Wolverine | 2024 |\n\u29e0 Movie\n\u229e Sky Movies \u00b7 MKV \u2317 '+(st.skyl.length?cap1(st.skyl):'Multi-Audio');
     $('pvPq').textContent=st.skyq.length?('≤'+Math.max.apply(null,st.skyq)+'p'):'All'; /* v1.15.81: m4ur-লিক-বন্ধ */
-    $('pvB').style.display=st.bf?'':'none';
-    $('pvBh').textContent='\u25a5 '+(st.bfq.length?Math.max.apply(null,st.bfq):(st.bfr||2160))+' \u25a5';
+    $('pvB').style.display=st.m4u?'':'none';
+    $('pvBh').textContent='\u25a5 '+(st.m4uq.length?Math.max.apply(null,st.m4uq):(st.m4ur||2160))+' \u25a5';
     $('pvBt').textContent='\u29c9 Sikandar | 2025 |\n\u29e0 Movie\n\u229e Movies4u \u2317 '+(st.m4ul.length?cap1(st.m4ul):'Hindi / Dual-Audio'); // v1.17.44: BF-প্রিভিউ → Movies4u
-    $('pvBq').textContent=st.bfq.length?('≤'+Math.max.apply(null,st.bfq)+'p'):(st.bfr?('cap '+st.bfr+'p'):'All');
+    $('pvBq').textContent=st.m4uq.length?('≤'+Math.max.apply(null,st.m4uq)+'p'):(st.m4ur?('cap '+st.m4ur+'p'):'All');
   }
 
   /* ─────────── counts + summary ─────────── */
@@ -959,7 +954,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     if(st.mm===1&&(st.mmq.length||st.mml.length||st.mmr))f++;
     if(st.m4u===1&&(st.m4uq.length||st.m4ul.length||st.m4ur))f++;
     if(st.sky===1&&(st.skyq.length||st.skyl.length))f++;
-    if(st.bf===1&&(st.bfq.length||st.bfl.length||st.bfr))f++;
+    /* v1.17.48: bf (BollyFlix) বাদ — গণনা থেকে-ও সরানো */
     if(st.vsp===1&&(st.vspq.length||st.vspl.length))f++;
     if(st.ott===1&&(st.ottq.length||st.ottl.length))f++;
     if(st.az===1&&(st.azq.length||st.azl.length))f++;
@@ -977,7 +972,6 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
       var ql=st[QK[x[0]]]||[],ll=st[LKK[x[0]]]||[];
       if(x[0]==='mm'&&!ql.length&&st.mmr)ql=[st.mmr];
       if(x[0]==='m4u'&&!ql.length&&st.m4ur)ql=[st.m4ur];
-      if(x[0]==='bf'&&!ql.length&&st.bfr)ql=[st.bfr];
       if(ql.length)s.appendChild(el('div','chip',x[4]+' ≤'+Math.max.apply(null,ql)+'p'));
       if(ll.length)s.appendChild(el('div','chip',x[4]+' '+ll.slice(0,2).join('/')+(ll.length>2?'+'+ll.length:'')));
     });
@@ -998,13 +992,17 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     /* v1.15.81: তালিকাগুলো ইন-প্লেস-পরিষ্কার (chipRow-এর-ক্লোজার একই অ্যারে-দেখে — নতুন-অ্যারে-বসালে রিড্র-ও বৃথা) */
     Object.keys(st).forEach(function(k){if(Array.isArray(st[k]))st[k].length=0;});
     st.v=1;st.sub=1;st.srv=SRVS.map(function(x){return x[0];});
-    st.nx=1;st.rt=1;st.tw=1;st.mm=1;st.mmr=0;st.m4u=1;st.m4ur=0;
-    st.sky=1;st.bf=1;st.bfr=0;st.bfexo=1;st.vsp=1;st.ott=1;st.az=1;
+    // ★ v1.17.48: হাতে-লেখা সোর্স-তালিকা বাদ (hm বাদ-পড়ে ছিল ⇒ Reset-এ HindMovie বন্ধ-ই থেকে যেত) —
+    //   এখন `SRC` থেকেই সব সোর্স অন, আর আলাদা করে শুধু রেজো/অডিও-ডিফল্ট।
+    SRC.forEach(function(x){st[x[0]]=1;});
+    st.mmr=0;st.m4ur=0;
     syncAll(true);rebuild();toast('Reset');
   };
   function syncAll(collapse){ /* v1.15.81: collapse=সত্য → প্রসারিত-কার্ড-গুটানো (কেবল Reset) */
-    [['v','card-v'],['nx','card-nx'],['rt','card-rt'],['tw','card-tw'],['mm','card-mm'],['m4u','card-m4u'],['sky','card-sky'],['bf','card-bf'],['vsp','card-vsp'],['ott','card-ott'],['az','card-az']].forEach(function(p){
-      var sw=$('sw-'+p[0]);sw.classList.toggle('on',!!st[p[0]]);$(p[1]).classList.toggle('off',!st[p[0]]);
+    // ★ v1.17.48: এখানেও হাতে-লেখা-তালিকা ছিল (`bf` সহ) — Reset চাপলেই `$('sw-bf')` null ⇒ TypeError।
+    //   এখন তালিকা = `SRC` + null-গার্ড, তাই ভবিষ্যতে সোর্স বাদ/যোগ হলে কিছুই ভাঙবে না।
+    SRC.map(function(x){return [x[0],'card-'+x[0]];}).forEach(function(p){
+      var sw=$('sw-'+p[0]), cd=$(p[1]); if(sw)sw.classList.toggle('on',!!st[p[0]]); if(cd)cd.classList.toggle('off',!st[p[0]]);
     });
     drawSrv();
     /* v1.15.81: সব-চিপ-সারি+সেগমেন্ট-রিড্র (Reset-এর-পরে দৃশ্য=স্টেট) */
