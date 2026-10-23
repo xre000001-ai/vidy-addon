@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.21.5';
+const VERSION = '1.21.6';
 const V1NOTE_47 = 'v1.17.47 (ইউজার: "stream cut kore fast na — 6-8s laguk, sob stream asuk") — হারভেস্ট-কাট বাতিল: আগে ৪.৬সে-এ ৬-কার্ড-হলেই কাট, ৪.৯সে হার্ড-ক্যাপ ⇒ দেরিতে-আসা সোর্সের কার্ড ফেলত। এখন **সব লাইভ-সোর্স সেটেল হলেই ফেরা**, নইলে ৭.৮সে ক্যাপ (Beamup ১২সে-সীমার ভিতরে)। সাথে: nx ৫.১→৭.২সে (MB আর কাটা পড়ে না), mm/m4u ৭.০সে সব-সাইট, hm-রেস ৩.২→৬.৬সে (কোল্ড-চেইনও একই রেসপন্সে), m4u-তে ৩ pd-id + ২ জীবিত মিরর (আগে ১ম-সফলেই-থামা), sky-তে ৩ pd-id/hub, PD_MAX env-নব। মাপা (১৬ রিকোয়েস্ট, লোকাল): avg 5.52s · সর্বোচ্চ 6.66s (আগে 3.75s-কাট-সংস্করণে ৮২৪ কার্ড), HindMovie ৮/১৬ (আগে ৩/১৬), MB ১৬/১৬, mm ১৬/১৬, m4u ১৪/১৬, sky ১২/১৬, কার্ড ৮৩৯ ⇒ **কার্ড কমেনি, বেড়েছে**।';
 
 const V1NOTE_48 = 'v1.17.48 (ইউজার: "M4u thik koro, Hindi movie add koro, configuration page ta o thik koro") — ★ কনফিগ-পেজ-মেরামত: SRC-তালিকা থেকেই সুইচ-বাইন্ড (bf সরানোর পর bindSwitch-এ null.classList-এ পুরো IIFE থেমে যেত ⇒ tune-কার্ড/সেভ/প্রিভিউ কিছুই রেন্ডার হতো না) + bindSwitch-এ null-গার্ড; HindMovie প্যানেল + tune-hm কার্ড যোগ। ★ Movies4u: একাধিক সার্চ-হিট-চেষ্টা (per_page 12), আর্টিকেল-বাদ-দিয়ে-পুনঃসার্চ, modpro-শাখা এখন আসলেই চলে (post খালি থাকলে lastPost দিয়ে) — মৃত-মিরর Range-প্রমাণ ছাড়া কার্ড-নয়। ★ প্রতি-সারি-deadline: এক-সারির-ঢিলামিতে সব-কার্ড বাতিল হতো (3 Idiots ৮.৬সে→৪.৭সে)। ★ HindMovie: 404/410-এ প্রক্সি-পুল-বন্ধ (Silence ১২.২সে→৬.১সে, কার্ড-আসে)। বেঞ্চ: avg ৪.৭৪সে (আগে ৫.৫২), max ৭.০২, m4u ১৪/১৬, HM ৮/১৬, Sky ১৪/১৬।';const V1NOTE_46 = 'v1.17.46 (HindMovie নতুন সোর্স): live search (REST → HTML ফলব্যাক, বছর-মুক্ত কুয়েরি) → পোস্ট (IMDb-id গার্ড) → mvlink (মুভি) / mvlink /web/<id> (সিজন×কোয়ালিটি) → hshare → hcloud b64 → workers.dev direct MKV (২০৬, সিক-যোগ্য)। ক্যাশ ৬ঘণ্টা (search/post/mvlink/final); ডিরেক্ট আগে, 403/429/5xx-তে পুল-রেস। ব্যাচ .zip কখনো কার্ড নয়। hmRace ৩.২s ⇒ কোল্ড-চেইন রেসপন্স আটকায় না, পেছনে ক্যাশ ভরে। মাপা (১৬ রিকোয়েস্ট): avg 3.75s, MB 15/16, mm 16/16, m4u 14/16, sky 13/16, hm 3/16 (হলিউড-ক্লাসিক বেঞ্চে; সিরিজে BB/GoT S1E1 = ৩ কার্ড)।';
@@ -8376,11 +8376,11 @@ function sresPut(k, body, partial) {
   if (!body || body.length < 24) return;
   let _n = 0; try { _n = (JSON.parse(body).streams || []).length; } catch (e) { return; }
   if (!_n) return;                                    // pure zero কখনো ক্যাশ নয়
-  if (partial) {                                      // ★ v1.21.1: অসম্পূর্ণ ফল ক্যাশেই বসে না
-    if (DBG) console.error('[vmc] partial ফল — ক্যাশ-বন্ধ (' + k.split('|')[0] + ')');
-    return;
-  }
-  STREAM_RES_CACHE.set(k, { body, exp: Date.now() + _vrc * 1000 }); // v1.20.0: পূর্ণ-ফল ৩০মিন, আংশিক ১মিনে-আসা সোর্স তাড়াতাড়ি যোগ হোক)
+  // ★ v1.21.6: অসম্পূর্ণ ফল (কোনো vidy সার্ভার বাদ) খুব **ছোট** TTL-এ ক্যাশ — তাৎক্ষণিক রিফ্রেশ একই
+  //   তালিকা দেয় (দ্রুত), কিন্তু ৬০সে পরেই সত্যিকারের rescan ⇒ আগের মতো ৩০মিনাট আটকে থাকে না।
+  const _pw = Number(process.env.VRPART || 60) * 1000;
+  STREAM_RES_CACHE.set(k, { body, exp: Date.now() + (partial ? _pw : _vrc * 1000), partial: !!partial, ts: Date.now() });
+  if (partial && DBG) console.error('[vmc] partial ফল — ' + Math.round(_pw / 1000) + 'সে ক্যাশ (' + k.split('|')[0] + ')'); // v1.20.0: পূর্ণ-ফল ৩০মিন, আংশিক ১মিনে-আসা সোর্স তাড়াতাড়ি যোগ হোক)
   if (STREAM_RES_CACHE.size > STREAM_RES_MAX) {
     const now = Date.now();
     for (const [kk, vv] of STREAM_RES_CACHE) if (vv.exp <= now) STREAM_RES_CACHE.delete(kk);
