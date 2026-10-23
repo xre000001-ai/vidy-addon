@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.20.0';
+const VERSION = '1.21.5';
 const V1NOTE_47 = 'v1.17.47 (ইউজার: "stream cut kore fast na — 6-8s laguk, sob stream asuk") — হারভেস্ট-কাট বাতিল: আগে ৪.৬সে-এ ৬-কার্ড-হলেই কাট, ৪.৯সে হার্ড-ক্যাপ ⇒ দেরিতে-আসা সোর্সের কার্ড ফেলত। এখন **সব লাইভ-সোর্স সেটেল হলেই ফেরা**, নইলে ৭.৮সে ক্যাপ (Beamup ১২সে-সীমার ভিতরে)। সাথে: nx ৫.১→৭.২সে (MB আর কাটা পড়ে না), mm/m4u ৭.০সে সব-সাইট, hm-রেস ৩.২→৬.৬সে (কোল্ড-চেইনও একই রেসপন্সে), m4u-তে ৩ pd-id + ২ জীবিত মিরর (আগে ১ম-সফলেই-থামা), sky-তে ৩ pd-id/hub, PD_MAX env-নব। মাপা (১৬ রিকোয়েস্ট, লোকাল): avg 5.52s · সর্বোচ্চ 6.66s (আগে 3.75s-কাট-সংস্করণে ৮২৪ কার্ড), HindMovie ৮/১৬ (আগে ৩/১৬), MB ১৬/১৬, mm ১৬/১৬, m4u ১৪/১৬, sky ১২/১৬, কার্ড ৮৩৯ ⇒ **কার্ড কমেনি, বেড়েছে**।';
 
 const V1NOTE_48 = 'v1.17.48 (ইউজার: "M4u thik koro, Hindi movie add koro, configuration page ta o thik koro") — ★ কনফিগ-পেজ-মেরামত: SRC-তালিকা থেকেই সুইচ-বাইন্ড (bf সরানোর পর bindSwitch-এ null.classList-এ পুরো IIFE থেমে যেত ⇒ tune-কার্ড/সেভ/প্রিভিউ কিছুই রেন্ডার হতো না) + bindSwitch-এ null-গার্ড; HindMovie প্যানেল + tune-hm কার্ড যোগ। ★ Movies4u: একাধিক সার্চ-হিট-চেষ্টা (per_page 12), আর্টিকেল-বাদ-দিয়ে-পুনঃসার্চ, modpro-শাখা এখন আসলেই চলে (post খালি থাকলে lastPost দিয়ে) — মৃত-মিরর Range-প্রমাণ ছাড়া কার্ড-নয়। ★ প্রতি-সারি-deadline: এক-সারির-ঢিলামিতে সব-কার্ড বাতিল হতো (3 Idiots ৮.৬সে→৪.৭সে)। ★ HindMovie: 404/410-এ প্রক্সি-পুল-বন্ধ (Silence ১২.২সে→৬.১সে, কার্ড-আসে)। বেঞ্চ: avg ৪.৭৪সে (আগে ৫.৫২), max ৭.০২, m4u ১৪/১৬, HM ৮/১৬, Sky ১৪/১৬।';const V1NOTE_46 = 'v1.17.46 (HindMovie নতুন সোর্স): live search (REST → HTML ফলব্যাক, বছর-মুক্ত কুয়েরি) → পোস্ট (IMDb-id গার্ড) → mvlink (মুভি) / mvlink /web/<id> (সিজন×কোয়ালিটি) → hshare → hcloud b64 → workers.dev direct MKV (২০৬, সিক-যোগ্য)। ক্যাশ ৬ঘণ্টা (search/post/mvlink/final); ডিরেক্ট আগে, 403/429/5xx-তে পুল-রেস। ব্যাচ .zip কখনো কার্ড নয়। hmRace ৩.২s ⇒ কোল্ড-চেইন রেসপন্স আটকায় না, পেছনে ক্যাশ ভরে। মাপা (১৬ রিকোয়েস্ট): avg 3.75s, MB 15/16, mm 16/16, m4u 14/16, sky 13/16, hm 3/16 (হলিউড-ক্লাসিক বেঞ্চে; সিরিজে BB/GoT S1E1 = ৩ কার্ড)।';
@@ -818,7 +818,11 @@ function directGet(url, timeoutMs, _re, _hop, _ag) {
   return new Promise((resolve, reject) => {
     const u = new URL(url);
     const mod = u.protocol === 'http:' ? http : https;
-    const req = mod.get(url, { headers: { 'User-Agent': UA, 'Accept': '*/*' }, timeout: timeoutMs, agent: _ag || (u.protocol === 'http:' ? HAGENT : SAGENT) }, res => {
+    // ★★ v1.21.4 (মাপা, ২৩-১০-২০২৬): vidy-API (`api.wecollege.net`) এখন **Referer/Origin ছাড়া ৪০৩**
+    //   (Cloudflare ব্লক-পেজ)। হেডার-সহ: ডিরেক্টে ২০০ seed; ১২টি verified-নোডের ৭টি ২০০, ১টি timeout
+    //   (আগে হেডার-ছাড়া ০/১২)। এটাই ছিল "প্রথম চেষ্টায় আসে না / proxy eto kom"-এর আসল কারণ।
+    const _vh = (u.hostname === 'api.wecollege.net') ? { 'Referer': VIDY_REFERER, 'Origin': 'https://www.vidy.st' } : null;
+    const req = mod.get(url, { headers: Object.assign({ 'User-Agent': UA, 'Accept': '*/*' }, _vh || {}), timeout: timeoutMs, agent: _ag || (u.protocol === 'http:' ? HAGENT : SAGENT) }, res => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
         res.resume();
         if ((_hop || 0) >= 4) return reject(Object.assign(new Error('redirect-loop'), { code: 310 })); // লুপিং-রিডাইরেক্ট-স্টপ
@@ -873,6 +877,7 @@ function proxiedGet(px, url, timeoutMs, hdrs) {
       if (!/^HTTP\/1\.[01] 200/.test(head)) return bail(new Error('proxy-refused'));
       const tl = tls.connect({ socket: sock, servername: u.hostname, rejectUnauthorized: false }, () => {
         let _hx = 'GET ' + (u.pathname + u.search) + ' HTTP/1.1\r\nHost: ' + u.hostname + '\r\nUser-Agent: ' + UA + '\r\nAccept: */*\r\nConnection: close\r\n';
+        if (u.hostname === 'api.wecollege.net') { _hx += 'Referer: ' + VIDY_REFERER + '\r\nOrigin: https://www.vidy.st\r\n'; }
         if (hdrs) for (const hk of Object.keys(hdrs)) _hx += hk + ': ' + hdrs[hk] + '\r\n';
         tl.write(_hx + '\r\n');
         const chunks = [buf.slice(i + 4)];
@@ -1035,6 +1040,7 @@ function vidySessionP(px, o, tmo) {
 // আর ৪৫টি "জীবিত" নোডের মধ্যে **১৪টি** সত্যিকারের vidy-সেশন (seed+sources একই IP) পাস করে।
 // তাই vidy-কার্ডের চাবি = **verified vidy-pool**, আর কোটার চাপ ছড়াতে প্রতি সার্ভারে আলাদা IP।
 let LAST_STREAM_AT = 0;               // ★ শেষ /stream অনুরোধের সময় (প্রশিক্ষণ-বিরতি)
+let INFLIGHT_STREAM = 0;              // ★ v1.21.2: এই-মুহূর্তে-চলমান /stream অনুরোধ
 const VIDY_OK = new Map();            // px -> {ms, ts, fails}  (verified: seed+sources একই IP)
 const VIDY_TRIED = new Map();         // px -> ts (ব্যর্থ-চেষ্টার ৩০মিন-কুলডাউন, নইলে একই মৃতগুলোই ঘুরত)
 function vidyVKey() { return 'vidy_px_verified.json'; }
@@ -1050,9 +1056,38 @@ function vidyVLoad() {
     if (DBG) console.error('[vpx] লোড ' + VIDY_OK.size + ' verified' + (slow ? ' (ধীর-বাদ ' + slow + ')' : ''));
   } catch (e) { }
 }
-function vidyVSave() {
-  try { const o = {}; for (const [k, v] of VIDY_OK) o[k] = { ms: v.ms }; require('fs').writeFileSync(require('path').join(__dirname, vidyVKey()), JSON.stringify(o)); } catch (e) { }
+// ★★ v1.21.1 — **পুল-ফাইল-দ্বন্দ্ব (মাপা)**: pool_daemon ও সার্ভার একই `vidy_px_verified.json`-এ লেখে,
+//   আর সার্ভারের vidyVSave শুধু নিজের মেমরি (৯৩-৯৪) দিয়ে **পুরো ফাইল মুছে** দিত ⇒ ডেমনের নতুন-যাচাই-করা
+//   নোড প্রতি চক্রেই হারিয়ে যেত (এজন্যই পুল ৮৪→৯৪-এ আটকে ছিল, "proxy eto kom")। এখন:
+//   সেভ = ফাইল-ইউনিয়ন-মেমরি (কিছু হারায় না), আর প্রতি ৬০সে-তে ফাইল থেকে নতুন-নোড মেমরিতে টেনে নেওয়া।
+const VIDY_DROP = new Set(); // সার্ভার-বাদ-দেওয়া (৬-ব্যর্থ) — আবার ফাইল-থেকে-ঢুকবে না
+function vidyVPath() { return require('path').join(__dirname, vidyVKey()); }
+function vidyVMerge() {
+  try {
+    const f = JSON.parse(require('fs').readFileSync(vidyVPath(), 'utf8')) || {};
+    const VMS = Number(process.env.PXVMS || 3500); let add = 0;
+    for (const k of Object.keys(f)) {
+      if (VIDY_OK.has(k) || VIDY_DROP.has(k)) continue;
+      const ms = (f[k] && f[k].ms) || 3000;
+      if (ms > VMS) continue;
+      VIDY_OK.set(k, { ms: ms, ts: 0, fails: 0 }); add++;
+    }
+    if (add && DBG) console.error('[vpx] ফাইল→মেমরি +' + add + ' নোড (মোট ' + VIDY_OK.size + ')');
+    return add;
+  } catch (e) { return 0; }
 }
+function vidyVSave() {
+  try {
+    let o = {};
+    try { o = JSON.parse(require('fs').readFileSync(vidyVPath(), 'utf8')) || {}; } catch (e) { }
+    for (const [k, v] of VIDY_OK) o[k] = { ms: v.ms };      // আমাদের-যাচাই-করা জেতে
+    for (const k of VIDY_DROP) delete o[k];
+    const ks = Object.keys(o);
+    if (ks.length > 4000) { const keep = {}; for (const k of ks.slice(-4000)) keep[k] = o[k]; o = keep; }
+    require('fs').writeFileSync(vidyVPath(), JSON.stringify(o));
+  } catch (e) { }
+}
+setInterval(() => { try { vidyVMerge(); } catch (e) { } }, 60000).unref?.();
 async function vidySession(px) { // এক IP-তে seed+sources — সত্যিকারের কন্ডিশন-পাস
   const t0 = Date.now();
   const b = await proxiedGet(px, API + '/seed?mediaId=278', 4500);
@@ -1066,6 +1101,30 @@ async function vidySweep(n) {
   if (vidySweepBusy) return; vidySweepBusy = true;
   try {
     const now = Date.now();
+    // ★★ v1.21.2 (ইউজার: "proxy eto kom keno je 1st try e hobe na" — মাপা কারণ): বুটে লোড-হওয়া
+    //   নোডগুলোর ts=0 ⇒ সবাই "বাসি"; আর sweeper ইউজার-অনুরোধের সময় **পুরো বন্ধ** হয়ে যেত
+    //   (LAST_STREAM_AT গেট), তাই ট্র্যাফিক-চলাকালীন একটাও নোড তাজা হতো না ⇒ প্রথম চেষ্টায় ব্যর্থ।
+    //   এখন: তাজা-ব্যান্ড (<PXFRESH) পাতলা হলে অনুরোধের মাঝেও **ছোট ব্যাচ (৬)** রি-ভেরিফাই চলে —
+    //   ভেরিফাই-করা নোডই পরের অনুরোধে আগে ডাকা হয় ⇒ প্রথম-চেষ্টার হার বাড়ে।
+    const _inflight = (Date.now() - LAST_STREAM_AT < 15000) ? Math.max(INFLIGHT_STREAM, 1) : 0;
+    const _FRSH = Number(process.env.PXFRESH || 240000);
+    const _freshN = [...VIDY_OK.values()].filter(v => v.ts && now - v.ts < _FRSH).length;
+    if (_inflight && _freshN < Number(process.env.PXFLOW || 14)) {
+      const st = [...VIDY_OK.entries()].filter(([, v]) => !v.ts || now - v.ts > _FRSH).map(([px]) => px).slice(0, 6);
+      let _o = 0;
+      await Promise.all(st.map(async px => {
+        if (!vpxTake(px)) return;
+        try {
+          const ms = await vidySession(px);
+          vidyNodeOk(px, ms); _o++;
+          if (DBG) console.error('[vsweep-t] ✓ ' + px + ' ' + ms + 'ms');
+        } catch (e) { vidyNodeBad(px); }
+        finally { vpxFree(px); }
+      }));
+      if (DBG) console.error('[vsweep-t] তাজা-রিফিল tried=' + st.length + ' ok=' + _o + ' fresh=' + _freshN + ' inflight=' + _inflight);
+      return;
+    }
+    if (_inflight) return; // তাজা-ব্যান্ড যথেষ্ট — ট্র্যাফিক চলাকালীন আর চাপ নয়
     if (VIDY_OK.size >= Number(process.env.VPXMAX || 500)) { vidyVSave(); return; } // যথেষ্ট verified ⇒ নতুন স্ক্যান বন্ধ
     const free = px => !VIDY_OK.has(px) && (now - (VIDY_TRIED.get(px) || 0)) > 30 * 60 * 1000;
     const poolC = POOL.filter(c => free(c.px)).sort((a, b) => pxScore(a.px, a.ms) - pxScore(b.px, b.ms)).map(c => c.px);
@@ -1154,7 +1213,7 @@ function vidyNodeBad(px) {
   e.fails = (e.fails || 0) + 1; e.last = Date.now();
   // ★ v1.17.56: বাদ দেওয়া কঠিন করা হলো — ৩-ব্যর্থে-বাদ দিলে সার্ভিং-এর সময়ই তালিকা ১৩৯→৩৩-এ নামে
   //   (আর স্ক্যান ইউজার-অনুরোধে থেমে যায় ⇒ পুল শুকিয়ে যায়)। এখন ৬-ব্যর্থ + ৪৫মিন আগে-সফল-নেই ⇒ বাদ।
-  if ((e.fails || 0) >= Number(process.env.PXVF || 6) && (!e.ts || Date.now() - e.ts > 45 * 60 * 1000)) { VIDY_OK.delete(px); if (DBG) console.error('[vpx] - ' + px); }
+  if ((e.fails || 0) >= Number(process.env.PXVF || 6) && (!e.ts || Date.now() - e.ts > 45 * 60 * 1000)) { VIDY_OK.delete(px); try { VIDY_DROP.add(px); } catch (e2) { } if (DBG) console.error('[vpx] - ' + px); }
   else VIDY_OK.set(px, e);
 }
 function vidyScore(px) {
@@ -1275,7 +1334,7 @@ function vidyFetch(o) { // ★ v1.17.56: verified-pool **ক্রমবর্�
   //  • সেরা-স্কোর নোড আগে; #0 সঙ্গে-সঙ্গে, বাকিরা ৩৫০/৯০০/১৮০০/২৮০০ms-এ (কেউ জিতলেই বাকিরা বন্ধ)
   //  • সর্বোচ্চ VYGATE(২৬) সেশন একসাথে — মাপা: ৪৮-এর-বেশি একসাথে গেলে নোডগুলো নিজেরাই timeout দেয়
   //  • ডিরেক্ট নিজের-IP শুধু শেষ-ভরসা (PXVD ৪সে) — ৩–৫ কলে ৪২৯
-  const TOT = Number(process.env.PXVT || 4600), NQ = Number(process.env.PXVQ || 4);
+  const TOT = Number(process.env.PXVT || 4600), NQ = Number(process.env.PXVQ || 6); // v1.21.0: ৪→৬ নোড t≈0-এ (কোটা per-node, তাই চওড়া race ফ্রি)
   const t0 = Date.now(), left = () => Math.max(900, TOT - (Date.now() - t0));
   const sc = o.sc || {};
   const ST = { done: false };
@@ -7627,7 +7686,7 @@ async function withSources(cardsP, srcs, cfg, t0) {
     //   পুরনো "৬ কার্ড হলেই ৪.৬সে-এ কাট" নিয়ম **বাতিল** — সেটাই দেরিতে-আসা সোর্সের
     //   (sky/m4u/hm/nx) কার্ড ফেলে দিত। এখন: **সব লাইভ-সোর্স সেটেল হলেই ফেরা**,
     //   নইলে শুধু ৮.২সে হার্ড-ক্যাপ (Beamup-এর ১২সে-কাটঅফের ভিতরে)।
-    const MIN_WAIT_MS = Number(process.env.VFLOOR || 1200), HARD_CAP_MS = Number(process.env.VCAP || 8800); // v1.17.52: ৭.৮সে-ক্যাপেই sky/hm/m4u/nx কাটা পড়ত ⇒ ১০.৫সে
+    const MIN_WAIT_MS = Number(process.env.VFLOOR || 1200), HARD_CAP_MS = Number(process.env.VCAP || 6500); // v1.17.52: ৭.৮সে-ক্যাপেই sky/hm/m4u/nx কাটা পড়ত ⇒ ১০.৫সে
     let lit = 0, settled = 0, fireCut = null;
     _cutP = new Promise(r => { fireCut = r; });
     _watch = setInterval(() => {
@@ -7639,7 +7698,8 @@ async function withSources(cardsP, srcs, cfg, t0) {
     if (_watch.unref) _watch.unref();
     // ★ v1.17.56: **গৌণ-সোর্সের নিজস্ব ছোট-ক্যাপ** — ott/tw/rt/az বসে-থাকলে পুরো উত্তর ১১.৫সে-দেয়ালে
     //   গিয়ে ঠেকত (প্রোড-লগে জোড়ায়-জোড়ায় 11.5s), অথচ ওরা কার্ড দিচ্ছিল না (n=0)। এখন ৬.৫সে।
-    const SRC_CAP_MAP = { ott: 6500, tw: 6500, rt: 6500, az: 6500, vsp: 7600, nx: 9200 };
+    // ★ v1.20.2 (মাপা: ৮.২সে-র কারণ ছিল hm — ০ কার্ড দিয়ে ৮.২সে পর্যন্ত ধরে রাখত; tw/rt তেমনই)
+    const SRC_CAP_MAP = { ott: 5000, tw: 5000, rt: 5000, az: 5000, hm: 5000, vsp: 6000, nx: 9200 };
     const SRC_CAP_MS = Number(process.env.VSCAP || 8200); // v1.17.58: 9.3s-cap-e prod-e 10.2-10.6s hoi (edge-er kache) // ★ v1.17.52: প্রতি-সোর্স-ক্যাপ — একটি ঝুলন্ত সোর্স (ott/tw/nx) পুরো তালিকাকে ক্যাপে টেনে নিত
     const track = x => { // ★ v1.17.52: টাইমার ক্লিয়ার হয় — নইলে সেটেল হওয়া সোর্সের জন্যও ভুল '[srccap]' ছাপ পড়ত
       let _tm = null;
@@ -7667,7 +7727,7 @@ async function withSources(cardsP, srcs, cfg, t0) {
       (x.key === 'nx' ? nxCutP : _cutP).then(() => null)
     ]))).finally(() => clearInterval(_watch));
   }
-  const cLeft = Math.max(500, 9200 - (Date.now() - t0)); // ⚠️ v1.17.27: ৪.৬সে-ক্যাপ **ফেরত নেওয়া হলো** — মাপা: vidy ৪.৩সে-তে ৩০+ কার্ড দেয়, ক্যাপ করলে E9/E12/E14-এ ১–১০ কার্ডে নেমে যায়
+  const cLeft = Math.max(500, Math.min(9200, Number(process.env.VPICK || 4500) + 1200) - (Date.now() - t0)); // ★ v1.20.2: vidy-কার্ড-কাট 5.7সে (আগে 9.2সে) // ⚠️ v1.17.27: ৪.৬সে-ক্যাপ **ফেরত নেওয়া হলো** — মাপা: vidy ৪.৩সে-তে ৩০+ কার্ড দেয়, ক্যাপ করলে E9/E12/E14-এ ১–১০ কার্ডে নেমে যায়
   const cards = await Promise.race([
     cardsP.catch(e => { if (DBG) console.error('[srcdbg] cardsP died: ' + String(e && e.message || e).slice(0, 90)); return []; }),
     new Promise(r => setTimeout(() => r([]), cLeft))
@@ -7834,8 +7894,15 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
     const t0 = Date.now();
     // v1.11.2: seed-আগেই-একবার (আগেও-প্রতিটা-one()-এর-প্রথম-await-এই-এক-ই-ছিল — লেটেন্সি-অপরিবর্তিত);
     // পথ-জানা-হলে-বাজেট-পথ-অনুযায়ী: প্রক্সি-চেইন (৪২৯-উইন্ডো) ধীর-কিন্তু-জীবন্ত — বাজেট-প্রশস্ত-না-হলে ৪.৭-৬.৩সে-র-সফল-ফেচ-বাদ-পড়ত
-    const sc0 = await getSeed(tmdbId, false).catch(() => null);
-    const viaProxy = !!(sc0 && sc0.via === 'proxy');
+    // ★★ v1.21.0 — **শেয়ার্ড-সিড আর গেট নয় (মাপা-মূল-কারণ)**:
+    //   vidy-শাখা কখনোই এই সিড ব্যবহার করত না — `vidySessionP()` প্রতি-নোডে নিজেই
+    //   `seedViaPx()` দিয়ে seed+sources একই IP-তে নেয় (SEED_PX ২৫সে ক্যাশ)। শেয়ার্ড-সিডের একমাত্র
+    //   ভূমিকা ছিল `sc.px` (sticky hint) — যেটাও কখনো SEED_PX-এ ঢুকত না, তাই একটাও কল বাঁচাত না।
+    //   অথচ এটা ছিল **একক-ব্যর্থতা-বিন্দু**: আমাদের ডেটাসেন্টার-IP-তে `/seed` স্থায়ীভাবে ৪২৯
+    //   (মাপা ৫/৫ → 429), আর `racePool` ব্যর্থ হলে `seedInflight`-এ আটকে থাকা rejected-প্রমিজ ৮সে ধরে
+    //   সব সার্ভারকে **০ms-এ rate_limited** দিত ⇒ পুরো টাইটেলে ০ vidy-কার্ড (লগ: `ERR at 0ms ×5`,
+    //   `ALL-SERVERS el=955ms ok=0/5`)। এখন vidy-পথ সিড-নিরপেক্ষ: প্রতি সার্ভার নিজের নোডে সিড নেয়।
+    const viaProxy = true; // (ডিরেক্ট-পথ আমাদের IP-তে ৪২৯ ⇒ সবসময় প্রক্সি-পথের বাজেট)
     const ckFor = srv => ['srvc', VERSION, tmdbId, type, s || '', e || '', srv].join('|');
     const allow = srvOrder().filter(srv => !cfg || !Array.isArray(cfg.srv) || !cfg.srv.length || cfg.srv.indexOf(srv) >= 0); // cfg-সার্ভার-সাবসেট
     const one = async srv => {
@@ -7852,9 +7919,8 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
       }
       const tS = Date.now(); // try-এর-বাইরে — catch-ও-লগ-দেখাতে-পারে
       try {
-        const sc = (sc0 && !force) ? sc0 : await getSeed(tmdbId, force);
-        if (DBG) console.error('[t1g] ' + srv + ' seed=' + (Date.now() - tS) + 'ms via=' + sc.via);
-        const q = { mediaType: type, tmdbId: String(tmdbId), enc: '2', seed: sc.seed, title: title || '' };
+        const sc = null; // v1.21.0: vidy-সেশন নিজেই প্রতি-নোডে সিড নেয় — শেয়ার্ড-সিড-গেট বাদ (উপরে-ব্যাখ্যা)
+        const q = { mediaType: type, tmdbId: String(tmdbId), enc: '2', title: title || '' }; // seed বাদ — vidySessionP নিজে বসায়
         if (type === 'tv') { q.seasonId = String(s || 1); q.episodeId = String(e || 1); } // ভুল-ছিল s/e — upstream-এগুলো-উপেক্ষা-করত → সবসময়-EP1
         const u = API + '/' + srv + '/sources?' + new URLSearchParams(q).toString();
         // v1.11.2 FETCH-HEDGE: আটকে-যাওয়া-আপস্ট্রিম-উত্তরের (phoenix 4.9s, dallas/tampa 7.5s+) +2.5সে-পরে-আরেক-টা-একই-কল;
@@ -7927,7 +7993,7 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
         if (DBG) console.error('[t1g] ' + srv + ' BUDGET-CUT');
         pend.delete(srv); // v1.14.2: বসে-গেছে — early-harvest-গণিত-যেন-ভুল-না-হয়
         fire({ srv, err: new Error('srv-budget') });
-      }, GIANT.indexOf(srv) >= 0 ? (viaProxy ? 5200 : 5000) : (viaProxy ? 5000 : 4800)); // ★ v1.17.56: vidy-সেশন ২–৩সে নেয় ⇒ ৩.৮সে-বাজেট ভিডি-কার্ডই কেটে দিত // v1.17.39: কাট-ঘড়ির (≤৪.২সে) পরে বাজেট-টাইমারের কোনো মানে নেই // v1.15.24 (ইউজার: '৬-৭সে-তে-সব-কার্ড'): প্রক্সি-পথ-বাজেট ৮.৫/৭→৬.৫/৫.৫সে — vidy-শাখা-নিজেই-ধীরতম-হয়ে-গোটা-উত্তর-৮-১০সে-টানছিল; প্রক্সি-চেইনের-সফল-ফেচ ৪.৭-৬.৩সে-তে-বলে-৬.৫সে-দৈত্য-সীমা-ওদের-ধরে; সরাসরি-পথ ৫.৫/৩.৮-অক্ষত
+      }, srv === 'delhi' ? Number(process.env.VDELB || 2600) : (GIANT.indexOf(srv) >= 0 ? (viaProxy ? 5200 : 5000) : (viaProxy ? 5000 : 4800))); // v1.21.5: delhi (500) ছোট বাজেট — ৪.৫সে-উইন্ডো/quota খায় না // ★ v1.17.56: vidy-সেশন ২–৩সে নেয় ⇒ ৩.৮সে-বাজেট ভিডি-কার্ডই কেটে দিত // v1.17.39: কাট-ঘড়ির (≤৪.২সে) পরে বাজেট-টাইমারের কোনো মানে নেই // v1.15.24 (ইউজার: '৬-৭সে-তে-সব-কার্ড'): প্রক্সি-পথ-বাজেট ৮.৫/৭→৬.৫/৫.৫সে — vidy-শাখা-নিজেই-ধীরতম-হয়ে-গোটা-উত্তর-৮-১০সে-টানছিল; প্রক্সি-চেইনের-সফল-ফেচ ৪.৭-৬.৩সে-তে-বলে-৬.৫সে-দৈত্য-সীমা-ওদের-ধরে; সরাসরি-পথ ৫.৫/৩.৮-অক্ষত
       return Promise.race([
         one(srv).then(r => { done = true; clearTimeout(tmo); pend.delete(srv); if (r.ok) okWave++; return r; }), // timer cleared on win — no dangling timeouts
         new Promise(r => { fire = r; pend.set(srv, v => { done = true; clearTimeout(tmo); fire(v); }); }) // v1.14.2: tighten-কাটও-টাইমার-পরিষ্কার-করে — পরের-আসল-বাজেট-কাট/শাস্তি-আর-গুলে-খায়-না
@@ -7953,16 +8019,32 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
         for (const [srv2, f2] of Array.from(pend)) { pend.delete(srv2); f2({ srv: srv2, late: true }); }
       }
     }, 150);
-    let rs = await Promise.all(allow.map(s => budget(s)));
-    clearInterval(stopTighten); pend.clear();
+    // ★★ v1.20.1 — **ইউজারের "smooth cholche na"**: মাপা টাইমলাইন দেখাল vidy-ধাপটাই ৮.২সে নিচ্ছিল
+    //   (ott .75s, hd 1.5s, tw/rt 1.7s, vsp 2.4s, m4u 6.3s, sky 6.7s — কিন্তু উত্তর যেত **৮.২সে**-তে,
+    //   কারণ vidy-কার্ড শেষ হওয়ার জন্য অপেক্ষা করত)। এখন vidy-ধাপের **কঠিন কাট VPICK=4.5সে**:
+    //   যা এসেছে তাই নিয়ে উত্তর; বাকি সার্ভারগুলো পেছনে শেষ হয়ে **মাইক্রো-ক্যাশ (৬০সে) ও ৩০মিন-ক্যাশ** ভরে
+    //   ⇒ পরের ট্যাপে ওগুলো সঙ্গে সঙ্গে আসে। মানে "প্রথম ট্যাপ ৫–৬সে, রিফ্রেশ ০.২সে, সার্ভার বাড়তেই থাকে"।
+    const VPICK = Number(process.env.VPICK || 4500);
+    const part = [];
+    const allP = Promise.all(allow.map(s2 => budget(s2).then(r => { part.push(r); return r; })));
+    const picked = await Promise.race([allP, new Promise(r => setTimeout(() => r(null), VPICK))]);
+    let rs;
+    if (picked === null) {
+      rs = part.slice();
+      if (DBG) console.error('[t1g] VPICK-কাট @' + VPICK + 'ms — ' + rs.filter(r => r.ok).length + '/' + allow.length + ' সার্ভার নিয়ে উত্তর, বাকিরা পেছনে');
+      clearInterval(stopTighten);
+      allP.then(restArr => { try { restArr.forEach(r => { if (r && r.ok && r.srv) { /* পেছনে-শেষ: ক্যাশ ভরে গেছে */ } }); } catch (e) { } });
+    } else {
+      clearInterval(stopTighten); pend.clear(); rs = picked;
+    }
     if (DBG) console.error('[t1g] ALL-SERVERS el=' + (Date.now() - t0) + 'ms ok=' + rs.filter(r => r.ok).length + '/' + rs.length);
     // ★ v1.18.1 (ইউজার: "proti show tei Miami, Boise, Atlanta, Phoenix thakbe"): **গ্ল্যায়ান্ট-নিশ্চয়তা** —
     //   এই চারটি সার্ভারের কোনোটি বাদ পড়লে বাজেট-থাকলে নতুন নোডে একবার পুনঃচেষ্টা (কোটা-হিসাব এখন থাকায়
     //   পুনঃচেষ্টাও নিরাপদ: নোড বদলে যায়, একই নোড পোড়ে না)।
     try {
-      const gMiss = rs.filter(r => GIANT.indexOf(r.srv) >= 0 && !r.ok).map(r => r.srv);
-      if (gMiss.length && Date.now() - t0 < 6200) {
-        const leftMs = Math.max(900, 8200 - (Date.now() - t0));
+      const gMiss = picked === null ? [] : rs.filter(r => GIANT.indexOf(r.srv) >= 0 && !r.ok).map(r => r.srv);
+      if (gMiss.length && Date.now() - t0 < Number(process.env.VGRETRY || 3800)) { // ★ v1.20.2: পুনঃচেষ্টা শুধু ডান-বাজেটে
+        const leftMs = Math.max(700, Math.min(2000, Number(process.env.VPICK || 4500) - (Date.now() - t0)));
         if (DBG) console.error('[giant] পুনঃচেষ্টা ' + gMiss.join(',') + ' @' + (Date.now() - t0) + 'ms');
         const again = await Promise.race([
           Promise.all(gMiss.map(s2 => budget(s2))),
@@ -7971,7 +8053,7 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
         if (again) rs = rs.filter(r => gMiss.indexOf(r.srv) < 0).concat(again);
       }
     } catch (eG) { }
-    if (!rs.some(r => r.ok) && Date.now() - t0 < 4600) { // gate 3.4s (নতুন-বাজেটে-সমন্বয়): দ্রুত-সর্বব্যর্থতায়-রিট্রাই-এখনো-৯.৮সে-সীমার-ভেতরে-শেষ-হয়
+    if (picked !== null && !rs.some(r => r.ok) && Date.now() - t0 < 3600) { // gate 3.4s (নতুন-বাজেটে-সমন্বয়): দ্রুত-সর্বব্যর্থতায়-রিট্রাই-এখনো-৯.৮সে-সীমার-ভেতরে-শেষ-হয়
       await new Promise(r2 => setTimeout(r2, 800)); force = true;
       rs = rs.concat(await Promise.all(allow.map(srv => budget(srv)))); // v1.15.10: পূর্ণ-পুনরুদ্ধার-ঢেউ-ফিরল (v1.15.9-ফিল্টার-ঠান্ডা-জানালার-কার্ড-উদ্ধার-ভাঙছিল — ইউজার-রিপোর্ট-অনুযায়ী-ফিরেছে)
     }
@@ -8021,6 +8103,19 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
     }
     // v1.15.8: কোনো-ফল-ক্যাশ-হয়-না — মিস-হলে-পরের-ক্লিকেই-তাজা-স্ক্যানে-পাওয়া-যায়
     if (DBG) console.error('[vdbg] ' + qsig + ' | ' + rs.map(r => r.srv + ':' + (r.neg ? 'neg' : r.err ? 'err' : r.empty ? 'empty' : 'ok' + r.nfit + '/' + (r.j && r.j.sources || []).length)).join(' '));
+    // ★★ v1.21.1 (ইউজার: "Boise/Phoenix elo na, refresh dilam tarpor o aslo na — pure zero kina jachai koro"):
+    //   vidy-সার্ভার-শূন্যতা এখন **partial** — কোনো সার্ভার err/empty/কাটা-পড়া থাকলে উত্তরটা
+    //   ক্যাশেই থাকে না ⇒ রিফ্রেশ মানেই সত্যিকারের নতুন চেষ্টা (যেগুলো এসেছে VSJ-মাইক্রো-ক্যাশ থেকে
+    //   সঙ্গে-সঙ্গেই ফেরে, শুধু বাদ-পড়াগুলো নতুন নোডে আবার চেষ্টা হয়)।
+    // ★ v1.21.5 (মাপা): `delhi` upstream-এই ভাঙা — `/delhi/sources` = **500** (সব মিডিয়ায়), তাই ওটা
+    //   "বাদ-পড়া" হিসেবে ক্যাশ আটকাবে না (নইলে প্রতিটা উত্তর partial হয়ে ক্যাশই না হতো)।
+    const VYOPT = String(process.env.VYOPT || 'delhi').split(',').map(x => x.trim()).filter(Boolean);
+    const _miss = rs.filter(r => !r.ok && VYOPT.indexOf(r.srv) < 0).map(r => r.srv);
+    const _pend = Math.max(0, allow.length - rs.length); // VPICK-কাটে এখনো-চলমান সার্ভার
+    if ((_miss.length || _pend) && out.length) {
+      out.$partial = true; out.$miss = _miss;
+      if (DBG) console.error('[partial] বাদ-পড়া vidy-সার্ভার: [' + _miss.join(',') + '] চলমান=' + _pend + ' → ক্যাশে যাবে না');
+    }
     if (DBG) console.error('[getsrc] returning @' + (Date.now() - t0) + 'ms n=' + out.length);
     if (!out.length && lastErr) throw lastErr;
     return out;
@@ -8198,7 +8293,12 @@ function manifest(cfg, origin, cfgged) {
 const reqLog = [];
 function logReq(path, ms, n, err, ua) {
   reqLog.push({ t: new Date().toISOString().slice(11, 19), path: path.slice(0, 60), ms, n, err: err || undefined, ua: (ua || '').split(')')[0].split('(')[1] || (ua || '').slice(0, 24) });
-  if (String(path).indexOf('/stream/') === 0) LAST_STREAM_AT = Date.now(); // ★ v1.17.56: স্ক্যান-বিরতি
+  if (String(path).indexOf('/stream/') === 0) {
+    LAST_STREAM_AT = Date.now(); // ★ v1.17.56: স্ক্যান-বিরতি
+    // ★ v1.21.2: সত্যিকারের in-flight গণনা (route-in = +1, উত্তর-লগ = -1)
+    if (err === 'route-in') INFLIGHT_STREAM++;
+    else INFLIGHT_STREAM = Math.max(0, INFLIGHT_STREAM - 1);
+  }
   if (reqLog.length > 60) reqLog.shift();
 }
 function originOf(req) { // beamup-প্রক্সি-Host-হেডার-মাঝে-মাঝে-অভ্যন্তরীণ-নাম (ডট-হীন) → পরিচিত-পাবলিক-ডোমেইন; লোকাল-পরীক্ষায়-http
@@ -8271,11 +8371,16 @@ function sresGet(k) {
   return e;
 }
 function sresPut(k, body, partial) {
-  const _vrc = Number(process.env.VRC || 1800);
+  const _vrc = Number(process.env.VRC || 600); // v1.21.1: ৩০মিন → ১০মিন (বাসি-উত্তর ৩০মিন ধরে ফেরত যেত)
   if (_vrc <= 0) return;
   if (!body || body.length < 24) return;
-  try { if (!JSON.parse(body).streams.length) return; } catch (e) { return; }
-  STREAM_RES_CACHE.set(k, { body, exp: Date.now() + (partial ? 60000 : _vrc * 1000) }); // v1.20.0: পূর্ণ-ফল ৩০মিন, আংশিক ১মিনে-আসা সোর্স তাড়াতাড়ি যোগ হোক)
+  let _n = 0; try { _n = (JSON.parse(body).streams || []).length; } catch (e) { return; }
+  if (!_n) return;                                    // pure zero কখনো ক্যাশ নয়
+  if (partial) {                                      // ★ v1.21.1: অসম্পূর্ণ ফল ক্যাশেই বসে না
+    if (DBG) console.error('[vmc] partial ফল — ক্যাশ-বন্ধ (' + k.split('|')[0] + ')');
+    return;
+  }
+  STREAM_RES_CACHE.set(k, { body, exp: Date.now() + _vrc * 1000 }); // v1.20.0: পূর্ণ-ফল ৩০মিন, আংশিক ১মিনে-আসা সোর্স তাড়াতাড়ি যোগ হোক)
   if (STREAM_RES_CACHE.size > STREAM_RES_MAX) {
     const now = Date.now();
     for (const [kk, vv] of STREAM_RES_CACHE) if (vv.exp <= now) STREAM_RES_CACHE.delete(kk);
@@ -8348,7 +8453,12 @@ function vhFixCards(cards, origin) { // vidy-HLS কার্ডের url → /
 
 function sendStreams(res, skey, plog, ms, cards, ua, cfg) {
   const partial = !!(cards && cards.$partial);
-  try { if (res && res.req) vhFixCards(cards, originOf(res.req)); } catch (e) { } // v1.17.50: vidy-প্লেলিস্ট-রিলে
+  // ★★ v1.21.2 (ইউজার: "Tumi vidy beamup relay diso keno, eijonnoi eto somossa — age direct e thik cholto; direct koro,
+  //   stream-card fetch hocche proxy die, kono server relay na"): **প্লেলিস্ট-রিলে বন্ধ**।
+  //   কার্ড এখন হুবহু CDN-এর m3u8 (আগের মতো) — Referer/UA `headers` + `behaviorHints.proxyHeaders`-এ থাকে
+  //   (decorate() নিজেই বসায়), প্লেয়ার নিজের IP-তে টানে। আমাদের beamup আর কোনো ভিডিও-বাইট/ম্যানিফেস্ট বহন করে না।
+  //   জরুরি হলে `VHRELAY=1` দিয়ে পুরোনো রিলে ফেরানো যাবে।
+  if (process.env.VHRELAY === '1') { try { if (res && res.req) vhFixCards(cards, originOf(res.req)); } catch (e) { } }
   const n = (cards || []).length; // v1.15.8: কোনো-stash-নেই — প্রতি-উত্তর-তাজা
   logReq(plog, ms, n, null, ua);
   const body = JSON.stringify({ streams: stripCards(cards) });
