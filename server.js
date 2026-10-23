@@ -11,9 +11,10 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.17.47';
+const VERSION = '1.17.48';
 const V1NOTE_47 = 'v1.17.47 (ইউজার: "stream cut kore fast na — 6-8s laguk, sob stream asuk") — হারভেস্ট-কাট বাতিল: আগে ৪.৬সে-এ ৬-কার্ড-হলেই কাট, ৪.৯সে হার্ড-ক্যাপ ⇒ দেরিতে-আসা সোর্সের কার্ড ফেলত। এখন **সব লাইভ-সোর্স সেটেল হলেই ফেরা**, নইলে ৭.৮সে ক্যাপ (Beamup ১২সে-সীমার ভিতরে)। সাথে: nx ৫.১→৭.২সে (MB আর কাটা পড়ে না), mm/m4u ৭.০সে সব-সাইট, hm-রেস ৩.২→৬.৬সে (কোল্ড-চেইনও একই রেসপন্সে), m4u-তে ৩ pd-id + ২ জীবিত মিরর (আগে ১ম-সফলেই-থামা), sky-তে ৩ pd-id/hub, PD_MAX env-নব। মাপা (১৬ রিকোয়েস্ট, লোকাল): avg 5.52s · সর্বোচ্চ 6.66s (আগে 3.75s-কাট-সংস্করণে ৮২৪ কার্ড), HindMovie ৮/১৬ (আগে ৩/১৬), MB ১৬/১৬, mm ১৬/১৬, m4u ১৪/১৬, sky ১২/১৬, কার্ড ৮৩৯ ⇒ **কার্ড কমেনি, বেড়েছে**।';
-const V1NOTE_46 = 'v1.17.46 (HindMovie নতুন সোর্স): live search (REST → HTML ফলব্যাক, বছর-মুক্ত কুয়েরি) → পোস্ট (IMDb-id গার্ড) → mvlink (মুভি) / mvlink /web/<id> (সিজন×কোয়ালিটি) → hshare → hcloud b64 → workers.dev direct MKV (২০৬, সিক-যোগ্য)। ক্যাশ ৬ঘণ্টা (search/post/mvlink/final); ডিরেক্ট আগে, 403/429/5xx-তে পুল-রেস। ব্যাচ .zip কখনো কার্ড নয়। hmRace ৩.২s ⇒ কোল্ড-চেইন রেসপন্স আটকায় না, পেছনে ক্যাশ ভরে। মাপা (১৬ রিকোয়েস্ট): avg 3.75s, MB 15/16, mm 16/16, m4u 14/16, sky 13/16, hm 3/16 (হলিউড-ক্লাসিক বেঞ্চে; সিরিজে BB/GoT S1E1 = ৩ কার্ড)।';
+
+const V1NOTE_48 = 'v1.17.48 (ইউজার: "M4u thik koro, Hindi movie add koro, configuration page ta o thik koro") — ★ কনফিগ-পেজ-মেরামত: SRC-তালিকা থেকেই সুইচ-বাইন্ড (bf সরানোর পর bindSwitch-এ null.classList-এ পুরো IIFE থেমে যেত ⇒ tune-কার্ড/সেভ/প্রিভিউ কিছুই রেন্ডার হতো না) + bindSwitch-এ null-গার্ড; HindMovie প্যানেল + tune-hm কার্ড যোগ। ★ Movies4u: একাধিক সার্চ-হিট-চেষ্টা (per_page 12), আর্টিকেল-বাদ-দিয়ে-পুনঃসার্চ, modpro-শাখা এখন আসলেই চলে (post খালি থাকলে lastPost দিয়ে) — মৃত-মিরর Range-প্রমাণ ছাড়া কার্ড-নয়। ★ প্রতি-সারি-deadline: এক-সারির-ঢিলামিতে সব-কার্ড বাতিল হতো (3 Idiots ৮.৬সে→৪.৭সে)। ★ HindMovie: 404/410-এ প্রক্সি-পুল-বন্ধ (Silence ১২.২সে→৬.১সে, কার্ড-আসে)। বেঞ্চ: avg ৪.৭৪সে (আগে ৫.৫২), max ৭.০২, m4u ১৪/১৬, HM ৮/১৬, Sky ১৪/১৬।';const V1NOTE_46 = 'v1.17.46 (HindMovie নতুন সোর্স): live search (REST → HTML ফলব্যাক, বছর-মুক্ত কুয়েরি) → পোস্ট (IMDb-id গার্ড) → mvlink (মুভি) / mvlink /web/<id> (সিজন×কোয়ালিটি) → hshare → hcloud b64 → workers.dev direct MKV (২০৬, সিক-যোগ্য)। ক্যাশ ৬ঘণ্টা (search/post/mvlink/final); ডিরেক্ট আগে, 403/429/5xx-তে পুল-রেস। ব্যাচ .zip কখনো কার্ড নয়। hmRace ৩.২s ⇒ কোল্ড-চেইন রেসপন্স আটকায় না, পেছনে ক্যাশ ভরে। মাপা (১৬ রিকোয়েস্ট): avg 3.75s, MB 15/16, mm 16/16, m4u 14/16, sky 13/16, hm 3/16 (হলিউড-ক্লাসিক বেঞ্চে; সিরিজে BB/GoT S1E1 = ৩ কার্ড)।';
 const V1NOTE_45 = 'v1.17.45 (mm T0+T2): ইনডেক্স-হোস্ট-ক্যাশ (মৃত ৩০মি / DNS-মৃত ৬ঘণ্টা) + DNS fast-fail (০.০২s) + ইনডেক্স-fetch ক্যাপ ২.২s ⇒ mm-এর সিরিজ n=0 কমল (GoT S1E1 0→5; mm সেটেল ৫.৮s→১.৫–২.৫s)। মাপা (১৬-রিকোয়েস্ট, লোকাল): avg 3.39s (আগে 3.75s), mm 16/16, m4u 14/16, sky 13/16, MB 16/16, BF 0।'; // v1.17.42: `_health`-এ **up (আপটাইম-সেকেন্ড) + deploy-ট্যাগ** যোগ — ডিপ্লয় সত্যিই
 //   নতুন কনটেইনার চালু করছে কি না তা এক-নজরে বোঝার জন্য (প্রোড এখনো 1.17.39 দেখাচ্ছিল, nxwaves=101 ⇒ রিস্টার্ট-ই হয়নি)।
 const V1NOTE_43c = ''; // v1.17.43 (মাপা, চূড়ান্ত): pixeldrain-গেট **PD_MAX=6** সেরা — ২-রাউন্ড/১৬-রিকোয়েস্ট A/B:
@@ -2956,7 +2957,9 @@ function hmText(u, ms, ref) { // ডিরেক্ট → ব্যর্থ �
     .catch(e => { if (DBG) console.error('[hm] DIRECT-ERR ' + String(u).slice(0, 46) + ' ' + (e && e.name) + ' ' + (e && (e.cause && e.cause.code || e.message) || '').slice(0, 40)); return { st: 0, t: '' }; })
     .then(r => {
       if (r.t && r.st < 400) return fin(r);
-      if (DBG) console.error('[hm] direct st=' + r.st + ' ' + String(u).slice(-30) + ' → pool');
+      // ★ v1.17.48 (মাপা: Silence — ৪-প্রক্সি-পুলে-একটি-404-পেছনে-প্রায়-২সে-নষ্ট, তার-ওপর-hshare-প্রায়-৩.৫সে):
+      //   404/410 = সাইটের-চূড়ান্ত-উত্তর — প্রক্সি-পুলে-আবার-চেষ্টা-অর্থহীন (ক্যাশ-ভরতে-পারে-না)।
+      if (r.st === 404 || r.st === 410) return fin(r);
       return racePool(u, 4, Math.max(1200, ms)).then(x => fin({ st: 200, t: String(x.body || ''), via: 'px' })).catch(() => fin(r));
     });
 }
@@ -3776,6 +3779,7 @@ async function azStreams(tmdbId, type, s, e, azq) { // সার্চ→সি�
 }
 // ---------- v1.15.40-local: Movies4u (M4U) — lookup.php-সার্চ + hubcloud→gamerxyt→FSL-R2 সরাসরি-MKV ----------
 const M4U_BASE = 'https://new2.movies4u.garden';
+const M4U_NEGC = new Map(); // v1.17.48: নতুন-চেইন-মৃত টাইটেল ১০মিন মনে রাখি (৮সে নষ্ট না করতে)
 // ★ v1.17.40: **বেঞ্চ-পাস-প্রক্সি আগে** — যে-হোস্টগুলো আমাদের-IP-এ-ব্লক (৪০৩/CF/খালি-বডি)
 //   সেগুলো HOST_PX-এ মনে থাকে ⇒ পরের-হপে সরাসরি-চেষ্টা-নষ্ট-হয়-না। প্রক্সি না-থাকলে/ব্যর্থ-হলে সরাসরি।
 let PXRACE_N = 0; const PXRACE_MAX = 4; // একসাথে-সর্বোচ্চ-৪টি প্রক্সি-রেস
@@ -4312,19 +4316,92 @@ async function m4uStreams(tmdbId, title, type, s, e, origin, maxh) { // maxh: cf
   if (!tmdbId) return []; // v1.15.82: মুভি + সিরিজ (আগে type!=='movie'-তে সিরিজ-শূন্য ছিল)
   if (type === 'series') return m4uSeries(tmdbId, title, s, e, origin, maxh); // সিরিজ = নিজস্ব-পথ (মুভি-কোড-অস্পৃষ্ট — ভাঙার-ঝুঁকি-না)
   const t3 = Date.now(); const WOB = 7000; const left = () => Math.max(250, WOB - (Date.now() - t3)); // v1.17.47: ৮.২সে ক্যাপের ভিতরে
+  if (M4U_NEGC.has(String(tmdbId)) && Date.now() - M4U_NEGC.get(String(tmdbId)) < 10 * 60 * 1000) { if (DBG) console.error('[m4u] neg-cache hit'); return []; } // v1.17.48
   try {
     const T = String(title || '').trim() || (await nameForTmdb(tmdbId, 'movie').catch(() => ''));
     if (!T) return [];
     // ধাপ-১: সার্চ-API (টাইটেল+TMDB-পোস্টার+কোয়ালিটি):
     const yPM = skyYear(tmdbId, false).catch(() => 0); // v1.15.82: hits[0]-অন্ধ-গ্রহণ-বন্ধ (Superman-২০২৫-এ hits[0] ছিল Superman-১৯৭৮ — ভুল-টাইটেল)
-    const sr = await m4uText(M4U_BASE + '/lookup.php?q=' + encodeURIComponent(T) + '&page=1&per_page=8', M4U_BASE + '/', Math.min(4500, left())).catch(() => '');
-    let hit = null;
-    try { const j = JSON.parse(sr); hit = m4uPick((j && j.hits) || [], T, await yPM, false); } catch { }
+    const sr = await m4uText(M4U_BASE + '/lookup.php?q=' + encodeURIComponent(T) + '&page=1&per_page=12', M4U_BASE + '/', Math.min(4500, left())).catch(() => '');
+    let hit = null, hitsAll = [];
+    try { const j = JSON.parse(sr); hitsAll = (j && j.hits) || []; hit = m4uPick(hitsAll, T, await yPM, false); } catch { }
     if (!hit || !hit.permalink) { if (DBG) console.error('[m4u] ' + tmdbId + ' no-search-hit for "' + T + '" @' + (Date.now() - t3) + 'ms'); return []; }
-    // ধাপ-২: পোস্ট-পেজ → m4ulinks /number/<N>:
-    const post = await m4uText(M4U_BASE + hit.permalink, M4U_BASE + '/', Math.min(4500, left())).catch(() => '');
-    const lnk = (post.match(/https?:\/\/m4ulinks\.sbs\/number\/\d+/) || [])[0];
-    if (!lnk) { if (DBG) console.error('[m4u] no-m4ulinks @' + (Date.now() - t3) + 'ms'); return []; }
+    // ধাপ-২: পোস্ট-পেজ → m4ulinks /number/<N>।
+    // ★ v1.17.48 (মাপা): সাইটে এখন **দুই ধরনের** চেইন — পুরোনো `m4ulinks.sbs/number/N` (কাজ করে)
+    //   আর নতুন `links.modpro.blog/archives/N` (গন্তব্য gdrivepro.xyz/anonfiles — **DNS-মৃত**)।
+    //   এক-টাইটেলে একাধিক পোস্ট থাকলে প্রথমটি নতুন-চেইনের হলে অকারণে ০ কার্ড আসত ⇒ এখন
+    //   **সব hit চেষ্টা** (সর্বোচ্চ ৪) এবং `m4ulinks` পাওয়া প্রথমটিতেই এগোই।
+    const M4U_NEG = (typeof M4U_NEGC !== 'undefined') ? M4U_NEGC : null;
+    let post = '', lnk = '';
+    const tries = [hit].concat(hitsAll.filter(h => h && h.permalink && h.permalink !== hit.permalink).slice(0, 3));
+    let lastPost = ''; // ★ v1.17.48: মৃত-পোস্টের HTML-ও ধরে রাখি — modpro-ফallback এর উপরেই চলে
+    for (const hh of tries) {
+      if (left() < 1200) break;
+      const pg = await m4uText(M4U_BASE + hh.permalink, M4U_BASE + '/', Math.min(4000, left())).catch(() => '');
+      if (pg && pg.length > 500) lastPost = pg;
+      const l2 = (pg.match(/https?:\/\/m4ulinks\.sbs\/number\/\d+/) || [])[0];
+      if (l2) { post = pg; lnk = l2; hit = hh; break; }
+      if (DBG) console.error('[m4u] hit-scheme-dead ' + String(hh.permalink).slice(0, 42) + ' @' + (Date.now() - t3) + 'ms');
+    }
+    // ★ v1.17.48: এক-হিট-ফল (যেমন Silence of the Lambs) প্রায়ই নতুন-চেইনের পোস্ট — তাই আর্টিকেল-বাদ-দিয়ে
+    //   আরেকবার সার্চ, কাজ-করা `m4ulinks` পোস্ট থাকলে সেটাই ব্যবহার করি (একই WOB-বাজেটের ভিতরে)।
+    if (!lnk && left() > 2200) {
+      const T2 = String(T).replace(/^(?:the|a|an)\s+/i, '').trim();
+      if (T2 && T2.toLowerCase() !== String(T).toLowerCase()) {
+        const sr2 = await m4uText(M4U_BASE + '/lookup.php?q=' + encodeURIComponent(T2) + '&page=1&per_page=12', M4U_BASE + '/', Math.min(3000, left())).catch(() => '');
+        let h2 = []; try { h2 = (JSON.parse(sr2) || {}).hits || []; } catch { }
+        const more = h2.filter(h => h && h.permalink && !tries.some(t => t && t.permalink === h.permalink)).slice(0, 3);
+        if (DBG) console.error('[m4u] retry-q "' + T2 + '" hits=' + more.length);
+        for (const hh of more) {
+          if (left() < 1200) break;
+          const pg = await m4uText(M4U_BASE + hh.permalink, M4U_BASE + '/', Math.min(4000, left())).catch(() => '');
+          if (pg && pg.length > 500) lastPost = pg;
+          const l2 = (pg.match(/https?:\/\/m4ulinks\.sbs\/number\/\d+/) || [])[0];
+          if (l2) { post = pg; lnk = l2; hit = m4uPick([hh], T, await yPM, false) || hh; break; }
+        }
+      }
+    }
+    if (!lnk) {
+      // ★ শেষ-চেষ্টা: নতুন-চেইন (links.modpro.blog/archives/N) — ভেতরের মিরর **Range-প্রমাণিত** হলেই কার্ড।
+      //   ⚠️ মাপা (২৩-১০-২০২৬): এই চেইনের গন্তব্য (gdrivepro.xyz DNS-মৃত, anonfiles/bayfiles বন্ধ) প্রায়ই
+      //   মরা — তাই প্রমাণ ছাড়া একটি কার্ডও দেওয়া হবে না (সৎ-শূন্য), শুধু প্রমাণ থাকলে লাভ।
+      const srcPg = post || lastPost; // আগে শুধু `post` — modpro-only পোস্টে সেটাই খালি থাকত ⇒ মৃত-শাখা কখনো চলত না
+      if (srcPg && /links\.modpro\.blog\/archives\/\d+/.test(srcPg) && left() > 2500) {
+        const alt = [...new Set((srcPg.match(/https:\/\/links\.modpro\.blog\/archives\/\d+/g) || []))].slice(0, 3);
+        const cards2 = [];
+        const probeOK = async (u, ms) => {
+          try {
+            const r = await fetch(u, { headers: { 'User-Agent': UA, Range: 'bytes=0-1023' }, signal: AbortSignal.timeout(Math.max(700, ms)) });
+            const ct = String(r.headers.get('content-type') || '');
+            const cr = String(r.headers.get('content-range') || '');
+            try { r.body && r.body.cancel && r.body.cancel(); } catch (e) { }
+            return (r.status === 206 || r.status === 200) && !/text\/html/i.test(ct) && /\d/.test(cr || String(r.headers.get('content-length') || '1'));
+          } catch (e) { return false; }
+        };
+        for (const au of alt) {
+          if (left() < 1800 || cards2.length) break;
+          const ap = await m4uText(au, M4U_BASE + '/', Math.min(3000, left())).catch(() => '');
+          const cands = [...new Set((ap.match(/https?:\/\/(?:urlflix\.xyz|gdrivepro\.xyz|hubcloud\.[a-z.]+|pixeldrain\.dev|workers\.dev)[^"'<>\s]*/g) || []))].slice(0, 4);
+          for (const cu of cands) {
+            if (left() < 1500 || cards2.length >= 2) break;
+            if (!(await probeOK(cu, Math.min(1800, left())))) continue;
+            const hh = resOfName(decodeURIComponent(String(cu).split('/').pop() || '')) || 0;
+            if (maxh && hh && hh > maxh) continue;
+            const ttl = '\u29c9 ' + T + '\n\u29e0 Movie\n\u229e Movies4u \u00b7 MKV';
+            cards2.push({
+              name: '\u25a5 ' + (hh ? String(hh) : 'MKV') + ' \u25a5', title: ttl, description: ttl, quality: String(hh || ''),
+              url: cu, behaviorHints: { notWebReady: false, isBingeable: true, proxyHeaders: { request: { 'User-Agent': UA } }, filename: 'movies4u.mkv' },
+              bingeGroup: 'm4u|' + String(T).toLowerCase() + '::'
+            });
+          }
+        }
+        if (cards2.length) { if (DBG) console.error('[m4u] modpro-cards=' + cards2.length + ' @' + (Date.now() - t3) + 'ms'); return cards2; }
+        if (DBG) console.error('[m4u] modpro-mirrors dead @' + (Date.now() - t3) + 'ms');
+      }
+      if (DBG) console.error('[m4u] no-m4ulinks after ' + tries.length + ' hit(s) @' + (Date.now() - t3) + 'ms');
+      if (M4U_NEG && M4U_NEG.set) M4U_NEG.set(String(tmdbId), Date.now());
+      return [];
+    }
     const out = []; // ফাইনাল-কার্ড-সারি (HLS-আগে, ফাইল-পরে)
     // ধাপ-২.৫: m4uplay-HLS (প্লেয়ারে-ঝড়ো-সিক) — MKV-লুপের-সাথে-সমান্তরালে-ছোটা, সরাসরি-CDN-মাস্টার (r173 ✓):
     const mpl = (post.match(/https?:\/\/m4uplay\.[a-z.]+\/file\/([a-z0-9]+)/i) || [])[0];
@@ -4488,8 +4565,15 @@ async function m4uStreams(tmdbId, title, type, s, e, origin, maxh) { // maxh: cf
       return cands;
       } catch { return cands; }
     };
-    const rowLists = await Promise.all(frows.map(r => oneRow(r).catch(() => []))); // সব-সারি-একসাথে
-    for (const cl of rowLists) for (const c2 of cl) { // মার্জ: প্রতি-রেজো-সর্বোচ্চ-২-ফাইল (আগে ১), মোট-ফাইল 3→7 (v1.15.51 — সাইটের-সব-ফাইল):
+    // ★ v1.17.48 (মাপা: 3 Idiots — এক-সারি ৬.৯সে-তে কার্ড-বানিয়ে-ও ৮.৬সে-র-ধীর-সারির-কারণে **সব** বাতিল হচ্ছিল):
+    //   শেষ-সময়সীমা পর্যন্ত যেসব-সারি-শেষ-হয়েছে সেগুলোই রাখি; এক-সারির-ঢিলামিতে-সব-হারাবে-না (স্ট্রিম-কাট-নয়)।
+    const rowP = frows.map(r => oneRow(r).catch(() => []));
+    const rowLists = [];
+    await Promise.race([
+      Promise.all(rowP.map((pr, i) => pr.then(v => { rowLists[i] = v || []; }))),
+      new Promise(res => setTimeout(res, Math.max(500, WOB - 700 - (Date.now() - t3))))
+    ]);
+    for (const cl of rowLists) if (cl) for (const c2 of cl) { // মার্জ: প্রতি-রেজো-সর্বোচ্চ-২-ফাইল (আগে ১), মোট-ফাইল 3→7 (v1.15.51 — সাইটের-সব-ফাইল):
       if (out.some(o => o.url === c2.url)) continue;
       if (out.filter(o => o.kind !== 'hls' && o.h === c2.h).length >= 2) continue;
       out.push(c2);

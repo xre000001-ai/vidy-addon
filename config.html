@@ -491,6 +491,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     ['mm','MM','linear-gradient(135deg,#23172b,#181020)','#d3a3f0','Multimovies','MM-HLS','', 'Bengali/English · fast HLS',1],
     ['m4u','M4U','linear-gradient(135deg,#252012,#19150c)','#e8d48a','Movies4u','MKV · 4K · HDR','', 'HDR10+/DV · Atmos · direct MKV',1],
     ['sky','SM','linear-gradient(135deg,#0f2436,#0a1826)','#7fd4ff','Sky Movies','SMHD','', 'SkymoviesHD · GDFlix/HubCloud · direct MKV',1],
+    ['hm','HM','linear-gradient(135deg,#2b1a12,#1d120c)','#ffb98a','HindMovie','Hindi · Direct MKV','new', 'Live search · dual-audio · seekable MKV',1],
     ['vsp','VS','linear-gradient(135deg,#1b2337,#121826)','#a9b8e8','Vidsrc','HLS · Eng','', 'Own relay pool · wide catalog',1],
     ['ott','AT','linear-gradient(135deg,#102a26,#0b1d1a)','#7fe0cc','AsianTV','HLS · K/C/J/Thai','', 'Dramas & movies · embedded subs',1],
     ['az','AZ','linear-gradient(135deg,#221a33,#171122)','#c9b8ff','AniZone','HLS · Anime','new','Anime series & movies · multi-language subs',1]
@@ -654,6 +655,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
   /* ─────────── switches + source cards ─────────── */
   var swOf={};
   function bindSwitch(key,swEl,cardEl,guard){
+    if(!swEl)return; /* v1.17.48: উপাদান-না-থাকলে চুপচাপ-বাদ (পেজ ভাঙবে না) */
     swEl.classList.toggle('on',!!st[key]);
     if(cardEl)cardEl.classList.toggle('off',!st[key]);
     swEl.onclick=function(){
@@ -692,17 +694,10 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
   (function buildSources(){
     var g=$('srcGrid');
     SRC.forEach(function(s){ g.appendChild(srcCard(s).card); });
-    bindSwitch('v', $('sw-v'), $('card-v'), guardV);
-    bindSwitch('nx',$('sw-nx'),$('card-nx'));
-    bindSwitch('rt',$('sw-rt'),$('card-rt'));
-    bindSwitch('tw',$('sw-tw'),$('card-tw'));
-    bindSwitch('mm',$('sw-mm'),$('card-mm'));
-    bindSwitch('m4u',$('sw-m4u'),$('card-m4u'));
-    bindSwitch('sky',$('sw-sky'),$('card-sky'));
-    bindSwitch('bf',$('sw-bf'),$('card-bf'));
-    bindSwitch('vsp',$('sw-vsp'),$('card-vsp'));
-    bindSwitch('ott',$('sw-ott'),$('card-ott'));
-    bindSwitch('az',$('sw-az'),$('card-az'));
+    // ★ v1.17.48: **সোর্স-তালিকা থেকেই বাইন্ড** — যে উৎস SRC-তে নেই তার সুইচ নেই;
+    //   আগে bf সরানোর পরেও bindSwitch('bf', …) চলত ⇒ null.classList-এ পেজের বাকি অংশ
+    //   (servers, tune-cards, save, preview) রেন্ডারই হতো না ⇒ **কনফিগ-পেজ ভাঙা**।
+    SRC.forEach(function(s2){ bindSwitch(s2[0], $('sw-'+s2[0]), $('card-'+s2[0]), s2[0]==='v'?guardV:null); });
   })();
 
   /* ─────────── servers ─────────── */
