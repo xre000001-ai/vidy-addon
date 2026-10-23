@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.17.59';
+const VERSION = '1.18.0';
 const V1NOTE_47 = 'v1.17.47 (ইউজার: "stream cut kore fast na — 6-8s laguk, sob stream asuk") — হারভেস্ট-কাট বাতিল: আগে ৪.৬সে-এ ৬-কার্ড-হলেই কাট, ৪.৯সে হার্ড-ক্যাপ ⇒ দেরিতে-আসা সোর্সের কার্ড ফেলত। এখন **সব লাইভ-সোর্স সেটেল হলেই ফেরা**, নইলে ৭.৮সে ক্যাপ (Beamup ১২সে-সীমার ভিতরে)। সাথে: nx ৫.১→৭.২সে (MB আর কাটা পড়ে না), mm/m4u ৭.০সে সব-সাইট, hm-রেস ৩.২→৬.৬সে (কোল্ড-চেইনও একই রেসপন্সে), m4u-তে ৩ pd-id + ২ জীবিত মিরর (আগে ১ম-সফলেই-থামা), sky-তে ৩ pd-id/hub, PD_MAX env-নব। মাপা (১৬ রিকোয়েস্ট, লোকাল): avg 5.52s · সর্বোচ্চ 6.66s (আগে 3.75s-কাট-সংস্করণে ৮২৪ কার্ড), HindMovie ৮/১৬ (আগে ৩/১৬), MB ১৬/১৬, mm ১৬/১৬, m4u ১৪/১৬, sky ১২/১৬, কার্ড ৮৩৯ ⇒ **কার্ড কমেনি, বেড়েছে**।';
 
 const V1NOTE_48 = 'v1.17.48 (ইউজার: "M4u thik koro, Hindi movie add koro, configuration page ta o thik koro") — ★ কনফিগ-পেজ-মেরামত: SRC-তালিকা থেকেই সুইচ-বাইন্ড (bf সরানোর পর bindSwitch-এ null.classList-এ পুরো IIFE থেমে যেত ⇒ tune-কার্ড/সেভ/প্রিভিউ কিছুই রেন্ডার হতো না) + bindSwitch-এ null-গার্ড; HindMovie প্যানেল + tune-hm কার্ড যোগ। ★ Movies4u: একাধিক সার্চ-হিট-চেষ্টা (per_page 12), আর্টিকেল-বাদ-দিয়ে-পুনঃসার্চ, modpro-শাখা এখন আসলেই চলে (post খালি থাকলে lastPost দিয়ে) — মৃত-মিরর Range-প্রমাণ ছাড়া কার্ড-নয়। ★ প্রতি-সারি-deadline: এক-সারির-ঢিলামিতে সব-কার্ড বাতিল হতো (3 Idiots ৮.৬সে→৪.৭সে)। ★ HindMovie: 404/410-এ প্রক্সি-পুল-বন্ধ (Silence ১২.২সে→৬.১সে, কার্ড-আসে)। বেঞ্চ: avg ৪.৭৪সে (আগে ৫.৫২), max ৭.০২, m4u ১৪/১৬, HM ৮/১৬, Sky ১৪/১৬।';const V1NOTE_46 = 'v1.17.46 (HindMovie নতুন সোর্স): live search (REST → HTML ফলব্যাক, বছর-মুক্ত কুয়েরি) → পোস্ট (IMDb-id গার্ড) → mvlink (মুভি) / mvlink /web/<id> (সিজন×কোয়ালিটি) → hshare → hcloud b64 → workers.dev direct MKV (২০৬, সিক-যোগ্য)। ক্যাশ ৬ঘণ্টা (search/post/mvlink/final); ডিরেক্ট আগে, 403/429/5xx-তে পুল-রেস। ব্যাচ .zip কখনো কার্ড নয়। hmRace ৩.২s ⇒ কোল্ড-চেইন রেসপন্স আটকায় না, পেছনে ক্যাশ ভরে। মাপা (১৬ রিকোয়েস্ট): avg 3.75s, MB 15/16, mm 16/16, m4u 14/16, sky 13/16, hm 3/16 (হলিউড-ক্লাসিক বেঞ্চে; সিরিজে BB/GoT S1E1 = ৩ কার্ড)।';
@@ -76,7 +76,7 @@ function tmdbGet(path, timeoutMs) { // v1.13.7 IMDb/ফ্রি-পাবলি
 }
 const CINEMETA = 'https://v3-cinemeta.strem.io';
 const SERVERS = ['miami', 'atlanta', 'seattle', 'boise', 'phoenix', 'dallas', 'austin', 'delhi', 'munich', 'cancun', 'vegas', 'oakland', 'orlando', 'paris', 'reno', 'tampa']; // full server family — 7 veterans + 9 discovered from the official player bundle (live-probed)
-const GIANT = ['miami', 'boise', 'atlanta']; // giant primaries — carry ~32 sources across a 12-title sample (new servers top out at ~13, measured 10-11 Oct 2026)
+const GIANT = ['miami', 'boise', 'atlanta', 'phoenix']; // giant primaries — carry ~32 sources across a 12-title sample (new servers top out at ~13, measured 10-11 Oct 2026)
 let POOL = [];
 try { POOL = JSON.parse(fs.readFileSync(path.join(__dirname, 'vidy_proxy_pool.json'), 'utf8')); } catch (e) {}
 // v1.15.0 রানটাইম-প্রক্সি-স্বাস্থ্য: বুট-সময়ের-ms-আর-বাস্তব-নয় — জয়/ব্যর্থতা/EMA-লেটেন্সি-মনে-থাকে, রেস-স্কোর-অনুযায়ী-হয়
@@ -1011,6 +1011,7 @@ function vidySessionP(px, o, tmo) {
     return proxiedGet(px, u, tmo).then(ct => {
       pxsRec('vidy:' + o.srv, px, true, Date.now() - t0);   // কন্ডিশন-পাস = seed+sources দুটোই
       vidyNodeOk(px, Date.now() - t0);
+      if (VGIANT.indexOf(o.srv) >= 0) vhotRec(o.srv, px);   // ★ v1.18.0: গ্ল্যায়ান্ট-হটে জমা
       if (DBG) console.error('[vses] ' + o.srv + ' ✓ ' + px + ' ' + (Date.now() - t0) + 'ms');
       return { ct: ct, seed: seed, px: px };
     });
@@ -1130,6 +1131,65 @@ function vidyScore(px) {
   const age = e.ts ? Math.min(Date.now() - e.ts, 3600000) / 60000 : 40; // মিনিট
   return (e.ms || 4000) + age * 60 + (e.fails || 0) * 1200;
 }
+// ===== v1.18.0 (ইউজার: "vidy etoh rate limit … giant server Miami, Boise, Atlanta, also phoenix") =====
+// vidy প্রতি IP-তে মাত্র ২–৪ কল দেয় ⇒ ১৬ সার্ভারের জন্য বিশাল পুল লাগে না, লাগে **বিশেষায়িত তাজা নোড**।
+// তাই গ্ল্যায়ান্ট ৪টি সার্ভারের জন্য আলাদা **HOT-নোড** (প্রতি সার্ভারে ৩টি, ≤৯০সে-যাচাই) + মিনি-sweeper।
+const VGIANT = ['miami', 'boise', 'atlanta', 'phoenix'];
+// ★★ v1.18.0 (মাপা, সিদ্ধান্ত-বদলানো প্রমাণ): vidy-সিড **IP-বাঁধা** (ডিরেক্ট-সিড + প্রক্সি = 401
+//   STREAMCRYPTO_SEED_INVALID), কিন্তু **একই নোডে এক সিড + ৩ সার্ভারের sources = তিনটিই ২০০**
+//   (৪ কল; কোটার ভিতরেই)। অর্থাৎ প্রতিটি সার্ভারের আলাদা নোড লাগে না — **এক নোডে ২–৩ সার্ভার**।
+//   তাই সার্ভারগুলোকে RING-এর স্লটে ভাগ করি ⇒ seed একবার, sources অনেকবার ⇒ কোটা ব্যবহার অর্ধেকের কম।
+let VRING = [], VRING_TS = 0;
+function vidyRing() {
+  if (VRING.length && Date.now() - VRING_TS < 15000) return VRING;
+  const now = Date.now(), FRSH = Number(process.env.PXFRESH || 240000);
+  const fresh = [...VIDY_OK.entries()].filter(([, v]) => v.ts && now - v.ts < FRSH).sort((x, y) => (x[1].ms || 9999) - (y[1].ms || 9999)).map(z => z[0]);
+  VRING = (fresh.length >= 4 ? fresh : [...VIDY_OK.keys()].sort((a2, b2) => vidyScore(a2) - vidyScore(b2))).slice(0, Number(process.env.PXRING || 6));
+  VRING_TS = now;
+  return VRING;
+}
+function srvHash(s2) { let h = 0; for (let i = 0; i < s2.length; i++) h = (h * 31 + s2.charCodeAt(i)) | 0; return Math.abs(h); }
+const VHOT = new Map();          // srv -> Map(px -> ts)
+function vhotRec(srv, px) {
+  let m = VHOT.get(srv); if (!m) { m = new Map(); VHOT.set(srv, m); }
+  m.set(px, Date.now());
+  if (m.size > 24) { const old = [...m.entries()].sort((a, b) => a[1] - b[1]).slice(0, m.size - 24); for (const [k] of old) m.delete(k); }
+}
+function vhotPick(srv, n) {
+  const m = VHOT.get(srv) || new Map(), now = Date.now(), TTL = Number(process.env.PXHOT || 90000);
+  return [...m.entries()].filter(([, ts]) => now - ts < TTL).sort((a, b) => b[1] - a[1]).map(z => z[0]).slice(0, n);
+}
+async function vidySessionFor(srv, px, tmdbId) { // নির্দিষ্ট সার্ভার-কন্ডিশন যাচাই (গ্ল্যায়ান্ট-হট-রিফিল)
+  const id = tmdbId || 278;
+  const b = await proxiedGet(px, API + '/seed?mediaId=' + id, 4200);
+  const seed = JSON.parse(b).seed; if (!seed) throw new Error('seed-empty');
+  const ct = await proxiedGet(px, API + '/' + srv + '/sources?' + new URLSearchParams({ mediaType: 'movie', tmdbId: String(id), enc: '2', seed: seed, title: '' }).toString(), 4200);
+  if (!ct || ct.length < 200) throw new Error('short');
+  return seed;
+}
+let vhotBusy = false;
+async function vhotWarm() {
+  if (vhotBusy) return; vhotBusy = true;
+  try {
+    for (const srv of VGIANT) {
+      if (Date.now() - LAST_STREAM_AT < 1200) return;   // ইউজারের অনুরোধ চলছে ⇒ এখন নয়
+      const have = vhotPick(srv, 99);
+      const need = Number(process.env.PXHOTN || 3) - have.length;
+      if (need <= 0) continue;
+      const cands = [...VIDY_OK.keys()].filter(px => have.indexOf(px) < 0 && !VPX_BUSY.get(px)).slice(0, need + 1);
+      for (const px of cands) {
+        if (!vpxTake(px)) continue;
+        try { await vySlot(3000); } catch (e) { vpxFree(px); continue; }
+        try { await vidySessionFor(srv, px); vhotRec(srv, px); if (DBG) console.error('[vhot] ' + srv + ' ✓ ' + px); }
+        catch (e) { if (DBG && process.env.VJDBG) console.error('[vhot] ' + srv + ' ✗ ' + px + ' ' + String(e && e.message).slice(0, 26)); }
+        finally { vyFree(); vpxFree(px); }
+      }
+    }
+  } finally { setTimeout(() => { vhotBusy = false; }, 3000); }
+}
+setTimeout(() => vhotWarm(), 8000);
+const vhotTimer = setInterval(() => vhotWarm(), Number(process.env.PXHOTMS || 40000)); if (vhotTimer.unref) vhotTimer.unref();
+
 let vidyRR = 0;   // ★ সার্ভার-ভিত্তিক রাউন্ড-রবিন: প্রতিটি সার্ভার আলাদা verified IP পায় (কোটা ছড়ায়)
 function vidyVerifiedPick(n, offset) {
   // ★ v1.17.59 (ইউজার: "proxy jodi age thekei condition mene bench hoye thake, sob stream asar kotha"):
@@ -1170,12 +1230,21 @@ function vidyFetch(o) { // ★ v1.17.56: verified-pool **ক্রমবর্�
   //  • সেরা-স্কোর নোড আগে; #0 সঙ্গে-সঙ্গে, বাকিরা ৩৫০/৯০০/১৮০০/২৮০০ms-এ (কেউ জিতলেই বাকিরা বন্ধ)
   //  • সর্বোচ্চ VYGATE(২৬) সেশন একসাথে — মাপা: ৪৮-এর-বেশি একসাথে গেলে নোডগুলো নিজেরাই timeout দেয়
   //  • ডিরেক্ট নিজের-IP শুধু শেষ-ভরসা (PXVD ৪সে) — ৩–৫ কলে ৪২৯
-  const TOT = Number(process.env.PXVT || 4600), NQ = Number(process.env.PXVQ || 8);
+  const TOT = Number(process.env.PXVT || 4600), NQ = Number(process.env.PXVQ || 5);
   const t0 = Date.now(), left = () => Math.max(900, TOT - (Date.now() - t0));
   const sc = o.sc || {};
   const ST = { done: false };
   const off = (typeof o.srv === 'string' ? o.srv.charCodeAt(0) + o.srv.length : 0);
-  const Q = vidyVerifiedPick(NQ, off);
+  // ★ v1.18.0: গ্ল্যায়ান্ট হলে **HOT-নোড আগে** (সেই সার্ভারে সদ্য-যাচাই ≤৯০সে), তারপর সাধারণ verified
+  const isG = VGIANT.indexOf(o.srv) >= 0;
+  const hot = isG ? vhotPick(o.srv, Number(process.env.PXHOTK || 3)) : [];
+  const ring = vidyRing();
+  // গ্ল্যায়ান্ট ⇒ রিং-এর প্রথম ৪ স্লট (এক-একটি নিজের); বাকিরা হ্যাশ-ভাগে (২–৩ সার্ভার/নোড, seed একবার)
+  const slot = isG ? VGIANT.indexOf(o.srv) : (4 + (srvHash(o.srv) % Math.max(1, ring.length)));
+  const primary = ring.length ? ring[slot % ring.length] : null;
+  const Q = [primary].concat(hot).concat(vidyVerifiedPick(NQ, off))
+    .filter((px, i, arr) => px && arr.indexOf(px) === i)
+    .slice(0, Math.max(NQ, hot.length + 2));
   if (sc.via === 'proxy' && sc.px && Q.indexOf(sc.px) < 0) Q.unshift(sc.px); // সদ্য-যাচাই-করা IP আগে
   const sesTmo = () => Math.max(1400, Math.min(Number(process.env.PXVTO || 2200), left()));
   const one = async px => {
