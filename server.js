@@ -11,13 +11,14 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.17.49';
+const VERSION = '1.17.50';
 const V1NOTE_47 = 'v1.17.47 (ইউজার: "stream cut kore fast na — 6-8s laguk, sob stream asuk") — হারভেস্ট-কাট বাতিল: আগে ৪.৬সে-এ ৬-কার্ড-হলেই কাট, ৪.৯সে হার্ড-ক্যাপ ⇒ দেরিতে-আসা সোর্সের কার্ড ফেলত। এখন **সব লাইভ-সোর্স সেটেল হলেই ফেরা**, নইলে ৭.৮সে ক্যাপ (Beamup ১২সে-সীমার ভিতরে)। সাথে: nx ৫.১→৭.২সে (MB আর কাটা পড়ে না), mm/m4u ৭.০সে সব-সাইট, hm-রেস ৩.২→৬.৬সে (কোল্ড-চেইনও একই রেসপন্সে), m4u-তে ৩ pd-id + ২ জীবিত মিরর (আগে ১ম-সফলেই-থামা), sky-তে ৩ pd-id/hub, PD_MAX env-নব। মাপা (১৬ রিকোয়েস্ট, লোকাল): avg 5.52s · সর্বোচ্চ 6.66s (আগে 3.75s-কাট-সংস্করণে ৮২৪ কার্ড), HindMovie ৮/১৬ (আগে ৩/১৬), MB ১৬/১৬, mm ১৬/১৬, m4u ১৪/১৬, sky ১২/১৬, কার্ড ৮৩৯ ⇒ **কার্ড কমেনি, বেড়েছে**।';
 
 const V1NOTE_48 = 'v1.17.48 (ইউজার: "M4u thik koro, Hindi movie add koro, configuration page ta o thik koro") — ★ কনফিগ-পেজ-মেরামত: SRC-তালিকা থেকেই সুইচ-বাইন্ড (bf সরানোর পর bindSwitch-এ null.classList-এ পুরো IIFE থেমে যেত ⇒ tune-কার্ড/সেভ/প্রিভিউ কিছুই রেন্ডার হতো না) + bindSwitch-এ null-গার্ড; HindMovie প্যানেল + tune-hm কার্ড যোগ। ★ Movies4u: একাধিক সার্চ-হিট-চেষ্টা (per_page 12), আর্টিকেল-বাদ-দিয়ে-পুনঃসার্চ, modpro-শাখা এখন আসলেই চলে (post খালি থাকলে lastPost দিয়ে) — মৃত-মিরর Range-প্রমাণ ছাড়া কার্ড-নয়। ★ প্রতি-সারি-deadline: এক-সারির-ঢিলামিতে সব-কার্ড বাতিল হতো (3 Idiots ৮.৬সে→৪.৭সে)। ★ HindMovie: 404/410-এ প্রক্সি-পুল-বন্ধ (Silence ১২.২সে→৬.১সে, কার্ড-আসে)। বেঞ্চ: avg ৪.৭৪সে (আগে ৫.৫২), max ৭.০২, m4u ১৪/১৬, HM ৮/১৬, Sky ১৪/১৬।';const V1NOTE_46 = 'v1.17.46 (HindMovie নতুন সোর্স): live search (REST → HTML ফলব্যাক, বছর-মুক্ত কুয়েরি) → পোস্ট (IMDb-id গার্ড) → mvlink (মুভি) / mvlink /web/<id> (সিজন×কোয়ালিটি) → hshare → hcloud b64 → workers.dev direct MKV (২০৬, সিক-যোগ্য)। ক্যাশ ৬ঘণ্টা (search/post/mvlink/final); ডিরেক্ট আগে, 403/429/5xx-তে পুল-রেস। ব্যাচ .zip কখনো কার্ড নয়। hmRace ৩.২s ⇒ কোল্ড-চেইন রেসপন্স আটকায় না, পেছনে ক্যাশ ভরে। মাপা (১৬ রিকোয়েস্ট): avg 3.75s, MB 15/16, mm 16/16, m4u 14/16, sky 13/16, hm 3/16 (হলিউড-ক্লাসিক বেঞ্চে; সিরিজে BB/GoT S1E1 = ৩ কার্ড)।';
 
 const V1NOTE_49 = 'v1.17.49 (ইউজার: "Hdhub name e ekta stremio addon ase oita kintu ei hubcloud kore easily — website ta balo kore khutie dekho") — ★ নতুন সোর্স HDHub4u (hd): বেস ghdhub.org (একই পোস্ট new8-এ ad-funnel, এখানে hubcloud.ist/drive), সার্চ থিমের search.php (Typesense-ধাঁচের, imdb_id ইনডেক্স ⇒ tt-দিয়ে ঠিক পোস্ট), চেইন post → hblinks.lol/archives বা hubdrive.bar/file (পেজ-শিরোনামেই আসল ফাইলনাম) → hubcloud → gamerxyt → pixeldrain/signed-S3/workers.dev, এবং Range-প্রমাণ (206+non-html) ছাড়া কার্ড নয়। মাপা: হিন্দি ৭/৭ টাইটেলে কার্ড (জাওয়ান ২১৬০p, ডরোথি ৫ কার্ড), avg ~৬.০সে। কনফিগ-পেজে ১২তম সোর্স (কার্ড+tune+save+white-list)।';const V1NOTE_45 = 'v1.17.45 (mm T0+T2): ইনডেক্স-হোস্ট-ক্যাশ (মৃত ৩০মি / DNS-মৃত ৬ঘণ্টা) + DNS fast-fail (০.০২s) + ইনডেক্স-fetch ক্যাপ ২.২s ⇒ mm-এর সিরিজ n=0 কমল (GoT S1E1 0→5; mm সেটেল ৫.৮s→১.৫–২.৫s)। মাপা (১৬-রিকোয়েস্ট, লোকাল): avg 3.39s (আগে 3.75s), mm 16/16, m4u 14/16, sky 13/16, MB 16/16, BF 0।'; // v1.17.42: `_health`-এ **up (আপটাইম-সেকেন্ড) + deploy-ট্যাগ** যোগ — ডিপ্লয় সত্যিই
-//   নতুন কনটেইনার চালু করছে কি না তা এক-নজরে বোঝার জন্য (প্রোড এখনো 1.17.39 দেখাচ্ছিল, nxwaves=101 ⇒ রিস্টার্ট-ই হয়নি)।
+
+const V1NOTE_50 = 'v1.17.50 (ইউজার: "token soho e dei… amar eikhane play hoi, tumi time mapping dekho, proxy condition pass check") — ★ vidy-প্রথম-ক্লিক-ব্যর্থতার মূল কারণ পাওয়া গেছে: হাব-CDN-এর m3u8 **Referer: https://www.vidy.st/ ছাড়া ৪০৩** (openresty), কিন্তু সেগমেন্ট/init রেফারার ছাড়াই ২০৬ ⇒ প্লেয়ার (proxyHeaders না পাঠালে) প্রথম ক্লিকেই আটকে যেত, অথচ আমাদের সার্ভার-প্রোব রেফারার পাঠানোয় ok=true দেখাত (ভুল-সবুজ)। টোকেন-টাইমস্ট্যাম্প মাপা: ৫৪ মিনিট পুরোনো টোকেনও বৈধ ⇒ টোকেন-এক্সপায়ারি সমস্যা নয়। সমাধান: /vh/<b64url(প্লেলিস্ট)>/p.m3u8 রিলে — সার্ভার রেফারার দিয়ে প্লেলিস্ট আনে, ভেতরের সব লাইন অ্যাবসোলিউট করে দেয় (ভ্যারিয়েন্ট-প্লেলিস্টও আবার /vh/, সেগমেন্ট/init সরাসরি CDN — ইউজার-নীতি: প্রক্সি শুধু টোকেন/ম্যানিফেস্ট)। যাচাই: ১৮/১৮ vidy কার্ড রিলেতে, প্রতিটি ২০০, ১৫২২টি সেগমেন্ট সরাসরি, exo/সাধারণ UA-তে সেগমেন্ট ২০৬।';//   নতুন কনটেইনার চালু করছে কি না তা এক-নজরে বোঝার জন্য (প্রোড এখনো 1.17.39 দেখাচ্ছিল, nxwaves=101 ⇒ রিস্টার্ট-ই হয়নি)।
 const V1NOTE_43c = ''; // v1.17.43 (মাপা, চূড়ান্ত): pixeldrain-গেট **PD_MAX=6** সেরা — ২-রাউন্ড/১৬-রিকোয়েস্ট A/B:
 //   PD_MAX=4 → avg 4.15s, m4u 10/16, sky 9/16 · **PD_MAX=6 → avg 3.68s, m4u 14/16, sky 11/16** · PD_MAX=8 → avg 4.17s।
 //   m4u-সারিতে pd-id ৪→২ + ১-সফলেই-থামা। বাদ-পড়া পরীক্ষা: sky-হাবে pd ১-করা (২য় id-ই জীবিত ⇒ কার্ড হারায়),
@@ -7635,8 +7636,73 @@ function sresPut(k, body, partial) {
     while (STREAM_RES_CACHE.size > STREAM_RES_MAX) STREAM_RES_CACHE.delete(STREAM_RES_CACHE.keys().next().value);
   }
 }
+// ================= v1.17.50: Vidy-p্লেলিস্ট-রিলে (/vh/) =================
+// ★ মাপা (২৩-১০-২০২৬): vidy-হাবের m3u8 **শুধু Referer: https://www.vidy.st/ থাকলেই ২০০** —
+//   রেফারার ছাড়া ৪০৩ (openresty)। Stremio/ExoPlayer অনেক সময় proxyHeaders প্রেরণ করে না ⇒
+//   **প্রথম ক্লিকেই "স্ট্রিম চলছে না"** (আমাদের প্রোব রেফারার পাঠাত, তাই ok=true-ও দেখাত)।
+//   কিন্তু সেগমেন্ট/init রেফারার ছাড়াই ২০৬ দেয় (মাপা) ⇒ শুধু **প্লেলিস্ট** রিলে করলেই যথেষ্ট,
+//   মিডিয়া ইউজারের ডিভাইস সরাসরি CDN থেকে টানে (ব্যবহারকারীর নীতি: proxy শুধু টোকেন/ম্যানিফেস্ট)।
+const VH_TTL = 30 * 60 * 1000;
+const VH_C = new Map();
+// vidy-কার্ড চেনা: (ক) হাব-পাথ /vd/ /vdb/ (খ) decorate()-এর বসানো Referer=vidy.st — paleoak/krico/workers-হোস্টও ধরা পড়ে
+function vhIsVidy(u, c) {
+  const p0 = String(u || '').split('?')[0];
+  if (!/\.m3u8$/i.test(p0)) return false;                      // শুধু প্লেলিস্ট-রিলে (সেগমেন্ট/ফাইল সরাসরি CDN)
+  if (/\/vd[b]?\//.test(p0)) return true;
+  return !!(c && c.headers && String(c.headers.Referer || '') === VIDY_REFERER);
+}
+function vhRelay(u, origin) { return origin + '/vh/' + Buffer.from(String(u)).toString('base64url') + '/p.m3u8'; }
+function vhRewrite(body, target, origin) {
+  return String(body || '').split('\n').map(line => {
+    const raw = line.trim();
+    if (!raw) return line;
+    if (raw.charAt(0) === '#') { // ট্যাগ-লাইন: URI="..." (EXT-X-MEDIA / EXT-X-MAP / EXT-X-KEY)
+      return line.replace(/URI="([^"]+)"/g, (m0, u1) => {
+        let abs = u1; try { abs = new URL(u1, target).toString(); } catch (e) { }
+        return /\.m3u8(\?|$)/i.test(abs) ? 'URI="' + vhRelay(abs, origin) + '"' : 'URI="' + abs + '"';
+      });
+    }
+    let abs = raw; try { abs = new URL(raw, target).toString(); } catch (e) { }
+    return /\.m3u8(\?|$)/i.test(abs) ? vhRelay(abs, origin) : abs; // ভ্যারিয়েন্ট-প্লেলিস্টও রিলে; সেগমেন্ট/init সরাসরি
+  }).join('\n');
+}
+async function vhServe(req, res, b64) {
+  let target = ''; try { target = Buffer.from(b64, 'base64url').toString('utf8'); } catch (e) { }
+  if (!/^https?:\/\//.test(target)) { res.writeHead(400); return res.end('bad'); }
+  const origin = originOf(req);
+  const ck = target;
+  const hit = VH_C.get(ck);
+  if (hit && Date.now() - hit.ts < VH_TTL) { res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl', 'access-control-allow-origin': '*', 'cache-control': 'max-age=300' }); return res.end(hit.v); }
+  const hdr = { 'User-Agent': UA, 'Referer': VIDY_REFERER, 'Accept': '*/*' };
+  let body = '';
+  try {
+    const r = await fetch(target, { headers: hdr, redirect: 'follow', signal: AbortSignal.timeout(7000) });
+    if (r.status === 200) body = await r.text();
+  } catch (e) { }
+  if (!body) { // পুল-ফলব্যাক (কিছু হাব ডেটাক-IP-এ ৪০৩ দেয়)
+    try { const x = await racePool(target, 3, 6500); body = String((x && x.body) || ''); } catch (e) { }
+  }
+  if (!body) { res.writeHead(502, { 'content-type': 'text/plain', 'access-control-allow-origin': '*' }); return res.end('upstream-fail'); }
+  const out = vhRewrite(body, target, origin);
+  if (VH_C.size > 800) VH_C.clear();
+  VH_C.set(ck, { ts: Date.now(), v: out });
+  res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl', 'access-control-allow-origin': '*', 'cache-control': 'max-age=300' });
+  return res.end(out);
+}
+function vhFixCards(cards, origin) { // vidy-HLS কার্ডের url → /vh/ রিলে (বাকি সব অপরিবর্তিত)
+  if (!origin) return cards;
+  for (const c of (cards || [])) {
+    const u = String(c && c.url || '');
+    if (!u || u.indexOf('/vh/') >= 0 || !vhIsVidy(u, c)) continue;
+    c.url = vhRelay(u, origin);
+    c.behaviorHints = Object.assign({}, c.behaviorHints, { notWebReady: true, proxyHeaders: { request: { 'User-Agent': UA, 'Referer': VIDY_REFERER } } });
+  }
+  return cards;
+}
+
 function sendStreams(res, skey, plog, ms, cards, ua, cfg) {
   const partial = !!(cards && cards.$partial);
+  try { if (res && res.req) vhFixCards(cards, originOf(res.req)); } catch (e) { } // v1.17.50: vidy-প্লেলিস্ট-রিলে
   const n = (cards || []).length; // v1.15.8: কোনো-stash-নেই — প্রতি-উত্তর-তাজা
   logReq(plog, ms, n, null, ua);
   const body = JSON.stringify({ streams: stripCards(cards) });
@@ -7863,6 +7929,9 @@ const server = http.createServer((req, res) => {
         return res.end(miniOut);
       } catch { res.writeHead(502, { 'content-type': 'text/plain' }); return res.end('upstream-err'); }
     })();
+    // ★ v1.17.50: vidy-প্লেলিস্ট-রিলে — /vh/<b64url(প্লেলিস্ট)>/p.m3u8 (রেফারার-লক-ভাঙা; সেগমেন্ট সরাসরি CDN)
+    const vhR = p.match(/^\/vh\/([A-Za-z0-9_=-]{8,2400})\/p\.m3u8$/);
+    if (vhR) return vhServe(req, res, vhR[1]);
     // v1.15.90+97+99: **অডিও ও ভিডিও প্লেলিস্ট ইনলাইনার** — /mma/<b64url(প্লেলিস্ট)>/a.m3u8
     const mmAR = p.match(/^\/mma\/([A-Za-z0-9_=-]{8,2400})\/a\.m3u8$/);
     if (mmAR) return (async () => {
