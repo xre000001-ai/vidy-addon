@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.18.2';
+const VERSION = '1.19.0';
 const V1NOTE_47 = 'v1.17.47 (ইউজার: "stream cut kore fast na — 6-8s laguk, sob stream asuk") — হারভেস্ট-কাট বাতিল: আগে ৪.৬সে-এ ৬-কার্ড-হলেই কাট, ৪.৯সে হার্ড-ক্যাপ ⇒ দেরিতে-আসা সোর্সের কার্ড ফেলত। এখন **সব লাইভ-সোর্স সেটেল হলেই ফেরা**, নইলে ৭.৮সে ক্যাপ (Beamup ১২সে-সীমার ভিতরে)। সাথে: nx ৫.১→৭.২সে (MB আর কাটা পড়ে না), mm/m4u ৭.০সে সব-সাইট, hm-রেস ৩.২→৬.৬সে (কোল্ড-চেইনও একই রেসপন্সে), m4u-তে ৩ pd-id + ২ জীবিত মিরর (আগে ১ম-সফলেই-থামা), sky-তে ৩ pd-id/hub, PD_MAX env-নব। মাপা (১৬ রিকোয়েস্ট, লোকাল): avg 5.52s · সর্বোচ্চ 6.66s (আগে 3.75s-কাট-সংস্করণে ৮২৪ কার্ড), HindMovie ৮/১৬ (আগে ৩/১৬), MB ১৬/১৬, mm ১৬/১৬, m4u ১৪/১৬, sky ১২/১৬, কার্ড ৮৩৯ ⇒ **কার্ড কমেনি, বেড়েছে**।';
 
 const V1NOTE_48 = 'v1.17.48 (ইউজার: "M4u thik koro, Hindi movie add koro, configuration page ta o thik koro") — ★ কনফিগ-পেজ-মেরামত: SRC-তালিকা থেকেই সুইচ-বাইন্ড (bf সরানোর পর bindSwitch-এ null.classList-এ পুরো IIFE থেমে যেত ⇒ tune-কার্ড/সেভ/প্রিভিউ কিছুই রেন্ডার হতো না) + bindSwitch-এ null-গার্ড; HindMovie প্যানেল + tune-hm কার্ড যোগ। ★ Movies4u: একাধিক সার্চ-হিট-চেষ্টা (per_page 12), আর্টিকেল-বাদ-দিয়ে-পুনঃসার্চ, modpro-শাখা এখন আসলেই চলে (post খালি থাকলে lastPost দিয়ে) — মৃত-মিরর Range-প্রমাণ ছাড়া কার্ড-নয়। ★ প্রতি-সারি-deadline: এক-সারির-ঢিলামিতে সব-কার্ড বাতিল হতো (3 Idiots ৮.৬সে→৪.৭সে)। ★ HindMovie: 404/410-এ প্রক্সি-পুল-বন্ধ (Silence ১২.২সে→৬.১সে, কার্ড-আসে)। বেঞ্চ: avg ৪.৭৪সে (আগে ৫.৫২), max ৭.০২, m4u ১৪/১৬, HM ৮/১৬, Sky ১৪/১৬।';const V1NOTE_46 = 'v1.17.46 (HindMovie নতুন সোর্স): live search (REST → HTML ফলব্যাক, বছর-মুক্ত কুয়েরি) → পোস্ট (IMDb-id গার্ড) → mvlink (মুভি) / mvlink /web/<id> (সিজন×কোয়ালিটি) → hshare → hcloud b64 → workers.dev direct MKV (২০৬, সিক-যোগ্য)। ক্যাশ ৬ঘণ্টা (search/post/mvlink/final); ডিরেক্ট আগে, 403/429/5xx-তে পুল-রেস। ব্যাচ .zip কখনো কার্ড নয়। hmRace ৩.২s ⇒ কোল্ড-চেইন রেসপন্স আটকায় না, পেছনে ক্যাশ ভরে। মাপা (১৬ রিকোয়েস্ট): avg 3.75s, MB 15/16, mm 16/16, m4u 14/16, sky 13/16, hm 3/16 (হলিউড-ক্লাসিক বেঞ্চে; সিরিজে BB/GoT S1E1 = ৩ কার্ড)।';
@@ -76,7 +76,7 @@ function tmdbGet(path, timeoutMs) { // v1.13.7 IMDb/ফ্রি-পাবলি
 }
 const CINEMETA = 'https://v3-cinemeta.strem.io';
 const SERVERS = ['miami', 'atlanta', 'seattle', 'boise', 'phoenix', 'dallas', 'austin', 'delhi', 'munich', 'cancun', 'vegas', 'oakland', 'orlando', 'paris', 'reno', 'tampa']; // full server family — 7 veterans + 9 discovered from the official player bundle (live-probed)
-const GIANT = ['miami', 'boise', 'atlanta', 'phoenix']; // giant primaries — carry ~32 sources across a 12-title sample (new servers top out at ~13, measured 10-11 Oct 2026)
+const GIANT = ['miami', 'boise', 'atlanta', 'phoenix', 'delhi']; // giant primaries — carry ~32 sources across a 12-title sample (new servers top out at ~13, measured 10-11 Oct 2026)
 let POOL = [];
 try { POOL = JSON.parse(fs.readFileSync(path.join(__dirname, 'vidy_proxy_pool.json'), 'utf8')); } catch (e) {}
 // v1.15.0 রানটাইম-প্রক্সি-স্বাস্থ্য: বুট-সময়ের-ms-আর-বাস্তব-নয় — জয়/ব্যর্থতা/EMA-লেটেন্সি-মনে-থাকে, রেস-স্কোর-অনুযায়ী-হয়
@@ -695,7 +695,16 @@ async function enrichPool() {
     const lists = ['https://raw.githubusercontent.com/TheSpeedX/PROXY-LIST/master/http.txt',
                    'https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt',
                    'https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=3000',
-                   'https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/protocols/http/data.txt']; // v1.15.23: proxifly-http-মডিউল (ইউজার-প্রস্তাব)
+                   'https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/protocols/http/data.txt',
+                   // ★ v1.18.5 (ইউজার: "Proxyscrape er API use koro") — v4 ফ্রি-লিস্ট API, HTTPS-সক্ষম ও দেশভিত্তিক
+                   'https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&protocol=http&proxy_format=ipport&format=text&timeout=5000',
+                   'https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&protocol=http&proxy_format=ipport&format=text&timeout=5000&supports_https=true',
+                   'https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&protocol=http&proxy_format=ipport&format=text&timeout=5000&country=us',
+                   'https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&protocol=http&proxy_format=ipport&format=text&timeout=5000&country=in',
+                   'https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&protocol=http&proxy_format=ipport&format=text&timeout=5000&country=de',
+                   'https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&protocol=http&proxy_format=ipport&format=text&timeout=5000&country=br',
+                   'https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&protocol=http&proxy_format=ipport&format=text&timeout=5000&country=id',
+                   'https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&protocol=http&proxy_format=ipport&format=text&timeout=5000&country=vn']; // v1.15.23: proxifly-http-মডিউল (ইউজার-প্রস্তাব)
     const txts = await Promise.all(lists.map(u => directGet(u, 12000).catch(() => '')));
     if (Date.now() < MMR_ACTIVE_UNTIL) return;
     const have = new Set(POOL.map(c => c.px));
@@ -1154,7 +1163,13 @@ function vidyScore(px) {
 // ===== v1.18.0 (ইউজার: "vidy etoh rate limit … giant server Miami, Boise, Atlanta, also phoenix") =====
 // vidy প্রতি IP-তে মাত্র ২–৪ কল দেয় ⇒ ১৬ সার্ভারের জন্য বিশাল পুল লাগে না, লাগে **বিশেষায়িত তাজা নোড**।
 // তাই গ্ল্যায়ান্ট ৪টি সার্ভারের জন্য আলাদা **HOT-নোড** (প্রতি সার্ভারে ৩টি, ≤৯০সে-যাচাই) + মিনি-sweeper।
-const VGIANT = ['miami', 'boise', 'atlanta', 'phoenix'];
+const VGIANT = ['miami', 'boise', 'phoenix', 'atlanta', 'delhi'];
+// v1.18.4 (user: purono version-e ei problem chilo na — because a server-result cache existed then).
+// vidy calls are precious (2-4 per IP) => 60s MICRO-CACHE per (server,title): a refresh within 60s
+// returns the same servers with zero extra quota. VMC=0 disables.
+const VSJ = new Map();
+function vsjGet(k) { if (process.env.VMC === '0') return null; const h = VSJ.get(k); return h && Date.now() - h.ts < Number(process.env.VMC || 60000) ? h.j : null; }
+function vsjPut(k, j) { if (process.env.VMC === '0') return; VSJ.set(k, { ts: Date.now(), j: j }); if (VSJ.size > 400) VSJ.delete(VSJ.keys().next().value); }
 // ★★ v1.18.0 (মাপা, সিদ্ধান্ত-বদলানো প্রমাণ): vidy-সিড **IP-বাঁধা** (ডিরেক্ট-সিড + প্রক্সি = 401
 //   STREAMCRYPTO_SEED_INVALID), কিন্তু **একই নোডে এক সিড + ৩ সার্ভারের sources = তিনটিই ২০০**
 //   (৪ কল; কোটার ভিতরেই)। অর্থাৎ প্রতিটি সার্ভারের আলাদা নোড লাগে না — **এক নোডে ২–৩ সার্ভার**।
@@ -1252,21 +1267,24 @@ function vidyFetch(o) { // ★ v1.17.56: verified-pool **ক্রমবর্�
   //  • সেরা-স্কোর নোড আগে; #0 সঙ্গে-সঙ্গে, বাকিরা ৩৫০/৯০০/১৮০০/২৮০০ms-এ (কেউ জিতলেই বাকিরা বন্ধ)
   //  • সর্বোচ্চ VYGATE(২৬) সেশন একসাথে — মাপা: ৪৮-এর-বেশি একসাথে গেলে নোডগুলো নিজেরাই timeout দেয়
   //  • ডিরেক্ট নিজের-IP শুধু শেষ-ভরসা (PXVD ৪সে) — ৩–৫ কলে ৪২৯
-  const TOT = Number(process.env.PXVT || 4600), NQ = Number(process.env.PXVQ || 5);
+  const TOT = Number(process.env.PXVT || 4600), NQ = Number(process.env.PXVQ || 4);
   const t0 = Date.now(), left = () => Math.max(900, TOT - (Date.now() - t0));
   const sc = o.sc || {};
   const ST = { done: false };
   const off = (typeof o.srv === 'string' ? o.srv.charCodeAt(0) + o.srv.length : 0);
   // ★ v1.18.0: গ্ল্যায়ান্ট হলে **HOT-নোড আগে** (সেই সার্ভারে সদ্য-যাচাই ≤৯০সে), তারপর সাধারণ verified
+  // ★★ v1.19.0 — **Multimovies-এর মতোই**: mm `mmRacePool()` করে (score-ক্রমে সাজিয়ে, ব্যান্ড-জুড়ে ছড়ানো
+  //   নমুনা নিয়ে, একসাথে race, প্রথম ২০০ জেতে; ব্যর্থ নোড সঙ্গে-সঙ্গে স্কোর হারায়)। vidy-তেও এখন ঠিক তাই:
+  //   HOT-নোড আগে, তারপর bench-এর স্বাস্থ্য-ব্যান্ড জুড়ে **ছড়ানো নমুনা** (শুধু প্রথম-কয়েকটা নয়), একসাথে race।
   const isG = VGIANT.indexOf(o.srv) >= 0;
-  const hot = isG ? vhotPick(o.srv, Number(process.env.PXHOTK || 3)) : [];
-  const ring = vidyRing();
-  // গ্ল্যায়ান্ট ⇒ রিং-এর প্রথম ৪ স্লট (এক-একটি নিজের); বাকিরা হ্যাশ-ভাগে (২–৩ সার্ভার/নোড, seed একবার)
-  const slot = isG ? VGIANT.indexOf(o.srv) : (4 + (srvHash(o.srv) % Math.max(1, ring.length)));
-  const primary = ring.length ? ring[slot % ring.length] : null;
-  const Q = [primary].concat(hot).concat(vidyVerifiedPick(NQ, off))
-    .filter((px, i, arr) => px && arr.indexOf(px) === i)
-    .slice(0, Math.max(NQ, hot.length + 2));
+  const hot = isG ? vhotPick(o.srv, Number(process.env.PXHOTK || 2)) : [];
+  const pool = vidyVerifiedPick(999, off);                 // score-ক্রমে সাজানো (তাজা+দ্রুত আগে)
+  const Q = hot.slice();
+  const want = NQ;                                          // চওড়া-নমুনা: bench-এর পুরো ব্যান্ড জুড়ে
+  for (let i = 0; i < want && pool.length; i++) {
+    const c = pool[Math.floor(i * pool.length / want) % pool.length];
+    if (c && Q.indexOf(c) < 0) Q.push(c);
+  }
   if (sc.via === 'proxy' && sc.px && Q.indexOf(sc.px) < 0) Q.unshift(sc.px); // সদ্য-যাচাই-করা IP আগে
   const sesTmo = () => Math.max(1400, Math.min(Number(process.env.PXVTO || 2200), left()));
   const one = async px => {
@@ -7726,7 +7744,11 @@ function srvBump(srv, d) {
   SRV_SCORE[srv] = Math.max(-20, Math.min(20, (SRV_SCORE[srv] || 0) + d));
   try { fs.writeFileSync(path.join(__dirname, 'vidy_server_scores.json'), JSON.stringify(SRV_SCORE)); } catch (e) {}
 }
-const srvOrder = () => SERVERS.slice().sort((a, b) => (SRV_SCORE[b] || 0) - (SRV_SCORE[a] || 0));
+// ★ v1.18.3 (ইউজার: "Miami, Boise, Phoenix, Atlanta, Delhi ei 5 ta server rakho"): শুধু এই ৫টি সার্ভার।
+//   ৫ সার্ভার = ৫×(seed+sources) ≈ ১০ কল ⇒ মাত্র ৩–৪টি নোডেই সবগুলো চলে ⇒ ভাগ্য-নির্ভরতা প্রায় শেষ।
+const SRV_KEEP = (process.env.VSRV || 'miami,boise,phoenix,atlanta,delhi').split(',').map(x => x.trim()).filter(Boolean);
+const SERVERS_ON = SERVERS.filter(x => SRV_KEEP.indexOf(x) >= 0);
+const srvOrder = () => SERVERS_ON.slice().sort((a, b) => (SRV_SCORE[b] || 0) - (SRV_SCORE[a] || 0));
 // প্রথম-সোর্স-URL-বাঁচা-কি-না (master-m3u8-ছোট — সস্তা-GET; Referer-ছাড়া-CDN-403-দেয়):
 function probePlaylist(u, hop) { // Auto-HLS-master পড়ে-সর্বোচ্চ-উচ্চতা-বের-করে (ok=২০০); বড়-বডি-১২৮KB-তে-কাটা
   return new Promise(resolve => {
@@ -7812,6 +7834,14 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
       const ck = ['srvc', VERSION, tmdbId, type, s || '', e || '', srv].join('|');
       // v1.15.8 (ইউজার): SRV_CACHE/SRV_NEG-পাঠ-বিলোপ — প্রতি-ট্যাপ-লাইভ-স্ক্যান; নতুন/মিস-হওয়া-স্ট্রিম-পরের-ক্লিকেই-ধরা-পড়ে
       // এক-সার্ভার-সম্পূর্ণ-মূল্যায়ন (seed+sources+প্রোব):
+      const vkey = 'vj|' + srv + '|' + tmdbId + '|' + type + '|' + (s || '') + '|' + (e || '');
+      const vhit = vsjGet(vkey);
+      if (vhit) { // v1.18.4: 60s micro-cache (quota-free refresh, same servers)
+        if (DBG) console.error('[vmc] ' + srv + ' hit');
+        const _q = Array.isArray(cfg && cfg.q) ? cfg.q : qToList(cfg && cfg.q);
+        const _p = (vhit.sources || []).filter(x => x.url && /^https?:/.test(x.url) && qPass(x, _q));
+        if (_p.length) return { srv: srv, j: vhit, ok: true, soft: false, ns: (vhit.subtitles || []).length, nfit: decorate(vhit, type, s, e, title || '', cfg, srv).length, probeOk: true, cache: 1 };
+      }
       const tS = Date.now(); // try-এর-বাইরে — catch-ও-লগ-দেখাতে-পারে
       try {
         const sc = (sc0 && !force) ? sc0 : await getSeed(tmdbId, force);
@@ -7824,6 +7854,7 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
         const vr = await vidyFetch({ srv: srv, tmdbId: tmdbId, q: q, sc: sc }); // ★ v1.17.54: নোড-সেশন রেস (seed+sources একই IP)
         const ct = vr.ct; // v1.17.39: ১২.৫সে হার্ড-ডেডলাইন ছিল নিছক সকেট-দখল (কাট সবসময় ≤৪.২সে)
         const j = JSON.parse(vidyDecrypt(ct, vr.seed, tmdbId)); // ★ সেশন-সিড দিয়েই ডিক্রিপ্ট (ভিন্ন-নোড-ডিক্রিপ্ট-ত্রুটি শেষ)
+        vsjPut(vkey, j); // v1.18.4: মাইক্রো-ক্যাশ-রাখা
         if (DBG) console.error('[t1g] ' + srv + ' fetch=' + (Date.now() - tS) + 'ms n=' + (j.sources || []).length + ' | jkeys=' + Object.keys(j).join(',') + ' | s0=' + JSON.stringify((j.sources || [])[0] || {}).slice(0, 220) + (j.audios ? ' | audios=' + JSON.stringify(j.audios).slice(0, 200) : '') + (j.audio ? ' | audio=' + JSON.stringify(j.audio).slice(0, 120) : ''));
         if (DBG && j.playlist) console.error('[t1g] ' + srv + ' PLAYLIST=' + JSON.stringify(j.playlist).slice(0, 500));
         if (!j.sources || !j.sources.length) {
