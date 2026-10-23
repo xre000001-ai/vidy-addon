@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.17.56';
+const VERSION = '1.17.57';
 const V1NOTE_47 = 'v1.17.47 (ইউজার: "stream cut kore fast na — 6-8s laguk, sob stream asuk") — হারভেস্ট-কাট বাতিল: আগে ৪.৬সে-এ ৬-কার্ড-হলেই কাট, ৪.৯সে হার্ড-ক্যাপ ⇒ দেরিতে-আসা সোর্সের কার্ড ফেলত। এখন **সব লাইভ-সোর্স সেটেল হলেই ফেরা**, নইলে ৭.৮সে ক্যাপ (Beamup ১২সে-সীমার ভিতরে)। সাথে: nx ৫.১→৭.২সে (MB আর কাটা পড়ে না), mm/m4u ৭.০সে সব-সাইট, hm-রেস ৩.২→৬.৬সে (কোল্ড-চেইনও একই রেসপন্সে), m4u-তে ৩ pd-id + ২ জীবিত মিরর (আগে ১ম-সফলেই-থামা), sky-তে ৩ pd-id/hub, PD_MAX env-নব। মাপা (১৬ রিকোয়েস্ট, লোকাল): avg 5.52s · সর্বোচ্চ 6.66s (আগে 3.75s-কাট-সংস্করণে ৮২৪ কার্ড), HindMovie ৮/১৬ (আগে ৩/১৬), MB ১৬/১৬, mm ১৬/১৬, m4u ১৪/১৬, sky ১২/১৬, কার্ড ৮৩৯ ⇒ **কার্ড কমেনি, বেড়েছে**।';
 
 const V1NOTE_48 = 'v1.17.48 (ইউজার: "M4u thik koro, Hindi movie add koro, configuration page ta o thik koro") — ★ কনফিগ-পেজ-মেরামত: SRC-তালিকা থেকেই সুইচ-বাইন্ড (bf সরানোর পর bindSwitch-এ null.classList-এ পুরো IIFE থেমে যেত ⇒ tune-কার্ড/সেভ/প্রিভিউ কিছুই রেন্ডার হতো না) + bindSwitch-এ null-গার্ড; HindMovie প্যানেল + tune-hm কার্ড যোগ। ★ Movies4u: একাধিক সার্চ-হিট-চেষ্টা (per_page 12), আর্টিকেল-বাদ-দিয়ে-পুনঃসার্চ, modpro-শাখা এখন আসলেই চলে (post খালি থাকলে lastPost দিয়ে) — মৃত-মিরর Range-প্রমাণ ছাড়া কার্ড-নয়। ★ প্রতি-সারি-deadline: এক-সারির-ঢিলামিতে সব-কার্ড বাতিল হতো (3 Idiots ৮.৬সে→৪.৭সে)। ★ HindMovie: 404/410-এ প্রক্সি-পুল-বন্ধ (Silence ১২.২সে→৬.১সে, কার্ড-আসে)। বেঞ্চ: avg ৪.৭৪সে (আগে ৫.৫২), max ৭.০২, m4u ১৪/১৬, HM ৮/১৬, Sky ১৪/১৬।';const V1NOTE_46 = 'v1.17.46 (HindMovie নতুন সোর্স): live search (REST → HTML ফলব্যাক, বছর-মুক্ত কুয়েরি) → পোস্ট (IMDb-id গার্ড) → mvlink (মুভি) / mvlink /web/<id> (সিজন×কোয়ালিটি) → hshare → hcloud b64 → workers.dev direct MKV (২০৬, সিক-যোগ্য)। ক্যাশ ৬ঘণ্টা (search/post/mvlink/final); ডিরেক্ট আগে, 403/429/5xx-তে পুল-রেস। ব্যাচ .zip কখনো কার্ড নয়। hmRace ৩.২s ⇒ কোল্ড-চেইন রেসপন্স আটকায় না, পেছনে ক্যাশ ভরে। মাপা (১৬ রিকোয়েস্ট): avg 3.75s, MB 15/16, mm 16/16, m4u 14/16, sky 13/16, hm 3/16 (হলিউড-ক্লাসিক বেঞ্চে; সিরিজে BB/GoT S1E1 = ৩ কার্ড)।';
@@ -7505,7 +7505,7 @@ async function withSources(cardsP, srcs, cfg, t0) {
     //   পুরনো "৬ কার্ড হলেই ৪.৬সে-এ কাট" নিয়ম **বাতিল** — সেটাই দেরিতে-আসা সোর্সের
     //   (sky/m4u/hm/nx) কার্ড ফেলে দিত। এখন: **সব লাইভ-সোর্স সেটেল হলেই ফেরা**,
     //   নইলে শুধু ৮.২সে হার্ড-ক্যাপ (Beamup-এর ১২সে-কাটঅফের ভিতরে)।
-    const MIN_WAIT_MS = Number(process.env.VFLOOR || 1200), HARD_CAP_MS = Number(process.env.VCAP || 11500); // v1.17.52: ৭.৮সে-ক্যাপেই sky/hm/m4u/nx কাটা পড়ত ⇒ ১০.৫সে
+    const MIN_WAIT_MS = Number(process.env.VFLOOR || 1200), HARD_CAP_MS = Number(process.env.VCAP || 9300); // v1.17.52: ৭.৮সে-ক্যাপেই sky/hm/m4u/nx কাটা পড়ত ⇒ ১০.৫সে
     let lit = 0, settled = 0, fireCut = null;
     _cutP = new Promise(r => { fireCut = r; });
     _watch = setInterval(() => {
@@ -7518,7 +7518,7 @@ async function withSources(cardsP, srcs, cfg, t0) {
     // ★ v1.17.56: **গৌণ-সোর্সের নিজস্ব ছোট-ক্যাপ** — ott/tw/rt/az বসে-থাকলে পুরো উত্তর ১১.৫সে-দেয়ালে
     //   গিয়ে ঠেকত (প্রোড-লগে জোড়ায়-জোড়ায় 11.5s), অথচ ওরা কার্ড দিচ্ছিল না (n=0)। এখন ৬.৫সে।
     const SRC_CAP_MAP = { ott: 6500, tw: 6500, rt: 6500, az: 6500, vsp: 8000 };
-    const SRC_CAP_MS = Number(process.env.VSCAP || 11500); // ★ v1.17.52: প্রতি-সোর্স-ক্যাপ — একটি ঝুলন্ত সোর্স (ott/tw/nx) পুরো তালিকাকে ক্যাপে টেনে নিত
+    const SRC_CAP_MS = Number(process.env.VSCAP || 9300); // ★ v1.17.52: প্রতি-সোর্স-ক্যাপ — একটি ঝুলন্ত সোর্স (ott/tw/nx) পুরো তালিকাকে ক্যাপে টেনে নিত
     const track = x => { // ★ v1.17.52: টাইমার ক্লিয়ার হয় — নইলে সেটেল হওয়া সোর্সের জন্যও ভুল '[srccap]' ছাপ পড়ত
       let _tm = null;
       const capMs = Math.min(SRC_CAP_MS, SRC_CAP_MAP[x.key] || SRC_CAP_MS);
@@ -7530,14 +7530,14 @@ async function withSources(cardsP, srcs, cfg, t0) {
       return v;
       }, () => { clearTimeout(_tm); errFlag = true; settled++; if (DBG) console.error('[srcsettle] ' + x.key + ' ERR @' + (Date.now() - t0) + 'ms (' + settled + '/' + live.length + ')'); return null; });
     };
-    const uniLeft0 = Math.max(0, Math.min(NXDEADLINE, 11500) - (Date.now() - t0)); // v1.17.52
+    const uniLeft0 = Math.max(0, Math.min(NXDEADLINE, 9300) - (Date.now() - t0)); // v1.17.52
     // ★ v1.17.29: **nx (MovieBox)-এর নিজস্ব কাট-ঘড়ি** — child-এর রিজলভ ৪–৮ সে নেয়, তাই সাধারণ
     //   হারভেস্ট-কাটে (৪.১ সে) কেটে যেত ⇒ "MovieBox নেই" দেখাত। এখন nx পায় `NX_FIRST_MS` পর্যন্ত
     //   (বাকিরা আগের মতোই); ক্যাশ-হিট হলে (৩০ মিন) আগেই ফেরে ⇒ দ্রুত।
     // ★ v1.17.34: **অভিযোজিত-উইন্ডো বাতিল** (মাপা: প্রোডে ৬.২সে-ও MB আনত না, শুধু উত্তর
     //   ৭–৮সে হয়ে যেত)। এখন সবসময় ৫.১সে — MB দেরিতে এলে ব্যাকগ্রাউন্ডে ক্যাশে জমে, আর
     //   ওই ফল `$partial` হয় ⇒ আমাদের /stream-ক্যাশ ১২সে-তেই মেয়াদোত্তীর্ণ ⇒ দ্বিতীয় ট্যাপে MB পুরো।
-    const nxFirstWait = Math.min(11000, Number(process.env.NXW || 11000)); // v1.17.52: ৭.২সে-এ MB প্রায়ই কাটা পড়ত // v1.17.47: MB আর কাটা পড়বে না (আগে ৫.১সে)
+    const nxFirstWait = Math.min(9200, Number(process.env.NXW || 9200)); // v1.17.52: ৭.২সে-এ MB প্রায়ই কাটা পড়ত // v1.17.47: MB আর কাটা পড়বে না (আগে ৫.১সে)
     const nxCutP = new Promise(r => setTimeout(() => r(true), Math.max(0, Math.min(uniLeft0, nxFirstWait - (Date.now() - t0)))));
     outsP = Promise.all(live.map(x => Promise.race([
       track(x),
@@ -7557,7 +7557,7 @@ async function withSources(cardsP, srcs, cfg, t0) {
     // v1.14.6 ঐক্যবদ্ধ-১ম-ক্লিক-সময়সীমা (ইউজার-টপ-অগ্রাধিকার: প্রতি-নির্বাচিত-সোর্স-১ম-ক্লিকেই):
     // সব-লাইভ-সোর্স-একই-পরম-সীমা ~৯.৬সে (রুট-সেফটি ১১.৯সে/এজ-কাট ১২সে-র-ভেতরে) — যে-সোর্স-আগে-সেটল
     // উত্তর-তার-পরেই (দ্রুত-ক্ষেত্রে ২-৫সে), ধীর-সোর্স-কাটা-পড়ার-আগে-সর্বোচ্চ-সময়-পায়।
-    const uniLeft = Math.max(0, Math.min(NXDEADLINE, 11500) - el); // v1.17.52 // v1.15.99: ৯.৬সে যাতে Beamup প্রক্সির ১২সে কাটঅফের আগে সবসময় ২+ সেকেন্ড হাতে থাকে
+    const uniLeft = Math.max(0, Math.min(NXDEADLINE, 9300) - el); // v1.17.52 // v1.15.99: ৯.৬সে যাতে Beamup প্রক্সির ১২সে কাটঅফের আগে সবসময় ২+ সেকেন্ড হাতে থাকে
     // v1.15.3: সোর্স-ত্রুটি (রিবিল্ড/নেটওয়ার্ক) ≠ সত্যিকারের-খালি — আংশিক-গণ্য হোক (errFlag উপরে ঘোষিত)
     const outs = await outsP;
     const seenFileU = new Set(); // v1.15.50: sky/m4u-একই-ফাইল-ডুপ-কাটার-সেট
@@ -8291,7 +8291,9 @@ const server = http.createServer((req, res) => {
     }
     // ★ v1.17.56: একই-URL-এর দ্বিতীয় অনুরোধ প্রথমটির সঙ্গে যোগ দেয় (কোটা-সাশ্রয়, ১১.৫সে-দেয়াল থেকে বাঁচা)
     if (req.method === 'GET' && !FRESH && /^\/(probe\/)?stream\/(movie|series)\//.test(p)) {
-      const kRT = req.url;
+      // v1.17.57: chabi = path + decoded cfg (app-er dui install/dui query ek-i kaj milbe);
+      //   shudhu req.url dile prod-e jora-onurodh milto na (prod-test: onugami 9.4s alada-fol).
+      const kRT = p + '|' + JSON.stringify(cfg || {});
       const ex = RT_INFLIGHT.get(kRT);
       if (ex) { // অনুগামী
         if (DBG) console.error('[sf] join ' + p.slice(0, 42));
@@ -8799,7 +8801,7 @@ const server = http.createServer((req, res) => {
       const ottP = !(cfg && cfg.ott === 0) ? ottStreams(Number(m[1]), 'movie', 0, 0, cfg && cfg.ottq || []).catch(() => []) : null; // v1.15.72: AsianTV
       const azP = !(cfg && cfg.az === 0) ? azStreams(Number(m[1]), 'movie', 0, 0, cfg && cfg.azq || []).catch(() => []) : null; // v1.15.76: AniZone
       kickSubs('tmdb' + m[1], 'movie', null, null, cfg);
-      return withDeadline(withSources(vOn ? getSources(Number(m[1]), 'movie', null, null, '', cfg, tp) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: hmP, key: 'hm' }, { p: hdP, key: 'hd' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0), 11900 /* v1.15.26 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
+      return withDeadline(withSources(vOn ? getSources(Number(m[1]), 'movie', null, null, '', cfg, tp) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: hmP, key: 'hm' }, { p: hdP, key: 'hd' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0), 10200 /* v1.17.57: 11.9s deadline + unify/network-e prod-e 12.4s-e theke chilo => 10.2s: NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
 cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'movie', s: 0, e: 0 }).then(u => sendStreams(res, req.url, p, Date.now() - t0, u, RVA, cfg)); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }
