@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.21.7';
+const VERSION = '1.21.8';
 const V1NOTE_47 = 'v1.17.47 (ইউজার: "stream cut kore fast na — 6-8s laguk, sob stream asuk") — হারভেস্ট-কাট বাতিল: আগে ৪.৬সে-এ ৬-কার্ড-হলেই কাট, ৪.৯সে হার্ড-ক্যাপ ⇒ দেরিতে-আসা সোর্সের কার্ড ফেলত। এখন **সব লাইভ-সোর্স সেটেল হলেই ফেরা**, নইলে ৭.৮সে ক্যাপ (Beamup ১২সে-সীমার ভিতরে)। সাথে: nx ৫.১→৭.২সে (MB আর কাটা পড়ে না), mm/m4u ৭.০সে সব-সাইট, hm-রেস ৩.২→৬.৬সে (কোল্ড-চেইনও একই রেসপন্সে), m4u-তে ৩ pd-id + ২ জীবিত মিরর (আগে ১ম-সফলেই-থামা), sky-তে ৩ pd-id/hub, PD_MAX env-নব। মাপা (১৬ রিকোয়েস্ট, লোকাল): avg 5.52s · সর্বোচ্চ 6.66s (আগে 3.75s-কাট-সংস্করণে ৮২৪ কার্ড), HindMovie ৮/১৬ (আগে ৩/১৬), MB ১৬/১৬, mm ১৬/১৬, m4u ১৪/১৬, sky ১২/১৬, কার্ড ৮৩৯ ⇒ **কার্ড কমেনি, বেড়েছে**।';
 
 const V1NOTE_48 = 'v1.17.48 (ইউজার: "M4u thik koro, Hindi movie add koro, configuration page ta o thik koro") — ★ কনফিগ-পেজ-মেরামত: SRC-তালিকা থেকেই সুইচ-বাইন্ড (bf সরানোর পর bindSwitch-এ null.classList-এ পুরো IIFE থেমে যেত ⇒ tune-কার্ড/সেভ/প্রিভিউ কিছুই রেন্ডার হতো না) + bindSwitch-এ null-গার্ড; HindMovie প্যানেল + tune-hm কার্ড যোগ। ★ Movies4u: একাধিক সার্চ-হিট-চেষ্টা (per_page 12), আর্টিকেল-বাদ-দিয়ে-পুনঃসার্চ, modpro-শাখা এখন আসলেই চলে (post খালি থাকলে lastPost দিয়ে) — মৃত-মিরর Range-প্রমাণ ছাড়া কার্ড-নয়। ★ প্রতি-সারি-deadline: এক-সারির-ঢিলামিতে সব-কার্ড বাতিল হতো (3 Idiots ৮.৬সে→৪.৭সে)। ★ HindMovie: 404/410-এ প্রক্সি-পুল-বন্ধ (Silence ১২.২সে→৬.১সে, কার্ড-আসে)। বেঞ্চ: avg ৪.৭৪সে (আগে ৫.৫২), max ৭.০২, m4u ১৪/১৬, HM ৮/১৬, Sky ১৪/১৬।';const V1NOTE_46 = 'v1.17.46 (HindMovie নতুন সোর্স): live search (REST → HTML ফলব্যাক, বছর-মুক্ত কুয়েরি) → পোস্ট (IMDb-id গার্ড) → mvlink (মুভি) / mvlink /web/<id> (সিজন×কোয়ালিটি) → hshare → hcloud b64 → workers.dev direct MKV (২০৬, সিক-যোগ্য)। ক্যাশ ৬ঘণ্টা (search/post/mvlink/final); ডিরেক্ট আগে, 403/429/5xx-তে পুল-রেস। ব্যাচ .zip কখনো কার্ড নয়। hmRace ৩.২s ⇒ কোল্ড-চেইন রেসপন্স আটকায় না, পেছনে ক্যাশ ভরে। মাপা (১৬ রিকোয়েস্ট): avg 3.75s, MB 15/16, mm 16/16, m4u 14/16, sky 13/16, hm 3/16 (হলিউড-ক্লাসিক বেঞ্চে; সিরিজে BB/GoT S1E1 = ৩ কার্ড)।';
@@ -8370,6 +8370,18 @@ function sresGet(k) {
   if (e.exp <= Date.now()) return null; // মেয়াদোত্তীর্ণ — কিন্তু রেকর্ডটা রাখি (পরের স্ক্যানে মার্জের জন্য)
   return e;
 }
+function sresMerge(k, body) { // পুরোনো-উত্তরের কার্ড ফিরিয়ে আনে (url-ডিডুপ, নতুন আগে) — রিফ্রেশে তালিকা ছোট হয় না
+  const prev = STREAM_RES_CACHE.get(k);
+  if (!prev || !prev.body) return body;
+  try {
+    const a = (JSON.parse(prev.body).streams || []), b = (JSON.parse(body).streams || []);
+    const seen = new Set(b.map(x => x && x.url));
+    const add = a.filter(x => x && x.url && !seen.has(x.url));
+    if (!add.length) return body;
+    if (DBG) console.error('[vmc] মার্জ +' + add.length + ' পুরোনো-কার্ড (মোট ' + (b.length + add.length) + ')');
+    return JSON.stringify({ streams: b.concat(add) });
+  } catch (e) { return body; }
+}
 function sresPut(k, body, partial) {
   const _vrc = Number(process.env.VRC || 600); // v1.21.1: ৩০মিন → ১০মিন (বাসি-উত্তর ৩০মিন ধরে ফেরত যেত)
   if (_vrc <= 0) return;
@@ -8381,17 +8393,7 @@ function sresPut(k, body, partial) {
   const _pw = Number(process.env.VRPART || 60) * 1000;
   // ★★ v1.21.7 (ইউজার: "refresh dile keno kome jay"): **মনোটনিক** — নতুন স্ক্যানে কোনো কার্ড কমলে
   //   আগের ফলটার কার্ডগুলোও রাখা হয় (url-ডিডুপ, নতুনগুলো আগে)। mane রিফ্রেশ কখনো তালিকা ছোট করে না।
-  let _body = body;
-  try {
-    const _prev = STREAM_RES_CACHE.get(k);
-    if (_prev && _prev.body) {
-      const _a = JSON.parse(_prev.body).streams || [], _b = JSON.parse(body).streams || [];
-      const _seen = new Set(_b.map(x => x && x.url));
-      const _add = _a.filter(x => x && x.url && !_seen.has(x.url));
-      if (_add.length) { _body = JSON.stringify({ streams: _b.concat(_add) }); if (DBG) console.error('[vmc] মার্জ +' + _add.length + ' পুরোনো-কার্ড'); }
-    }
-  } catch (e) { }
-  STREAM_RES_CACHE.set(k, { body: _body, exp: Date.now() + (partial ? _pw : _vrc * 1000), partial: !!partial, ts: Date.now() });
+  STREAM_RES_CACHE.set(k, { body: body, exp: Date.now() + (partial ? _pw : _vrc * 1000), partial: !!partial, ts: Date.now() });
   if (partial && DBG) console.error('[vmc] partial ফল — ' + Math.round(_pw / 1000) + 'সে ক্যাশ (' + k.split('|')[0] + ')'); // v1.20.0: পূর্ণ-ফল ৩০মিন, আংশিক ১মিনে-আসা সোর্স তাড়াতাড়ি যোগ হোক)
   if (STREAM_RES_CACHE.size > STREAM_RES_MAX) {
     const now = Date.now();
@@ -8473,8 +8475,11 @@ function sendStreams(res, skey, plog, ms, cards, ua, cfg) {
   if (process.env.VHRELAY === '1') { try { if (res && res.req) vhFixCards(cards, originOf(res.req)); } catch (e) { } }
   const n = (cards || []).length; // v1.15.8: কোনো-stash-নেই — প্রতি-উত্তর-তাজা
   logReq(plog, ms, n, null, ua);
-  const body = JSON.stringify({ streams: stripCards(cards) });
-  try { if (String(plog).indexOf('fresh=1') < 0) sresPut(sresKey(plog, cfg), body, partial); } catch (e) { }
+  const _sk = sresKey(plog, cfg);
+  let body = JSON.stringify({ streams: stripCards(cards) });
+  // ★★ v1.21.8: মার্জ **উত্তর দেওয়ার আগেই** (v1.21.7-এ শুধু ক্যাশে মার্জ হচ্ছিল, তাই ওই ট্যাপেই কম-তালিকা দেখা যেত)
+  try { body = sresMerge(_sk, body); } catch (e) { }
+  try { if (String(plog).indexOf('fresh=1') < 0) sresPut(_sk, body, partial); } catch (e) { }
   res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'cache-control': 'no-store' });
   return res.end(body);
 }
