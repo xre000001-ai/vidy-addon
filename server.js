@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.26.8';
+const VERSION = '1.26.9';
 const V1NOTE_47 = 'v1.17.47 (ইউজার: "stream cut kore fast na — 6-8s laguk, sob stream asuk") — হারভেস্ট-কাট বাতিল: আগে ৪.৬সে-এ ৬-কার্ড-হলেই কাট, ৪.৯সে হার্ড-ক্যাপ ⇒ দেরিতে-আসা সোর্সের কার্ড ফেলত। এখন **সব লাইভ-সোর্স সেটেল হলেই ফেরা**, নইলে ৭.৮সে ক্যাপ (Beamup ১২সে-সীমার ভিতরে)। সাথে: nx ৫.১→৭.২সে (MB আর কাটা পড়ে না), mm/m4u ৭.০সে সব-সাইট, hm-রেস ৩.২→৬.৬সে (কোল্ড-চেইনও একই রেসপন্সে), m4u-তে ৩ pd-id + ২ জীবিত মিরর (আগে ১ম-সফলেই-থামা), sky-তে ৩ pd-id/hub, PD_MAX env-নব। মাপা (১৬ রিকোয়েস্ট, লোকাল): avg 5.52s · সর্বোচ্চ 6.66s (আগে 3.75s-কাট-সংস্করণে ৮২৪ কার্ড), HindMovie ৮/১৬ (আগে ৩/১৬), MB ১৬/১৬, mm ১৬/১৬, m4u ১৪/১৬, sky ১২/১৬, কার্ড ৮৩৯ ⇒ **কার্ড কমেনি, বেড়েছে**।';
 
 const V1NOTE_48 = 'v1.17.48 (ইউজার: "M4u thik koro, Hindi movie add koro, configuration page ta o thik koro") — ★ কনফিগ-পেজ-মেরামত: SRC-তালিকা থেকেই সুইচ-বাইন্ড (bf সরানোর পর bindSwitch-এ null.classList-এ পুরো IIFE থেমে যেত ⇒ tune-কার্ড/সেভ/প্রিভিউ কিছুই রেন্ডার হতো না) + bindSwitch-এ null-গার্ড; HindMovie প্যানেল + tune-hm কার্ড যোগ। ★ Movies4u: একাধিক সার্চ-হিট-চেষ্টা (per_page 12), আর্টিকেল-বাদ-দিয়ে-পুনঃসার্চ, modpro-শাখা এখন আসলেই চলে (post খালি থাকলে lastPost দিয়ে) — মৃত-মিরর Range-প্রমাণ ছাড়া কার্ড-নয়। ★ প্রতি-সারি-deadline: এক-সারির-ঢিলামিতে সব-কার্ড বাতিল হতো (3 Idiots ৮.৬সে→৪.৭সে)। ★ HindMovie: 404/410-এ প্রক্সি-পুল-বন্ধ (Silence ১২.২সে→৬.১সে, কার্ড-আসে)। বেঞ্চ: avg ৪.৭৪সে (আগে ৫.৫২), max ৭.০২, m4u ১৪/১৬, HM ৮/১৬, Sky ১৪/১৬।';const V1NOTE_46 = 'v1.17.46 (HindMovie নতুন সোর্স): live search (REST → HTML ফলব্যাক, বছর-মুক্ত কুয়েরি) → পোস্ট (IMDb-id গার্ড) → mvlink (মুভি) / mvlink /web/<id> (সিজন×কোয়ালিটি) → hshare → hcloud b64 → workers.dev direct MKV (২০৬, সিক-যোগ্য)। ক্যাশ ৬ঘণ্টা (search/post/mvlink/final); ডিরেক্ট আগে, 403/429/5xx-তে পুল-রেস। ব্যাচ .zip কখনো কার্ড নয়। hmRace ৩.২s ⇒ কোল্ড-চেইন রেসপন্স আটকায় না, পেছনে ক্যাশ ভরে। মাপা (১৬ রিকোয়েস্ট): avg 3.75s, MB 15/16, mm 16/16, m4u 14/16, sky 13/16, hm 3/16 (হলিউড-ক্লাসিক বেঞ্চে; সিরিজে BB/GoT S1E1 = ৩ কার্ড)।';
@@ -177,7 +177,9 @@ async function pxCheckerWave() {
     }
     if (cut) { try { fs.promises.writeFile(POOL_FILE, JSON.stringify(POOL)).catch(() => {}); } catch (e) {} setTimeout(enrichPool, 1500).unref(); }
     const benchN = POOL.filter(c => PX_SITE.has(c.px)).length;
-    if (benchN < 48) { setTimeout(enrichPool, 2000).unref(); if (PXCHK % 10 === 1) console.log('[pxbench-keeper] bench=' + benchN + ' < ৪৮ → এনরিচ-ফসল-তাৎক্ষণিক'); } // v1.15.68: বেঞ্চ-রক্ষক ২× ২৪→৪৮
+    // ★★ v1.26.9 (ইউজার: "node, benched proxy eigula onek baraw"): বেঞ্চ-লক্ষ্য ৪৮ → PXBMIN(২৪০)।
+    //   স্ক্যানের গতি (PXSCAN সমান্তরালতা) অপরিবর্তিত — শুধু **কত নোড জমা রাখা হবে** তার ছাদ বেড়েছে।
+    if (benchN < Number(process.env.PXBMIN || 240)) { setTimeout(enrichPool, 2000).unref(); if (PXCHK % 10 === 1) console.log('[pxbench-keeper] bench=' + benchN + ' < ' + Number(process.env.PXBMIN || 240) + ' → এনরিচ-ফসল-তাৎক্ষণিক'); }
     if (cut || PXCHK % 15 === 1 || process.env.VPCHK) console.log('[pxchk] wave=' + wave.length + ' site=' + cok + ' spare=' + cspare + ' dead=' + cdead + ' pool=' + POOL.length + ' bench=' + benchN + ' cut=' + cut); // VPCHK=1: প্রতি-ঢেউয়ে-লগ (ডিবাগ)
   } finally { pxChkBusy = false; }
 }
@@ -694,7 +696,7 @@ async function enrichPool() {
   if (process.uptime() < Number(process.env.PXBOOT || 75)) return; // ★ v1.24.1: বুট-ঝড় রোধ (ডিপ্লয়ের পর ৭৫সে শান্ত)
   // ★ v1.17.56: verified-pool পূর্ণ না হওয়া পর্যন্ত এনরিচ ছোট-বিরতিতে (৯০সে→৩০সে) — POOL-ই
   //   vidy-verified-এর কাঁচামাল; POOL না-বাড়লে verified স্যাচুরেট করে (মাপা: ৩.৫ মিনিটে ৭৩→৮০ থেমে যেত)।
-  const _gap = (VIDY_OK.size < Number(process.env.VPXMAX || 2500)) ? Number(process.env.PXGAP || 30000) : 90000;
+  const _gap = (VIDY_OK.size < Number(process.env.VPXMAX || 2000)) ? Number(process.env.PXGAP || 30000) : 90000;   // ★ v1.26.9: দুটি ভিন্ন-লক্ষ্য(১৫০০/২৫০০) এক করা হলো
   if (POOL.length >= 180 && Date.now() - _lastEnrich < _gap) return; // v1.15.98: প্রতি ১৮ সেকেন্ডে এনরিচ-ঝড় রোধ (কমপক্ষে ৯০সে বিরতি)
   _training = true; _lastEnrich = Date.now();
   try {
@@ -760,8 +762,10 @@ async function enrichPool() {
       .concat(shuffle(all.filter(px => !t1.has(px) && t2.has(px))))  // T2
       .concat(shuffle(all.filter(px => !t1.has(px) && !t2.has(px)))); // বাকি সব
     pxRawPush(cands); // ★ v1.17.56: vidy-প্রশিক্ষণের জন্যে তাজা-প্রার্থী জমা
-    const sample = cands.slice(0, Number(process.env.PXSAMPLE || 600)), good = []; // v1.15.68: স্ক্যান ২× ২০০→৪০০
-    for (let i = 0; i < sample.length && POOL.length < PX_CAP; i += 240) { // v1.15.68: ব্যাচ ২× ১২০→২৪০
+    const sample = cands.slice(0, Number(process.env.PXSAMPLE || 1200)), good = []; // ★ v1.26.9: ৬০০ → ১২০০ (প্রতি ফসলে দ্বিগুণ নোড; সমান্তরালতা আগের মতোই)
+    // ★★ v1.26.9 বাগ-ফিক্স: ধাপ ছিল ২৪০ কিন্তু ব্যাচ ১২০ ⇒ নমুনার **অর্ধেকই কখনো প্রোব হতো না**
+    //   (৬০০ নমুনায় ৩০০)। এখন ধাপ ১২০ ⇒ নমুনার প্রতিটি প্রার্থী যাচাই হয়, সমান্তরালতা আগের মতোই ১২০।
+    for (let i = 0; i < sample.length && POOL.length < PX_CAP; i += 120) { // v1.15.68: ব্যাচ ২× ১২০→২৪০
       if (Date.now() < MMR_ACTIVE_UNTIL) break;
       const res = await Promise.all(sample.slice(i, i + 120).map(px => new Promise(r2 => {
         const t0 = Date.now();
@@ -1336,7 +1340,7 @@ async function spoolTrain() {
     for (const k of Object.keys(SRC_PROBE)) {
       const m = srcPool(k);
       const fresh = [...m.values()].filter(e => spoolFresh(e)).length;
-      if (fresh >= Number(process.env.SPMIN || 48)) continue;
+      if (fresh >= Number(process.env.SPMIN || 96)) continue;
       const cands = [];
       for (const px of VIDY_OK.keys()) if (!m.has(px)) cands.push(px);                          // (ক) vidy-প্রমাণিত নোড
       for (const c of POOL.filter(c => PX_SITE.has(c.px))) if (!m.has(c.px) && cands.indexOf(c.px) < 0) cands.push(c.px); // (খ) site-proven
@@ -1620,8 +1624,8 @@ async function vidySweep(n) {
     const poolC = POOL.filter(c => free(c.px)).sort((a, b) => pxScore(a.px, a.ms) - pxScore(b.px, b.ms)).map(c => c.px);
     // ★ v1.17.56: POOL শেষ হলে enrich-এর তাজা-প্রার্থী-তালিকা (PX_RAW) থেকে যাচাই চলবে — পুল স্যাচুরেট হয় না।
     const rawC = PX_RAW.filter(p2 => free(p2) && vpxLeft(p2) >= 3);
-    const cands = poolC.slice(0, n || 720);   // v1.25.3: 240 -> 720 per cycle
-    for (let i = 0; i < rawC.length && cands.length < (n || 720); i++) cands.push(rawC[i]);
+    const cands = poolC.slice(0, n || Number(process.env.VPXPASS || 1500));   // ★ v1.26.9: ৭২০ → ১৫০০ (verified পুল দ্বিগুণ-দ্রুত ভরে)
+    for (let i = 0; i < rawC.length && cands.length < (n || Number(process.env.VPXPASS || 1500)); i++) cands.push(rawC[i]);
     let _ok = 0;
     // ★ v1.17.56: প্রশিক্ষণ এখন **ভদ্র** — ছোট-ব্যাচ (১২) + গ্লোবাল-গেট + প্রতি-নোড-লক,
     //   আর ইউজারের অনুরোধ চলাকালীন স্ক্যান থামে (আগে ৬০-এর-বেশি সমান্তরাল স্ক্যান সার্ভিং-ট্র্যাফিক
@@ -1692,7 +1696,7 @@ vidyVLoad();
   setTimeout(spawnD, 8000);
 })();
 let vidySweepTimer = null;
-function vidySweepNext(ms) { if (vidySweepTimer) clearTimeout(vidySweepTimer); vidySweepTimer = setTimeout(() => vidySweep(Number(process.env.VPXW || 60)), ms); if (vidySweepTimer.unref) vidySweepTimer.unref(); }
+function vidySweepNext(ms) { if (vidySweepTimer) clearTimeout(vidySweepTimer); vidySweepTimer = setTimeout(() => vidySweep(Number(process.env.VPXW || 240)), ms); if (vidySweepTimer.unref) vidySweepTimer.unref(); }   // ★ v1.26.9: প্রতি-চক্রে ৬০ → ২৪০ প্রার্থী
 setTimeout(() => vidySweep(Number(process.env.VPXW || 720)), 2500);
 // ★ v1.25.0: টানেল-ব্যাংক রক্ষণাবেক্ষণ (vidy-কোটা শূন্য) — প্রতি PXTWMS-এ ভরা, প্রতি ১০সে-এ বাসি বাদ
 const tunTimer = setInterval(() => { try { tunWarm(); } catch (e) { } }, Number(process.env.PXTWMS || 3000));   // v1.25.3: 8s -> 3s if (tunTimer.unref) tunTimer.unref();
@@ -1810,16 +1814,16 @@ function vsrvKey(o) { return o.srv + ':' + ((o.q && o.q.mediaType) || 'any'); }
 // প্রতিটি কন্টেইনার আলাদা পুল দিয়ে চলে — তাই ভরার হিসাব পুল-ধরন অনুযায়ী:
 //   vidy (verified) · warm tunnel bank · generic POOL · ৬টি spool-সোর্স (SRC_PROBE) + bf · mm-এর নিজের পুল
 function poolsFull() {
-  if (VIDY_OK.size < Number(process.env.VPXMAX || 1500)) return false;
+  if (VIDY_OK.size < Number(process.env.VPXMAX || 2000)) return false;   // ★ v1.26.9: verified-লক্ষ্য ১৫০০ → ২০০০
   // (টানেল-ব্যাংক ইচ্ছাকৃতভাবে বাদ — ওটা ফ্রি-বোনাস, প্রক্সি-মৃত্যুতে ওঠানামা করে; ভরার শর্ত নয়)
   if (POOL.length < Math.floor(PX_CAP * 0.8)) return false;
   try {
     const keys = Object.keys(SRC_PROBE); if (SPOOL.has('bf')) keys.push('bf');
     for (const k of keys) {
       const fresh = [...srcPool(k).values()].filter(e => spoolFresh(e)).length;
-      if (fresh < Number(process.env.SPMIN || 48)) return false;
+      if (fresh < Number(process.env.SPMIN || 96)) return false;
     }
-    if (typeof MM_POOL !== 'undefined' && MM_POOL.length < Number(process.env.MMTGT || 48)) return false;
+    if (typeof MM_POOL !== 'undefined' && MM_POOL.length < Number(process.env.MMTGT || 96)) return false;
   } catch (e) { }
   return true;
 }
@@ -1831,8 +1835,8 @@ function poolsFill() {
   out.generic = [POOL.length, Math.floor(PX_CAP * 0.8)];
   try {
     const keys = Object.keys(SRC_PROBE); if (SPOOL.has('bf')) keys.push('bf');
-    for (const k of keys) out[k] = [[...srcPool(k).values()].filter(e => spoolFresh(e)).length, Number(process.env.SPMIN || 48)];
-    if (typeof MM_POOL !== 'undefined') out.mm = [MM_POOL.length, Number(process.env.MMTGT || 48)];
+    for (const k of keys) out[k] = [[...srcPool(k).values()].filter(e => spoolFresh(e)).length, Number(process.env.SPMIN || 96)];
+    if (typeof MM_POOL !== 'undefined') out.mm = [MM_POOL.length, Number(process.env.MMTGT || 96)];
   } catch (e) { }
   return out;
 }
@@ -5075,28 +5079,23 @@ const HD_BASE = 'https://ghdhub.org';
 const HD_TTL = 6 * 3600 * 1000;
 const HD_S = new Map(), HD_P = new Map(); // সার্চ-ফল / পোস্ট-পেজ ক্যাশ
 const HD_C = new Map();            // ★ v1.27.2: যাচাই-করা কার্ডের শেষ-জীবিত-সেট (প্রতি এপিসোড/মুভি)
-const HD_CTTL = 3 * 3600e3;        // ★ v1.27.10: ৬→৩ ঘণ্টা (মৃত ফাইল-লিঙ্ক ক্যাশে বসে থাকলে ৪০৪ দিত)
+const HD_CTTL = Number(process.env.HDCT || 20 * 60e3);   // ★ v1.26.9: ৩ ঘণ্টার পুরোনো লিংক আর রাখা হয় না (ইউজার: একই লিংক অনেকে একসাথে চালাতে পারে না)
 function hdCached(m, k) { if (NOCACHE) return null; const c = m.get(k); return (c && Date.now() - c.ts < HD_TTL) ? c.v : null; }
 function hdStore(m, k, v) { if (m.size > 600) m.clear(); m.set(k, { ts: Date.now(), v: v }); }
 // ★ v1.27.2 (মাপা সমস্যা): একই এপিসোড দুই রানে hd=3 → hd=0 — মিরর-প্রোব মাঝে মাঝে ব্যর্থ হয় (pixeldrain/worker
 //   রেট-লিমিট, ড্রাইভ-স্টাব)। ব্যবহারকারীর চোখে এটা "স্ট্রিম হারিয়ে গেল"। তাই **শেষবার যাচাই হওয়া কার্ড-সেট**
 //   ৬ ঘণ্টা রাখি; নতুন প্রোব শূন্য দিলে সেটাই ফেরত যায় (নতুন কার্ড এলে সেটি অগ্রাধিকার পায়)।
 function hdCards(key, arr) {
-  // ★ v1.26.6: **merge** — কোনো রানে কম কার্ড প্রমাণিত হলে আগের সমৃদ্ধ সেট মুছে যাবে না (মাপা: Shawshank ৫→১)।
+  // ★★ v1.26.9 (ইউজার: "cache joma rakhar jabe na — ekoi link onek e eksathe chalte pare na"):
+  //   v1.26.6-এর merge **জমা** করত (পুরোনো ৩ ঘণ্টার লিংক নতুনের সাথে জুড়ে দিত) ⇒ একই signed লিংক
+  //   অনেক ইউজার পেত। এখন **জমা নেই**: এই রানের ফলই চূড়ান্ত (ভিতরে dedupe, বাইরে কিছু নয়)।
+  //   শুধু সত্যিকারের **ত্রুটি**র রানে (err=true) আগের সেট সেফটি-নেট হিসেবে ফেরে — সেটা জমা নয়।
   if (arr && arr.length) {
-    const prev = HD_C.get(key);
-    const keep = (prev && Date.now() - prev.ts < HD_CTTL) ? (prev.v || []) : [];
     const sig = x => String(x.u || '').slice(-40) + '|' + String(x.f || x.n || '');
     const out = [];
     for (const z of arr.map(x => ({ n: x.name, t: x.title, d: x.description, q: x.quality, u: x.url, b: x.bingeGroup, f: x.behaviorHints && x.behaviorHints.filename }))) if (!out.some(y => sig(y) === sig(z))) out.push(z);
-    for (const z of keep) if (!out.some(y => sig(y) === sig(z))) out.push(z);      // পুরোনো-প্রমাণিত আগে নয়, পরে (নতুন অগ্রাধিকার)
-    hdStore(HD_C, key, out.slice(0, 12));
-    const extra = out.slice(arr.length).map(x => ({
-      name: x.n, title: x.t, description: x.d, quality: x.q, url: x.u,
-      behaviorHints: { notWebReady: false, isBingeable: true, proxyHeaders: { request: { 'User-Agent': UA } }, filename: x.f },
-      bingeGroup: x.b
-    }));
-    return extra.length ? arr.concat(extra) : arr;   // ★ v1.26.6: thin-রানেও আগের প্রমাণিত কার্ড থাকে
+    hdStore(HD_C, key, out.slice(0, 16));
+    return arr;
   }
   return null;
 }
@@ -8789,7 +8788,12 @@ function dvOfDesc(d) { // desc থেকে-HDR-ধরন:
 const SRC_STASH = new Map();                   // routeKey -> { srcKey: {ts, cards} }
 const STASH_TTL = Number(process.env.SSTASH || 240000);   // ৪ মিনিট (লিংকের আয়ু মেনে ছোট রাখা)
 const STASH_MAX = Number(process.env.SSTASHN || 600);
+// ★★ v1.26.9 (ইউজার: "cache joma rakhar jabe na — ekoi link onek e eksathe chalte pare na"):
+//   আগের ৪ মিনিটের সোর্স-ফল জমিয়ে পরের ট্যাপে সেগুলোই দেওয়া হতো ⇒ সব ইউজার **একই লিংক** পেত,
+//   একসাথে অনেকে চালালে সেই একই exit/সার্ভার চাপে ভেঙে পড়ত। এখন ডিফল্টে জমা নেই (দরকার হলে SRCSTASH=1)।
+const STASH_ON = process.env.SRCSTASH === '1';
 function stashPut(k, sk, cards) {
+  if (!STASH_ON) return;                      // ★ v1.26.9: জমা বন্ধ
   if (!k || !sk || !cards || !cards.length) return;
   let e = SRC_STASH.get(k); if (!e) { e = {}; SRC_STASH.set(k, e); }
   e[sk] = { ts: Date.now(), cards: cards };
@@ -8800,6 +8804,7 @@ function stashPut(k, sk, cards) {
   }
 }
 function stashGet(k) {
+  if (!STASH_ON) return null;                 // ★ v1.26.9: জমা বন্ধ
   const e = SRC_STASH.get(k); if (!e) return null;
   const now = Date.now(), out = {}; let any = false;
   for (const sk in e) if (now - e[sk].ts < STASH_TTL) { out[sk] = e[sk]; any = true; }
