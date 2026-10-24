@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.27.6';
+const VERSION = '1.27.7';
 const V1NOTE_47 = 'v1.17.47 (ইউজার: "stream cut kore fast na — 6-8s laguk, sob stream asuk") — হারভেস্ট-কাট বাতিল: আগে ৪.৬সে-এ ৬-কার্ড-হলেই কাট, ৪.৯সে হার্ড-ক্যাপ ⇒ দেরিতে-আসা সোর্সের কার্ড ফেলত। এখন **সব লাইভ-সোর্স সেটেল হলেই ফেরা**, নইলে ৭.৮সে ক্যাপ (Beamup ১২সে-সীমার ভিতরে)। সাথে: nx ৫.১→৭.২সে (MB আর কাটা পড়ে না), mm/m4u ৭.০সে সব-সাইট, hm-রেস ৩.২→৬.৬সে (কোল্ড-চেইনও একই রেসপন্সে), m4u-তে ৩ pd-id + ২ জীবিত মিরর (আগে ১ম-সফলেই-থামা), sky-তে ৩ pd-id/hub, PD_MAX env-নব। মাপা (১৬ রিকোয়েস্ট, লোকাল): avg 5.52s · সর্বোচ্চ 6.66s (আগে 3.75s-কাট-সংস্করণে ৮২৪ কার্ড), HindMovie ৮/১৬ (আগে ৩/১৬), MB ১৬/১৬, mm ১৬/১৬, m4u ১৪/১৬, sky ১২/১৬, কার্ড ৮৩৯ ⇒ **কার্ড কমেনি, বেড়েছে**।';
 
 const V1NOTE_48 = 'v1.17.48 (ইউজার: "M4u thik koro, Hindi movie add koro, configuration page ta o thik koro") — ★ কনফিগ-পেজ-মেরামত: SRC-তালিকা থেকেই সুইচ-বাইন্ড (bf সরানোর পর bindSwitch-এ null.classList-এ পুরো IIFE থেমে যেত ⇒ tune-কার্ড/সেভ/প্রিভিউ কিছুই রেন্ডার হতো না) + bindSwitch-এ null-গার্ড; HindMovie প্যানেল + tune-hm কার্ড যোগ। ★ Movies4u: একাধিক সার্চ-হিট-চেষ্টা (per_page 12), আর্টিকেল-বাদ-দিয়ে-পুনঃসার্চ, modpro-শাখা এখন আসলেই চলে (post খালি থাকলে lastPost দিয়ে) — মৃত-মিরর Range-প্রমাণ ছাড়া কার্ড-নয়। ★ প্রতি-সারি-deadline: এক-সারির-ঢিলামিতে সব-কার্ড বাতিল হতো (3 Idiots ৮.৬সে→৪.৭সে)। ★ HindMovie: 404/410-এ প্রক্সি-পুল-বন্ধ (Silence ১২.২সে→৬.১সে, কার্ড-আসে)। বেঞ্চ: avg ৪.৭৪সে (আগে ৫.৫২), max ৭.০২, m4u ১৪/১৬, HM ৮/১৬, Sky ১৪/১৬।';const V1NOTE_46 = 'v1.17.46 (HindMovie নতুন সোর্স): live search (REST → HTML ফলব্যাক, বছর-মুক্ত কুয়েরি) → পোস্ট (IMDb-id গার্ড) → mvlink (মুভি) / mvlink /web/<id> (সিজন×কোয়ালিটি) → hshare → hcloud b64 → workers.dev direct MKV (২০৬, সিক-যোগ্য)। ক্যাশ ৬ঘণ্টা (search/post/mvlink/final); ডিরেক্ট আগে, 403/429/5xx-তে পুল-রেস। ব্যাচ .zip কখনো কার্ড নয়। hmRace ৩.২s ⇒ কোল্ড-চেইন রেসপন্স আটকায় না, পেছনে ক্যাশ ভরে। মাপা (১৬ রিকোয়েস্ট): avg 3.75s, MB 15/16, mm 16/16, m4u 14/16, sky 13/16, hm 3/16 (হলিউড-ক্লাসিক বেঞ্চে; সিরিজে BB/GoT S1E1 = ৩ কার্ড)।';
@@ -573,6 +573,29 @@ async function mmProbeImg(u) { // image verdict by MAGIC BYTES, not extension �
     if (b.length >= 12 && b[4] === 0x66 && b[5] === 0x74 && b[6] === 0x79 && b[7] === 0x70) { const f = b.subarray(8, 12).toString('latin1'); return f.indexOf('avif') >= 0 || f.indexOf('heic') >= 0; } // ISOBMFF
     return false; // MPEG-TS (0x47), MP4, anything else — real media
   } catch { return false; }
+}
+// ★★ v1.27.7: **Multimovies-এর ভিডিও-বাইট আর আমাদের দিয়ে যাবে না** (ইউজার: "jader jader eirokom implant
+//   kora jay"). আগে `/mmr/` রিলে সব সেগমেন্ট নিজের ভিতর দিয়ে টানত ⇒ আমাদের ব্যান্ডউইথ/লেটেন্সি।
+//   মাপা: rousav সেগমেন্ট সাধারণ UA দিয়েই **২০৬ video/mp2t** দেয় (অতিরিক্ত `&vu=` সহও)।
+//   তবু অন্ধ-বিশ্বাস নয় — প্লেয়ারের মতো ১টি Range-প্রোব (১KB) করে **তবেই** সরাসরি পাঠাই, নইলে
+//   আগের রিলে-পথ। সিদ্ধান্ত প্রতি origin-এ ৫ মিনিট ক্যাশ।
+const MM_DIRECT = process.env.MMDIRECT !== '0';
+const MM_DCHK = new Map();      // origin → {ts, ok}
+async function mmDirectOK(u) {
+  if (!MM_DIRECT) return false;
+  let o = ''; try { o = new URL(u).origin; } catch (e) { return false; }
+  const c = MM_DCHK.get(o);
+  if (c && Date.now() - c.ts < 5 * 60e3) return c.ok;
+  let ok = false;
+  try {
+    const r = await fetch(u, { headers: { 'User-Agent': UA, 'Accept': '*/*', Range: 'bytes=0-1023' }, signal: AbortSignal.timeout(3500) });
+    const ct = String(r.headers.get('content-type') || '');
+    ok = (r.status === 206 || r.status === 200) && !/text\/html/i.test(ct) && ct.length > 0;
+    try { r.body && r.body.cancel && r.body.cancel(); } catch (e) { }
+  } catch (e) { ok = false; }
+  MM_DCHK.set(o, { ts: Date.now(), ok: ok });
+  if (DBG) console.error('[mmdir] ' + o + ' ⇒ ' + (ok ? 'direct' : 'relay'));
+  return ok;
 }
 function mmPut(map, k, v) { if (map.size > 300) map.clear(); map.set(k, { ts: Date.now(), v }); }
 function mmGet(map, k, ttl) { const e = map.get(k); return e && (Date.now() - e.ts) < ttl ? e.v : null; }
@@ -9778,6 +9801,9 @@ function gwRewriteBody(body, origin) {
 const REL_ON = process.env.REL !== '0';
 const REL_HOSTS_MP4 = /(?:^|\.)hakunaymatata\.com$|(?:^|\.)bcdnxw\./i;
 const RELVU = (() => { try { return require('crypto'); } catch (e) { return null; } })();
+// ★ v1.27.7: প্রি-সাইনড (X-Amz-Signature) লিংকে **কোনো প্যারামিটার যোগ করা যাবে না** —
+//   সিগনেচার কুয়েরির অংশ ⇒ মাপা: `&vu=` দিলেই r2 403। তাই সেগুলোয় হাত দেওয়া হয় না।
+const isPresigned = u => /[?&](X-Amz-Signature|X-Amz-Credential)=/i.test(String(u || ''));
 function relWrapBody(body, origin) {
   if (!REL_ON || !origin || !body || body.length < 40) return body;
   try {
@@ -9795,6 +9821,7 @@ function relWrapBody(body, origin) {
       //   তাই HLS আর রিলে করি না — **সরাসরি CDN লিংক** রাখি, শুধু প্রতি-উত্তরে নতুন `vu` কোয়েরি
       //   (লিংক আলাদা, অথচ সার্ভার সম্পূর্ণ বাইরে ⇒ থ্রটল/বাধা শূন্য)।
       let kind = '';
+      if (isPresigned(u)) continue;                       // ★ প্রি-সাইনড ⇒ অপরিবর্তিত
       if (/\.m3u8(\?|$)/i.test(u) && process.env.RELHLS !== '1') {
         const vq = (process.env.VUQ === '0') ? '' : ('vu=' + RELVU.randomBytes(6).toString('base64url'));
         if (vq) {
@@ -10195,12 +10222,24 @@ const server = http.createServer((req, res) => {
         }
         let miniOut = mini;
         if (relOn && !isMasterForm) {
-          mmPrewarmPlaylistSegs(mini);
-          const rw = u2 => String(u2).replace(/https?:\/\/[^\s"<>]+/g, uu => {
-            if (/\.m3u8(\?|$)/.test(uu)) return origin2 + '/mmr/' + Buffer.from(uu).toString('base64url') + '/p.m3u8';
-            return origin2 + '/mmr/' + Buffer.from(uu).toString('base64url') + '/s.m4s';
-          });
-          miniOut = rw(mini);
+          // ★ v1.27.7: প্রথম সেগমেন্ট সত্যিই সরাসরি চলে? ⇒ তাহলে আর রিলে নয়
+          const _fseg = (mini.match(/^https?:\/\/\S+$/gm) || []).find(u2 => !/\.m3u8(\?|$)/i.test(u2)) || '';
+          const _direct = !!_fseg && await mmDirectOK(_fseg);
+          if (_direct) {
+            const vq = (process.env.VUQ === '0') ? '' : ('vu=' + RELVU.randomBytes(6).toString('base64url'));
+            miniOut = String(mini).replace(/^(https?:\/\/\S+)\s*$/gm, (m0, uu) => {
+              if (/\.m3u8(\?|$)/i.test(uu) || !vq) return uu;     // প্লেলিস্ট আগের মতোই (এক ধাপ, ছোট)
+              return uu + (uu.indexOf('?') >= 0 ? '&' : '?') + vq;
+            });
+            if (DBG) console.error('[mmdir] mini → direct segments');
+          } else {
+            mmPrewarmPlaylistSegs(mini);
+            const rw = u2 => String(u2).replace(/https?:\/\/[^\s"<>]+/g, uu => {
+              if (/\.m3u8(\?|$)/.test(uu)) return origin2 + '/mmr/' + Buffer.from(uu).toString('base64url') + '/p.m3u8';
+              return origin2 + '/mmr/' + Buffer.from(uu).toString('base64url') + '/s.m4s';
+            });
+            miniOut = rw(mini);
+          }
         }
         res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl', 'access-control-allow-origin': '*', 'cache-control': 'no-store', 'cdn-cache-control': 'no-store' });
         return res.end(miniOut);
@@ -10227,8 +10266,16 @@ const server = http.createServer((req, res) => {
           else { try { if (await mmNeedsRef(afs)) aRel = 1; } catch { } }
         }
         if (aRel) {
-          mmPrewarmPlaylistSegs(out);
-          out = String(out).replace(/https?:\/\/[^\s"<>]+/g, uu => originOf(req) + '/mmr/' + Buffer.from(uu).toString('base64url') + '/s.m4s');
+          const _fs2 = (out.match(/^https?:\/\/\S+$/gm) || []).find(u2 => !/\.m3u8(\?|$)/i.test(u2)) || '';
+          const _d2 = !!_fs2 && await mmDirectOK(_fs2);
+          if (_d2) {
+            const vq2 = (process.env.VUQ === '0') ? '' : ('vu=' + RELVU.randomBytes(6).toString('base64url'));
+            out = String(out).replace(/^(https?:\/\/\S+)\s*$/gm, (m0, uu) => (/\.m3u8(\?|$)/i.test(uu) || !vq2) ? uu : (uu + (uu.indexOf('?') >= 0 ? '&' : '?') + vq2));
+            if (DBG) console.error('[mmdir] audio path → direct segments');
+          } else {
+            mmPrewarmPlaylistSegs(out);
+            out = String(out).replace(/https?:\/\/[^\s"<>]+/g, uu => originOf(req) + '/mmr/' + Buffer.from(uu).toString('base64url') + '/s.m4s');
+          }
         }
         res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl', 'access-control-allow-origin': '*', 'cache-control': 'no-store', 'cdn-cache-control': 'no-store' });
         return res.end(out);
