@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.26.7';
+const VERSION = '1.26.8';
 const V1NOTE_47 = 'v1.17.47 (ইউজার: "stream cut kore fast na — 6-8s laguk, sob stream asuk") — হারভেস্ট-কাট বাতিল: আগে ৪.৬সে-এ ৬-কার্ড-হলেই কাট, ৪.৯সে হার্ড-ক্যাপ ⇒ দেরিতে-আসা সোর্সের কার্ড ফেলত। এখন **সব লাইভ-সোর্স সেটেল হলেই ফেরা**, নইলে ৭.৮সে ক্যাপ (Beamup ১২সে-সীমার ভিতরে)। সাথে: nx ৫.১→৭.২সে (MB আর কাটা পড়ে না), mm/m4u ৭.০সে সব-সাইট, hm-রেস ৩.২→৬.৬সে (কোল্ড-চেইনও একই রেসপন্সে), m4u-তে ৩ pd-id + ২ জীবিত মিরর (আগে ১ম-সফলেই-থামা), sky-তে ৩ pd-id/hub, PD_MAX env-নব। মাপা (১৬ রিকোয়েস্ট, লোকাল): avg 5.52s · সর্বোচ্চ 6.66s (আগে 3.75s-কাট-সংস্করণে ৮২৪ কার্ড), HindMovie ৮/১৬ (আগে ৩/১৬), MB ১৬/১৬, mm ১৬/১৬, m4u ১৪/১৬, sky ১২/১৬, কার্ড ৮৩৯ ⇒ **কার্ড কমেনি, বেড়েছে**।';
 
 const V1NOTE_48 = 'v1.17.48 (ইউজার: "M4u thik koro, Hindi movie add koro, configuration page ta o thik koro") — ★ কনফিগ-পেজ-মেরামত: SRC-তালিকা থেকেই সুইচ-বাইন্ড (bf সরানোর পর bindSwitch-এ null.classList-এ পুরো IIFE থেমে যেত ⇒ tune-কার্ড/সেভ/প্রিভিউ কিছুই রেন্ডার হতো না) + bindSwitch-এ null-গার্ড; HindMovie প্যানেল + tune-hm কার্ড যোগ। ★ Movies4u: একাধিক সার্চ-হিট-চেষ্টা (per_page 12), আর্টিকেল-বাদ-দিয়ে-পুনঃসার্চ, modpro-শাখা এখন আসলেই চলে (post খালি থাকলে lastPost দিয়ে) — মৃত-মিরর Range-প্রমাণ ছাড়া কার্ড-নয়। ★ প্রতি-সারি-deadline: এক-সারির-ঢিলামিতে সব-কার্ড বাতিল হতো (3 Idiots ৮.৬সে→৪.৭সে)। ★ HindMovie: 404/410-এ প্রক্সি-পুল-বন্ধ (Silence ১২.২সে→৬.১সে, কার্ড-আসে)। বেঞ্চ: avg ৪.৭৪সে (আগে ৫.৫২), max ৭.০২, m4u ১৪/১৬, HM ৮/১৬, Sky ১৪/১৬।';const V1NOTE_46 = 'v1.17.46 (HindMovie নতুন সোর্স): live search (REST → HTML ফলব্যাক, বছর-মুক্ত কুয়েরি) → পোস্ট (IMDb-id গার্ড) → mvlink (মুভি) / mvlink /web/<id> (সিজন×কোয়ালিটি) → hshare → hcloud b64 → workers.dev direct MKV (২০৬, সিক-যোগ্য)। ক্যাশ ৬ঘণ্টা (search/post/mvlink/final); ডিরেক্ট আগে, 403/429/5xx-তে পুল-রেস। ব্যাচ .zip কখনো কার্ড নয়। hmRace ৩.২s ⇒ কোল্ড-চেইন রেসপন্স আটকায় না, পেছনে ক্যাশ ভরে। মাপা (১৬ রিকোয়েস্ট): avg 3.75s, MB 15/16, mm 16/16, m4u 14/16, sky 13/16, hm 3/16 (হলিউড-ক্লাসিক বেঞ্চে; সিরিজে BB/GoT S1E1 = ৩ কার্ড)।';
@@ -1911,9 +1911,9 @@ async function vhotWarm() {
     for (const srv of order) {
       // ★ v1.26.7: আগে **পুরো লুপ বন্ধ** হয়ে যেত ⇒ ব্যস্ত সময়ে হট-সেট TTL-এ মরে গিয়ে miami/boise মিস করত।
       //   এখন ব্যস্ত থাকলেও প্রায়োরিটি সার্ভার এক-এক নোড করে রিফিল হয় (কম খরচ), বাকিরা অপেক্ষা করে।
-      if (busyNow() && !isPrio(srv)) continue;
+      if (busyNow() && !(isPrio(srv) && (vhotPick(srv, 99).length < Number(process.env.PXHOTN || 2)))) continue;   // ★ v1.26.7: ব্যস্ত সময়ে শুধু **ঘাটতিতে থাকা** প্রায়োরিটি-শহর
       const have = vhotPick(srv, 99);
-      const need = Number(process.env.PXHOTN || 2) + (isPrio(srv) ? Number(process.env.PXHOTN_PRIO || 2) : 0) - have.length;   // ★ v1.26.7: miami/boise ২টি অতিরিক্ত হট-নোড
+      const need = Number(process.env.PXHOTN || 2) + (isPrio(srv) ? Number(process.env.PXHOTN_PRIO || 0) : 0) - have.length;   // ★ v1.26.7: ডিফল্টে বাড়তি নয় (প্রতি নোডে ২–৪ কলের কোটা)   // ★ v1.26.7: miami/boise ২টি অতিরিক্ত হট-নোড
       if (need <= 0) continue;
       // আগে **পিন করা নোডগুলোই পুনঃযাচাই** (স্থিরতা), তারপর নতুন
       const pinned = [...(VHOT.get(srv) || new Map()).entries()].sort((a, b) => b[1] - a[1]).map(z => z[0]);
@@ -2075,7 +2075,7 @@ async function vidyFetch(o) { // ★ v1.17.56: verified-pool **ক্রমব�
   //   নমুনা নিয়ে, একসাথে race, প্রথম ২০০ জেতে; ব্যর্থ নোড সঙ্গে-সঙ্গে স্কোর হারায়)। vidy-তেও এখন ঠিক তাই:
   //   HOT-নোড আগে, তারপর bench-এর স্বাস্থ্য-ব্যান্ড জুড়ে **ছড়ানো নমুনা** (শুধু প্রথম-কয়েকটা নয়), একসাথে race।
   const isG = VGIANT.indexOf(o.srv) >= 0;
-  const hot = (isG ? vhotPick(o.srv, Number(process.env.PXHOTK || 2) + (isPrio(o.srv) ? 1 : 0)) : []).filter(px => vpxLeft(px) >= 2);   // ★ v1.26.7
+  const hot = (isG ? vhotPick(o.srv, Number(process.env.PXHOTK || 2)) : []).filter(px => vpxLeft(px) >= 2);
   const pool = vidyVerifiedPick(999, off).sort((a, b) =>   // v1.25.1: affinity then yield
     (affN(o.srv, b) - affN(o.srv, a)) || (yieldOf(b) - yieldOf(a)) || (vidyScore(a) - vidyScore(b)));
   // ★ v1.25.1 WAVE RACE + SUBNET DIVERSITY: a wave is 6 nodes from 6 DIFFERENT /24s, and we get up to
@@ -2098,7 +2098,7 @@ async function vidyFetch(o) { // ★ v1.17.56: verified-pool **ক্রমব�
     const e = VIDY_OK.get(px) || {};
     // v1.25.0 (measured): a `sources` call takes up to 1.6 s even on a node whose ping was 0.7 s —
     // the old 1.5 s floor cut it off ourselves (a big share of the "node failures"). Floor 2.0 s, 2.2x the ping.
-    const base = Math.max(Number(process.env.PXVTOMIN || 2000), (e.ms || 1800) * Number(process.env.PXVTOM || 2.2)) * (isPrio(o.srv) ? Number(process.env.PXVT_PRIO || 1.25) : 1);   // ★ v1.26.7
+    const base = Math.max(Number(process.env.PXVTOMIN || 2000), (e.ms || 1800) * Number(process.env.PXVTOM || 2.2)) * (isPrio(o.srv) ? Number(process.env.PXVT_PRIO || 1) : 1);   // ★ v1.26.7: ডিফল্টে বাড়তি নয় (মাপা: ফ্লিট-স্টারভেশন)   // ★ v1.26.7
     return Math.max(1200, Math.min(base, Number(process.env.PXVTO || 2600), left()));
   };
   const one = async px => {
