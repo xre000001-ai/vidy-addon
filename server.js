@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.25.3';
+const VERSION = '1.25.4';
 const V1NOTE_47 = 'v1.17.47 (ইউজার: "stream cut kore fast na — 6-8s laguk, sob stream asuk") — হারভেস্ট-কাট বাতিল: আগে ৪.৬সে-এ ৬-কার্ড-হলেই কাট, ৪.৯সে হার্ড-ক্যাপ ⇒ দেরিতে-আসা সোর্সের কার্ড ফেলত। এখন **সব লাইভ-সোর্স সেটেল হলেই ফেরা**, নইলে ৭.৮সে ক্যাপ (Beamup ১২সে-সীমার ভিতরে)। সাথে: nx ৫.১→৭.২সে (MB আর কাটা পড়ে না), mm/m4u ৭.০সে সব-সাইট, hm-রেস ৩.২→৬.৬সে (কোল্ড-চেইনও একই রেসপন্সে), m4u-তে ৩ pd-id + ২ জীবিত মিরর (আগে ১ম-সফলেই-থামা), sky-তে ৩ pd-id/hub, PD_MAX env-নব। মাপা (১৬ রিকোয়েস্ট, লোকাল): avg 5.52s · সর্বোচ্চ 6.66s (আগে 3.75s-কাট-সংস্করণে ৮২৪ কার্ড), HindMovie ৮/১৬ (আগে ৩/১৬), MB ১৬/১৬, mm ১৬/১৬, m4u ১৪/১৬, sky ১২/১৬, কার্ড ৮৩৯ ⇒ **কার্ড কমেনি, বেড়েছে**।';
 
 const V1NOTE_48 = 'v1.17.48 (ইউজার: "M4u thik koro, Hindi movie add koro, configuration page ta o thik koro") — ★ কনফিগ-পেজ-মেরামত: SRC-তালিকা থেকেই সুইচ-বাইন্ড (bf সরানোর পর bindSwitch-এ null.classList-এ পুরো IIFE থেমে যেত ⇒ tune-কার্ড/সেভ/প্রিভিউ কিছুই রেন্ডার হতো না) + bindSwitch-এ null-গার্ড; HindMovie প্যানেল + tune-hm কার্ড যোগ। ★ Movies4u: একাধিক সার্চ-হিট-চেষ্টা (per_page 12), আর্টিকেল-বাদ-দিয়ে-পুনঃসার্চ, modpro-শাখা এখন আসলেই চলে (post খালি থাকলে lastPost দিয়ে) — মৃত-মিরর Range-প্রমাণ ছাড়া কার্ড-নয়। ★ প্রতি-সারি-deadline: এক-সারির-ঢিলামিতে সব-কার্ড বাতিল হতো (3 Idiots ৮.৬সে→৪.৭সে)। ★ HindMovie: 404/410-এ প্রক্সি-পুল-বন্ধ (Silence ১২.২সে→৬.১সে, কার্ড-আসে)। বেঞ্চ: avg ৪.৭৪সে (আগে ৫.৫২), max ৭.০২, m4u ১৪/১৬, HM ৮/১৬, Sky ১৪/১৬।';const V1NOTE_46 = 'v1.17.46 (HindMovie নতুন সোর্স): live search (REST → HTML ফলব্যাক, বছর-মুক্ত কুয়েরি) → পোস্ট (IMDb-id গার্ড) → mvlink (মুভি) / mvlink /web/<id> (সিজন×কোয়ালিটি) → hshare → hcloud b64 → workers.dev direct MKV (২০৬, সিক-যোগ্য)। ক্যাশ ৬ঘণ্টা (search/post/mvlink/final); ডিরেক্ট আগে, 403/429/5xx-তে পুল-রেস। ব্যাচ .zip কখনো কার্ড নয়। hmRace ৩.২s ⇒ কোল্ড-চেইন রেসপন্স আটকায় না, পেছনে ক্যাশ ভরে। মাপা (১৬ রিকোয়েস্ট): avg 3.75s, MB 15/16, mm 16/16, m4u 14/16, sky 13/16, hm 3/16 (হলিউড-ক্লাসিক বেঞ্চে; সিরিজে BB/GoT S1E1 = ৩ কার্ড)।';
@@ -1081,6 +1081,8 @@ async function tunWarm(n) { // টানেল-ব্যাংক ভরা — 
   if (twBusy) return; twBusy = true;
   try {
     if (process.uptime() < Number(process.env.PXTWBOOT || 20)) return;
+    // v1.25.4: ইউজার-রিকোয়েস্ট চলাকালীন ১.৫সে থামি — স্ক্যান গতি অপরিবর্তিত, শুধু সার্ভিং-কে অগ্রাধিকার
+    if (Date.now() - LAST_STREAM_AT < 1500) return;
     const cap = Number(process.env.PXTWN || 192);   // v1.25.1: 24 -> 192 warm tunnels (8x)
     let live = 0; for (const px of PTUN.keys()) if (ptunLive(px)) live++;
     const need = Math.min(n || 14, Math.max(0, cap - live));
@@ -1709,17 +1711,34 @@ const PXSBR = () => Number(process.env.PXSBR || 300000), PXSFAIL = () => Number(
 function vsrvKey(o) { return o.srv + ':' + ((o.q && o.q.mediaType) || 'any'); }
 // ★ v1.25.3 — "সব কন্টেইনার ভরা" কিনা: vidy verified, warm tunnel bank, generic pool, আর ১২টি সোর্স-পুল।
 //   যতক্ষণ একটাও ভরা নয় ⇒ স্ক্যান সর্বোচ্চ গতিতে (1.5s ক্যাডেন্স)। সব ভরে গেলে ⇒ শুধু রক্ষণাবেক্ষণ।
+// প্রতিটি কন্টেইনার আলাদা পুল দিয়ে চলে — তাই ভরার হিসাব পুল-ধরন অনুযায়ী:
+//   vidy (verified) · warm tunnel bank · generic POOL · ৬টি spool-সোর্স (SRC_PROBE) + bf · mm-এর নিজের পুল
 function poolsFull() {
   if (VIDY_OK.size < Number(process.env.VPXMAX || 1500)) return false;
-  if (PTUN.size < Number(process.env.PXTWN || 192)) return false;
+  // (টানেল-ব্যাংক ইচ্ছাকৃতভাবে বাদ — ওটা ফ্রি-বোনাস, প্রক্সি-মৃত্যুতে ওঠানামা করে; ভরার শর্ত নয়)
   if (POOL.length < Math.floor(PX_CAP * 0.8)) return false;
   try {
-    for (const k of srcPoolKeys()) {
+    const keys = Object.keys(SRC_PROBE); if (SPOOL.has('bf')) keys.push('bf');
+    for (const k of keys) {
       const fresh = [...srcPool(k).values()].filter(e => spoolFresh(e)).length;
       if (fresh < Number(process.env.SPMIN || 48)) return false;
     }
+    if (typeof MM_POOL !== 'undefined' && MM_POOL.length < Number(process.env.MMTGT || 48)) return false;
   } catch (e) { }
   return true;
+}
+// কত ভরা — রিপোর্টের জন্য (percent per container)
+function poolsFill() {
+  const out = {};
+  out.vidy = [VIDY_OK.size, Number(process.env.VPXMAX || 1500)];
+  out.tunnels = [PTUN.size, Number(process.env.PXTWN || 192)];
+  out.generic = [POOL.length, Math.floor(PX_CAP * 0.8)];
+  try {
+    const keys = Object.keys(SRC_PROBE); if (SPOOL.has('bf')) keys.push('bf');
+    for (const k of keys) out[k] = [[...srcPool(k).values()].filter(e => spoolFresh(e)).length, Number(process.env.SPMIN || 48)];
+    if (typeof MM_POOL !== 'undefined') out.mm = [MM_POOL.length, Number(process.env.MMTGT || 48)];
+  } catch (e) { }
+  return out;
 }
 function srcPoolKeys() { try { return Object.keys(SRC_PROBE || {}); } catch (e) { return []; } }
 function vsrvH(k) { let h = VSRV_H.get(k); if (!h) { h = { ok: 0, fail: 0, lastOk: 0, until: 0, trips: 0, probing: 0 }; VSRV_H.set(k, h); } return h; }
@@ -9193,7 +9212,7 @@ const server = http.createServer((req, res) => {
         const mins = Math.max(1, process.uptime() / 60);
         return { fresh: fresh, proven: proven, verifiedPerMin: Math.round((VIDY_OK.size / mins) * 10) / 10, att: att, ok: okc, yield: att ? Math.round(1000 * okc / att) / 10 : 0, full: poolsFull() };
       })();
-      const _t = Object.assign({ scan: _scan, live: PTUN.size, cool: PTUN_COOL.size, subnets: (() => { const m = new Map(); for (const px of VIDY_OK.keys()) { const k = sub24(px); m.set(k, (m.get(k) || 0) + 1); } return { distinct: m.size, nodes: VIDY_OK.size }; })(), snban: SNBAN.size, cap: VCAP.size, aff: [...PXAFF.entries()].map(([k, m]) => k + ':' + m.size).join(',') }, TST);
+      const _t = Object.assign({ fill: poolsFill(), scan: _scan, live: PTUN.size, cool: PTUN_COOL.size, subnets: (() => { const m = new Map(); for (const px of VIDY_OK.keys()) { const k = sub24(px); m.set(k, (m.get(k) || 0) + 1); } return { distinct: m.size, nodes: VIDY_OK.size }; })(), snban: SNBAN.size, cap: VCAP.size, aff: [...PXAFF.entries()].map(([k, m]) => k + ':' + m.size).join(',') }, TST);
       for (const k2 of ['srv', 'sw']) if (_t[k2]) _t[k2] = Object.assign({ rate: (_t[k2].ok + '/' + _t[k2].req) }, _t[k2]);
       return sendJson(res, 200, { keys: Object.keys(out).length, pool: POOL.length, site: PX_SITE.size, tun: _t, src: out });
     }
