@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.25.7';
+const VERSION = '1.26.0';
 const V1NOTE_47 = 'v1.17.47 (ইউজার: "stream cut kore fast na — 6-8s laguk, sob stream asuk") — হারভেস্ট-কাট বাতিল: আগে ৪.৬সে-এ ৬-কার্ড-হলেই কাট, ৪.৯সে হার্ড-ক্যাপ ⇒ দেরিতে-আসা সোর্সের কার্ড ফেলত। এখন **সব লাইভ-সোর্স সেটেল হলেই ফেরা**, নইলে ৭.৮সে ক্যাপ (Beamup ১২সে-সীমার ভিতরে)। সাথে: nx ৫.১→৭.২সে (MB আর কাটা পড়ে না), mm/m4u ৭.০সে সব-সাইট, hm-রেস ৩.২→৬.৬সে (কোল্ড-চেইনও একই রেসপন্সে), m4u-তে ৩ pd-id + ২ জীবিত মিরর (আগে ১ম-সফলেই-থামা), sky-তে ৩ pd-id/hub, PD_MAX env-নব। মাপা (১৬ রিকোয়েস্ট, লোকাল): avg 5.52s · সর্বোচ্চ 6.66s (আগে 3.75s-কাট-সংস্করণে ৮২৪ কার্ড), HindMovie ৮/১৬ (আগে ৩/১৬), MB ১৬/১৬, mm ১৬/১৬, m4u ১৪/১৬, sky ১২/১৬, কার্ড ৮৩৯ ⇒ **কার্ড কমেনি, বেড়েছে**।';
 
 const V1NOTE_48 = 'v1.17.48 (ইউজার: "M4u thik koro, Hindi movie add koro, configuration page ta o thik koro") — ★ কনফিগ-পেজ-মেরামত: SRC-তালিকা থেকেই সুইচ-বাইন্ড (bf সরানোর পর bindSwitch-এ null.classList-এ পুরো IIFE থেমে যেত ⇒ tune-কার্ড/সেভ/প্রিভিউ কিছুই রেন্ডার হতো না) + bindSwitch-এ null-গার্ড; HindMovie প্যানেল + tune-hm কার্ড যোগ। ★ Movies4u: একাধিক সার্চ-হিট-চেষ্টা (per_page 12), আর্টিকেল-বাদ-দিয়ে-পুনঃসার্চ, modpro-শাখা এখন আসলেই চলে (post খালি থাকলে lastPost দিয়ে) — মৃত-মিরর Range-প্রমাণ ছাড়া কার্ড-নয়। ★ প্রতি-সারি-deadline: এক-সারির-ঢিলামিতে সব-কার্ড বাতিল হতো (3 Idiots ৮.৬সে→৪.৭সে)। ★ HindMovie: 404/410-এ প্রক্সি-পুল-বন্ধ (Silence ১২.২সে→৬.১সে, কার্ড-আসে)। বেঞ্চ: avg ৪.৭৪সে (আগে ৫.৫২), max ৭.০২, m4u ১৪/১৬, HM ৮/১৬, Sky ১৪/১৬।';const V1NOTE_46 = 'v1.17.46 (HindMovie নতুন সোর্স): live search (REST → HTML ফলব্যাক, বছর-মুক্ত কুয়েরি) → পোস্ট (IMDb-id গার্ড) → mvlink (মুভি) / mvlink /web/<id> (সিজন×কোয়ালিটি) → hshare → hcloud b64 → workers.dev direct MKV (২০৬, সিক-যোগ্য)। ক্যাশ ৬ঘণ্টা (search/post/mvlink/final); ডিরেক্ট আগে, 403/429/5xx-তে পুল-রেস। ব্যাচ .zip কখনো কার্ড নয়। hmRace ৩.২s ⇒ কোল্ড-চেইন রেসপন্স আটকায় না, পেছনে ক্যাশ ভরে। মাপা (১৬ রিকোয়েস্ট): avg 3.75s, MB 15/16, mm 16/16, m4u 14/16, sky 13/16, hm 3/16 (হলিউড-ক্লাসিক বেঞ্চে; সিরিজে BB/GoT S1E1 = ৩ কার্ড)।';
@@ -1093,7 +1093,7 @@ async function apiGetT(px, url, tmo, hdrs, tag) { // vidy-কলের একম
     if (r.keepAlive && !ent.s.destroyed && !PX_NORE.get(px)) { ent.ts = Date.now(); ent.used = (ent.used || 0) + 1; PTUN.set(px, ent); } else ptunDrop(px);
     if (reused) PX_NORE.set(px, Math.max(0, (PX_NORE.get(px) || 0) - 1)); // সফল পুনঃব্যবহার ⇒ বিশ্বাস ফিরে
     TST.req++;
-    if (r.code === 429) { TST.rate++; tfail('429', tag); pbad(tag, '429'); vpxBurn(px); PTUN_COOL.set(px, Date.now() + Number(process.env.PXTCF || 60000)); TST.failr++; throw Object.assign(new Error('rate_limited'), { code: 429 }); }
+    if (r.code === 429) { TST.rate++; tfail('429', tag); pbad(tag, '429'); vpxBurn(px); PTUN_COOL.set(px, Date.now() + Number(process.env.PXTCF || 150000)); TST.failr++; throw Object.assign(new Error('rate_limited'), { code: 429 }); }
     if (r.code === 403) { // API এই IP-কে চেনে না/ব্যান করেছে ⇒ ৩০মিন বাদ, কোটাও পোড়ে না
       TST.forb++; PTUN_COOL.set(px, Date.now() + Number(process.env.PXTFC || 1800000));
       try { VIDY_DROP.add(px); VIDY_OK.delete(px); VIDY_TRIED.set(px, Date.now()); } catch (e) { }
@@ -1378,7 +1378,7 @@ const SEED_PX = new Map(); // px:mediaId -> {seed,ts} — ★ একই প্�
 async function seedViaPx(px, tmdbId, tmo) {
   const ck = px + ':' + tmdbId, hit = SEED_PX.get(ck);
   if (hit && Date.now() - hit.ts < 25000) return hit.seed;
-  vpxCharge(px, 1);
+  vpxCharge(px, 1); vpxSeedCharge(px);
   const b = await proxiedGet(px, API + '/seed?mediaId=' + tmdbId, tmo || 6000);
   let j = null;
   try { j = JSON.parse(b); }
@@ -1533,8 +1533,8 @@ async function vidySession(px) { // এক IP-তে seed+sources — সত্�
 //   sources-কলের সত্যতা আসে আসল ট্র্যাফিক থেকেই (vidyNodeOk) — মাপা: সিড-পাসের পর sources-পাস ৮৯%।
 async function vidyPing(px) {
   const t0 = Date.now();
-  if (vpxLeft(px) < 1) throw new Error('quota');
-  vpxCharge(px, 1); // ★ v1.25.0: sweeper-কলও **হিসাবে** ঢুকল — আগে না-ঢোকায় upstream কোটা ছাড়িয়ে ৪০৩/৪২৯ খেতাম
+  if (vpxSeedLeft(px) < 1 || vpxTotalLeft(px) < 1) throw new Error('quota');
+  vpxCharge(px, 1); vpxSeedCharge(px); // ★ v1.25.0: sweeper-কলও **হিসাবে** ঢুকল // v1.26.0: সিড-বাকেটেও — আগে না-ঢোকায় upstream কোটা ছাড়িয়ে ৪০৩/৪২৯ খেতাম
   const b = await proxiedGet(px, API + '/seed?mediaId=278', 4500, null, 'sweep');
   let j = null;
   try { j = JSON.parse(b); }
@@ -1708,17 +1708,34 @@ const VPX_USED = new Map();      // px -> {n, ts}
 // v1.25.1 (measured): 10 nodes x 5 sequential seeds => all 200 (9/10 nodes); 6th call => 429 (9/10),
 // 7th => 429 (10/10); recovery 30-60s. So the real budget is ~5 calls/window, NOT 2 (v1.25.0 was too
 // conservative because the 403/429s it saw were caused by our own uncharged sweeper/hot calls).
-const VUSED = Number(process.env.PXVUSED || 5), VWIN = Number(process.env.PXVWIN || 120000);
+// ★★★ v1.26.0 (মাপা): **সিড আর সোর্সের কোটা আলাদা বাকেট।**
+//   একই নোডে ১টি `/seed` + ১৪টি `/sources` ⇒ কোনো ৪২৯ নেই; কিন্তু `/seed` লুপে ৫–৬টি ২০০-র পর ৪২৯।
+//   আগে একটাই বাকেট (৫) ছিল ⇒ ফ্যান-আউট করার সঙ্গে সঙ্গেই নিজের লেজারই "quota" বলে আটকে দিত।
+const VUSED = Number(process.env.PXVUSED || 5);          // সিড/উইন্ডো (মাপা)
+const VUSEC = Number(process.env.PXVUSEC || 26);         // মোট কল/উইন্ডো (সোর্স সহ; মাপা ≥১৪ নিরাপদে)
+const VWIN = Number(process.env.PXVWIN || 180000);       // বার্স্টে ৪২৯ খেলে নোড ২–৩ মিনিট বন্ধ থাকে
+const VPX_SEED = new Map();                              // px -> {n, ts} সিড-বাকেট
 function vpxCharge(px, k) {
   const e = VPX_USED.get(px) || { n: 0, ts: Date.now() };
   if (Date.now() - e.ts > VWIN) { e.n = 0; e.ts = Date.now(); }
   e.n += (k || 1); VPX_USED.set(px, e);
 }
-function vpxLeft(px) {
-  const e = VPX_USED.get(px); if (!e) return VUSED;
-  if (Date.now() - e.ts > VWIN) return VUSED;
+function vpxSeedCharge(px) {
+  const e = VPX_SEED.get(px) || { n: 0, ts: Date.now() };
+  if (Date.now() - e.ts > VWIN) { e.n = 0; e.ts = Date.now(); }
+  e.n += 1; VPX_SEED.set(px, e);
+}
+function vpxTotalLeft(px) {
+  const e = VPX_USED.get(px); if (!e || Date.now() - e.ts > VWIN) return VUSEC;
+  const cap = Math.min(VUSEC, Math.max(VUSED, VCAP.get(px) || VUSEC));
+  return Math.max(0, cap - e.n);
+}
+function vpxSeedLeft(px) {
+  const e = VPX_SEED.get(px); if (!e || Date.now() - e.ts > VWIN) return VUSED;
   return Math.max(0, VUSED - e.n);
 }
+function vpxLeft(px) { return Math.min(vpxTotalLeft(px), vpxSeedLeft(px) * 2); } // সেশন = ১ সিড + ১ সোর্স
+function vpxSrcLeft(px) { return vpxTotalLeft(px); }                // সোর্স-শুধু (leader পথ)
 const vpxSpent = px => vpxLeft(px) <= 0;
 function vpxBurn(px) { // 429 => this window is spent AND we learn the node's real capacity
   const e = VPX_USED.get(px) || { n: 0, ts: Date.now() };
@@ -1726,7 +1743,8 @@ function vpxBurn(px) { // 429 => this window is spent AND we learn the node's re
   const cap = Math.max(2, Math.min(VUSED, used));              // measured capacity for this node
   const old = VCAP.get(px);
   VCAP.set(px, old ? Math.round(old * 0.6 + cap * 0.4) : cap);  // EWMA
-  VPX_USED.set(px, { n: VUSED, ts: Date.now() });
+  VPX_USED.set(px, { n: VUSEC, ts: Date.now() });
+  VPX_SEED.set(px, { n: VUSED, ts: Date.now() });   // v1.26.0: ৪২৯ ⇒ দুই বাকেটই শেষ
 }
 const VCAP = new Map();               // px -> learned calls-per-window (higher = more valuable node)
 // ★ v1.25.1 efficiency guard (user: 'guard jeta proxy pool efficiency barabe'):
@@ -1945,9 +1963,70 @@ function vidyDirectSession(o, tmo) { // ডিরেক্ট-সেশনও �
     return directGet(u, tmo, 0, 0, VAGENT).then(ct => { pxsRec('vidy:' + o.srv, '@direct', true, Date.now() - t0); return { ct: ct, seed: seed, px: '@direct' }; });
   }).catch(e => { pxsRec('vidy:' + o.srv, '@direct', false, Date.now() - t0); throw e; });
 }
+
+// ★★★ v1.26.0 (মাপা, ২০২৬-১০-২৪): **সিড ও সোর্সের কোটা আলাদা।**
+//   এক নোডে এক সিড + ১৪টি `/sources` কল ⇒ **৪২৯ শূন্য** (৮×২০০, বাকিরা upstream-৫০০/টাইমআউট),
+//   আর একই নোডে `/seed` লুপে **৫–৬টি ২০০-র পর ৪২৯**। ৬টি সার্ভার সমান্তরালে এক সিডে **৩.২ সেকেন্ডে ৬/৬ ২০০**।
+//   আগের নকশা প্রতি সার্ভারের জন্য আলাদা নোড-রেস করত ⇒ প্রতি সার্ভারে ১টি সিড খরচ, অর্থাৎ একটি টাইটেলে
+//   ১৬টি পর্যন্ত সিড। এখন একটাই সিড (leader) + সব সার্ভার সেই নোডেই ⇒ সিড-খরচ ~১৬ গুণ কম,
+//   আর একই নোড সব সার্ভার সার্ভ করায় কার্ডও বেশি আসে। leader মরে গেলে আগের per-server রেস-ই ফলব্যাক।
+const VLEAD = new Map();          // tmdbId -> {px, seed, ts, dead, busy}
+let VLEAD_BUSY = 0;               // leader-এ সমান্তরাল sources কল (মাপা: ৬টি একসাথে ঠিক আছে)
+async function vidyLeader(tmdbId) {
+  const k = String(tmdbId), TTL = Number(process.env.PXLDTTL || 18000); // vidy-সিডের ttlMs=৩০সে (মাপা)
+  const cur = VLEAD.get(k);
+  if (cur && cur.inflight) return cur.inflight;
+  if (cur && !cur.dead && Date.now() - cur.ts < TTL) return cur;
+  const rec = { seed: null, px: null, ts: 0, dead: false };
+  VLEAD.set(k, rec);
+  rec.inflight = (async () => {
+    let cands = [];
+    try {
+      cands = vidyVerifiedPick(999, 0)
+        .filter(px => !snBanned(px) && ptunAllowed(px) && vpxLeft(px) >= 1)
+        .slice(0, Number(process.env.PXLC || 3));
+    } catch (e) { }
+    if (!cands.length) { rec.dead = true; return null; }
+    const TMO = Number(process.env.PXLSTMO || 2600);
+    const win = await new Promise(resolve => {
+      let left = cands.length, done = false;
+      const fin = v => { if (!done) { done = true; resolve(v); } };
+      for (const px of cands) {
+        seedViaPx(px, tmdbId, TMO).then(seed => { if (seed) fin({ px: px, seed: seed }); }, () => { if (--left === 0) fin(null); });
+      }
+      setTimeout(() => fin(null), TMO + 250);
+    });
+    rec.inflight = null;
+    if (!win) { rec.dead = true; if (DBG) console.error('[leader] none for ' + k); return null; }
+    rec.px = win.px; rec.seed = win.seed; rec.ts = Date.now();
+    if (DBG) console.error('[leader] ' + k + ' → ' + win.px);
+    return rec;
+  })();
+  return rec.inflight;
+}
+function vidyLeaderKill(tmdbId) { const k = String(tmdbId); const c = VLEAD.get(k); if (c) { c.dead = true; c.seed = null; } }
+// leader-সেশন: একই নোডে সোর্স-কল (seed আগেই আছে) — ব্যর্থ হলে null ফেরত, caller আগের রেসে ফলব্যাক করে
+async function vidyLeaderTry(o, budget) {
+  if (process.env.PXLEAD !== '1') return null;   // ★ মাপা A/B: ফ্যান-আউট কার্ড বাড়ায়নি (১৪৭ vs ১৯৮) ⇒ ডিফল্ট বন্ধ
+  if (VLEAD_BUSY >= Number(process.env.PXLQ || 10)) return null;   // নোড চাপে ফেলব না
+  const L = await vidyLeader(o.tmdbId);
+  if (!L || L.dead || !L.seed) return null;
+  if (snBanned(L.px) || !ptunAllowed(L.px) || vpxSrcLeft(L.px) < 1) { vidyLeaderKill(o.tmdbId); return null; }
+  VLEAD_BUSY++;
+  try {
+    const r = await vidySessionWithSeed(L.px, Object.assign({}, o, { sc: { seed: L.seed } }), Math.max(1200, budget));
+    return r;
+  } catch (e) {
+    const m = String((e && e.message) || '');
+    if (/403|429|quit|html/.test(m)) vidyLeaderKill(o.tmdbId);      // নোড-ব্লক/কোটা ⇒ leader বাতিল
+    else if (/http_401/.test(m)) { vidyLeaderKill(o.tmdbId); }        // সিড পুরোনো ⇒ পরের কলে নতুন সিড
+    if (DBG && process.env.VJDBG) console.error('[leader] ' + (o.srv || '?') + ' fail ' + m.slice(0, 40));
+    return null;
+  } finally { VLEAD_BUSY--; }
+}
 function vidySessionWithSeed(px, o, tmo) { // সিড আগেই আছে ⇒ শুধু sources, সেই একই IP-তে (কোটা বাঁচে)
   const t0 = Date.now();
-  if (vpxLeft(px) < 1) return Promise.reject(new Error('quota'));
+  if (vpxSrcLeft(px) < 1) return Promise.reject(new Error('quota'));   // v1.26.0: সোর্স-শুধু ⇒ সিড-বাকেট লাগে না
   vpxCharge(px, 1); // ★ v1.25.0: এই কলটাও এখন হিসাবে
   const u = API + '/' + o.srv + '/sources?' + new URLSearchParams(Object.assign({}, o.q, { seed: (o.sc && o.sc.seed) || '' })).toString();
   return proxiedGet(px, u, tmo).then(ct => {
@@ -1955,13 +2034,18 @@ function vidySessionWithSeed(px, o, tmo) { // সিড আগেই আছে �
     return { ct: ct, seed: (o.sc && o.sc.seed) || '', px: px };
   }).catch(e => { pxsRec('vidy:' + o.srv, px, false, Date.now() - t0); throw e; });
 }
-function vidyFetch(o) { // ★ v1.17.56: verified-pool **ক্রমবর্ধমান-হেজ** + গ্লোবাল-গেট + নোড-স্কোর
+async function vidyFetch(o) { // ★ v1.17.56: verified-pool **ক্রমবর্ধমান-হেজ** + গ্লোবাল-গেট + নোড-স্কোর
   // নীতি (ইউজার): stream fetch সবসময় প্রক্সি-পুল দিয়ে, প্লেব্যাক-লিংক সরাসরি CDN।
   //  • সেরা-স্কোর নোড আগে; #0 সঙ্গে-সঙ্গে, বাকিরা ৩৫০/৯০০/১৮০০/২৮০০ms-এ (কেউ জিতলেই বাকিরা বন্ধ)
   //  • সর্বোচ্চ VYGATE(২৬) সেশন একসাথে — মাপা: ৪৮-এর-বেশি একসাথে গেলে নোডগুলো নিজেরাই timeout দেয়
   //  • ডিরেক্ট নিজের-IP শুধু শেষ-ভরসা (PXVD ৪সে) — ৩–৫ কলে ৪২৯
   const _bk = vsrvKey(o);
   if (vsrvOpen(_bk)) return Promise.reject(Object.assign(new Error('srv-breaker'), { breaker: 1, srv: o.srv }));
+  // ★ v1.26.0: এক সিড-এক নোড (leader) — আগে এখানেই বেশিরভাগ কল সফল হয়ে যায়, সিড-কোটা বাঁচে
+  if (process.env.PXLEAD === '1') {   // opt-in (মাপা: এক সিডে ৬টি sources সমান্তরালে ৩.২সে-তে ৬/৬ ২০০)
+    const _lr = await vidyLeaderTry(o, Number(process.env.PXLTO || 2600));
+    if (_lr) return _lr;
+  }
   const _hb = vsrvHalf(_bk); // probation: একটাই নোড, ছোট বাজেট
   // ★ v1.25.1 waste meter: a server whose success ratio is poor (e.g. delhi on TV: it hangs instead of answering)
   // is raced with 2 nodes and a short budget instead of 6-18 nodes x 2.6s. It still gets its card when it works,
@@ -9271,6 +9355,7 @@ const server = http.createServer((req, res) => {
       return sendJson(res, 200, out);
     }
     if (p === '/mbpool.json') { try { const b = fs.readFileSync(MB_POOL_FILE); res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', 'access-control-allow-origin': '*' }); return res.end(b); } catch (e) { return sendJson(res, 200, []); } } // v1.17.34: child-যাচাই করা MB-বেঞ্চ (ডিপ্লয়-বীজ-হালনাগাদের জন্য)
+    if (p === '/_plead') return sendJson(res, 200, { busy: VLEAD_BUSY, seeds: VPX_SEED.size, n: VLEAD.size, live: [...VLEAD.entries()].filter(([k, v]) => v.seed && !v.dead && Date.now() - v.ts < 60000).map(([k, v]) => k + '@' + v.px) });
     if (p === '/_pxsrc') { // ★ v1.17.54: সোর্স-ভিত্তিক পুলের অবস্থা (রিপোর্ট/ডায়াগনস্টিক)
       const out = {};
       for (const [k, st] of PXS) {
