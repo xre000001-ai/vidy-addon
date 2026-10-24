@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.27.1';
+const VERSION = '1.27.2';
 const V1NOTE_47 = 'v1.17.47 (ইউজার: "stream cut kore fast na — 6-8s laguk, sob stream asuk") — হারভেস্ট-কাট বাতিল: আগে ৪.৬সে-এ ৬-কার্ড-হলেই কাট, ৪.৯সে হার্ড-ক্যাপ ⇒ দেরিতে-আসা সোর্সের কার্ড ফেলত। এখন **সব লাইভ-সোর্স সেটেল হলেই ফেরা**, নইলে ৭.৮সে ক্যাপ (Beamup ১২সে-সীমার ভিতরে)। সাথে: nx ৫.১→৭.২সে (MB আর কাটা পড়ে না), mm/m4u ৭.০সে সব-সাইট, hm-রেস ৩.২→৬.৬সে (কোল্ড-চেইনও একই রেসপন্সে), m4u-তে ৩ pd-id + ২ জীবিত মিরর (আগে ১ম-সফলেই-থামা), sky-তে ৩ pd-id/hub, PD_MAX env-নব। মাপা (১৬ রিকোয়েস্ট, লোকাল): avg 5.52s · সর্বোচ্চ 6.66s (আগে 3.75s-কাট-সংস্করণে ৮২৪ কার্ড), HindMovie ৮/১৬ (আগে ৩/১৬), MB ১৬/১৬, mm ১৬/১৬, m4u ১৪/১৬, sky ১২/১৬, কার্ড ৮৩৯ ⇒ **কার্ড কমেনি, বেড়েছে**।';
 
 const V1NOTE_48 = 'v1.17.48 (ইউজার: "M4u thik koro, Hindi movie add koro, configuration page ta o thik koro") — ★ কনফিগ-পেজ-মেরামত: SRC-তালিকা থেকেই সুইচ-বাইন্ড (bf সরানোর পর bindSwitch-এ null.classList-এ পুরো IIFE থেমে যেত ⇒ tune-কার্ড/সেভ/প্রিভিউ কিছুই রেন্ডার হতো না) + bindSwitch-এ null-গার্ড; HindMovie প্যানেল + tune-hm কার্ড যোগ। ★ Movies4u: একাধিক সার্চ-হিট-চেষ্টা (per_page 12), আর্টিকেল-বাদ-দিয়ে-পুনঃসার্চ, modpro-শাখা এখন আসলেই চলে (post খালি থাকলে lastPost দিয়ে) — মৃত-মিরর Range-প্রমাণ ছাড়া কার্ড-নয়। ★ প্রতি-সারি-deadline: এক-সারির-ঢিলামিতে সব-কার্ড বাতিল হতো (3 Idiots ৮.৬সে→৪.৭সে)। ★ HindMovie: 404/410-এ প্রক্সি-পুল-বন্ধ (Silence ১২.২সে→৬.১সে, কার্ড-আসে)। বেঞ্চ: avg ৪.৭৪সে (আগে ৫.৫২), max ৭.০২, m4u ১৪/১৬, HM ৮/১৬, Sky ১৪/১৬।';const V1NOTE_46 = 'v1.17.46 (HindMovie নতুন সোর্স): live search (REST → HTML ফলব্যাক, বছর-মুক্ত কুয়েরি) → পোস্ট (IMDb-id গার্ড) → mvlink (মুভি) / mvlink /web/<id> (সিজন×কোয়ালিটি) → hshare → hcloud b64 → workers.dev direct MKV (২০৬, সিক-যোগ্য)। ক্যাশ ৬ঘণ্টা (search/post/mvlink/final); ডিরেক্ট আগে, 403/429/5xx-তে পুল-রেস। ব্যাচ .zip কখনো কার্ড নয়। hmRace ৩.২s ⇒ কোল্ড-চেইন রেসপন্স আটকায় না, পেছনে ক্যাশ ভরে। মাপা (১৬ রিকোয়েস্ট): avg 3.75s, MB 15/16, mm 16/16, m4u 14/16, sky 13/16, hm 3/16 (হলিউড-ক্লাসিক বেঞ্চে; সিরিজে BB/GoT S1E1 = ৩ কার্ড)।';
@@ -1311,7 +1311,7 @@ function srcKeyFor(pxKey) {
 const SRC_PROBE = {
   hm: { u: () => HM_BASE + '/wp-json/wp/v2/search?search=inception&per_page=1', min: 200, mark: /"id"|"slug"|"title"/ },
   hd: { u: () => HD_BASE + '/', min: 3000, mark: /hdhub|post_title|movies|download/i },
-  m4u: { u: () => M4U_BASE + '/', min: 3000, mark: /movies4u|post|href/i },
+  m4u: { u: () => M4U_LIVE + '/', min: 3000, mark: /movies4u|post|href/i },   // ★ v1.27.2: এখানে await চলবে না (sync প্রোব-বিল্ডার)
   sky: { u: () => SKY_ANNOUNCERS[0], min: 1000, mark: /sky|movie|href/i },
   az: { u: () => AZ_BASE + '/', min: 3000, mark: /anizone|anime|href/i },
   ott: { u: () => OTT_HOSTS[0] + '/vod/search?page=1&keyword=inception', min: 60, mark: /vod|[\{]/i }
@@ -5148,6 +5148,9 @@ async function hdSearch(imdb, title, year, ms) { // → {url, title} | null
   const c = hdCached(HD_S, key); if (c) return c;
   const qb = 'query_by=post_title,category,stars,director,imdb_id&query_by_weights=4,2,2,2,4&sort_by=sort_by_date:desc';
   let docs = [];
+  // ★ v1.27.2 (মাপা: search=৩.৭সে — পুরো hd-চেইনের সবচেয়ে ধীর ধাপ): IMDb-কোয়েরি আর টাইটেল-কোয়েরি
+  //   এখন **সমান্তরালে** (আগে টাইটেল-কোয়েরি IMDb-ব্যর্থতার পরে শুরু হত ⇒ দুইবার অপেক্ষা)।
+  const _rTitle = (title && !docs.length) ? hdText(HD_BASE + '/search.php?type=post&' + qb + '&limit=14&q=' + encodeURIComponent(String(title).trim()), HD_BASE + '/', ms).catch(() => ({ t: '' })) : null;
   if (imdb) { // ① IMDb-নির্ভুল (ইনডেক্সে imdb_id আছে)
     const r = await hdText(HD_BASE + '/search.php?type=post&' + qb + '&limit=6&q=' + encodeURIComponent(imdb), HD_BASE + '/', ms);
     try { docs = (JSON.parse(r.t).hits || []).map(x => x.document || x); } catch (e) { }
@@ -5158,7 +5161,7 @@ async function hdSearch(imdb, title, year, ms) { // → {url, title} | null
   }
   if (!docs.length && title) { // ② টাইটেল + বছর-মিল (ভুল-টাইটেল নয়)
     const T = String(title).trim();
-    const r = await hdText(HD_BASE + '/search.php?type=post&' + qb + '&limit=14&q=' + encodeURIComponent(T), HD_BASE + '/', ms);
+    const r = _rTitle ? await _rTitle : await hdText(HD_BASE + '/search.php?type=post&' + qb + '&limit=14&q=' + encodeURIComponent(T), HD_BASE + '/', ms);
     try { docs = (JSON.parse(r.t).hits || []).map(x => x.document || x); } catch (e) { }
     const norm = z => String(z || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
     const tn = norm(T), y = String(year || '').slice(0, 4);
@@ -5622,13 +5625,21 @@ async function hdSeries(imdb, title, s, e, origin, maxh) {
 async function hdStreams(imdb, title, type, s, e, origin, maxh) { // v1.17.49: হিন্দি/ডুয়াল-অডিও DDL
   if (type === 'series' || type === 'tv') return hdSeries(imdb, title, s, e, origin, maxh); // v1.17.51: সিরিজ-পাথ
   if (!title && imdb) title = await hdImdbName(imdb, 'movie');    // ★ v1.27.4: রুট-নাম খালি ⇒ Cinemeta
-  const T0 = Date.now(); const B = Number(process.env.HDB || 8200); /* v1.27.0: মাপা চেইন ৩.৯–৪.৪সে */ const left = () => Math.max(600, B - (Date.now() - T0));
+  const T0 = Date.now(); const B = Number(process.env.HDB || 9000); /* v1.27.0: মাপা চেইন ৩.৯–৪.৪সে */ const left = () => Math.max(600, B - (Date.now() - T0));
   const hard = new Promise(r => setTimeout(() => r('deadline'), B + 200)); // ক্যাপের ভিতরে ফেরত — দেরিতে-আসা কার্ডে সোর্স আটকে থাকবে না
   try {
    return await Promise.race([(async () => {
     const hit = await hdSearch(imdb, title, 0, Math.min(2200, left()));
     if (!hit) return [];
-    const pg = await hdText(hit.url, HD_BASE + '/', Math.min(2600, left()));
+    // ★★ v1.27.2 (মাপা): search.php-র permalink এখন `new2.hdhub4u.free` — **DNS-মৃত**, তাই পোস্ট-পেজ
+    //   খুঁজতে ২.৫সে+ নষ্ট হয়ে hd প্রায়ই রেস-কাটে পড়ে যেত ("hdhub4u theke stream asche na")।
+    //   একই path `ghdhub.org`-এ **০.০৮সে**-তে পাওয়া যায় ⇒ হোস্ট বদলে দিলেই চেইন ২.৫সে দ্রুত।
+    const postUrl = (() => {
+      try { const u = new URL(hit.url); return HD_BASE + u.pathname + (u.search || ''); } catch (e) { return hit.url; }
+    })();
+    const _tPost = Date.now();
+    const pg = await hdText(postUrl, HD_BASE + '/', Math.min(2600, left()));
+    if (DBG) console.error('[hd] search=' + (_tPost - T0) + 'ms post=' + (Date.now() - _tPost) + 'ms');
     const html = String(pg.t || '');
     const wraps = [...new Set((html.match(/https:\/\/(?:hblinks\.lol\/archives|hubdrive\.bar\/file)\/[A-Za-z0-9]+/g) || []))].slice(0, 7);
     const direct = [...new Set((html.match(/https:\/\/hubcloud\.[a-z]+\/drive\/[A-Za-z0-9]+/g) || []))].slice(0, 5);
@@ -5656,6 +5667,7 @@ async function hdStreams(imdb, title, type, s, e, origin, maxh) { // v1.17.49: �
     }
     for (const d of direct) drives.push({ hub: d, ttl: '' });
     if (!drives.length) return [];
+    // ★ v1.27.2: hubcloud-ড্রাইভ (direct) আগেই সমান্তরালে রিজলভ শুরু — hop-শেষের অপেক্ষা নেই
     const resolved = await Promise.all(drives.slice(0, 8).map(d => hdDrive(d.hub, Math.min(2400, left())).catch(() => null)));
     const cands = [];
     for (let i = 0; i < resolved.length; i++) {
@@ -5728,7 +5740,27 @@ async function hdStreams(imdb, title, type, s, e, origin, maxh) { // v1.17.49: �
   }
 }
 
-const M4U_BASE = 'https://new2.movies4u.garden';
+// ★★ v1.27.2 (ইউজার: "Movies4u,Kono stream dicche na" — মাপা): সাইট আবার ডোমেইন বদলেছে।
+//   `new2.movies4u.garden/lookup.php` এখন **302 → google.com/search?q=movies4u.bot** (মাইগ্রেশন-নোটিশ),
+//   তাই প্রতিটি সার্চ ব্যর্থ হয়ে m4u পুরো শূন্য হয়ে গিয়েছিল। `new3` একই API ঠিকঠাক দেয় (মাপা: found=5)।
+//   তাই আর একটি-হোস্টে আটকে না থেকে **বেস-তালিকা + অটো-ডিটেক্ট** (১০ মিনিট ক্যাশ, ব্যর্থ হলে আবার প্রোব)।
+const M4U_BASES = ['https://new3.movies4u.garden', 'https://new4.movies4u.garden', 'https://new1.movies4u.garden',
+                   'https://new2.movies4u.garden', 'https://movies4u.garden'];
+let M4U_LIVE = process.env.M4UB || 'https://new3.movies4u.garden', M4U_PROBE_AT = 0;
+const M4U_BASE = M4U_LIVE;   // (পুরোনো নাম ধরে রাখা — নতুন কোড m4uB() ব্যবহার করে)
+async function m4uB() {                        // ⟵ সব m4u-কলে এটাই বেস
+  if (Date.now() - M4U_PROBE_AT < 10 * 60e3 && M4U_LIVE) return M4U_LIVE;
+  M4U_PROBE_AT = Date.now();
+  for (const b of [M4U_LIVE].concat(M4U_BASES)) {
+    if (!b) continue;
+    try {
+      const r = await m4uText(b + '/lookup.php?q=the&page=1&per_page=1', b + '/', 2500);
+      if (/\"hits\"/.test(String(r))) { if (b !== M4U_LIVE && DBG) console.error('[m4u] base → ' + b); M4U_LIVE = b; return b; }
+    } catch (e) { }
+  }
+  if (DBG) console.error('[m4u] কোনো বেস সাড়া দিচ্ছে না');
+  return M4U_LIVE;
+}
 const M4U_NEGC = new Map(); // v1.17.48: নতুন-চেইন-মৃত টাইটেল ১০মিন মনে রাখি (৮সে নষ্ট না করতে)
 // ★ v1.17.40: **বেঞ্চ-পাস-প্রক্সি আগে** — যে-হোস্টগুলো আমাদের-IP-এ-ব্লক (৪০৩/CF/খালি-বডি)
 //   সেগুলো HOST_PX-এ মনে থাকে ⇒ পরের-হপে সরাসরি-চেষ্টা-নষ্ট-হয়-না। প্রক্সি না-থাকলে/ব্যর্থ-হলে সরাসরি।
@@ -6279,7 +6311,7 @@ async function m4uStreams(tmdbId, title, type, s, e, origin, maxh) { // maxh: cf
     if (!T) return [];
     // ধাপ-১: সার্চ-API (টাইটেল+TMDB-পোস্টার+কোয়ালিটি):
     const yPM = skyYear(tmdbId, false).catch(() => 0); // v1.15.82: hits[0]-অন্ধ-গ্রহণ-বন্ধ (Superman-২০২৫-এ hits[0] ছিল Superman-১৯৭৮ — ভুল-টাইটেল)
-    const sr = await m4uText(M4U_BASE + '/lookup.php?q=' + encodeURIComponent(T) + '&page=1&per_page=12', M4U_BASE + '/', Math.min(4500, left())).catch(() => '');
+    const _B = await m4uB(); const sr = await m4uText(_B + '/lookup.php?q=' + encodeURIComponent(T) + '&page=1&per_page=12', _B + '/', Math.min(4500, left())).catch(() => '');
     let hit = null, hitsAll = [];
     try { const j = JSON.parse(sr); hitsAll = (j && j.hits) || []; hit = m4uPick(hitsAll, T, await yPM, false); } catch { }
     if (!hit || !hit.permalink) { if (DBG) console.error('[m4u] ' + tmdbId + ' no-search-hit for "' + T + '" @' + (Date.now() - t3) + 'ms'); return []; }
@@ -6294,7 +6326,7 @@ async function m4uStreams(tmdbId, title, type, s, e, origin, maxh) { // maxh: cf
     let lastPost = ''; // ★ v1.17.48: মৃত-পোস্টের HTML-ও ধরে রাখি — modpro-ফallback এর উপরেই চলে
     for (const hh of tries) {
       if (left() < 1200) break;
-      const pg = await m4uText(M4U_BASE + hh.permalink, M4U_BASE + '/', Math.min(4000, left())).catch(() => '');
+      const pg = await m4uText((await m4uB()) + hh.permalink, (await m4uB()) + '/', Math.min(4000, left())).catch(() => '');
       if (pg && pg.length > 500) lastPost = pg;
       const l2 = (pg.match(/https?:\/\/m4ulinks\.sbs\/number\/\d+/) || [])[0];
       if (l2) { post = pg; lnk = l2; hit = hh; break; }
@@ -6305,13 +6337,13 @@ async function m4uStreams(tmdbId, title, type, s, e, origin, maxh) { // maxh: cf
     if (!lnk && left() > 2200) {
       const T2 = String(T).replace(/^(?:the|a|an)\s+/i, '').trim();
       if (T2 && T2.toLowerCase() !== String(T).toLowerCase()) {
-        const sr2 = await m4uText(M4U_BASE + '/lookup.php?q=' + encodeURIComponent(T2) + '&page=1&per_page=12', M4U_BASE + '/', Math.min(3000, left())).catch(() => '');
+        const _B2 = await m4uB(); const sr2 = await m4uText(_B2 + '/lookup.php?q=' + encodeURIComponent(T2) + '&page=1&per_page=12', _B2 + + '/', Math.min(3000, left())).catch(() => '');
         let h2 = []; try { h2 = (JSON.parse(sr2) || {}).hits || []; } catch { }
         const more = h2.filter(h => h && h.permalink && !tries.some(t => t && t.permalink === h.permalink)).slice(0, 3);
         if (DBG) console.error('[m4u] retry-q "' + T2 + '" hits=' + more.length);
         for (const hh of more) {
           if (left() < 1200) break;
-          const pg = await m4uText(M4U_BASE + hh.permalink, M4U_BASE + '/', Math.min(4000, left())).catch(() => '');
+          const pg = await m4uText((await m4uB()) + hh.permalink, (await m4uB()) + '/', Math.min(4000, left())).catch(() => '');
           if (pg && pg.length > 500) lastPost = pg;
           const l2 = (pg.match(/https?:\/\/m4ulinks\.sbs\/number\/\d+/) || [])[0];
           if (l2) { post = pg; lnk = l2; hit = m4uPick([hh], T, await yPM, false) || hh; break; }
@@ -6337,7 +6369,7 @@ async function m4uStreams(tmdbId, title, type, s, e, origin, maxh) { // maxh: cf
         };
         for (const au of alt) {
           if (left() < 1800 || cards2.length) break;
-          const ap = await m4uText(au, M4U_BASE + '/', Math.min(3000, left())).catch(() => '');
+          const ap = await m4uText(au, (await m4uB()) + '/', Math.min(3000, left())).catch(() => '');
           const cands = [...new Set((ap.match(/https?:\/\/(?:urlflix\.xyz|gdrivepro\.xyz|hubcloud\.[a-z.]+|pixeldrain\.dev|workers\.dev)[^"'<>\s]*/g) || []))].slice(0, 4);
           for (const cu of cands) {
             if (left() < 1500 || cards2.length >= 2) break;
@@ -6365,7 +6397,7 @@ async function m4uStreams(tmdbId, title, type, s, e, origin, maxh) { // maxh: cf
     const hlsP = (async () => {
       if (!mpl) return;
       try {
-        const mpPage = await m4uText(mpl, M4U_BASE + '/', Math.min(4200, left())).catch(() => '');
+        const mpPage = await m4uText(mpl, (await m4uB()) + '/', Math.min(4200, left())).catch(() => '');
         const pk = mpPage.indexOf('eval(function(p,a,c,k,e,d)');
         if (pk < 0) return;
         let d2 = 0, eEnd = -1;
@@ -6389,7 +6421,7 @@ async function m4uStreams(tmdbId, title, type, s, e, origin, maxh) { // maxh: cf
       } catch { }
     })();
     // ধাপ-৩: ডাউনলোড-হাব → hubcloud IDs + লেবেল (downloads-btns-div-ব্লক-ভাগ):
-    const hub = await m4uText(lnk, M4U_BASE + '/', Math.min(4500, left())).catch(() => '');
+    const hub = await m4uText(lnk, (await m4uB()) + '/', Math.min(4500, left())).catch(() => '');
     const rows = []; const seenId = new Set();
     const rxh = /<h4>([^<]{3,140})<\/h4>/g; let mw2;
     while ((mw2 = rxh.exec(hub))) { // h4-অবস্থান-থেকে-সামনের-১৬০০-অক্ষরে-নিজের-লিঙ্ক (ব্লক-বিভাজনে-off-by-one-হত)
@@ -6569,51 +6601,85 @@ async function m4uSeries(tmdbId, title, s, e, origin, maxh) {
     const T = String(title || '').trim() || (await nameForTmdb(tmdbId, 'series').catch(() => ''));
     if (!T) return [];
     // ধাপ-১: lookup → সিরিজ-হিট-বাছাই ("El Camino: A Breaking Bad Movie"-জাতীয়-মুভি-হিট-বাদ):
-    const sr = await m4uText(M4U_BASE + '/lookup.php?q=' + encodeURIComponent(T) + '&page=1&per_page=8', M4U_BASE + '/', Math.min(4500, left())).catch(() => '');
+    const sr = await m4uText((await m4uB()) + '/lookup.php?q=' + encodeURIComponent(T) + '&page=1&per_page=8', (await m4uB()) + '/', Math.min(4500, left())).catch(() => '');
     let hits = []; try { hits = ((JSON.parse(sr) || {}).hits) || []; } catch { }
     if (!hits.length) { if (DBG) console.error('[m4us] ' + tmdbId + ' no-hit "' + T + '"'); return []; }
     const best = m4uPick(hits, T, await skyYear(tmdbId, true).catch(() => 0), true); // বছর + সিরিজ-পক্ষপাত (m4uPick — মুভি-পথের-সাথে-একই-নীতি)
     if (!best) { if (DBG) console.error('[m4us] no-series-hit "' + T + '" hits=' + hits.length); return []; }
     // ধাপ-২: পোস্ট → সব-m4ulinks (প্রতি-এপিসোড/প্রতি-রেজো-ভিন্ন-এন্ট্রি):
-    const post = await m4uText(M4U_BASE + best.permalink, M4U_BASE + '/', Math.min(4500, left())).catch(() => '');
-    const nums = [...new Set(post.match(/https?:\/\/m4ulinks\.sbs\/number\/\d+/g) || [])].slice(0, 18); // The Diplomat-এ ১৫-এন্ট্রি (প্রমাণ) — ৮-এ E04-মিস-হত
+    const post = await m4uText((await m4uB()) + best.permalink, (await m4uB()) + '/', Math.min(4500, left())).catch(() => '');
+    const nums = [...new Set(post.match(/https?:\/\/m4ulinks\.sbs\/number\/\d+/g) || [])].slice(0, Number(process.env.M4UEP || 40)); // ★ v1.27.2: ১৮→৪০ ("Season 1-8" পোস্টে প্রতি-সিজনের পেজ আলাদা ⇒ S1 পেজ ১৮-এর পরে পড়ত)হত
     if (!nums.length) { if (DBG) console.error('[m4us] no-m4ulinks'); return []; }
     // ধাপ-৩+৪: তরঙ্গে-তরঙ্গে (প্রতি-তরঙ্গে ৬-m4ulinks → তাদের-hubcloud → শিরোনাম-পড়া) — মিল-পেলেই-থামা (সব-একসাথে=বাজেট-কাটে):
+    // ★★ v1.27.2 (মাপা: GoT S1E1 = ০ কার্ড, hub=124): নতুন প্রোভাইডারে **প্রতি-সিজনের আলাদা m4ulinks পেজ**।
+    //   আগে ৬-পেজের তরঙ্গে যাওয়া হতো ⇒ ৭সে-বাজেটে ১৮ পেজ ⇒ S01 পেজে পৌঁছতই না (S08 আগে)।
+    //   এখন: সব পেজ **সমান্তরালে** (কনকারেন্সি ১২), নিজের <title>-এর সিজন দিয়ে ছাঁকনি, তারপর h5-এপিসোড-হিন্ট।
     let mts = []; const seenHc = new Set(); let hcN = 0;
-    for (let w = 0; w < nums.length && !mts.some(m => m.kind === 'ep'); w += 6) { // v1.15.83: শুধু-হুবহু-এপিসোড-মিলেই-থামা (প্যাক পেলেও আরও-তরঙ্গ দেখা — সেরা-বিকল্প-খোঁজা)
-      if (left() < 2600) break;
-      const hcSet = new Set();
-      await Promise.all(nums.slice(w, w + 6).map(async u => { // m4ulinks → hubcloud-লিংক (সমান্তরাল)
-        if (left() < 2400) return;
-        const hb = await m4uText(u, M4U_BASE + '/', Math.min(3400, left())).catch(() => '');
-        for (const m2 of (hb.match(/hubcloud\.[a-z.]+\/(?:drive|video)\/[a-z0-9]+/g) || [])) hcSet.add(m2);
-      }));
-      const got = await Promise.all([...hcSet].filter(z => !seenHc.has(z)).map(async hp => { // hubcloud → শিরোনাম(=ফাইলনাম) → হুবহু SxxExx
-        seenHc.add(hp); hcN++;
-        if (left() < 2200) return null;
-        const hu = 'https://' + hp;
-        const pg = await m4uText(hu, M4U_BASE + '/', Math.min(3000, left())).catch(() => '');
-        const ttl = ((pg.match(/<title>([^<]{4,220})</) || [])[1] || '').trim();
-        if (!ttl) return null;
-        if (/\.zip\b/i.test(ttl)) return null;              // সিজন-জিপ-প্যাক = প্লেয়ারে-চলে-না
-        // v1.15.83: দু-স্তর — (ক) হুবহু SxxExx = সেরা; (খ) কোনো-E-চিহ্ন-নেই কিন্তু সিজন নিশ্চিত ("….S01.2160p…") = সিজন-প্যাক
-        // প্রমাণ: Kon Yashwant Pansare (2026) — পোস্টে শুধু সিজন-প্যাক (length=11770s ≈ ৩ঘ ১৬মি), কিন্তু 2160p-কপিতে
-        // pixeldrain×2 + signed-S3×2 আছে (সিক-যোগ্য, 206)। আগে হুবহু-SxxExx-শর্তে এই 4K পুরোপুরি বাতিল হত।
-        const ep = epOfName(ttl); const ssn = seasonOfName(ttl);
-        let kind = '';
-        if (ep && ep.s === SE && ep.e === EP) kind = 'ep';
-        else if (!ep && ssn === SE) kind = 'pack';           // সিজন নিশ্চিত → ভুল-সিজন-নয়; লেবেলে স্পষ্ট করা হবে
-        else return null;                                    // অন্য-সিজন / অস্পষ্ট → সৎ-বাতিল
-        const h2 = resOfName(ttl);
-        if (maxh && h2 && h2 > maxh) return null;
-        const gx = (pg.match(/https:\/\/gamerxyt\.com\/hubcloud\.php\?[^"']+/) || [])[0];
-        if (!gx) return null;
-        if (DBG) console.error('[m4us] ' + (kind === 'ep' ? 'EPMATCH' : 'PACKMATCH') + ' "' + ttl.slice(0, 76) + '" h=' + (h2 || 0));
-        return { h: h2 || 0, url: hu, gx: gx.replace(/&amp;/g, '&'), spec: ttl.replace(/\+/g, ' '), kind };
-      }));
-      for (const g of got) if (g) mts.push(g);
-      if (DBG) console.error('[m4us] wave' + (w / 6 + 1) + ' hc=' + hcSet.size + ' match=' + mts.length + ' @' + (Date.now() - t3) + 'ms');
+    const _pages = [];
+    for (let i4 = 0; i4 < nums.length; i4 += 12) {
+      if (left() < 2400) break;
+      const chunk = nums.slice(i4, i4 + 12);
+      const _B3 = await m4uB();
+      const txts = await Promise.all(chunk.map(u => m4uText(u, _B3 + '/', Math.min(3200, left())).catch(() => '')));
+      for (let j4 = 0; j4 < txts.length; j4++) if (txts[j4] && txts[j4].length > 400) _pages.push({ u: chunk[j4], t: txts[j4] });
     }
+    const _seasonOfPage = pg => {
+      const ttl = ((pg.t.match(/<title>([^<]{4,220})</) || [])[1] || '');
+      // ★ v1.27.2: `seasonOfName` শুধু "S08" ধরে, কিন্তু নতুন প্রোভাইডার লেখে **"Season 8"** ⇒
+      //   সব পেজ "অজানা-সিজন" হয়ে যেত (মাপা: want=0 maybe=32) ⇒ ভুল-সিজনের লিংকও প্রোব হতো।
+      let ssn = 0;
+      const mS = /\bSeason\s*(\d{1,2})(?:\s*[-–]\s*(\d{1,2}))?\b/i.exec(ttl);
+      if (mS) ssn = parseInt(mS[1], 10) || 0;
+      if (!ssn) ssn = seasonOfName(ttl);
+      return { ssn: ssn, ttl: ttl, multi: !!(mS && mS[2]) };
+    };
+    const _want = [], _maybe = [];
+    for (const pg of _pages) {
+      const { ssn } = _seasonOfPage(pg);
+      if (ssn && SE && ssn !== SE) continue;                 // স্পষ্ট-ভুল-সিজন বাদ
+      (ssn === SE ? _want : _maybe).push(pg);
+    }
+    const _order = _want.concat(_maybe);
+    if (DBG) console.error('[m4us] pages=' + _pages.length + ' want=' + _want.length + ' maybe=' + _maybe.length + ' @' + (Date.now() - t3) + 'ms');
+    const _links = [];                                        // {hp, hint, ssn}
+    for (const pg of _order) {
+      const _hs = [...pg.t.matchAll(/<h5[^>]*>\s*-?:?\s*Episodes?\s*:?\s*(\d{1,4})\s*:?-?\s*<\/h5>/gi)];
+      const push = (hp, hint) => { if (!_links.some(z => z.hp === hp)) { const _m = _seasonOfPage(pg); _links.push({ hp: hp, hint: hint, ssn: _m.ssn, multi: _m.multi }); } };
+      for (let i5 = 0; i5 < _hs.length; i5++) {
+        const from = _hs[i5].index, to = (i5 + 1 < _hs.length) ? _hs[i5 + 1].index : pg.t.length;
+        const ep = parseInt(_hs[i5][1], 10) || 0;
+        for (const m5 of (pg.t.slice(from, to).match(/hubcloud\.[a-z.]+\/(?:drive|video)\/[a-z0-9]+/g) || [])) push(m5, ep);
+      }
+      for (const m5 of (pg.t.match(/hubcloud\.[a-z.]+\/(?:drive|video)\/[a-z0-9]+/g) || [])) push(m5, 0);
+    }
+    _links.sort((a, b) => ((b.hint === EP) - (a.hint === EP)) || ((b.ssn === SE) - (a.ssn === SE)));
+    if (DBG) console.error('[m4us] links=' + _links.length + ' epHint=' + _links.filter(z => z.hint === EP).length + ' @' + (Date.now() - t3) + 'ms');
+    const got = await Promise.all(_links.slice(0, Number(process.env.M4UHC || 14)).filter(z => !seenHc.has(z.hp)).map(async L => {
+      seenHc.add(L.hp); hcN++;
+      if (left() < 2200) return null;
+      const hp = L.hp, hu = 'https://' + hp;
+      const _B4 = await m4uB();
+      const pg = await m4uText(hu, _B4 + '/', Math.min(3000, left())).catch(() => '');
+      const ttl = ((pg.match(/<title>([^<]{4,220})</) || [])[1] || '').trim();
+      if (!ttl) return null;
+      if (/\.zip\b/i.test(ttl)) return null;
+      const ep = epOfName(ttl); const ssn = seasonOfName(ttl);
+      let kind = '';
+      if (ep && ep.s === SE && ep.e === EP) kind = 'ep';
+      else if (ep && ep.s !== SE) return null;
+      else if (!ep && ssn && ssn !== SE) return null;
+      else if (!ep && L.hint === EP && (!L.ssn || L.ssn === SE || L.multi)) kind = 'ep';   // ★ v1.27.2: পেজ-সিজনের সঙ্গতি দরকার
+      else if (!ep && ssn === SE) kind = 'pack';
+      else return null;
+      const h2 = resOfName(ttl);
+      if (maxh && h2 && h2 > maxh) return null;
+      const gx = (pg.match(/https:\/\/gamerxyt\.com\/hubcloud\.php\?[^"']+/) || [])[0];
+      if (!gx) return null;
+      if (DBG) console.error('[m4us] ' + (kind === 'ep' ? 'EPMATCH' : 'PACKMATCH') + ' "' + ttl.slice(0, 76) + '" h=' + (h2 || 0));
+      return { h: h2 || 0, url: hu, gx: gx.replace(/&amp;/g, '&'), spec: ttl.replace(/\+/g, ' '), kind };
+    }));
+    for (const g of got) if (g) mts.push(g);
+
     if (!mts.length) { if (DBG) console.error('[m4us] S' + SE + 'E' + EP + ' no-ep-match (hub=' + hcN + ') @' + (Date.now() - t3) + 'ms'); return []; }
     const exactM = mts.filter(m => m.kind === 'ep'); // v1.15.83: হুবহু-এপিসোড-থাকলে সেটাই; না-থাকলে সিজন-প্যাক (লেবেলে স্পষ্ট)
     const isPack = !exactM.length;
