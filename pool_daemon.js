@@ -12,10 +12,16 @@ const OUT = path.join(__dirname, 'vidy_px_verified.json');
 //   বাকি সব ০–৭.৫% ⇒ গুণমান-তালিকা আলাদা রাখি, চক্রে সেগুলো আগে নিই।
 const QLISTS = [
   'https://raw.githubusercontent.com/proxmint/free-proxy-list/main/proxies/http.txt',
+  'https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&protocol=http&proxy_format=ipport&format=text&timeout=5000',
+  'https://free-proxy-list.net/ssl-proxy.html',
+  'https://free-proxy-list.net/',
   'https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt',
   'https://raw.githubusercontent.com/litportnet/free-proxy-list/live/proxies/http.txt',
   'https://raw.githubusercontent.com/Thordata/awesome-free-proxy-list/main/proxies/http.txt'
-];
+]; // v1.25.5: measured pass rates on our target — best four first
+// HTML তালিকায় IP ও port আলাদা <td>-তে থাকে ⇒ জোড়া-ম্যাচ
+const RXPAIR = /((?:\d{1,3}\.){3}\d{1,3})\s*<\/td>\s*<td[^>]*>\s*(\d{2,5})\b/g;
+function htmlPairs(t) { const o = []; let m; RXPAIR.lastIndex = 0; while ((m = RXPAIR.exec(t))) { const p = +m[2]; if (p >= 20 && p <= 65535) o.push(m[1] + ':' + p); } return o; }
 const LISTS = [
   'https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&protocol=http&proxy_format=ipport&format=text&timeout=5000',
   'https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&protocol=http&proxy_format=ipport&format=text&timeout=5000&supports_https=true',
@@ -87,12 +93,16 @@ function saveVer(found) {
     // ১) ৩০০০ নতুন HTTP-প্রক্সি জোগাড়
     const [qtxts, txts] = await Promise.all([Promise.all(QLISTS.map(get)), Promise.all(LISTS.map(get))]);
     const rx = /\b\d{1,3}(?:\.\d{1,3}){3}:\d{2,5}\b/g;
-    const qset = new Set((qtxts.join('\n').match(rx) || []));
-    const all = [...new Set((txts.join('\n').match(rx) || []).concat([...qset]))];
-    const qfirst = all.filter(x => qset.has(x)), rest = all.filter(x => !qset.has(x));
+    const qtxt = qtxts.join('\n'), ttxt = txts.join('\n');
+    const qset = new Set((qtxt.match(rx) || []).concat(htmlPairs(qtxt)));   // v1.25.5: HTML তালিকা (IP/port আলাদা cell)
+    const all = [...new Set((ttxt.match(rx) || []).concat(htmlPairs(ttxt)).concat([...qset]))];
+    // v1.25.5: tier — T1 = মাপা-সেরা ৪টি সোর্স, T2 = মধ্যম; premium নোড আগে যাচাই হবে
+    const t1 = new Set(), t2 = new Set();
+    qtxts.forEach((t, i2) => { if (!t) return; const set = (i2 < 4) ? t1 : t2; for (const px of (t.match(rx) || [])) set.add(px); for (const px of htmlPairs(t)) set.add(px); });
+    const qfirst = all.filter(x => t1.has(x)), mid = all.filter(x => !t1.has(x) && t2.has(x)), rest = all.filter(x => !t1.has(x) && !t2.has(x));
     for (let i = qfirst.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); const w = qfirst[i]; qfirst[i] = qfirst[j]; qfirst[j] = w; }
     for (let i = rest.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); const w = rest[i]; rest[i] = rest[j]; rest[j] = w; }
-    const ordered = qfirst.concat(rest);
+    const ordered = qfirst.concat(mid).concat(rest);
     const fresh = ordered.filter(x => !seen.has(x)).slice(0, PER_CYCLE);
     fresh.forEach(x => seen.add(x));
     console.log('[daemon] চক্র: তালিকা-নোড=' + all.length + ' নতুন=' + fresh.length + ' verified-আগে=' + Object.keys(readVer()).length);

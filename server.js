@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.25.4';
+const VERSION = '1.25.5';
 const V1NOTE_47 = 'v1.17.47 (ইউজার: "stream cut kore fast na — 6-8s laguk, sob stream asuk") — হারভেস্ট-কাট বাতিল: আগে ৪.৬সে-এ ৬-কার্ড-হলেই কাট, ৪.৯সে হার্ড-ক্যাপ ⇒ দেরিতে-আসা সোর্সের কার্ড ফেলত। এখন **সব লাইভ-সোর্স সেটেল হলেই ফেরা**, নইলে ৭.৮সে ক্যাপ (Beamup ১২সে-সীমার ভিতরে)। সাথে: nx ৫.১→৭.২সে (MB আর কাটা পড়ে না), mm/m4u ৭.০সে সব-সাইট, hm-রেস ৩.২→৬.৬সে (কোল্ড-চেইনও একই রেসপন্সে), m4u-তে ৩ pd-id + ২ জীবিত মিরর (আগে ১ম-সফলেই-থামা), sky-তে ৩ pd-id/hub, PD_MAX env-নব। মাপা (১৬ রিকোয়েস্ট, লোকাল): avg 5.52s · সর্বোচ্চ 6.66s (আগে 3.75s-কাট-সংস্করণে ৮২৪ কার্ড), HindMovie ৮/১৬ (আগে ৩/১৬), MB ১৬/১৬, mm ১৬/১৬, m4u ১৪/১৬, sky ১২/১৬, কার্ড ৮৩৯ ⇒ **কার্ড কমেনি, বেড়েছে**।';
 
 const V1NOTE_48 = 'v1.17.48 (ইউজার: "M4u thik koro, Hindi movie add koro, configuration page ta o thik koro") — ★ কনফিগ-পেজ-মেরামত: SRC-তালিকা থেকেই সুইচ-বাইন্ড (bf সরানোর পর bindSwitch-এ null.classList-এ পুরো IIFE থেমে যেত ⇒ tune-কার্ড/সেভ/প্রিভিউ কিছুই রেন্ডার হতো না) + bindSwitch-এ null-গার্ড; HindMovie প্যানেল + tune-hm কার্ড যোগ। ★ Movies4u: একাধিক সার্চ-হিট-চেষ্টা (per_page 12), আর্টিকেল-বাদ-দিয়ে-পুনঃসার্চ, modpro-শাখা এখন আসলেই চলে (post খালি থাকলে lastPost দিয়ে) — মৃত-মিরর Range-প্রমাণ ছাড়া কার্ড-নয়। ★ প্রতি-সারি-deadline: এক-সারির-ঢিলামিতে সব-কার্ড বাতিল হতো (3 Idiots ৮.৬সে→৪.৭সে)। ★ HindMovie: 404/410-এ প্রক্সি-পুল-বন্ধ (Silence ১২.২সে→৬.১সে, কার্ড-আসে)। বেঞ্চ: avg ৪.৭৪সে (আগে ৫.৫২), max ৭.০২, m4u ১৪/১৬, HM ৮/১৬, Sky ১৪/১৬।';const V1NOTE_46 = 'v1.17.46 (HindMovie নতুন সোর্স): live search (REST → HTML ফলব্যাক, বছর-মুক্ত কুয়েরি) → পোস্ট (IMDb-id গার্ড) → mvlink (মুভি) / mvlink /web/<id> (সিজন×কোয়ালিটি) → hshare → hcloud b64 → workers.dev direct MKV (২০৬, সিক-যোগ্য)। ক্যাশ ৬ঘণ্টা (search/post/mvlink/final); ডিরেক্ট আগে, 403/429/5xx-তে পুল-রেস। ব্যাচ .zip কখনো কার্ড নয়। hmRace ৩.২s ⇒ কোল্ড-চেইন রেসপন্স আটকায় না, পেছনে ক্যাশ ভরে। মাপা (১৬ রিকোয়েস্ট): avg 3.75s, MB 15/16, mm 16/16, m4u 14/16, sky 13/16, hm 3/16 (হলিউড-ক্লাসিক বেঞ্চে; সিরিজে BB/GoT S1E1 = ৩ কার্ড)।';
@@ -698,7 +698,18 @@ async function enrichPool() {
     // ★★ v1.24.0 — **তালিকা-গুণমান মাপা হয়েছে** (২৩-১০-২০২৬, আমাদের নিজের টার্গেটে: vidy seed, ৪সে):
     //   proxmint ৪৭.৫% পাস (৪০-নমুনা), monosans ৩২.৫%, litport ১৭.৫%, thordata ১০%, thespeedx/pscdn ৭.৫%,
     //   iplocate ৫%, proxifly ২.৫%, vakhov ০%। ⇒ ভালো-তালিকা **আগে** (এনরিচ এখন গুণমান-প্রথমে নমুনা নেয়)।
+    // ★★ v1.25.5 — ১৩টি নাম-করা সোর্স আমাদের নিজের target-এ মাপা (৬০-নমুনা, ৪সে, CONNECT→TLS→vidy seed):
+    //    proxmint 25% · proxyscrape-api(v4) **21.7%** · sslproxies.org **18.3%** · free-proxy-list.net **11.7%**
+    //    · monosans 10% · spys.me 6.7% · geonode 3.3% · proxydb 2.4% · hidemy.name 0% ·
+    //    spys.one 403(CF) · free-proxy.world/proxyfy.io/free-socks-list DNS-মৃত · proxynova JS-অবফাসকেটেড ·
+    //    openproxy.space 521 · free-proxy.cz TLS-রিসেট। SOCKS-তালিকা (cyber-gateway/free-socks-list) অচল —
+    //    আমাদের স্ট্যাক HTTP-CONNECT।
+    //    ⇒ quality tier = মাপা-সেরা ৪টি (নতুন ৩টি সহ), তারপর বাকি সব।
     const QLISTS = ['https://raw.githubusercontent.com/proxmint/free-proxy-list/main/proxies/http.txt',
+                    'https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&protocol=http&proxy_format=ipport&format=text&timeout=5000',
+                    'https://free-proxy-list.net/ssl-proxy.html',   // sslproxies.org 301→ এখানেই (রিডাইরেক্ট-ফ্রি)
+                    'https://free-proxy-list.net/',
+                    // মধ্যম টিয়ার (আগের মাপা: monosans ৩২→১০%, litport ১৭%, thordata ১০%)
                     'https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt',
                     'https://raw.githubusercontent.com/litportnet/free-proxy-list/live/proxies/http.txt',
                     'https://raw.githubusercontent.com/Thordata/awesome-free-proxy-list/main/proxies/http.txt'];
@@ -722,10 +733,22 @@ async function enrichPool() {
     if (Date.now() < MMR_ACTIVE_UNTIL) return;
     const have = new Set(POOL.map(c => c.px));
     const rx = /\b\d{1,3}(?:\.\d{1,3}){3}:\d{2,5}\b/g;
+    // ★ v1.25.5: sslproxies.org / free-proxy-list.net প্রথমে IP আর port আলাদা <td>-তে দেয় — শুধু "ip:port"
+    //   রেজেক্স দিয়ে ওই দুই সেরা-তালিকা প্রায় পুরো ফাঁকা হয়ে যেত (মাপা: ৩০০ সারি ⇒ ০ ম্যাচ)।
+    const rxPair = /((?:\d{1,3}\.){3}\d{1,3})\s*<\/td>\s*<td[^>]*>\s*(\d{2,5})\b/g;
+    const rxHtml = t => { const o = []; let m; rxPair.lastIndex = 0; while ((m = rxPair.exec(t))) { const p = +m[2]; if (p >= 20 && p <= 65535) o.push(m[1] + ':' + p); } return o; };
     const shuffle = a => { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); const w = a[i]; a[i] = a[j]; a[j] = w; } return a; };
-    const qset = new Set((qtxts.join('\n').match(rx) || []));
-    const all = [...new Set((txts.join('\n').match(rx) || []).concat([...qset]))].filter(px => !have.has(px));
-    const cands = shuffle(all.filter(px => qset.has(px))).concat(shuffle(all.filter(px => !qset.has(px)))); // গুণমান-প্রথমে
+    const qtxt = qtxts.join('\n'), ttxt = txts.join('\n');
+    const qset = new Set((qtxt.match(rx) || []).concat(rxHtml(qtxt)));
+    const all = [...new Set((ttxt.match(rx) || []).concat(rxHtml(ttxt)).concat([...qset]))].filter(px => !have.has(px));
+    // ★ v1.25.5 tier-weighting: T1 = মাপা-সেরা (proxmint/proxyscrape-api/sslproxies/free-proxy-list),
+    //   T2 = মধ্যম (monosans/litport/thordata)। প্রতি tier আলাদা করে shuffle ⇒ বৈচিত্র্য থাকে, কিন্তু
+    //   premium সোর্সের নোড আগে যাচাই হয়।
+    const t1 = new Set(), t2 = new Set();
+    qtxts.forEach((t, i2) => { if (!t) return; const set = (i2 < Number(process.env.QT1 || 4)) ? t1 : t2; for (const px of (t.match(rx) || [])) set.add(px); for (const px of rxHtml(t)) set.add(px); });
+    const cands = shuffle(all.filter(px => t1.has(px)))       // T1 (premium)
+      .concat(shuffle(all.filter(px => !t1.has(px) && t2.has(px))))  // T2
+      .concat(shuffle(all.filter(px => !t1.has(px) && !t2.has(px)))); // বাকি সব
     pxRawPush(cands); // ★ v1.17.56: vidy-প্রশিক্ষণের জন্যে তাজা-প্রার্থী জমা
     const sample = cands.slice(0, Number(process.env.PXSAMPLE || 600)), good = []; // v1.15.68: স্ক্যান ২× ২০০→৪০০
     for (let i = 0; i < sample.length && POOL.length < PX_CAP; i += 240) { // v1.15.68: ব্যাচ ২× ১২০→২৪০
