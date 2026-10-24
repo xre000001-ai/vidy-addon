@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.26.0';
+const VERSION = '1.26.2';
 const V1NOTE_47 = 'v1.17.47 (ইউজার: "stream cut kore fast na — 6-8s laguk, sob stream asuk") — হারভেস্ট-কাট বাতিল: আগে ৪.৬সে-এ ৬-কার্ড-হলেই কাট, ৪.৯সে হার্ড-ক্যাপ ⇒ দেরিতে-আসা সোর্সের কার্ড ফেলত। এখন **সব লাইভ-সোর্স সেটেল হলেই ফেরা**, নইলে ৭.৮সে ক্যাপ (Beamup ১২সে-সীমার ভিতরে)। সাথে: nx ৫.১→৭.২সে (MB আর কাটা পড়ে না), mm/m4u ৭.০সে সব-সাইট, hm-রেস ৩.২→৬.৬সে (কোল্ড-চেইনও একই রেসপন্সে), m4u-তে ৩ pd-id + ২ জীবিত মিরর (আগে ১ম-সফলেই-থামা), sky-তে ৩ pd-id/hub, PD_MAX env-নব। মাপা (১৬ রিকোয়েস্ট, লোকাল): avg 5.52s · সর্বোচ্চ 6.66s (আগে 3.75s-কাট-সংস্করণে ৮২৪ কার্ড), HindMovie ৮/১৬ (আগে ৩/১৬), MB ১৬/১৬, mm ১৬/১৬, m4u ১৪/১৬, sky ১২/১৬, কার্ড ৮৩৯ ⇒ **কার্ড কমেনি, বেড়েছে**।';
 
 const V1NOTE_48 = 'v1.17.48 (ইউজার: "M4u thik koro, Hindi movie add koro, configuration page ta o thik koro") — ★ কনফিগ-পেজ-মেরামত: SRC-তালিকা থেকেই সুইচ-বাইন্ড (bf সরানোর পর bindSwitch-এ null.classList-এ পুরো IIFE থেমে যেত ⇒ tune-কার্ড/সেভ/প্রিভিউ কিছুই রেন্ডার হতো না) + bindSwitch-এ null-গার্ড; HindMovie প্যানেল + tune-hm কার্ড যোগ। ★ Movies4u: একাধিক সার্চ-হিট-চেষ্টা (per_page 12), আর্টিকেল-বাদ-দিয়ে-পুনঃসার্চ, modpro-শাখা এখন আসলেই চলে (post খালি থাকলে lastPost দিয়ে) — মৃত-মিরর Range-প্রমাণ ছাড়া কার্ড-নয়। ★ প্রতি-সারি-deadline: এক-সারির-ঢিলামিতে সব-কার্ড বাতিল হতো (3 Idiots ৮.৬সে→৪.৭সে)। ★ HindMovie: 404/410-এ প্রক্সি-পুল-বন্ধ (Silence ১২.২সে→৬.১সে, কার্ড-আসে)। বেঞ্চ: avg ৪.৭৪সে (আগে ৫.৫২), max ৭.০২, m4u ১৪/১৬, HM ৮/১৬, Sky ১৪/১৬।';const V1NOTE_46 = 'v1.17.46 (HindMovie নতুন সোর্স): live search (REST → HTML ফলব্যাক, বছর-মুক্ত কুয়েরি) → পোস্ট (IMDb-id গার্ড) → mvlink (মুভি) / mvlink /web/<id> (সিজন×কোয়ালিটি) → hshare → hcloud b64 → workers.dev direct MKV (২০৬, সিক-যোগ্য)। ক্যাশ ৬ঘণ্টা (search/post/mvlink/final); ডিরেক্ট আগে, 403/429/5xx-তে পুল-রেস। ব্যাচ .zip কখনো কার্ড নয়। hmRace ৩.২s ⇒ কোল্ড-চেইন রেসপন্স আটকায় না, পেছনে ক্যাশ ভরে। মাপা (১৬ রিকোয়েস্ট): avg 3.75s, MB 15/16, mm 16/16, m4u 14/16, sky 13/16, hm 3/16 (হলিউড-ক্লাসিক বেঞ্চে; সিরিজে BB/GoT S1E1 = ৩ কার্ড)।';
@@ -8413,7 +8413,38 @@ function dvOfDesc(d) { // desc থেকে-HDR-ধরন:
   if (/Dolby Vision|\bDV\b/i.test(d)) return 'DV';
   return 'HDR';
 }
-async function withSources(cardsP, srcs, cfg, t0) {
+// ★★★ v1.26.1 (ইউজার: "1st try e sob source stream dicche na … hard cap 12s, timeout hole retry,
+//   background fetching cholte thakbe, refresh dile aisa porbe"):
+//   **সমস্যা (মাপা, লোকাল)**: কাটা-পড়া সোর্সের প্রমিস তো চলতেই থাকে, কিন্তু `Promise.race`-এ হেরে গেলে
+//   তার ফল **ফেলে দেওয়া হত** (`outs[i]=null`) ⇒ প্রথম কলে toonworld ঠিক ৮২০১ms-এ কাটা পড়ে `n=0`,
+//   আর পরের কলে ৭২৮ms-এ ৩ কার্ড আসে — অথচ সেই কাজটা প্রথম কলেই হয়েছিল, আমরা শুধু নষ্ট করেছি।
+//   **সমাধান**: প্রতি সোর্সের প্রমিসে `stashPut` — ফল যে-সময়েই আসুক, টাইটেল-কী ধরে জমা হয় (TTL ৪মিন)।
+//   পরের রিকোয়েস্টে যে-সোর্স এখনো আসেনি, তার জমা-ফল সঙ্গে-সঙ্গে বসে যায় ⇒ **রিফ্রেশে নতুনগুলো আসে**।
+const SRC_STASH = new Map();                   // routeKey -> { srcKey: {ts, cards} }
+const STASH_TTL = Number(process.env.SSTASH || 240000);   // ৪ মিনিট (লিংকের আয়ু মেনে ছোট রাখা)
+const STASH_MAX = Number(process.env.SSTASHN || 600);
+function stashPut(k, sk, cards) {
+  if (!k || !sk || !cards || !cards.length) return;
+  let e = SRC_STASH.get(k); if (!e) { e = {}; SRC_STASH.set(k, e); }
+  e[sk] = { ts: Date.now(), cards: cards };
+  if (SRC_STASH.size > STASH_MAX) {
+    const now = Date.now();
+    for (const [kk, vv] of SRC_STASH) if (!Object.keys(vv).some(x2 => now - vv[x2].ts < STASH_TTL)) SRC_STASH.delete(kk);
+    while (SRC_STASH.size > STASH_MAX) SRC_STASH.delete(SRC_STASH.keys().next().value);
+  }
+}
+function stashGet(k) {
+  const e = SRC_STASH.get(k); if (!e) return null;
+  const now = Date.now(), out = {}; let any = false;
+  for (const sk in e) if (now - e[sk].ts < STASH_TTL) { out[sk] = e[sk]; any = true; }
+  return any ? out : null;
+}
+async function withSources(cardsP, srcs, cfg, t0, mkey, lookupP) {
+  const SKEY = mkey ? String(mkey).split(' [')[0] : '';
+  // ★ v1.26.2: নাম/TMDB-লুকআপ কত সময় নিল — সোর্সগুলো ওই সময়ের **পরে** শুরু হয়, তাই ওদের বাজেট
+  //   ন্যায্যভাবে ওই সময়টুকু বেশি পাবে (নাহলে প্রথম ট্যাপেই tw/rt/az কেটে যেত, দ্বিতীয় ট্যাপে আসত)।
+  let _lookMs = 0;
+  if (lookupP) { try { lookupP.then(() => { _lookMs = Date.now() - t0; }).catch(() => { }); } catch (e) { } }
   // ★ v1.17.26: **সোর্স-রেস আগে শুরু, vidy-কার্ডের অপেক্ষা পরে** — আগে vidy ৩–৪ সে খেয়ে ফেলত,
   //   তারপর অন্য সোর্সদের দিকে তাকানো হত ⇒ হারভেস্ট-ঘড়িও ৩ সে দেরিতে শুরু হয়ে মোট ৫.৭সে-তে ঠেকত।
   //   এখন দুটোই সমান্তরাল: vidy + ৯ সোর্স একসাথে দৌড়ায়, ৬ কার্ড হলেই গ্রেস-শেষে উত্তর।
@@ -8430,7 +8461,7 @@ async function withSources(cardsP, srcs, cfg, t0) {
     //   পুরনো "৬ কার্ড হলেই ৪.৬সে-এ কাট" নিয়ম **বাতিল** — সেটাই দেরিতে-আসা সোর্সের
     //   (sky/m4u/hm/nx) কার্ড ফেলে দিত। এখন: **সব লাইভ-সোর্স সেটেল হলেই ফেরা**,
     //   নইলে শুধু ৮.২সে হার্ড-ক্যাপ (Beamup-এর ১২সে-কাটঅফের ভিতরে)।
-    const MIN_WAIT_MS = Number(process.env.VFLOOR || 1200), HARD_CAP_MS = Number(process.env.VCAP || 9400); // v1.17.52: ৭.৮সে-ক্যাপেই sky/hm/m4u/nx কাটা পড়ত ⇒ ১০.৫সে
+    const MIN_WAIT_MS = Number(process.env.VFLOOR || 1200), HARD_CAP_MS = Math.min(11800, Number(process.env.VCAP || 10200) + _lookMs); // v1.26.2: লুকআপ-সময় যোগ (১২সে-হার্ড-ক্যাপের ভিতরে) // v1.26.1: ১২সে-হার্ড-ক্যাপের ভিতরে ১০.২সে পর্যন্ত কাজে লাগাই // v1.17.52: ৭.৮সে-ক্যাপেই sky/hm/m4u/nx কাটা পড়ত ⇒ ১০.৫সে
     let lit = 0, settled = 0, fireCut = null;
     _cutP = new Promise(r => { fireCut = r; });
     _watch = setInterval(() => {
@@ -8443,11 +8474,11 @@ async function withSources(cardsP, srcs, cfg, t0) {
     // ★ v1.17.56: **গৌণ-সোর্সের নিজস্ব ছোট-ক্যাপ** — ott/tw/rt/az বসে-থাকলে পুরো উত্তর ১১.৫সে-দেয়ালে
     //   গিয়ে ঠেকত (প্রোড-লগে জোড়ায়-জোড়ায় 11.5s), অথচ ওরা কার্ড দিচ্ছিল না (n=0)। এখন ৬.৫সে।
     // ★ v1.20.2 (মাপা: ৮.২সে-র কারণ ছিল hm — ০ কার্ড দিয়ে ৮.২সে পর্যন্ত ধরে রাখত; tw/rt তেমনই)
-    const SRC_CAP_MAP = { ott: 8500, tw: 8500, rt: 8500, az: 9200, hm: 8800, vsp: 8500, nx: 9000, m4u: 9000, sky: 8800, mm: 9200 }; // ★ v1.22.3: prod-মাপা — এই সোর্সগুলো prod-এ ৭-৮সে নেয়, আগের ক্যাপে তারা সবসময় 'cut' হতো
-    const SRC_CAP_MS = Number(process.env.VSCAP || 8200); // v1.17.58: 9.3s-cap-e prod-e 10.2-10.6s hoi (edge-er kache) // ★ v1.17.52: প্রতি-সোর্স-ক্যাপ — একটি ঝুলন্ত সোর্স (ott/tw/nx) পুরো তালিকাকে ক্যাপে টেনে নিত
+    const SRC_CAP_MAP = { ott: 9400, tw: 9600, rt: 9400, az: 9600, hm: 9000, vsp: 9400, nx: 9200, m4u: 9200, sky: 9000, mm: 9600 }; // v1.26.1: toonworld-এর রেজলভারই ৭.৫সে নেয় (মাপা) — ৮.৫সে-ক্যাপে ওটা সবসময় কাটা পড়ত // ★ v1.22.3: prod-মাপা — এই সোর্সগুলো prod-এ ৭-৮সে নেয়, আগের ক্যাপে তারা সবসময় 'cut' হতো
+    const SRC_CAP_MS = Number(process.env.VSCAP || 9600); // v1.17.58: 9.3s-cap-e prod-e 10.2-10.6s hoi (edge-er kache) // ★ v1.17.52: প্রতি-সোর্স-ক্যাপ — একটি ঝুলন্ত সোর্স (ott/tw/nx) পুরো তালিকাকে ক্যাপে টেনে নিত
     const track = x => { // ★ v1.17.52: টাইমার ক্লিয়ার হয় — নইলে সেটেল হওয়া সোর্সের জন্যও ভুল '[srccap]' ছাপ পড়ত
       let _tm = null;
-      const capMs = Math.min(SRC_CAP_MS, SRC_CAP_MAP[x.key] || SRC_CAP_MS);
+      const capMs = Math.min(SRC_CAP_MS, SRC_CAP_MAP[x.key] || SRC_CAP_MS) + _lookMs; // v1.26.2: নিজের ঘড়ি — লুকআপের সময় চুরি যায় না
       const capP = new Promise(r => { _tm = setTimeout(() => { if (DBG) console.error('[srccap] ' + x.key + ' @' + capMs + 'ms'); r(null); }, capMs); });
       return Promise.race([x.p, capP]).then(v => { clearTimeout(_tm);
       if (v && v.length) lit += v.length;
@@ -8456,7 +8487,7 @@ async function withSources(cardsP, srcs, cfg, t0) {
       return v;
       }, () => { clearTimeout(_tm); errFlag = true; settled++; if (DBG) console.error('[srcsettle] ' + x.key + ' ERR @' + (Date.now() - t0) + 'ms (' + settled + '/' + live.length + ')'); return null; });
     };
-    const uniLeft0 = Math.max(0, Math.min(NXDEADLINE, 9300) - (Date.now() - t0)); // v1.17.52
+    const uniLeft0 = Math.max(0, Math.min(NXDEADLINE, 9300) + _lookMs - (Date.now() - t0)); // v1.17.52
     // ★ v1.17.29: **nx (MovieBox)-এর নিজস্ব কাট-ঘড়ি** — child-এর রিজলভ ৪–৮ সে নেয়, তাই সাধারণ
     //   হারভেস্ট-কাটে (৪.১ সে) কেটে যেত ⇒ "MovieBox নেই" দেখাত। এখন nx পায় `NX_FIRST_MS` পর্যন্ত
     //   (বাকিরা আগের মতোই); ক্যাশ-হিট হলে (৩০ মিন) আগেই ফেরে ⇒ দ্রুত।
@@ -8465,13 +8496,15 @@ async function withSources(cardsP, srcs, cfg, t0) {
     //   ওই ফল `$partial` হয় ⇒ আমাদের /stream-ক্যাশ ১২সে-তেই মেয়াদোত্তীর্ণ ⇒ দ্বিতীয় ট্যাপে MB পুরো।
     const nxFirstWait = Math.min(Number(process.env.NXW || 9000), 9500); // ★ v1.22.2: prod-এ MB ৯.২সে ধরে উত্তর টানত (মাপা ৯.৪সে) ⇒ ৭সে // v1.17.52: ৭.২সে-এ MB প্রায়ই কাটা পড়ত // v1.17.47: MB আর কাটা পড়বে না (আগে ৫.১সে)
     const nxCutP = new Promise(r => setTimeout(() => r(true), Math.max(0, Math.min(uniLeft0, nxFirstWait - (Date.now() - t0)))));
+    // ★ v1.26.1: প্রতিটা সোর্স-প্রমিসের ফল **যে-সময়েই আসুক** স্ট্যাশে জমা (কাটা পড়লেও)
+    if (SKEY) live.forEach(x => { try { x.p.then(v => stashPut(SKEY, x.key, v)).catch(() => { }); } catch (e) { } });
     outsP = Promise.all(live.map(x => Promise.race([
       track(x),
       new Promise(r => setTimeout(() => r(null), uniLeft0)),
       (x.key === 'nx' ? nxCutP : _cutP).then(() => null)
     ]))).finally(() => clearInterval(_watch));
   }
-  const cLeft = Math.max(500, Math.min(9200, Number(process.env.VPICK || 4500) + 1200) - (Date.now() - t0)); // ★ v1.20.2: vidy-কার্ড-কাট 5.7সে (আগে 9.2সে) // ⚠️ v1.17.27: ৪.৬সে-ক্যাপ **ফেরত নেওয়া হলো** — মাপা: vidy ৪.৩সে-তে ৩০+ কার্ড দেয়, ক্যাপ করলে E9/E12/E14-এ ১–১০ কার্ডে নেমে যায়
+  const cLeft = Math.max(500, Math.min(10600, Number(process.env.VPICK || 9600) + 1200) + _lookMs - (Date.now() - t0)); // ★ v1.20.2: vidy-কার্ড-কাট 5.7সে (আগে 9.2সে) // ⚠️ v1.17.27: ৪.৬সে-ক্যাপ **ফেরত নেওয়া হলো** — মাপা: vidy ৪.৩সে-তে ৩০+ কার্ড দেয়, ক্যাপ করলে E9/E12/E14-এ ১–১০ কার্ডে নেমে যায়
   const cards = await Promise.race([
     cardsP.catch(e => { if (DBG) console.error('[srcdbg] cardsP died: ' + String(e && e.message || e).slice(0, 90)); return []; }),
     new Promise(r => setTimeout(() => r([]), cLeft))
@@ -8486,6 +8519,17 @@ async function withSources(cardsP, srcs, cfg, t0) {
     const uniLeft = Math.max(0, Math.min(NXDEADLINE, 9300) - el); // v1.17.52 // v1.15.99: ৯.৬সে যাতে Beamup প্রক্সির ১২সে কাটঅফের আগে সবসময় ২+ সেকেন্ড হাতে থাকে
     // v1.15.3: সোর্স-ত্রুটি (রিবিল্ড/নেটওয়ার্ক) ≠ সত্যিকারের-খালি — আংশিক-গণ্য হোক (errFlag উপরে ঘোষিত)
     const outs = await outsP;
+    // ★ v1.26.1: যে-সোর্স এই কলে আসেনি, তার **গত ৪ মিনিটের জমা-ফল** বসাও (রিফ্রেশে ভরে যায়)
+    let _stN = 0;
+    if (SKEY) {
+      const _st = stashGet(SKEY);
+      if (_st) {
+        for (let _i = 0; _i < live.length; _i++) {
+          if ((!outs[_i] || !outs[_i].length) && _st[live[_i].key]) { outs[_i] = _st[live[_i].key].cards; _stN += outs[_i].length; }
+        }
+        if (_stN && DBG) console.error('[stash] +' + _stN + ' কার্ড (' + live.filter((x2, i2) => outs[i2] && _st[x2.key]).map(x2 => x2.key).join(',') + ')');
+      }
+    }
     const seenFileU = new Set(); // v1.15.50: sky/m4u-একই-ফাইল-ডুপ-কাটার-সেট
     let all = cards.slice();
     for (let i = 0; i < live.length; i++) {
@@ -8545,7 +8589,7 @@ async function withSources(cardsP, srcs, cfg, t0) {
     try { LAST_SRC = { ts: Date.now(), el: el, cards: all.length, src: live.map((x2, i2) => x2.key + ':' + (outs[i2] ? outs[i2].length : 'cut')) }; } catch (e) { }
     if (DBG) console.error('[srcdbg] withSources el=' + el + 'ms uniLeft=' + uniLeft + 'ms → ' + all.length + ' কার্ড (partial=' + !!all.$partial + ') সোর্স=' + live.map((x2, i2) => x2.key + ':' + (outs[i2] ? outs[i2].length : 'কাটা')).join(','));
 
-    all.$partial = outs.some(v => v === null) || errFlag || cutFlag; // v1.15.3: কাটা-বা-ত্রুটিজ-সোর্স → ৩০মিন-নয়-৯০সে-ক্যাশ (পরের-ট্যাপে-সম্পূর্ণ-আপগ্রেড)
+    all.$partial = outs.some(v => v === null) || errFlag || cutFlag || _stN > 0; // v1.15.3: কাটা-বা-ত্রুটিজ-সোর্স → ৩০মিন-নয়-৯০সে-ক্যাশ (পরের-ট্যাপে-সম্পূর্ণ-আপগ্রেড)
     return all;
   } catch (e) { if (DBG) console.error('[srcdbg] ERR ' + String(e && e.message).slice(0, 80)); return cards; }
 }
@@ -8561,7 +8605,17 @@ function srvBump(srv, d) {
 //   ৫ সার্ভার = ৫×(seed+sources) ≈ ১০ কল ⇒ মাত্র ৩–৪টি নোডেই সবগুলো চলে ⇒ ভাগ্য-নির্ভরতা প্রায় শেষ।
 const SRV_KEEP = (process.env.VSRV || 'miami,boise,phoenix,atlanta,delhi').split(',').map(x => x.trim()).filter(Boolean);
 const SERVERS_ON = SERVERS.filter(x => SRV_KEEP.indexOf(x) >= 0);
-const srvOrder = () => SERVERS_ON.slice().sort((a, b) => (SRV_SCORE[b] || 0) - (SRV_SCORE[a] || 0));
+// ★★★ v1.26.2 (ইউজার: "Vidy er Miami, Boise ei duita server e gurutto besi thakbe"):
+//   (ক) **ক্রম**: miami, boise সবার আগে (তারপর স্কোর-অনুযায়ী বাকিরা) — vidy-ঢেউয়ের প্রথম স্লট ওরা পায়;
+//   (খ) **বাজেট**: PRI সার্ভার ৭.৬সে (বাকিরা ৫.২সে, delhi ২.৬সে) ⇒ দেরিতে-ফেরা Miami/Boise কাটা পড়ে না;
+//   (গ) **টাইটেন-কাট-থেকে-রেহাই**: stopTighten PRI সার্ভারকে VPRIX(৭.২সে)-এর আগে কাটে না।
+const SRV_PRI = (process.env.VSRVP || 'miami,boise').split(',').map(x => x.trim()).filter(Boolean);
+const isPriSrv = srv => SRV_PRI.indexOf(srv) >= 0;
+const srvOrder = () => {
+  const pri = SRV_PRI.filter(x => SERVERS_ON.indexOf(x) >= 0);
+  const rest = SERVERS_ON.filter(x => !isPriSrv(x)).sort((a, b) => (SRV_SCORE[b] || 0) - (SRV_SCORE[a] || 0));
+  return pri.concat(rest);
+};
 // প্রথম-সোর্স-URL-বাঁচা-কি-না (master-m3u8-ছোট — সস্তা-GET; Referer-ছাড়া-CDN-403-দেয়):
 function probePlaylist(u, hop) { // Auto-HLS-master পড়ে-সর্বোচ্চ-উচ্চতা-বের-করে (ok=২০০); বড়-বডি-১২৮KB-তে-কাটা
   return new Promise(resolve => {
@@ -8738,7 +8792,9 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
         if (DBG) console.error('[t1g] ' + srv + ' BUDGET-CUT');
         pend.delete(srv); // v1.14.2: বসে-গেছে — early-harvest-গণিত-যেন-ভুল-না-হয়
         fire({ srv, err: new Error('srv-budget') });
-      }, srv === 'delhi' ? Number(process.env.VDELB || 2600) : (GIANT.indexOf(srv) >= 0 ? (viaProxy ? 5200 : 5000) : (viaProxy ? 5000 : 4800))); // v1.21.5: delhi (500) ছোট বাজেট — ৪.৫সে-উইন্ডো/quota খায় না // ★ v1.17.56: vidy-সেশন ২–৩সে নেয় ⇒ ৩.৮সে-বাজেট ভিডি-কার্ডই কেটে দিত // v1.17.39: কাট-ঘড়ির (≤৪.২সে) পরে বাজেট-টাইমারের কোনো মানে নেই // v1.15.24 (ইউজার: '৬-৭সে-তে-সব-কার্ড'): প্রক্সি-পথ-বাজেট ৮.৫/৭→৬.৫/৫.৫সে — vidy-শাখা-নিজেই-ধীরতম-হয়ে-গোটা-উত্তর-৮-১০সে-টানছিল; প্রক্সি-চেইনের-সফল-ফেচ ৪.৭-৬.৩সে-তে-বলে-৬.৫সে-দৈত্য-সীমা-ওদের-ধরে; সরাসরি-পথ ৫.৫/৩.৮-অক্ষত
+      }, isPriSrv(srv) ? Number(process.env.VPRIB || 7600)                              // ★ v1.26.2: Miami/Boise — দীর্ঘ বাজেট
+        : srv === 'delhi' ? Number(process.env.VDELB || 2600)
+          : (GIANT.indexOf(srv) >= 0 ? (viaProxy ? 5200 : 5000) : (viaProxy ? 5000 : 4800))); // v1.21.5: delhi (500) ছোট বাজেট — ৪.৫সে-উইন্ডো/quota খায় না // ★ v1.17.56: vidy-সেশন ২–৩সে নেয় ⇒ ৩.৮সে-বাজেট ভিডি-কার্ডই কেটে দিত // v1.17.39: কাট-ঘড়ির (≤৪.২সে) পরে বাজেট-টাইমারের কোনো মানে নেই // v1.15.24 (ইউজার: '৬-৭সে-তে-সব-কার্ড'): প্রক্সি-পথ-বাজেট ৮.৫/৭→৬.৫/৫.৫সে — vidy-শাখা-নিজেই-ধীরতম-হয়ে-গোটা-উত্তর-৮-১০সে-টানছিল; প্রক্সি-চেইনের-সফল-ফেচ ৪.৭-৬.৩সে-তে-বলে-৬.৫সে-দৈত্য-সীমা-ওদের-ধরে; সরাসরি-পথ ৫.৫/৩.৮-অক্ষত
       return Promise.race([
         one(srv).then(r => { done = true; clearTimeout(tmo); pend.delete(srv); if (r.ok) okWave++; return r; }), // timer cleared on win — no dangling timeouts
         new Promise(r => { fire = r; pend.set(srv, v => { done = true; clearTimeout(tmo); fire(v); }); }) // v1.14.2: tighten-কাটও-টাইমার-পরিষ্কার-করে — পরের-আসল-বাজেট-কাট/শাস্তি-আর-গুলে-খায়-না
@@ -8761,7 +8817,10 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
         || (okWave >= 1 && el2 >= 4800)
         || (okWave >= 1 && el2 >= 4300 && allow.length - pend.size >= allow.length - 2))) {
         if (DBG) console.error('[t1g] TIGHTEN ok=' + okWave + ' cut=' + pend.size + ' at ' + el2 + 'ms');
-        for (const [srv2, f2] of Array.from(pend)) { pend.delete(srv2); f2({ srv: srv2, late: true }); }
+        for (const [srv2, f2] of Array.from(pend)) {
+          if (isPriSrv(srv2) && el2 < Number(process.env.VPRIX || 7200)) continue;   // ★ v1.26.2: Miami/Boise-কে তাড়াতাড়ি কাটি না
+          pend.delete(srv2); f2({ srv: srv2, late: true });
+        }
       }
     }, 150);
     // ★★ v1.20.1 — **ইউজারের "smooth cholche na"**: মাপা টাইমলাইন দেখাল vidy-ধাপটাই ৮.২সে নিচ্ছিল
@@ -9135,7 +9194,7 @@ function sresPut(k, body, partial) {
   if (!_n) return;                                    // pure zero কখনো ক্যাশ নয়
   // ★ v1.21.6: অসম্পূর্ণ ফল (কোনো vidy সার্ভার বাদ) খুব **ছোট** TTL-এ ক্যাশ — তাৎক্ষণিক রিফ্রেশ একই
   //   তালিকা দেয় (দ্রুত), কিন্তু ৬০সে পরেই সত্যিকারের rescan ⇒ আগের মতো ৩০মিনাট আটকে থাকে না।
-  const _pw = Number(process.env.VRPART || 60) * 1000;
+  const _pw = Number(process.env.VRPART || 8) * 1000; // v1.26.1: আংশিক-ফল ৬০সে ধরে রিপ্লে করলে রিফ্রেশেও পুরোনো কম-তালিকা আসত — এখন ৮সে (স্ট্যাশ ভরাট করে)
   // ★★ v1.21.7 (ইউজার: "refresh dile keno kome jay"): **মনোটনিক** — নতুন স্ক্যানে কোনো কার্ড কমলে
   //   আগের ফলটার কার্ডগুলোও রাখা হয় (url-ডিডুপ, নতুনগুলো আগে)। mane রিফ্রেশ কখনো তালিকা ছোট করে না।
   STREAM_RES_CACHE.set(k, { body: body, exp: Date.now() + (partial ? _pw : _vrc * 1000), partial: !!partial, ts: Date.now() });
@@ -9355,6 +9414,7 @@ const server = http.createServer((req, res) => {
       return sendJson(res, 200, out);
     }
     if (p === '/mbpool.json') { try { const b = fs.readFileSync(MB_POOL_FILE); res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', 'access-control-allow-origin': '*' }); return res.end(b); } catch (e) { return sendJson(res, 200, []); } } // v1.17.34: child-যাচাই করা MB-বেঞ্চ (ডিপ্লয়-বীজ-হালনাগাদের জন্য)
+    if (p === '/_stash') return sendJson(res, 200, { n: SRC_STASH.size, ttl: STASH_TTL, items: [...SRC_STASH.entries()].slice(0, 40).map(([k, v]) => k + ' :: ' + Object.entries(v).map(([sk, o2]) => sk + '(' + o2.cards.length + ',' + Math.round((Date.now() - o2.ts) / 1000) + 's)').join(' ')) });
     if (p === '/_plead') return sendJson(res, 200, { busy: VLEAD_BUSY, seeds: VPX_SEED.size, n: VLEAD.size, live: [...VLEAD.entries()].filter(([k, v]) => v.seed && !v.dead && Date.now() - v.ts < 60000).map(([k, v]) => k + '@' + v.px) });
     if (p === '/_pxsrc') { // ★ v1.17.54: সোর্স-ভিত্তিক পুলের অবস্থা (রিপোর্ট/ডায়াগনস্টিক)
       const out = {};
@@ -9856,7 +9916,8 @@ const server = http.createServer((req, res) => {
       const ottP = !(cfg && cfg.ott === 0) ? ottStreams(Number(m[1]), 'movie', 0, 0, cfg && cfg.ottq || []).catch(() => []) : null; // v1.15.72: AsianTV
       const azP = !(cfg && cfg.az === 0) ? azStreams(Number(m[1]), 'movie', 0, 0, cfg && cfg.azq || []).catch(() => []) : null; // v1.15.76: AniZone
       kickSubs('tmdb' + m[1], 'movie', null, null, cfg);
-      return withDeadline(withSources(vOn ? getSources(Number(m[1]), 'movie', null, null, '', cfg, tp) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: hmP, key: 'hm' }, { p: hdP, key: 'hd' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0), 11500 /* v1.23.0: 11.9s deadline + unify/network-e prod-e 12.4s-e theke chilo => 10.2s: NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
+      const lookP = Promise.all([typeof tp !== 'undefined' ? tp : null, typeof nmP !== 'undefined' ? nmP : null, typeof infoP !== 'undefined' ? infoP : null].filter(Boolean)).catch(() => []); // v1.26.2
+      return withDeadline(withSources(vOn ? getSources(Number(m[1]), 'movie', null, null, '', cfg, tp) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: hmP, key: 'hm' }, { p: hdP, key: 'hd' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0, p, lookP), 11500 /* v1.23.0: 11.9s deadline + unify/network-e prod-e 12.4s-e theke chilo => 10.2s: NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
 cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'movie', s: 0, e: 0 }).then(u => sendStreams(res, req.url, p, Date.now() - t0, u, RVA, cfg)); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }
@@ -9879,7 +9940,8 @@ cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'movie', s: 0, e: 0 }
       if (nxOn) nxPrewarm('series', String(m[1]), Number(m[2] || 1), Number(m[3] || 1));
       twRtPrewarm(tp, 'series', Number(m[2] || 1), Number(m[3] || 1));
       kickSubs('tmdb' + m[1], 'series', Number(m[2] || 1), Number(m[3] || 1), cfg);
-      return withDeadline(withSources(vOn ? getSources(Number(m[1]), 'tv', Number(m[2] || 1), Number(m[3] || 1), '', cfg, tp) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: hmP, key: 'hm' }, { p: hdP, key: 'hd' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0), 11500 /* v1.23.0 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
+      const lookP = Promise.all([typeof tp !== 'undefined' ? tp : null, typeof nmP !== 'undefined' ? nmP : null, typeof infoP !== 'undefined' ? infoP : null].filter(Boolean)).catch(() => []); // v1.26.2
+      return withDeadline(withSources(vOn ? getSources(Number(m[1]), 'tv', Number(m[2] || 1), Number(m[3] || 1), '', cfg, tp) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: hmP, key: 'hm' }, { p: hdP, key: 'hd' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0, p, lookP), 11500 /* v1.23.0 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
 cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'series', s: Number(m[2] || 1), e: Number(m[3] || 1) }).then(u => sendStreams(res, req.url, p, Date.now() - t0, u, RVA, cfg)); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }
@@ -9902,7 +9964,8 @@ cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'series', s: Number(m
       const ottP = !(cfg && cfg.ott === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? ottStreams(info.id, 'movie', 0, 0, cfg && cfg.ottq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.72: AsianTV
       const azP = !(cfg && cfg.az === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? azStreams(info.id, 'movie', 0, 0, cfg && cfg.azq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.76: AniZone
       kickSubs(m[1], 'movie', null, null, cfg);
-      return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'movie', null, null, info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: hmP, key: 'hm' }, { p: hdP, key: 'hd' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0), 11500 /* v1.23.0 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
+      const lookP = Promise.all([typeof tp !== 'undefined' ? tp : null, typeof nmP !== 'undefined' ? nmP : null, typeof infoP !== 'undefined' ? infoP : null].filter(Boolean)).catch(() => []); // v1.26.2
+      return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'movie', null, null, info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: hmP, key: 'hm' }, { p: hdP, key: 'hd' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0, p, lookP), 11500 /* v1.23.0 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
 cards => { if (DBG) console.error('[rt] cards-ready @' + (Date.now() - t0) + 'ms n=' + (cards || []).length); Promise.all([infoP, nmP]).then(([info, nm]) => { if (DBG) console.error('[rt] info/nm ready @' + (Date.now() - t0) + 'ms'); return unifyCards(cards, { tmdbId: info && info.id, title: (info && info.name) || nm, type: 'movie', s: 0, e: 0, year: info && info.year }); }).then(u => { if (DBG) console.error('[rt] sending @' + (Date.now() - t0) + 'ms'); sendStreams(res, req.url, p, Date.now() - t0, u, RVA, cfg); }); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }
@@ -9926,7 +9989,8 @@ cards => { if (DBG) console.error('[rt] cards-ready @' + (Date.now() - t0) + 'ms
       if (nxOn) nxPrewarm('series', m[1], Number(m[2]), Number(m[3]));
       twRtPrewarm(nmP, 'series', Number(m[2]), Number(m[3]));
       kickSubs(m[1], 'series', Number(m[2]), Number(m[3]), cfg);
-      return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'tv', Number(m[2]), Number(m[3]), info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: hmP, key: 'hm' }, { p: hdP, key: 'hd' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0), 11500 /* v1.23.0 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
+      const lookP = Promise.all([typeof tp !== 'undefined' ? tp : null, typeof nmP !== 'undefined' ? nmP : null, typeof infoP !== 'undefined' ? infoP : null].filter(Boolean)).catch(() => []); // v1.26.2
+      return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'tv', Number(m[2]), Number(m[3]), info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: hmP, key: 'hm' }, { p: hdP, key: 'hd' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0, p, lookP), 11500 /* v1.23.0 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
 cards => { Promise.all([infoP, nmP]).then(([info, nm]) => unifyCards(cards, { tmdbId: info && info.id, title: (info && info.name) || nm, type: 'series', s: Number(m[2]), e: Number(m[3]), year: info && info.year })).then(u => sendStreams(res, req.url, p, Date.now() - t0, u, RVA, cfg)); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }
@@ -9950,7 +10014,8 @@ cards => { Promise.all([infoP, nmP]).then(([info, nm]) => unifyCards(cards, { tm
       if (nxOn) nxPrewarm('series', m[1], 1, 1);
       twRtPrewarm(nmP, 'series', 1, 1);
       kickSubs(m[1], 'series', 1, 1, cfg);
-      return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'tv', 1, 1, info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: hmP, key: 'hm' }, { p: hdP, key: 'hd' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0), 11900 /* v1.15.26 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
+      const lookP = Promise.all([typeof tp !== 'undefined' ? tp : null, typeof nmP !== 'undefined' ? nmP : null, typeof infoP !== 'undefined' ? infoP : null].filter(Boolean)).catch(() => []); // v1.26.2
+      return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'tv', 1, 1, info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: hmP, key: 'hm' }, { p: hdP, key: 'hd' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0, p, lookP), 11900 /* v1.15.26 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
 cards => { Promise.all([infoP, nmP]).then(([info, nm]) => unifyCards(cards, { tmdbId: info && info.id, title: (info && info.name) || nm, type: 'series', s: 1, e: 1, year: info && info.year })).then(u => sendStreams(res, req.url, p + ' [no-s:e]', Date.now() - t0, u, RVA, cfg)); },
         e => { logReq(p + ' [no-s:e]', Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }
