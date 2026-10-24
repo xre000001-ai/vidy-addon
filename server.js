@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.26.5';
+const VERSION = '1.26.6';
 const V1NOTE_47 = 'v1.17.47 (ইউজার: "stream cut kore fast na — 6-8s laguk, sob stream asuk") — হারভেস্ট-কাট বাতিল: আগে ৪.৬সে-এ ৬-কার্ড-হলেই কাট, ৪.৯সে হার্ড-ক্যাপ ⇒ দেরিতে-আসা সোর্সের কার্ড ফেলত। এখন **সব লাইভ-সোর্স সেটেল হলেই ফেরা**, নইলে ৭.৮সে ক্যাপ (Beamup ১২সে-সীমার ভিতরে)। সাথে: nx ৫.১→৭.২সে (MB আর কাটা পড়ে না), mm/m4u ৭.০সে সব-সাইট, hm-রেস ৩.২→৬.৬সে (কোল্ড-চেইনও একই রেসপন্সে), m4u-তে ৩ pd-id + ২ জীবিত মিরর (আগে ১ম-সফলেই-থামা), sky-তে ৩ pd-id/hub, PD_MAX env-নব। মাপা (১৬ রিকোয়েস্ট, লোকাল): avg 5.52s · সর্বোচ্চ 6.66s (আগে 3.75s-কাট-সংস্করণে ৮২৪ কার্ড), HindMovie ৮/১৬ (আগে ৩/১৬), MB ১৬/১৬, mm ১৬/১৬, m4u ১৪/১৬, sky ১২/১৬, কার্ড ৮৩৯ ⇒ **কার্ড কমেনি, বেড়েছে**।';
 
 const V1NOTE_48 = 'v1.17.48 (ইউজার: "M4u thik koro, Hindi movie add koro, configuration page ta o thik koro") — ★ কনফিগ-পেজ-মেরামত: SRC-তালিকা থেকেই সুইচ-বাইন্ড (bf সরানোর পর bindSwitch-এ null.classList-এ পুরো IIFE থেমে যেত ⇒ tune-কার্ড/সেভ/প্রিভিউ কিছুই রেন্ডার হতো না) + bindSwitch-এ null-গার্ড; HindMovie প্যানেল + tune-hm কার্ড যোগ। ★ Movies4u: একাধিক সার্চ-হিট-চেষ্টা (per_page 12), আর্টিকেল-বাদ-দিয়ে-পুনঃসার্চ, modpro-শাখা এখন আসলেই চলে (post খালি থাকলে lastPost দিয়ে) — মৃত-মিরর Range-প্রমাণ ছাড়া কার্ড-নয়। ★ প্রতি-সারি-deadline: এক-সারির-ঢিলামিতে সব-কার্ড বাতিল হতো (3 Idiots ৮.৬সে→৪.৭সে)। ★ HindMovie: 404/410-এ প্রক্সি-পুল-বন্ধ (Silence ১২.২সে→৬.১সে, কার্ড-আসে)। বেঞ্চ: avg ৪.৭৪সে (আগে ৫.৫২), max ৭.০২, m4u ১৪/১৬, HM ৮/১৬, Sky ১৪/১৬।';const V1NOTE_46 = 'v1.17.46 (HindMovie নতুন সোর্স): live search (REST → HTML ফলব্যাক, বছর-মুক্ত কুয়েরি) → পোস্ট (IMDb-id গার্ড) → mvlink (মুভি) / mvlink /web/<id> (সিজন×কোয়ালিটি) → hshare → hcloud b64 → workers.dev direct MKV (২০৬, সিক-যোগ্য)। ক্যাশ ৬ঘণ্টা (search/post/mvlink/final); ডিরেক্ট আগে, 403/429/5xx-তে পুল-রেস। ব্যাচ .zip কখনো কার্ড নয়। hmRace ৩.২s ⇒ কোল্ড-চেইন রেসপন্স আটকায় না, পেছনে ক্যাশ ভরে। মাপা (১৬ রিকোয়েস্ট): avg 3.75s, MB 15/16, mm 16/16, m4u 14/16, sky 13/16, hm 3/16 (হলিউড-ক্লাসিক বেঞ্চে; সিরিজে BB/GoT S1E1 = ৩ কার্ড)।';
@@ -5063,8 +5063,48 @@ async function azStreams(tmdbId, type, s, e, azq) { // সার্চ→সি�
 const HD_BASE = 'https://ghdhub.org';
 const HD_TTL = 6 * 3600 * 1000;
 const HD_S = new Map(), HD_P = new Map(); // সার্চ-ফল / পোস্ট-পেজ ক্যাশ
+const HD_C = new Map();            // ★ v1.27.2: যাচাই-করা কার্ডের শেষ-জীবিত-সেট (প্রতি এপিসোড/মুভি)
+const HD_CTTL = 3 * 3600e3;        // ★ v1.27.10: ৬→৩ ঘণ্টা (মৃত ফাইল-লিঙ্ক ক্যাশে বসে থাকলে ৪০৪ দিত)
 function hdCached(m, k) { if (NOCACHE) return null; const c = m.get(k); return (c && Date.now() - c.ts < HD_TTL) ? c.v : null; }
 function hdStore(m, k, v) { if (m.size > 600) m.clear(); m.set(k, { ts: Date.now(), v: v }); }
+// ★ v1.27.2 (মাপা সমস্যা): একই এপিসোড দুই রানে hd=3 → hd=0 — মিরর-প্রোব মাঝে মাঝে ব্যর্থ হয় (pixeldrain/worker
+//   রেট-লিমিট, ড্রাইভ-স্টাব)। ব্যবহারকারীর চোখে এটা "স্ট্রিম হারিয়ে গেল"। তাই **শেষবার যাচাই হওয়া কার্ড-সেট**
+//   ৬ ঘণ্টা রাখি; নতুন প্রোব শূন্য দিলে সেটাই ফেরত যায় (নতুন কার্ড এলে সেটি অগ্রাধিকার পায়)।
+function hdCards(key, arr) {
+  // ★ v1.26.6: **merge** — কোনো রানে কম কার্ড প্রমাণিত হলে আগের সমৃদ্ধ সেট মুছে যাবে না (মাপা: Shawshank ৫→১)।
+  if (arr && arr.length) {
+    const prev = HD_C.get(key);
+    const keep = (prev && Date.now() - prev.ts < HD_CTTL) ? (prev.v || []) : [];
+    const sig = x => String(x.u || '').slice(-40) + '|' + String(x.f || x.n || '');
+    const out = [];
+    for (const z of arr.map(x => ({ n: x.name, t: x.title, d: x.description, q: x.quality, u: x.url, b: x.bingeGroup, f: x.behaviorHints && x.behaviorHints.filename }))) if (!out.some(y => sig(y) === sig(z))) out.push(z);
+    for (const z of keep) if (!out.some(y => sig(y) === sig(z))) out.push(z);      // পুরোনো-প্রমাণিত আগে নয়, পরে (নতুন অগ্রাধিকার)
+    hdStore(HD_C, key, out.slice(0, 12));
+    const extra = out.slice(arr.length).map(x => ({
+      name: x.n, title: x.t, description: x.d, quality: x.q, url: x.u,
+      behaviorHints: { notWebReady: false, isBingeable: true, proxyHeaders: { request: { 'User-Agent': UA } }, filename: x.f },
+      bingeGroup: x.b
+    }));
+    return extra.length ? arr.concat(extra) : arr;   // ★ v1.26.6: thin-রানেও আগের প্রমাণিত কার্ড থাকে
+  }
+  return null;
+}
+function hdCardsBack(key) {
+  const c = HD_C.get(key);
+  if (!c || Date.now() - c.ts > HD_CTTL) return [];
+  return (c.v || []).map(x => ({
+    name: x.n, title: x.t, description: x.d, quality: x.q, url: x.u,
+    behaviorHints: { notWebReady: false, isBingeable: true, proxyHeaders: { request: { 'User-Agent': UA } }, filename: x.f },
+    bingeGroup: x.b
+  }));
+}
+function hdTextFast(u, ref, ms) { // ★ v1.27.9: ছোট পেজ (hubdrive/লিস্ট) — শুধু সরাসরি, পুল-রেস নয়
+  const h = { 'User-Agent': UA, 'Accept': 'text/html,*/*;q=0.8' };
+  if (ref) h.Referer = ref;
+  return fetch(u, { headers: h, redirect: 'follow', signal: AbortSignal.timeout(Math.max(700, ms)) })
+    .then(r => r.text().then(t => ({ st: r.status, t: t })).catch(() => ({ st: r.status, t: '' })))
+    .catch(() => ({ st: 0, t: '' }));
+}
 function hdText(u, ref, ms) { // ডিরেক্ট → (status 0/403/429/5xx) হলে পুল-রেস; 404/410 = চূড়ান্ত
   const h = { 'User-Agent': UA, 'Accept': 'text/html,application/json;q=0.9,*/*;q=0.8', 'Accept-Language': 'en-US,en;q=0.9' };
   if (ref) h.Referer = ref;
@@ -5093,6 +5133,7 @@ function hdFileOf(t) { // পেজ-শিরোনাম/ফাইলনাম 
   return { fn: clean.slice(0, 160), h, tag };
 }
 async function hdSearch(imdb, title, year, ms) { // → {url, title} | null
+  // ★ v1.27.3: search.php ব্যর্থ ⇒ সাইটম্যাপ (সাইটে পোস্ট থাকলেও সার্চ-ইনডেক্সে থাকে না)
   const key = 'q:' + (imdb || String(title || '').toLowerCase());
   const c = hdCached(HD_S, key); if (c) return c;
   const qb = 'query_by=post_title,category,stars,director,imdb_id&query_by_weights=4,2,2,2,4&sort_by=sort_by_date:desc';
@@ -5100,7 +5141,10 @@ async function hdSearch(imdb, title, year, ms) { // → {url, title} | null
   if (imdb) { // ① IMDb-নির্ভুল (ইনডেক্সে imdb_id আছে)
     const r = await hdText(HD_BASE + '/search.php?type=post&' + qb + '&limit=6&q=' + encodeURIComponent(imdb), HD_BASE + '/', ms);
     try { docs = (JSON.parse(r.t).hits || []).map(x => x.document || x); } catch (e) { }
-    docs = docs.filter(d => d && String(d.imdb_id || '') === imdb);
+    const docs0 = docs;
+    const _tOk = d => hdTitleOk(d && (d.post_title || d.title), title);
+    docs = docs.filter(d => d && String(d.imdb_id || '') === imdb && _tOk(d));   // ★ v1.27.0: টাইটেল-যাচাই
+    if (!docs.length) docs = docs0.filter(d => d && _tOk(d) && String(d.imdb_id || '') === imdb); // (কোনোটা না মিললে নিচের টাইটেল-পথে)
   }
   if (!docs.length && title) { // ② টাইটেল + বছর-মিল (ভুল-টাইটেল নয়)
     const T = String(title).trim();
@@ -5116,6 +5160,15 @@ async function hdSearch(imdb, title, year, ms) { // → {url, title} | null
     });
   }
   const d0 = docs[0];
+  if ((!d0 || !d0.permalink) && title) {                       // ★ v1.27.3: সাইটম্যাপ-পথ (মুভি)
+    const sm = await hdSmFind(title, 0, false).catch(() => []);
+    if (sm.length) {
+      if (DBG) console.error('[hdsm] movie-pick "' + String(sm[0].title).slice(0, 46) + '"');
+      const v = { url: sm[0].url, title: sm[0].title };
+      hdStore(HD_S, key, v);
+      return v;
+    }
+  }
   if (!d0 || !d0.permalink) { if (DBG) console.error('[hd] no-post "' + (imdb || title) + '"'); return null; }
   let path = '/'; try { path = new URL(d0.permalink).pathname; } catch (e) { }
   const v = { url: HD_BASE + path, title: String(d0.post_title || '') }; // ★ হোস্ট-রিরাইট: permalink অন্য মিররে যেতে পারে
@@ -5150,13 +5203,118 @@ async function hdDrive(driveUrl, ms) { // hubcloud drive → gamerxyt → প্
   const pd = [...new Set((txt.match(/pixeldrain\.dev\/u\/([A-Za-z0-9]+)/g) || []).map(z => z.split('/u/')[1]))].slice(0, 3);
   const s3 = [...new Set((txt.match(/https?:\/\/[a-z0-9.-]+\/[^"'\s<>]*X-Amz-Signature=[A-Za-z0-9%]+/g) || []).map(z => z.replace(/&amp;/g, '&')))].slice(0, 1);
   const wk = [...new Set((txt.match(/https:\/\/[a-z0-9.-]*workers\.dev\/[^"'\s<>]*/g) || []))].filter(u => !/\.m3u8/i.test(u)).slice(0, 1);
-  return { fn: nm, cands: [...s3.map(u => ({ u: u, k: 's3' })), ...wk.map(u => ({ u: u, k: 'wk' })), ...pd.map(id => ({ u: 'https://pixeldrain.dev/api/file/' + id, k: 'pd' }))] };
+  // ★ v1.27.1: "Server : 10Gbps" = `gpdl.hubcloud.<tld>/?id=<hash>` → 302 → `<host>.workers.dev/?id=…`
+  //   (মাপা)। আলাদা প্রার্থী-ধরন; 302-পার হয়ে Range-প্রমাণ ছাড়া কার্ড নয়।
+  const gp = [...new Set((txt.match(/https:\/\/gpdl\.hubcloud\.[a-z]+\/\?id=[A-Za-z0-9]+/g) || []))].slice(0, 2);
+  return { fn: nm, cands: [...s3.map(u => ({ u: u, k: 's3' })), ...wk.map(u => ({ u: u, k: 'wk' })), ...gp.map(u => ({ u: u, k: 'gp' })), ...pd.map(id => ({ u: 'https://pixeldrain.dev/api/file/' + id, k: 'pd' }))] };
 }
 // ---------- HDHub4u সিরিজ (v1.17.51) ----------
 // ★ মাপা গঠন (Reacher S4): পোস্টে দুই ধরনের লিঙ্ক —
 //   (ক) **PACK** ("1080p WEB-DL PACK [25GB]") = পুরো সিজন এক ফাইলে ⇒ কোনো একক এপিসোডের কার্ড নয় (বাদ),
 //   (খ) **"Single Episode Links: EPiSODE 1…8"** ⇒ প্রতি এপিসোডের র্যাপার (hblinks) → hubcloud।
 //   র্যাপারের <title> শুধু "Reacher S04-E01" বলে, **কোয়ালিটি hubcloud পেজের ফাইলনামে** থাকে ⇒ label সেখান থেকেই।
+// ★★★ v1.27.0 (মাপা): HDHub4u-র `imdb_id` ইনডেক্স **অবিশ্বাসযোগ্য** —
+//   tt0111161 সার্চে Shawshank-এর সাথে "Train to Busan"-ও আসে, আর tt0108778 (Friends) সার্চে
+//   "Friends Sex and Games" আসে। শুধু imdb-মিল ধরে নিলে **ভুল সিনেমা/সিরিজের কার্ড** দেখানো হয়।
+//   তাই টাইটেল যাচাই বাধ্যতামূলক: পোস্ট-শিরোনামের "পরিচ্ছন্ন কোর" (বছর/সিজন/গুণমান/ব্র্যাকেট বাদ)
+//   অবশ্যই অনুরোধ-করা নামের সাথে মিলবে — নইলে প্রার্থী বাতিল।
+const hdNorm = z => String(z || '').toLowerCase()
+  .replace(/\[18\+\]/gi, ' ')
+  .replace(/\[(?:hindi|dual|org|dd[0-9.\s]*|multi|english|esub)[^\]]*\]/gi, ' ')
+  .replace(/\((?:19|20)\d{2}\)/g, ' ')
+  .replace(/\b(?:season|s)\s*0?\d{1,2}\b/gi, ' ')
+  .replace(/\b(?:all\s+episodes?|complete|series|bluray|web-?dl|webrip|hdrip|hdr|hevc|10bit|x26[45]|aac|ddp?[0-9.]*|dual\s+audio|hindi\s+dubbed|480p|720p|1080p|2160p|4k)\b/gi, ' ')
+  .replace(/[^a-z0-9]+/g, ' ').trim();
+// ★★★ v1.27.3 (মাপা): `search.php` ইনডেক্স **অসম্পূর্ণ** — Friends/Office/Heist/Severance/Boys/Ozark/ST-এর পোস্ট
+//   সার্চে আসে না, অথচ **সাইটম্যাপে সব আছে** (`sitemap.xml` → `sitemap-posts-1..3.xml`, ১৪,৩৪৪ URL, ৪K সহ)।
+//   প্রমাণ: `the-office-season-1-english-webrip-all-episodes`, `money-heist-season-1-hindi-webrip-all-episodes`
+//   (= E01…E13 ড্রাইভ-সারি সহ), `severance-season-1/2`, `the-boys-season-1..5`, `stranger-things-season-1..5`,
+//   `chernobyl-season-1`, `money-heist-season-5(-vol-2)`. ⇒ সার্চ-ব্যর্থ হলে সাইটম্যাপ থেকেই পোস্ট বাছি।
+let HDSM = { ts: 0, urls: null, p: null };           // স্লাগ-তালিকা, ৬ ঘণ্টা
+const HD_NAME = new Map();                          // ★ v1.27.4: imdb → নাম (রুট-নাম খালি হলে)
+async function hdImdbName(imdb, type) {
+  const k = String(imdb || '');
+  if (!k) return '';
+  if (HD_NAME.has(k)) return HD_NAME.get(k);
+  try {
+    const r = await fetch(CINEMETA + '/meta/' + ((type === 'series' || type === 'tv') ? 'series' : 'movie') + '/' + encodeURIComponent(k) + '.json',
+      { headers: { 'User-Agent': UA, 'Accept': 'application/json' }, signal: AbortSignal.timeout(2600) });
+    const j = await r.json();
+    const nm = String((j && j.meta && j.meta.name) || '');
+    if (nm) { if (HD_NAME.size > 400) HD_NAME.clear(); HD_NAME.set(k, nm); }
+    if (DBG && nm) console.error('[hdname] ' + k + ' = ' + nm);
+    return nm;
+  } catch (e) { return ''; }
+}
+async function hdSmUrls() {
+  const ok = () => (HDSM.urls && Date.now() - HDSM.ts < 6 * 3600e3) ? HDSM.urls : null;
+  if (ok()) return ok();
+  if (HDSM.p) return HDSM.p;
+  HDSM.p = (async () => {
+    try {
+      const idx = await hdText(HD_BASE + '/sitemap.xml', HD_BASE + '/', 6000);
+      const subs = [...new Set((String(idx.t || '').match(/https:\/\/[^<\s]+\/sitemap-[a-z0-9-]+\.xml/g) || []))]
+        .filter(u => /sitemap-posts/.test(u));
+      const parts = await Promise.all(subs.map(u => hdText(u, HD_BASE + '/', 9000).catch(() => ({ t: '' }))));
+      const urls = [];
+      for (const p of parts) for (const m of String(p.t || '').matchAll(/<loc>([^<]+)<\/loc>/g)) {
+        const u = String(m[1]).replace(/\/$/, '');
+        if (/\/(category|tag|author)\//.test(u)) continue;
+        urls.push(u);
+      }
+      if (urls.length) { HDSM.urls = [...new Set(urls)]; HDSM.ts = Date.now(); if (DBG) console.error('[hdsm] indexed ' + HDSM.urls.length); }
+      return HDSM.urls || [];
+    } catch (e) { return HDSM.urls || []; } finally { HDSM.p = null; }
+  })();
+  return HDSM.p;
+}
+const hdSlugWords = (u) => String(u).replace(/^.*\//, '').toLowerCase().split('-');
+const hdHasWord = (ws, w) => ws.indexOf(w) >= 0;
+// টাইটেল+সিজন ⇒ সাইটম্যাপ-প্রার্থী (স্কোর-উচ্চ আগে)। সিরিজে `season-N`/`all-episodes` বাধ্যতামূলক।
+async function hdSmFind(want, SE, isSeries) {
+  const urls = await hdSmUrls();
+  if (!urls || !urls.length) return [];
+  const w = hdNorm(want);
+  if (!w) return [];
+  const ww = w.split(' ').filter(x => x.length > 1);
+  if (!ww.length) return [];
+  const out = [];
+  for (const u of urls) {
+    const ws = hdSlugWords(u);
+    if (!ww.every(t => hdHasWord(ws, t))) continue;                 // সব শব্দ থাকতেই হবে (শব্দ-সীমা ধরে)
+    const sNums = ws.map((x, i) => (x === 'season' || /^s\d{1,2}$/.test(x)) ? parseInt(String(ws[i + 1] || x).replace(/\D/g, ''), 10) : 0).filter(Boolean);
+    if (isSeries) {
+      const epish = ws.indexOf('all-episodes') >= 0 || ws.indexOf('full-series') >= 0 || ws.indexOf('episodes') >= 0;
+      if (SE && sNums.length && sNums.indexOf(SE) < 0) continue;      // অন্য সিজন বাদ
+      if (!SE && !sNums.length && !epish) continue;
+      if (SE && sNums.indexOf(SE) < 0 && !epish) continue;
+      if (ws.indexOf('movie') >= 0) continue;
+    } else {
+      if (ws.indexOf('movie') < 0 && ws.indexOf('film') < 0) continue;
+      if (sNums.length) continue;                                     // মুভি-অনুরোধে সিরিজ-পোস্ট নয়
+    }
+    let sc = 100 - Math.abs(ws.length - ww.length);
+    if (ws.slice(0, ww.length).join('-') === ww.join('-')) sc += 40;   // টাইটেল দিয়ে শুরু
+    if (ws.indexOf('all-episodes') >= 0 || ws.indexOf('full-series') >= 0) sc += 15;
+    if (/\bds4k\b|-4k-|2160p/.test(u)) sc += 2;
+    out.push({ url: u, title: ws.join(' ').replace(/\b(?:hindi|english|webrip|web-dl|bluray|all episodes|full series|full movie|dual audio)\b/g, ' ').replace(/\s+/g, ' ').trim(), sc: sc });
+  }
+  out.sort((a, b) => b.sc - a.sc);
+  if (DBG && out.length) console.error('[hdsm] cands ' + out.slice(0, 3).map(x => x.url.replace(/^.*\//, '') + '(' + x.sc + ')').join(' | '));
+  return out.slice(0, 4);
+}
+function hdTitleOk(postTitle, want) {
+  const w = hdNorm(want);
+  if (!w) return true;                      // নাম নেই ⇒ যাচাই করা সম্ভব নয়, imdb-ই ভরসা
+  const p2 = hdNorm(postTitle);
+  if (!p2) return false;
+  if (p2 === w) return true;
+  const wl = w.split(' ').filter(x => x.length > 1);
+  if (p2.indexOf(w) === 0 || p2.indexOf(w) >= 0) return p2.length <= w.length + 6; // ছোট-অতিরিক্ত-শব্দ সহনীয়
+  // শব্দ-ভিত্তিক: অনুরোধের সব বড়-শব্দ পোস্টে থাকতে হবে
+  const big = wl.filter(x => x.length > 2);
+  return big.length > 0 && big.every(t => p2.split(' ').indexOf(t) >= 0) && p2.length <= w.length + 10;
+}
 const hdEpMap = (html) => { // পোস্ট-HTML → { ep: [{u, lab}…] }
   // ★ দুই প্রজন্মের পোস্ট-গঠন একসাথে: (ক) নতুন — অ্যাঙ্কর-টেক্সটই "EPiSODE 4"; (খ) পুরোনো — লেবেল
   //   "E01 –" প্লেন-টেক্সটে, তারপর Drive/Instant অ্যাঙ্কর (hubdrive.bar/file → hubcloud drive)।
@@ -5184,14 +5342,45 @@ const hdEpMap = (html) => { // পোস্ট-HTML → { ep: [{u, lab}…] }
   }
   return map;
 };
+// ★★★ v1.27.1 (মাপা): HDHub4u-র সিরিজ-পোস্টে দুই স্তর — (ক) "টাইটেল-এপিসোড" সারি, (খ) **কোয়ালিটি-প্যাক**
+//   র্যাপার (`…/archives/68257  1080p 10Bit HEVC [9.7GB]`)। প্যাক-র্যাপারের ভেতরে আবার **প্রতি-এপিসোডের
+//   আলাদা hubdrive** থাকে ("Episode 1 … Episode 10")। প্রমাণ (GoT S01): পোস্টের ep1-ড্রাইভ
+//   `hubdrive.bar/file/1698968789` → hubcloud পেজ **২০ বাইট** (মৃত), কিন্তু প্যাকের ep1
+//   `…/1698967740` → hubcloud → gamerxyt → pixeldrain+gpdl (পেজ সত্যিই তৈরি) ⇒ দুই পথ আলাদা।
+const hdPackWraps = (html) => { // এপিসোড-নম্বরহীন (কোয়ালিটি) র্যাপার — প্যাক-স্তর
+  const out = [];
+  const re = /<a\b[^>]*href="(https:\/\/(?:hblinks\.lol\/archives|hubdrive\.bar\/file|hubcloud\.[a-z]+\/drive)\/[^"]+)"[^>]*>([\s\S]{0,80}?)<\/a>/gi;
+  let m;
+  while ((m = re.exec(String(html)))) {
+    const lab = String(m[2]).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+    if (/\b(?:episode|episod|ep|e)\s*0*\d{1,3}\b/i.test(lab)) continue;          // নির্দিষ্ট-এপিসোড সারি বাদ
+    // v1.27.7: "Single Episode Links" (Ozark S1) = ভেতরে প্রতি-এপিসোডের ড্রাইভ, কিন্তু লেবেলহীন
+    if (!/pack|2160p|4k|1080p|720p|480p|hevc|web-?dl|bluray|episode|episodes|links/i.test(lab)) continue;
+    if (!out.some(z => z.u === m[1])) out.push({ u: m[1], lab: lab });
+  }
+  return out;
+};
+const hdEpInPack = (html, ep) => { // প্যাক-র্যাপারের ভেতর থেকে ঠিক-এপিসোডের লিঙ্ক ("Episode 3")
+  const epRe = new RegExp('\\b(?:episode|episod|ep|e)\\s*0*' + ep + '\\b', 'i');
+  const out = [];
+  const re = /<a\b[^>]*href="(https:\/\/(?:hblinks\.lol\/archives|hubdrive\.bar\/file|hubcloud\.[a-z]+\/drive)\/[^"]+)"[^>]*>([\s\S]{0,80}?)<\/a>/gi;
+  let m;
+  while ((m = re.exec(String(html)))) {
+    const lab = String(m[2]).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!epRe.test(lab)) continue;
+    if (!out.some(z => z.u === m[1])) out.push({ u: m[1], lab: lab });
+  }
+  return out;
+};
 const hdLabH = (s) => { // "720p 10Bit HEVC" → 720
   const m = String(s || '').match(/(\d{3,4})\s*p\b/i);
   let h = m ? parseInt(m[1], 10) : (/\b4k\b|2160/i.test(String(s)) ? 2160 : 0);
   return [480, 720, 1080, 2160].indexOf(h) >= 0 ? h : 0;
 };
 async function hdSeries(imdb, title, s, e, origin, maxh) {
-  const T0 = Date.now(); const B = Number(process.env.HDS || 5600); const left = () => Math.max(600, B - (Date.now() - T0));
+  const T0 = Date.now(); const B = Number(process.env.HDS || 8600); /* v1.27.0: মাপা ৪.০–৬.০সে (hubdrive-হপসহ) */ const left = () => Math.max(600, B - (Date.now() - T0));
   const SE = parseInt(s, 10) || 1, EP = parseInt(e, 10) || 1;
+  if (!title && imdb) title = await hdImdbName(imdb, 'series');   // ★ v1.27.4: রুট-নাম খালি ⇒ Cinemeta
   try {
     const key = 'hs:' + imdb + ':' + SE;
     let hit = hdCached(HD_S, key);
@@ -5203,24 +5392,127 @@ async function hdSeries(imdb, title, s, e, origin, maxh) {
       // সিজন-মিল: "Season 4" / "S04" / "Season 4 Vol 1" — IMDb-মিল আগে, না-পেলে টাইটেল-মিল
       const norm = z => String(z || '').toLowerCase();
       const sRe = new RegExp('\\bseason\\s*0?' + SE + '\\b|\\bs0?' + SE + '\\b', 'i');
-      let pick = docs.find(d => d && d.permalink && String(d.imdb_id || '') === imdb && sRe.test(norm(d.post_title)));
+      const tOk = d => hdTitleOk(d && d.post_title, title);        // ★ v1.27.0: ভুল-শো ঠেকাও
+      let pick = docs.find(d => d && d.permalink && String(d.imdb_id || '') === imdb && sRe.test(norm(d.post_title)) && tOk(d));
+      if (!pick) pick = docs.find(d => d && d.permalink && sRe.test(norm(d.post_title)) && tOk(d)); // v1.27.0: let (title-fallback)
       if (!pick) pick = docs.find(d => d && d.permalink && sRe.test(norm(d.post_title)) && norm(d.post_title).indexOf(norm(title).split(' ')[0]) >= 0);
-      if (!pick) pick = docs.find(d => d && d.permalink && String(d.imdb_id || '') === imdb);
-      if (!pick) { if (DBG) console.error('[hds] no-post "' + (imdb || title) + '" S' + SE); return []; }
-      let path = '/' + String(pick.permalink).split('/').slice(3).join('/');
-      try { path = new URL(pick.permalink).pathname; } catch (er) { }
-      hit = { url: HD_BASE + path, title: String(pick.post_title || '') };
-      hdStore(HD_S, key, hit);
+      // ★ v1.27.1: সিজন-নিরপেক্ষ fallback-এ **ভুল-সিজন নিষিদ্ধ** (মাপা: Ozark S1 চাইলে "Season 4: Part-2" এসেছিল,
+      //   ep-map-এ 8…14 ⇒ "S1E1 absent")। পোস্টে অন্য সিজন-নম্বর থাকলে বাদ; সিজন-নম্বরহীন ("ALL Episodes") চলবে।
+      const sOther = d => {
+        const t2 = norm(d && d.post_title);
+        const ms2 = [...t2.matchAll(/season\s*0?(\d{1,2})|\bs0?(\d{1,2})\b/g)].map(m2 => parseInt(m2[1] || m2[2], 10)).filter(Boolean);
+        return ms2.length > 0 && ms2.indexOf(SE) < 0;
+      };
+      if (!pick) pick = docs.find(d => d && d.permalink && String(d.imdb_id || '') === imdb && !sOther(d));
+      if (!pick && title) {   // ★ v1.27.0: IMDb-ইনডেক্সে নেই (যেমন Friends) ⇒ টাইটেল+সিজন-স্ক্যান
+        const r2 = await hdText(HD_BASE + '/search.php?type=post&' + qb + '&limit=24&q=' + encodeURIComponent(String(title).replace(/\s*\(.*$/, '')), HD_BASE + '/', Math.min(2400, left()));
+        let d2 = []; try { d2 = (JSON.parse(r2.t).hits || []).map(x => x.document || x); } catch (er) { }
+        const tOk2 = d => hdTitleOk(d && d.post_title, title);
+        pick = d2.find(d => d && d.permalink && sRe.test(String(d.post_title || '')) && tOk2(d))
+          || d2.find(d => d && d.permalink && tOk2(d) && !sOther(d));   // ★ v1.27.1: ভুল-সিজনও নয় (v1.27.0: শুধু প্রথম-শব্দ নয়)
+        if (DBG && pick) console.error('[hds] title-fallback → ' + String(pick.post_title).slice(0, 44));
+      }
+      if (!pick) { if (DBG) console.error('[hds] no-post "' + (imdb || title) + '" S' + SE); }
+      if (!pick) {                                                  // ★ v1.27.3: সাইটম্যাপ-পথ
+        const sm = await hdSmFind(title, SE, true);
+        if (sm.length) { hit = { url: sm[0].url, title: sm[0].title }; hdStore(HD_S, key, hit); if (DBG) console.error('[hds] sitemap-pick "' + String(sm[0].title).slice(0, 46) + '"'); }
+      }
+      if (!pick && !hit) return [];
+      if (pick) {                                                  // ★ v1.27.4b: sitemap-pick-এ pick নেই ⇒ permalink-পাঠ বাদ
+        let path = '/' + String(pick.permalink).split('/').slice(3).join('/');
+        try { path = new URL(pick.permalink).pathname; } catch (er) { }
+        hit = { url: HD_BASE + path, title: String(pick.post_title || '') };
+        hdStore(HD_S, key, hit);
+      }
     }
-    const pg = await hdText(hit.url, HD_BASE + '/', Math.min(2800, left()));
-    const map = hdEpMap(String(pg.t || ''));
+    let pg = await hdText(hit.url, HD_BASE + '/', Math.min(2800, left()));
+    let map = hdEpMap(String(pg.t || ''));
+    // ★★★ v1.27.3 (মাপা): সার্চ ভুল/দুর্বল পোস্ট বেছে নেয় (Heist-এ "La Casa… 720p" পোস্টে ep-সারি নেই, কিন্তু
+    //   `money-heist-season-1-hindi-webrip-all-episodes`-এ E01…E13 সারি আছে)। ep-map-এ EP না থাকলে
+    //   সাইটম্যাপের **বিকল্প পোস্ট** এক-এক করে দেখি (প্রতি পোস্ট ~40–120ms) — শুধু ব্যর্থ-পথে খরচ।
+    if (!map[EP] && (title || '')) {
+      const alts = (await hdSmFind(title, SE, true).catch(() => [])).filter(a => a.url !== hit.url);
+      for (const a of alts.slice(0, 2)) {
+        if (left() < 3000) break;
+        const p2 = await hdText(a.url, HD_BASE + '/', Math.min(2400, left()));
+        const m2 = hdEpMap(String(p2.t || ''));
+        if (m2[EP]) {
+          if (DBG) console.error('[hds] alt-post "' + String(a.title).slice(0, 46) + '" eps=' + Object.keys(m2).length);
+          pg = p2; map = m2; hit = { url: a.url, title: a.title };
+          hdStore(HD_S, key, hit);
+          break;
+        }
+      }
+    }
+    if (DBG) console.error('[hds] pick="' + String(hit.title).slice(0, 54) + '" want="' + String(title || '').slice(0, 30) + '" mapEps=' + Object.keys(map).length + ' e' + EP + '=' + JSON.stringify((map[EP] || []).map(z => z.u.slice(-12) + ':' + String(z.lab).slice(0, 14))));
+    // ★★★ v1.27.6 (মাপা): কিছু পোস্টে এপিসোড-সারি **কোয়ালিটি-প্যাকের ভেতরে** থাকে, পোস্টে শুধু
+    //   `Single Episode Links` + `Pack [Drive-8.32GB]` (Ozark S1)। তখন hdEpMap খালি ⇒ আগে ব Bail করতাম।
+    //   এখন প্যাক-র্যাপার খুলে ঠিক-এপিসোডের লিঙ্ক বের করি এবং সেটাকেই ep-map ধরি।
+    if (!map[EP]) {
+      const pw0 = hdPackWraps(String(pg.t || '')).slice(0, 3);
+      if (pw0.length) {
+        const pp0 = await Promise.all(pw0.map(w => hdTextFast(w.u, HD_BASE + '/', Math.min(2000, left())).catch(() => ({ t: '' }))));
+        if (DBG) console.error('[hds] pack0 n=' + pw0.length + ' links=' + pp0.map(x => (String(x.t || '').match(/hubdrive\.bar\/file/g) || []).length).join(',') + ' left=' + left());
+        const links0 = [];
+        for (const x of pp0) for (const z of hdEpInPack(String(x.t || ''), EP)) if (!links0.some(q => q.u === z.u)) links0.push(z);
+        if (!links0.length) {   // ★ v1.27.7: লেবেলহীন ড্রাইভ-লিঙ্ক ⇒ পেজ-`<title>`-এ SxxExx মিলিয়ে বাছি
+          const all = [];
+          for (const x of pp0) for (const u of [...new Set(String(x.t || '').match(/https:\/\/(?:hubdrive\.bar\/file|hubcloud\.[a-z]+\/drive)\/[A-Za-z0-9]+/g) || [])]) if (all.indexOf(u) < 0) all.push(u);
+          const tak = all.slice(0, 12);   // ★ v1.27.8: লিস্ট উল্টো-সাজানো হয় (E10 আগে) ⇒ ৮-এ E01 বাদ পড়ত
+          if (tak.length) {
+            const tp = await Promise.all(tak.map(u => hdTextFast(u, HD_BASE + '/', Math.min(1600, left())).catch(() => ({ t: '' }))));
+            const eRe = new RegExp('\\bS\\d{1,2}[ .\-]?E0*' + EP + '\\b|\\b(?:episode|episod)\\s*0*' + EP + '\\b', 'i');
+            for (let q2 = 0; q2 < tp.length; q2++) {
+              const ttl2 = (String(tp[q2].t || '').match(/<title>([^<]*)<\/title>/) || [])[1] || '';
+              if (ttl2 && eRe.test(ttl2)) links0.push({ u: tak[q2], lab: ttl2 });
+            }
+            if (DBG) console.error('[hds] pack-ep-title x' + links0.length + ' tak=' + tak.length);
+          }
+        }
+        if (links0.length) { map = {}; map[EP] = links0.slice(0, 4); if (DBG) console.error('[hds] pack-ep x' + links0.length + ' @' + (Date.now() - T0) + 'ms'); }
+      }
+    }
     const eps = Object.keys(map).map(Number).sort((a, b) => a - b);
-    if (!eps.length) { if (DBG) console.error('[hds] no-ep-links "' + hit.title.slice(0, 40) + '" @' + (Date.now() - T0) + 'ms'); return []; }
+    if (!eps.length) { if (DBG) console.error('[hds] no-ep-links "' + hit.title.slice(0, 40) + '" @' + (Date.now() - T0) + 'ms'); const bk2 = hdCardsBack('hc:' + (imdb || title) + ':' + SE + ':' + EP); if (bk2.length && DBG) console.error('[hds] cache-fallback ' + bk2.length + ' @' + (Date.now() - T0) + 'ms'); return bk2; }
     let want = EP;
-    if (!map[want]) { if (DBG) console.error('[hds] S' + SE + 'E' + EP + ' absent (have ' + eps.join(',') + ')'); return []; }
+    if (!map[want]) { if (DBG) console.error('[hds] S' + SE + 'E' + EP + ' absent (have ' + eps.join(',') + ')'); const bk2 = hdCardsBack('hc:' + (imdb || title) + ':' + SE + ':' + EP); if (bk2.length && DBG) console.error('[hds] cache-fallback ' + bk2.length + ' @' + (Date.now() - T0) + 'ms'); return bk2; }
     if (DBG) console.error('[hds] post+ep-map @' + (Date.now() - T0) + 'ms eps=' + eps.length);
-    const wraps = map[want].slice(0, 2);
-    const wpages = await Promise.all(wraps.map(w => hdText(w.u, HD_BASE + '/', Math.min(2400, left())).catch(() => ({ t: '' }))));
+    const wraps = map[want].slice(0, 3);
+    // ★ v1.27.1: প্যাক-স্তর সমান্তরালে আনি — ep-সারির ড্রাইভ মৃত হলেও প্যাকের ভেতরের লিঙ্ক বাঁচাতে পারে
+    const packW = hdPackWraps(String(pg.t || '')).slice(0, 3);
+    const [wpages, packPages] = await Promise.all([
+      Promise.all(wraps.map(w => hdText(w.u, HD_BASE + '/', Math.min(2600, left())).catch(() => ({ t: '' })))),
+      Promise.all(packW.map(w => hdText(w.u, HD_BASE + '/', Math.min(2400, left())).catch(() => ({ t: '' }))))
+    ]);
+    // ★★★ v1.27.0: এপিসোড-র্যাপার (`hblinks.lol/archives/N`) ভেতরে hubcloud লিঙ্ক **রাখে না** —
+    //   রাখে প্রতি-কোয়ালিটির `hubdrive.bar/file/<id>` (মাপা: 4টি) আর `hubcdn.wiki` (CF, বাদ)।
+    //   মুভি-র্যাপারে অবশ্য সরাসরি hubcloud থাকে (1টি) — তাই মুভি চলত, সিরিজ কখনোই নয়।
+    //   এখন মাঝের হপটা খুলে দিই: hubdrive পেজ → hubcloud drive + আসল ফাইলনাম (কোয়ালিটি/অডিও ওখানেই)।
+    const needDrv = [];
+    const preHub = [];                                     // v1.27.1: প্যাক-র্যাপারে পাওয়া সরাসরি hubcloud
+    for (let i = 0; i < wpages.length; i++) {
+      const t = String(wpages[i].t || '');
+      if (/https:\/\/hubcloud\.[a-z]+\/drive\//i.test(t)) continue;      // সরাসরি পাওয়া গেছে
+      const hd2 = [...new Set((t.match(/https:\/\/hubdrive\.bar\/file\/[A-Za-z0-9]+/g) || []))];
+      for (const u2 of hd2) if (needDrv.indexOf(u2) < 0 && needDrv.length < 6) needDrv.push(u2);
+    }
+    for (let i = 0; i < packPages.length; i++) {           // ★ v1.27.1: "Episode N" সারি → ড্রাইভ/hubcloud
+      for (const z of hdEpInPack(String(packPages[i].t || ''), EP)) {
+        if (/hubcloud\./.test(z.u)) { if (!preHub.some(p => p.u === z.u)) preHub.push({ u: z.u, lab: z.lab, hint: (packW[i] && packW[i].lab) || '' }); }
+        else if (needDrv.indexOf(z.u) < 0 && needDrv.length < 8) needDrv.push(z.u);
+      }
+    }
+    if (DBG && needDrv.length) console.error('[hds] expand hubdrive x' + needDrv.length + ' @' + (Date.now() - T0) + 'ms');
+    const expP = needDrv.length
+      ? await Promise.all(needDrv.map(u2 => hdText(u2, HD_BASE + '/', Math.min(2400, left())).catch(() => ({ t: '' }))))
+      : [];
+    const expHubs = [];
+    for (const e2 of expP) {
+      const t2 = String(e2.t || '');
+      const hub2 = (t2.match(/https:\/\/hubcloud\.[a-z]+\/drive\/[A-Za-z0-9]+/) || [])[0];
+      const ttl2 = (t2.match(/<title>([^<]*)<\/title>/) || [])[1] || '';
+      if (hub2) expHubs.push({ hub: hub2, ttl: ttl2 });
+    }
     const drives = []; const dseen = new Set();
     for (let i = 0; i < wpages.length; i++) {
       const t = String(wpages[i].t || '');
@@ -5235,11 +5527,34 @@ async function hdSeries(imdb, title, s, e, origin, maxh) {
         if (dseen.has(hub)) continue; dseen.add(hub);
         drives.push({ hub: hub, lab: lab, ttl: ttl, h: hdLabH(lab), tag: hdFileOf(lab || '').tag || '' });
       }
+      // ★ v1.27.0: কিছু পেজে hubcloud লিঙ্ক <a>-এর ভেতরে থাকে না (প্লেন টেক্সট/JS) — মাপা: GoT S01E01
+      //   hubdrive পেজে লিঙ্ক আছে, কিন্তু অ্যাঙ্কর-রেজেক্সে ধরা পড়ত না ⇒ 'no-hubcloud'।
+      if (!rel.length) {
+        for (const h3 of [...new Set((t.match(/https:\/\/hubcloud\.[a-z]+\/drive\/[A-Za-z0-9]+/g) || []))]) {
+          if (dseen.has(h3)) continue; dseen.add(h3);
+          const fi3 = hdFileOf(ttl);
+          drives.push({ hub: h3, lab: ttl, ttl: ttl, h: fi3.h || 0, tag: fi3.tag || '' });
+        }
+      }
+    }
+    for (const eh of expHubs) {
+      if (dseen.has(eh.hub)) continue; dseen.add(eh.hub);
+      const fi = hdFileOf(eh.ttl);
+      drives.push({ hub: eh.hub, lab: eh.ttl, ttl: eh.ttl, h: fi.h || 0, tag: fi.tag || '' });
+    }
+    for (const ph of preHub) {                             // ★ v1.27.1
+      if (dseen.has(ph.u)) continue; dseen.add(ph.u);
+      const hint = String(ph.lab || '') + ' ' + String(ph.hint || '');
+      const fi = hdFileOf(hint);
+      drives.push({ hub: ph.u, lab: ph.lab, ttl: ph.lab, h: fi.h || hdLabH(hint), tag: fi.tag || '' });
     }
     let dsel = drives.slice().sort((a, b) => (b.h || 0) - (a.h || 0));
+    // ★ v1.27.1: সিজন-জিপ (ZipDisk) প্লে-যোগ্য নয় — অন্য ড্রাইভ থাকলে বাদ (প্রমাণ: HOTD S01 প্যাক = 3.56GB .zip)
+    const dselNZ = dsel.filter(d => !/\.zip\b/i.test(String(d.ttl || d.lab || '')));
+    if (dselNZ.length) dsel = dselNZ;
     if (maxh) dsel = dsel.filter(d => !(d.h && d.h > maxh));
-    dsel = dsel.slice(0, 4);                                  // সময়-বাজেট: সর্বোচ্চ ৪ কোয়ালিটি
-    if (!dsel.length) { if (DBG) console.error('[hds] no-hubcloud @' + (Date.now() - T0) + 'ms'); return []; }
+    dsel = dsel.slice(0, 6);                                  // v1.27.0: প্রতি-কোয়ালিটি ড্রাইভ এখন সত্যিই আসে
+    if (!dsel.length) { if (DBG) console.error('[hds] no-hubcloud @' + (Date.now() - T0) + 'ms'); const bk2 = hdCardsBack('hc:' + (imdb || title) + ':' + SE + ':' + EP); if (bk2.length && DBG) console.error('[hds] cache-fallback ' + bk2.length + ' @' + (Date.now() - T0) + 'ms'); return bk2; }
     const resolved = await Promise.all(dsel.map(d => hdDrive(d.hub, Math.min(2600, left())).catch(() => null)));
     const cands = []; const seenU = new Set();
     for (let i = 0; i < resolved.length; i++) {
@@ -5249,20 +5564,22 @@ async function hdSeries(imdb, title, s, e, origin, maxh) {
       for (const c of r.cands) { if (seenU.has(c.u)) continue; seenU.add(c.u); cands.push({ u: c.u, k: c.k, h: hh, fn: info.fn || dsel[i].ttl, tag: tg }); }
     }
     const pool = cands.filter(c => !(maxh && c.h && c.h > maxh));
-    if (!pool.length) { if (DBG) console.error('[hds] no-cands @' + (Date.now() - T0) + 'ms'); return []; }
+    if (!pool.length) { if (DBG) console.error('[hds] no-cands @' + (Date.now() - T0) + 'ms'); const bk2 = hdCardsBack('hc:' + (imdb || title) + ':' + SE + ':' + EP); if (bk2.length && DBG) console.error('[hds] cache-fallback ' + bk2.length + ' @' + (Date.now() - T0) + 'ms'); return bk2; }
     const prio = c => (c.k === 's3' ? 0 : c.k === 'wk' ? 1 : 2);
     const ordered = pool.slice().sort((a, b) => ((b.h || 0) - (a.h || 0)) || (prio(a) - prio(b)));
     const proven = [];
     const probeOne = async c => {
       if (left() < 800) return;
-      const pr = c.k === 'pd' ? await pdProbe(c.u).then(x => ({ ok: !!(x && x.alive) })) : await hdProbe(c.u, Math.min(1800, left()));
-      if (pr.ok) proven.push(c);
+      const pr = c.k === 'pd'
+        ? await pdProbe(c.u).then(x => ({ ok: !!(x && x.alive), sz: (x && x.total) || 0, nm: (x && x.name) || '' }))
+        : await hdProbe(c.u, Math.min(2800, left())).then(x => ({ ok: !!x.ok, sz: +((String(x.cr || '').match(/\/(\d+)\s*$/) || [])[1] || 0), nm: '' }));
+      if (pr.ok) { c.sz = pr.sz || 0; if (pr.nm && !c.fn) c.fn = hdFileOf(pr.nm).fn; proven.push(c); }
     };
     const w1 = []; let pdN = 0;
-    for (const c of ordered) { if (w1.length >= 5) break; if (c.k === 'pd') { if (pdN >= 2) continue; pdN++; } w1.push(c); }
+    for (const c of ordered) { if (w1.length >= 8) break; if (c.k === 'pd') { if (pdN >= 3) continue; pdN++; } w1.push(c); }
     await Promise.all(w1.map(probeOne));
-    if (!proven.length && left() > 1200) await Promise.all(ordered.filter(c => c.k === 'pd' && w1.indexOf(c) < 0).slice(0, 2).map(probeOne));
-    if (!proven.length) { if (DBG) console.error('[hds] no-proven @' + (Date.now() - T0) + 'ms'); return []; }
+    if (!proven.length && left() > 2400) await Promise.all(ordered.filter(c => w1.indexOf(c) < 0).slice(0, 3).map(probeOne));   // ★ v1.27.5: যেকোনো অপ্রমাণিত, শুধু pd নয়
+    if (!proven.length) { if (DBG) console.error('[hds] no-proven @' + (Date.now() - T0) + 'ms'); const bk2 = hdCardsBack('hc:' + (imdb || title) + ':' + SE + ':' + EP); if (bk2.length && DBG) console.error('[hds] cache-fallback ' + bk2.length + ' @' + (Date.now() - T0) + 'ms'); return bk2; }
     proven.sort((a, b) => (b.h || 0) - (a.h || 0));
     const cleanT = (z) => String(z || '').replace(/\s*\|.*$/, '').replace(/\((?:Season|S)\s*\d+[^)]*\)/gi, ' ')
       .replace(/[\[\(][^\]\)]*(?:Hindi|English|WEB|BluRay|4K|1080p|720p|480p|HEVC|x264|x265|Dual|Audio|DD5|10Bit)[^\]\)]*[\]\)]/gi, ' ')
@@ -5274,21 +5591,28 @@ async function hdSeries(imdb, title, s, e, origin, maxh) {
       if (us.has(c.u)) continue; us.add(c.u);
       const hk = String(c.h || 0) + '|' + String(c.tag || '');
       if (hseen.has(hk)) continue; hseen.add(hk);            // একই রেজো বারবার নয়
-      if (out.length >= 5) break;
+      if (out.length >= Number(process.env.HDCAPS || 8)) break;
       const txt = '\u29c9 ' + baseTtl + '\n' + epLine + '\n\u229e HDHub4u' + (c.tag ? ' \u2317 ' + c.tag : '') + (c.h ? ' \u00b7 ' + c.h + 'p' : '');
       out.push({
-        name: '\u25a5 ' + (c.h ? c.h + 'p' : 'MKV') + ' \u25a5', title: txt, description: txt, quality: String(c.h || ''),
+        name: '\u25a5 ' + (c.h ? String(c.h) : 'Auto') + ' \u25a5', title: txt, description: txt, quality: String(c.h || ''),
         url: c.u, behaviorHints: { notWebReady: false, isBingeable: true, proxyHeaders: { request: { 'User-Agent': UA } }, filename: (c.fn || 'hdhub4u.mkv') },
         bingeGroup: 'hd|' + String(title || baseTtl).toLowerCase() + '|S' + SE + 'E' + EP
       });
     }
     if (DBG) console.error('[hds] cards=' + out.length + ' S' + SE + 'E' + EP + ' @' + (Date.now() - T0) + 'ms');
-    return out;
-  } catch (er) { if (DBG) console.error('[hds] err ' + (er && er.message)); return []; }
+    const uni = hdCards('hc:' + (imdb || title) + ':' + SE + ':' + EP, out);
+    return uni || out;
+  } catch (er) {
+    if (DBG) console.error('[hds] err ' + (er && er.message));
+    const bk = hdCardsBack('hc:' + (imdb || title) + ':' + SE + ':' + EP);
+    if (bk.length && DBG) console.error('[hds] cache-fallback ' + bk.length);
+    return bk;
+  }
 }
 async function hdStreams(imdb, title, type, s, e, origin, maxh) { // v1.17.49: হিন্দি/ডুয়াল-অডিও DDL
   if (type === 'series' || type === 'tv') return hdSeries(imdb, title, s, e, origin, maxh); // v1.17.51: সিরিজ-পাথ
-  const T0 = Date.now(); const B = Number(process.env.HDB || 4800); const left = () => Math.max(600, B - (Date.now() - T0));
+  if (!title && imdb) title = await hdImdbName(imdb, 'movie');    // ★ v1.27.4: রুট-নাম খালি ⇒ Cinemeta
+  const T0 = Date.now(); const B = Number(process.env.HDB || 8200); /* v1.27.0: মাপা চেইন ৩.৯–৪.৪সে */ const left = () => Math.max(600, B - (Date.now() - T0));
   const hard = new Promise(r => setTimeout(() => r('deadline'), B + 200)); // ক্যাপের ভিতরে ফেরত — দেরিতে-আসা কার্ডে সোর্স আটকে থাকবে না
   try {
    return await Promise.race([(async () => {
@@ -5302,15 +5626,27 @@ async function hdStreams(imdb, title, type, s, e, origin, maxh) { // v1.17.49: �
     if (DBG) console.error('[hd] post @' + (Date.now() - T0) + 'ms wrap=' + wraps.length + ' direct=' + direct.length);
     const drives = [];
     const wpages = await Promise.all(wraps.map(u => hdText(u, HD_BASE + '/', Math.min(2200, left())).catch(() => ({ t: '' }))));
+    const mDrv = [];
     for (let i = 0; i < wpages.length; i++) {
       const t = String(wpages[i].t || '');
       const hub = (t.match(/https:\/\/hubcloud\.[a-z]+\/drive\/[A-Za-z0-9]+/) || [])[0];
       const ttl = (t.match(/<title>([^<]*)<\/title>/) || [])[1] || '';
       if (hub) drives.push({ hub: hub, ttl: ttl });
+      else for (const u2 of [...new Set((t.match(/https:\/\/hubdrive\.bar\/file\/[A-Za-z0-9]+/g) || []))]) if (mDrv.indexOf(u2) < 0 && mDrv.length < 6) mDrv.push(u2);
+    }
+    if (mDrv.length) { // ★ v1.27.0: একই মাঝের-হপ (সিরিজে যেটা সবসময় লাগত)
+      const ep = await Promise.all(mDrv.map(u2 => hdText(u2, HD_BASE + '/', Math.min(2000, left())).catch(() => ({ t: '' }))));
+      for (const e2 of ep) {
+        const t2 = String(e2.t || '');
+        const h2 = (t2.match(/https:\/\/hubcloud\.[a-z]+\/drive\/[A-Za-z0-9]+/) || [])[0];
+        const tl2 = (t2.match(/<title>([^<]*)<\/title>/) || [])[1] || '';
+        if (h2) drives.push({ hub: h2, ttl: tl2 });
+      }
+      if (DBG) console.error('[hd] hubdrive-hop +' + mDrv.length + ' drives=' + drives.length + ' @' + (Date.now() - T0) + 'ms');
     }
     for (const d of direct) drives.push({ hub: d, ttl: '' });
     if (!drives.length) return [];
-    const resolved = await Promise.all(drives.slice(0, 6).map(d => hdDrive(d.hub, Math.min(2400, left())).catch(() => null)));
+    const resolved = await Promise.all(drives.slice(0, 8).map(d => hdDrive(d.hub, Math.min(2400, left())).catch(() => null)));
     const cands = [];
     for (let i = 0; i < resolved.length; i++) {
       const r = resolved[i]; if (!r) continue;
@@ -5331,12 +5667,14 @@ async function hdStreams(imdb, title, type, s, e, origin, maxh) { // v1.17.49: �
     const proven = [];
     const probeOne = async c => {
       if (left() < 800) return false;
-      const pr = c.k === 'pd' ? await pdProbe(c.u).then(x => ({ ok: !!(x && x.alive) })) : await hdProbe(c.u, Math.min(1800, left()));
-      if (pr.ok) proven.push(c);
+      const pr = c.k === 'pd'
+        ? await pdProbe(c.u).then(x => ({ ok: !!(x && x.alive), sz: (x && x.total) || 0, nm: (x && x.name) || '' }))
+        : await hdProbe(c.u, Math.min(2800, left())).then(x => ({ ok: !!x.ok, sz: +((String(x.cr || '').match(/\/(\d+)\s*$/) || [])[1] || 0), nm: '' }));
+      if (pr.ok) { c.sz = pr.sz || 0; if (pr.nm && !c.fn) c.fn = hdFileOf(pr.nm).fn; proven.push(c); }
       return pr.ok;
     };
     const w1 = []; let pdInW1 = 0; // ১ম ঢেউ: সবচেয়ে ভালো ৬টি, তবে pixeldrain সর্বোচ্চ ২ (গেট-লাইন এড়াতে)
-    for (const c of uniqC) { if (w1.length >= 6) break; if (c.k === 'pd') { if (pdInW1 >= 2) continue; pdInW1++; } w1.push(c); }
+    for (const c of uniqC) { if (w1.length >= 8) break; if (c.k === 'pd') { if (pdInW1 >= 3) continue; pdInW1++; } w1.push(c); }
     await Promise.all(w1.map(probeOne));
     if (proven.length < 3 && left() > 1200) { // ২য় ঢেউ: বাকি pixeldrain-মিরর
       const done = new Set(w1.map(c => c.u));
@@ -5346,21 +5684,38 @@ async function hdStreams(imdb, title, type, s, e, origin, maxh) { // v1.17.49: �
     proven.sort((a, b) => (b.h || 0) - (a.h || 0));
     const out = [];
     const us = new Set();
+    const sig = new Set();   // ★ v1.27.0: (উচ্চতা + আসল আকার) — একই ফাইলের দুই মিরর একই কার্ড
     for (const c of proven) {
       if (us.has(c.u)) continue; us.add(c.u);
-      if (out.length >= 6) break;
+      const szN = +c.sz || 0;
+      const sk = (c.h || 0) + '|' + (szN ? Math.round(szN / 25e6) : String(c.fn || c.u).slice(-24));
+      if (sig.has(sk)) continue; sig.add(sk);
+      if (out.length >= Number(process.env.HDCAP || 10)) break;
       const ttl = String(hit.title || title || '').replace(/\s*\|.*$/, '').slice(0, 78);
-      const txt = '\u29c9 ' + ttl + '\n\u29e0 Movie\n\u229e HDHub4u' + (c.tag ? ' \u2317 ' + c.tag : '') + (c.h ? ' \u00b7 ' + c.h + 'p' : '');
+      const gb = c.sz ? ' \u00b7 ' + (c.sz > 1e9 ? (c.sz / 1e9).toFixed(1) + 'GB' : Math.round(c.sz / 1e6) + 'MB') : '';
+      const txt = '\u29c9 ' + ttl + '\n\u29e0 Movie\n\u229e HDHub4u' + (c.tag ? ' \u2317 ' + c.tag : '') + (c.h ? ' \u00b7 ' + c.h + 'p' : '') + gb;
       out.push({
-        name: '\u25a5 ' + (c.h ? c.h + 'p' : 'MKV') + ' \u25a5', title: txt, description: txt, quality: String(c.h || ''),
+        name: '\u25a5 ' + (c.h ? String(c.h) : 'Auto') + ' \u25a5', title: txt, description: txt, quality: String(c.h || ''),
         url: c.u, behaviorHints: { notWebReady: false, isBingeable: true, proxyHeaders: { request: { 'User-Agent': UA } }, filename: (c.fn || 'hdhub4u.mkv') },
         bingeGroup: 'hd|' + String(title || ttl).toLowerCase() + '::'
       });
     }
     if (DBG) console.error('[hd] cards=' + out.length + ' @' + (Date.now() - T0) + 'ms');
+    hdCards('hm:' + (imdb || title), out);
     return out;
-   })(), hard]).then(v => (v === 'deadline' ? [] : v));
-  } catch (e) { if (DBG) console.error('[hd] err ' + (e && e.message)); return []; }
+   })(), hard]).then(v => (v === 'deadline' ? [] : v)).then(v => {
+    const u2 = hdCards('hm:' + (imdb || title), v);                        // ★ v1.27.2: শেষ-জীবিত-সেট সংরক্ষণ (v1.26.6: merge)
+    if (v && v.length) return u2 || v;
+    const bk = hdCardsBack('hm:' + (imdb || title));                     // ★ v1.27.2: ফ্ল্যাপে প্রমাণিত-কার্ড ফেরত
+    if (bk.length && DBG) console.error('[hd] cache-fallback ' + bk.length);
+    return bk.length ? bk : v;
+  });
+  } catch (e) {
+    if (DBG) console.error('[hd] err ' + (e && e.message));
+    const bk = hdCardsBack('hm:' + (imdb || title));
+    if (bk.length && DBG) console.error('[hd] cache-fallback ' + bk.length);
+    return bk;
+  }
 }
 
 const M4U_BASE = 'https://new2.movies4u.garden';
@@ -9185,8 +9540,18 @@ function sresMerge(k, body) { // পুরোনো-উত্তরের কা
   if (!prev || !prev.body) return body;
   try {
     const a = (JSON.parse(prev.body).streams || []), b = (JSON.parse(body).streams || []);
+    // ★ v1.27.0: সাইন-করা URL (r2/cloudflarestorage, workers.dev, pixeldrain) প্রতি কলে বদলায় ⇒
+    //   শুধু url-মিল দেখলে **একই ফাইল দুইবার** ফেরত আসে (মাপা: Shawshank-এ 1080p 2.8GB ×2)।
+    //   কনটেন্ট-সিগনেচার: (সোর্স + উচ্চতা + ফাইলনাম) — না থাকলে url।
+    const sigOf = x => {
+      if (!x) return '';
+      const bg = String(x.bingeGroup || '').split('|')[0];
+      const fn = String((x.behaviorHints && x.behaviorHints.filename) || '').toLowerCase().replace(/[^a-z0-9]+/g, '').slice(0, 60);
+      return fn ? (bg + '|' + String(x.quality || '') + '|' + fn) : ('u|' + x.url);
+    };
     const seen = new Set(b.map(x => x && x.url));
-    const add = a.filter(x => x && x.url && !seen.has(x.url));
+    const seenS = new Set(b.map(sigOf));
+    const add = a.filter(x => x && x.url && !seen.has(x.url) && !seenS.has(sigOf(x)));
     if (!add.length) return body;
     if (DBG) console.error('[vmc] মার্জ +' + add.length + ' পুরোনো-কার্ড (মোট ' + (b.length + add.length) + ')');
     return JSON.stringify({ streams: b.concat(add) });
@@ -9915,7 +10280,7 @@ const server = http.createServer((req, res) => {
       const mmP = !(cfg && cfg.mm === 0) ? mmStreams(Number(m[1]), '', 'movie', 0, 0, originOf(req), cfg && cfg.mmr || 0, cfg && cfg.mmrelay === 1).catch(() => []) : null; // v1.15.28: Multimovies (cfg.mm toggle)
       const m4uP = !(cfg && cfg.m4u === 0) ? m4uStreams(Number(m[1]), '', 'movie', 0, 0, originOf(req), cfg && cfg.m4ur || 0).catch(() => []) : null; // v1.15.40-local: Movies4u
       const skyP = !(cfg && cfg.sky === 0) ? skyStreams(Number(m[1]), '', 'movie', 0, 0, originOf(req), cfg && cfg.skyr || 0).catch(() => []) : null;
-      const hdP = !(cfg && cfg.hd === 0) ? tmdbToImdb(String(m[1]), 'movie').catch(() => '').then(im => hdStreams(im || '', '', 'movie', 0, 0, originOf(req), (cfg && cfg.hdq && cfg.hdq.length ? Math.max.apply(null, cfg.hdq) : (cfg && cfg.hdr || 0)))).catch(() => []) : null; // v1.17.49: HDHub4u (tmdb → imdb → search.php)
+      const hdP = !(cfg && cfg.hd === 0) ? Promise.all([tmdbToImdb(String(m[1]), 'movie').catch(() => ''), tp.catch(() => '')]).then(([im, nm0]) => hdStreams(im || '', nm0 || '', 'movie', 0, 0, originOf(req), (cfg && cfg.hdq && cfg.hdq.length ? Math.max.apply(null, cfg.hdq) : (cfg && cfg.hdr || 0)))).catch(() => []) : null; // v1.17.49: HDHub4u (tmdb → imdb → search.php)
       const hmP = !(cfg && cfg.hm === 0) ? tp.then(n => hmRace(hmStreams(Number(m[1]), n, 'movie', 0, 0, originOf(req), cfg && cfg.hmr || 0))).catch(() => []) : null; // v1.17.46: HindMovie (live search) // v1.15.50: Arctic-স্বাধীন (SkymoviesHD)
       const bfP = BF_ENABLED && !(cfg && cfg.bf === 0) ? bfStreams(Number(m[1]), '', 'movie', 0, 0, originOf(req), cfg && cfg.bfr || 0, '', cfg && cfg.bfexo === 0 ? 0 : 1).catch(() => []) : null; // BollyFlix
       const vspP = !(cfg && cfg.vsp === 0) ? vspStreams(Number(m[1]), 'movie', 0, 0, cfg && cfg.vspq || []).catch(() => []) : null; // v1.15.71: Vidsrc
@@ -9938,7 +10303,7 @@ cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'movie', s: 0, e: 0 }
       const m4uP = !(cfg && cfg.m4u === 0) ? m4uStreams(Number(m[1]), '', 'series', Number(m[2] || 1), Number(m[3] || 1), originOf(req), cfg && cfg.m4ur || 0).catch(() => []) : null; // v1.15.40-local
       const skyP = !(cfg && cfg.sky === 0) ? skyStreams(Number(m[1]), '', 'series', Number(m[2] || 1), Number(m[3] || 1), originOf(req), cfg && cfg.skyr || 0).catch(() => []) : null;
       const hmP = !(cfg && cfg.hm === 0) ? tp.then(n => hmRace(hmStreams(Number(m[1]), n, 'series', Number(m[2] || 1), Number(m[3] || 1), originOf(req), cfg && cfg.hmr || 0))).catch(() => []) : null; // v1.17.46: HindMovie // v1.15.50: Arctic-স্বাধীন (SkymoviesHD)
-      const hdP = !(cfg && cfg.hd === 0) ? tmdbToImdb(String(m[1]), 'tv').catch(() => '').then(im => hdStreams(im || '', '', 'tv', Number(m[2] || 1), Number(m[3] || 1), originOf(req), (cfg && cfg.hdq && cfg.hdq.length ? Math.max.apply(null, cfg.hdq) : (cfg && cfg.hdr || 0)))).catch(() => []) : null; // v1.17.51: HDHub4u-সিরিজ
+      const hdP = !(cfg && cfg.hd === 0) ? Promise.all([tmdbToImdb(String(m[1]), 'tv').catch(() => ''), tp.catch(() => '')]).then(([im, nm0]) => hdStreams(im || '', nm0 || '', 'tv', Number(m[2] || 1), Number(m[3] || 1), originOf(req), (cfg && cfg.hdq && cfg.hdq.length ? Math.max.apply(null, cfg.hdq) : (cfg && cfg.hdr || 0)))).catch(() => []) : null; // v1.17.51: HDHub4u-সিরিজ
       const bfP = BF_ENABLED && !(cfg && cfg.bf === 0) ? bfStreams(Number(m[1]), '', 'series', Number(m[2] || 1), Number(m[3] || 1), originOf(req), cfg && cfg.bfr || 0, '', cfg && cfg.bfexo === 0 ? 0 : 1).catch(() => []) : null; // BollyFlix
       const vspP = !(cfg && cfg.vsp === 0) ? vspStreams(Number(m[1]), 'tv', Number(m[2] || 1), Number(m[3] || 1), cfg && cfg.vspq || []).catch(() => []) : null; // v1.15.71: Vidsrc
       const ottP = !(cfg && cfg.ott === 0) ? ottStreams(Number(m[1]), 'tv', Number(m[2] || 1), Number(m[3] || 1), cfg && cfg.ottq || []).catch(() => []) : null; // v1.15.72: AsianTV
@@ -10180,6 +10545,10 @@ setInterval(() => { nxBenchHealth(); }, 15000).unref();
   if (!NEXBASE) NEXBASE = await startEmbeddedNx();
   nxBenchHealth(); // v1.15.13: বুটেই-জানি (৬০সে-অপেক্ষা-নয়)
   server.listen(PORT, '0.0.0.0', () => console.log('[vidy] ' + VERSION + ' on :' + PORT + ' | pool=' + POOL.length + (NEXBASE ? ' | moviebox embedded' : '')));
+  // ★ v1.27.8: HDHub4u সাইটম্যাপ-ইনডেক্স বুটেই টানি (২.৩MB, ~১–৩সে) — নইলে প্রথম সিরিজ-রিকোয়েস্টে
+  //   ১২সে রুট-ডেডলাইনে কাটা পড়ে (মাপা: sitemap fetch-এর কারণে hd ফিরত না-ও পারে)। প্রতি ৬ঘণ্টায় রিফ্রেশ।
+  setTimeout(() => { hdSmUrls().then(n => { if (DBG) console.error('[hdsm] boot ' + (n && n.length)); }).catch(() => {}); }, 1500).unref();
+  setInterval(() => { hdSmUrls().catch(() => {}); }, 6 * 3600e3).unref();
   setTimeout(probePool, 3000).unref(); // v1.15.0 বুট-প্রোব
   setTimeout(pxCheckerStart, 5000).unref();
   if (BF_ENABLED) setTimeout(bfBenchStart, 7000).unref(); // v1.17.6: BollyFlix-হপ-বেঞ্চ (আসল gdflix হপে প্রক্সি যাচাই)

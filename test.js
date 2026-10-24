@@ -79,7 +79,7 @@ async function tap(label, url, checks) {
     ok(v.length && v.every(c => audioOf(c) === 'English'), 'vidy audio = English');
     ok(v.length && v.every(c => SERVER_WORDS.includes(slotOf(c).toLowerCase())), 'vidy slots = server names');
     ok(mb.length === 0 || mb.some(c => audioOf(c) === 'English'), 'moviebox: original audio present (English)');
-    ok(s.every(c => !c.bingeGroup || /^(mbxr|mm|tw|rt|m4u|peng|sky|vsp|ott|az)\|/.test(String(c.bingeGroup))), 'bingeGroup: known-source prefix'); // v1.15.71: vsp=Vidsrc; v1.15.72: ott=AsianTV; v1.15.76: az=AniZone
+    ok(s.every(c => !c.bingeGroup || /^(mbxr|mm|tw|rt|m4u|peng|sky|vsp|ott|az|hd)\|/.test(String(c.bingeGroup))), 'bingeGroup: known-source prefix'); // v1.15.71: vsp=Vidsrc; v1.15.72: ott=AsianTV; v1.15.76: az=AniZone; v1.26.6: hd=HDHub4u
     ok(mb.length === 0 || mb.every(c => c.bingeGroup && String(c.bingeGroup).indexOf('mbxr|') === 0), 'moviebox cards carry bingeGroup');
     ok(s.every(c => !c.behaviorHints || typeof c.behaviorHints === 'object'), 'behaviorHints sane');
     ok(v.every(c => !Array.isArray(c.subtitles) || c.subtitles.every(u2 => u2 && typeof u2.url === 'string')), 'vidy cards: subs shape sane (embedded subs retired — /subtitles resource serves them)');
