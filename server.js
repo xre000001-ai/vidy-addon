@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.27.2';
+const VERSION = '1.27.3';
 const V1NOTE_47 = 'v1.17.47 (ইউজার: "stream cut kore fast na — 6-8s laguk, sob stream asuk") — হারভেস্ট-কাট বাতিল: আগে ৪.৬সে-এ ৬-কার্ড-হলেই কাট, ৪.৯সে হার্ড-ক্যাপ ⇒ দেরিতে-আসা সোর্সের কার্ড ফেলত। এখন **সব লাইভ-সোর্স সেটেল হলেই ফেরা**, নইলে ৭.৮সে ক্যাপ (Beamup ১২সে-সীমার ভিতরে)। সাথে: nx ৫.১→৭.২সে (MB আর কাটা পড়ে না), mm/m4u ৭.০সে সব-সাইট, hm-রেস ৩.২→৬.৬সে (কোল্ড-চেইনও একই রেসপন্সে), m4u-তে ৩ pd-id + ২ জীবিত মিরর (আগে ১ম-সফলেই-থামা), sky-তে ৩ pd-id/hub, PD_MAX env-নব। মাপা (১৬ রিকোয়েস্ট, লোকাল): avg 5.52s · সর্বোচ্চ 6.66s (আগে 3.75s-কাট-সংস্করণে ৮২৪ কার্ড), HindMovie ৮/১৬ (আগে ৩/১৬), MB ১৬/১৬, mm ১৬/১৬, m4u ১৪/১৬, sky ১২/১৬, কার্ড ৮৩৯ ⇒ **কার্ড কমেনি, বেড়েছে**।';
 
 const V1NOTE_48 = 'v1.17.48 (ইউজার: "M4u thik koro, Hindi movie add koro, configuration page ta o thik koro") — ★ কনফিগ-পেজ-মেরামত: SRC-তালিকা থেকেই সুইচ-বাইন্ড (bf সরানোর পর bindSwitch-এ null.classList-এ পুরো IIFE থেমে যেত ⇒ tune-কার্ড/সেভ/প্রিভিউ কিছুই রেন্ডার হতো না) + bindSwitch-এ null-গার্ড; HindMovie প্যানেল + tune-hm কার্ড যোগ। ★ Movies4u: একাধিক সার্চ-হিট-চেষ্টা (per_page 12), আর্টিকেল-বাদ-দিয়ে-পুনঃসার্চ, modpro-শাখা এখন আসলেই চলে (post খালি থাকলে lastPost দিয়ে) — মৃত-মিরর Range-প্রমাণ ছাড়া কার্ড-নয়। ★ প্রতি-সারি-deadline: এক-সারির-ঢিলামিতে সব-কার্ড বাতিল হতো (3 Idiots ৮.৬সে→৪.৭সে)। ★ HindMovie: 404/410-এ প্রক্সি-পুল-বন্ধ (Silence ১২.২সে→৬.১সে, কার্ড-আসে)। বেঞ্চ: avg ৪.৭৪সে (আগে ৫.৫২), max ৭.০২, m4u ১৪/১৬, HM ৮/১৬, Sky ১৪/১৬।';const V1NOTE_46 = 'v1.17.46 (HindMovie নতুন সোর্স): live search (REST → HTML ফলব্যাক, বছর-মুক্ত কুয়েরি) → পোস্ট (IMDb-id গার্ড) → mvlink (মুভি) / mvlink /web/<id> (সিজন×কোয়ালিটি) → hshare → hcloud b64 → workers.dev direct MKV (২০৬, সিক-যোগ্য)। ক্যাশ ৬ঘণ্টা (search/post/mvlink/final); ডিরেক্ট আগে, 403/429/5xx-তে পুল-রেস। ব্যাচ .zip কখনো কার্ড নয়। hmRace ৩.২s ⇒ কোল্ড-চেইন রেসপন্স আটকায় না, পেছনে ক্যাশ ভরে। মাপা (১৬ রিকোয়েস্ট): avg 3.75s, MB 15/16, mm 16/16, m4u 14/16, sky 13/16, hm 3/16 (হলিউড-ক্লাসিক বেঞ্চে; সিরিজে BB/GoT S1E1 = ৩ কার্ড)।';
@@ -9732,7 +9732,7 @@ function vhFixCards(cards, origin) { // vidy-HLS কার্ডের url → /
 const GW_ON = process.env.GW !== '0';
 const GW_TTL = Number(process.env.GWTTL || 6 * 3600e3), GW_MAX = Number(process.env.GWMAX || 60000);
 const GW = new Map();
-const GW_PRE = ['/mm/', '/mma/', '/mmr/', '/bfz/', '/vsp/', '/vh/', '/m4u/', '/m4h/', '/m4i/', '/fod/'];
+const GW_PRE = ['/mm/', '/mma/', '/mmr/', '/bfz/', '/vsp/', '/vh/', '/m4u/', '/m4h/', '/m4i/', '/fod/', '/rel/'];
 function gwMint(internal) {
   const t = require('crypto').randomBytes(9).toString('base64url');
   GW.set(t, { u: internal, ts: Date.now() });
@@ -9759,11 +9759,70 @@ function gwRewriteBody(body, origin) {
       if (tm2) { const inner = gwGet(tm2[1]); if (!inner) continue; rest = inner; }
       let hit = false; for (const pr of GW_PRE) if (rest.indexOf(pr) === 0) { hit = true; break; }
       if (!hit) continue;
-      const ext = (/\.m3u8(\?|$)/i.test(rest) ? 'x.m3u8' : (/\.mp4(\?|$)/i.test(rest) ? 'v.mp4' : 'v.mkv'));
+      // ★ v1.27.3: /rel/-পথে এক্সটেনশন নেই ⇒ ধরন দেখে ঠিক করি (প্লেয়ার এক্সটেনশন দেখে ইঞ্জিন বাছে)
+      const ext = (rest.indexOf('/rel/v/') === 0) ? 'x.m3u8'
+        : (rest.indexOf('/rel/m/') === 0) ? 'v.mp4'
+        : (/\.m3u8(\?|$)/i.test(rest) ? 'x.m3u8' : (/\.mp4(\?|$)/i.test(rest) ? 'v.mp4' : 'v.mkv'));
       c.url = origin + '/t/' + gwMint(rest) + '/' + ext; n++;
     }
     return n ? JSON.stringify(j) : body;
   } catch (e) { return body; }
+}
+// ================= v1.27.3: vidy + MovieBox-ও প্রতি-ইউজার আলাদা লিংক =================
+// ইউজার (মাপা): দুই ইনস্টলে Miami আর MovieBox-এর লিংক **হুবহু এক** ছিল, কারণ ওগুলো সরাসরি
+//   তৃতীয়-পক্ষের ঠিকানা (vidy CDN, bcdnxw…). এখন:
+//     • vidy HLS (.m3u8)  → `/rel/v/<b64>` — শুধু **প্লেলিস্ট** আমাদের দিয়ে যায় (কয়েক KB), ভিডিও-বাইট
+//       আগের মতোই সরাসরি CDN থেকে (প্লেব্যাক-আচরণ অপরিবর্তিত, ব্যান্ডউইথ-খরচ ~০)।
+//     • MovieBox (.mp4?sign=) → `/rel/m/<b64>` — 302 রিডাইরেক্ট (কার্ড-লিংক আলাদা, ব্যান্ডউইথ শূন্য)।
+//   দুটোই পরে `/t/<tok>/x.m3u8`-এ টোকেনাইজ হয় ⇒ প্রতিটি ইনস্টল আলাদা লিংক দেখে।
+const REL_ON = process.env.REL !== '0';
+const REL_HOSTS_MP4 = /(?:^|\.)hakunaymatata\.com$|(?:^|\.)bcdnxw\./i;
+function relWrapBody(body, origin) {
+  if (!REL_ON || !origin || !body || body.length < 40) return body;
+  try {
+    const j = JSON.parse(body); const arr = j && j.streams;
+    if (!Array.isArray(arr) || !arr.length) return body;
+    let n = 0;
+    for (const c of arr) {
+      const u = String((c && c.url) || '');
+      if (!/^https?:\/\//i.test(u)) continue;
+      if (u.indexOf(origin + '/') === 0) continue;               // ইতিমধ্যেই আমাদের
+      let kind = '';
+      if (/\.m3u8(\?|$)/i.test(u)) kind = 'v';                    // HLS প্লেলিস্ট (vidy/অন্যান্য)
+      else if (/\.mp4(\?|$)/i.test(u)) { try { if (REL_HOSTS_MP4.test(new URL(u).host)) kind = 'm'; } catch (e) { } }
+      if (!kind) continue;
+      c.url = origin + '/rel/' + kind + '/' + Buffer.from(u).toString('base64url');
+      n++;
+    }
+    return n ? JSON.stringify(j) : body;
+  } catch (e) { return body; }
+}
+// প্লেলিস্ট-রিলে: শুধু টেক্সট রিরাইট (URI গুলো absolute হয়ে যায় ⇒ সেগমেন্ট/কী সরাসরি CDN থেকে)
+const REL_C = new Map(); const REL_TTL = Number(process.env.RELT || 90e3);
+async function relServe(req, res, kind, b64) {
+  let target = ''; try { target = Buffer.from(b64, 'base64url').toString('utf8'); } catch (e) { }
+  if (!/^https?:\/\//.test(target)) { res.writeHead(400); return res.end('bad'); }
+  if (kind === 'm') {                                   // MP4: 302 — Range/সিক আগের মতোই কাজ করে
+    res.writeHead(302, { location: target, 'cache-control': 'no-store', 'access-control-allow-origin': '*' });
+    return res.end();
+  }
+  const hit = REL_C.get(target);
+  if (hit && Date.now() - hit.ts < REL_TTL) { res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl', 'access-control-allow-origin': '*', 'cache-control': 'no-store' }); return res.end(hit.b); }
+  let body = '', st = 0;
+  const hdr = { 'User-Agent': UA, 'Referer': VIDY_REFERER, 'Accept': '*/*' };
+  try {
+    const r = await fetch(target, { headers: hdr, redirect: 'follow', signal: AbortSignal.timeout(8000) });
+    st = r.status; if (r.status === 200) body = await r.text();
+  } catch (e) { }
+  if (!body) { try { const x = await racePool(target, 3, 6000); body = String((x && x.body) || ''); } catch (e) { } }
+  if (!body) { res.writeHead(502, { 'content-type': 'text/plain', 'access-control-allow-origin': '*' }); return res.end('upstream'); }
+  // URI → absolute (সেগমেন্ট/ভ্যারিয়েন্ট সবই সরাসরি CDN; শুধু এই মাস্টারটাই আমাদের দিয়ে গেল)
+  const out = body.replace(/^(?!#)(\S+)\s*$/gm, (m0, u) => {
+    try { return new URL(u, target).toString(); } catch (e) { return u; }
+  }).replace(/URI="([^"]*)"/g, (m0, u) => { try { return 'URI="' + new URL(u, target).toString() + '"'; } catch (e) { return m0; } });
+  REL_C.set(target, { ts: Date.now(), b: out }); if (REL_C.size > 800) REL_C.clear();
+  res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl', 'access-control-allow-origin': '*', 'cache-control': 'no-store' });
+  return res.end(out);
 }
 function sendStreams(res, skey, plog, ms, cards, ua, cfg) {
   const partial = !!(cards && cards.$partial);
@@ -9782,7 +9841,10 @@ function sendStreams(res, skey, plog, ms, cards, ua, cfg) {
   try { if (String(plog).indexOf('fresh=1') < 0) sresPut(_sk, body, partial); } catch (e) { }
   // ★ v1.27.0: **উত্তরের সময়ই** টোকেন বসে ⇒ ক্যাশ থেকে এলেও প্রতিটি ইউজার আলাদা লিংক পায়
   let _out = body;
-  try { _out = gwRewriteBody(body, originOf(res.req || { headers: {} })); } catch (eG) { _out = body; }
+  try {
+    const _org = originOf(res.req || { headers: {} });
+    _out = gwRewriteBody(relWrapBody(body, _org), _org);   // ★ v1.27.3: vidy/MovieBox → /rel/ → /t/<tok>/
+  } catch (eG) { _out = body; }
   res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'cache-control': 'no-store' });
   return res.end(_out);
 }
@@ -9844,12 +9906,18 @@ const server = http.createServer((req, res) => {
       if ([...qs.keys()].length) cfg = parseCfgFromObj({ q: qs.get('q') || qs.get('maxq'), sub: qs.get('sub') === '0' ? 0 : 1, cat: qs.get('cat') || '', lang: qs.get('lang') || '', sort: qs.get('sort') || '', era: qs.get('era') || '', g: (qs.get('g') || '').split(',').filter(Boolean), srv: (qs.get('srv') || '').split(',').filter(Boolean), v: qs.get('v') === '0' ? 0 : undefined, nx: qs.get('nx') === '0' ? 0 : undefined, tw: qs.get('tw') === '0' ? 0 : undefined, rt: qs.get('rt') === '0' ? 0 : undefined, m4u: qs.get('m4u') === '0' ? 0 : undefined, m4ur: qs.get('m4ur') || undefined, sky: qs.get('sky') === '0' ? 0 : undefined, skyr: qs.get('skyr') || undefined, bf: qs.get('bf') === '0' ? 0 : undefined, bfr: qs.get('bfr') || undefined, mm: qs.get('mm') === '0' ? 0 : undefined, mmrelay: qs.get('mmrelay') === '1' ? 1 : undefined, mmdirect: qs.get('mmdirect') === '1' ? 1 : undefined, vsp: qs.get('vsp') === '0' ? 0 : undefined, vspq: qs.get('vspq') || undefined, ott: qs.get('ott') === '0' ? 0 : undefined, ottq: qs.get('ottq') || undefined, az: qs.get('az') === '0' ? 0 : undefined, azq: qs.get('azq') || undefined, rtl: qs.get('rtl') ? qs.get('rtl').split(',') : undefined, nxq: qs.get('nxq') || undefined, nxl: qs.get('nxl') ? qs.get('nxl').split(',') : undefined, rtq: qs.get('rtq') || undefined, mmq: qs.get('mmq') || undefined, m4uq: qs.get('m4uq') || undefined, skyq: qs.get('skyq') || undefined, bfq: qs.get('bfq') || undefined, twl: qs.get('twl') ? qs.get('twl').split(',') : undefined, mml: qs.get('mml') ? qs.get('mml').split(',') : undefined, m4ul: qs.get('m4ul') ? qs.get('m4ul').split(',') : undefined, skyl: qs.get('skyl') ? qs.get('skyl').split(',') : undefined, bfl: qs.get('bfl') ? qs.get('bfl').split(',') : undefined, vspl: qs.get('vspl') ? qs.get('vspl').split(',') : undefined, ottl: qs.get('ottl') ? qs.get('ottl').split(',') : undefined, azl: qs.get('azl') ? qs.get('azl').split(',') : undefined });
     }
     if (!cfg) cfg = Object.assign({}, DEFAULT_CFG, { g: [], srv: [] });
+    // ★ v1.27.3: vidy/MovieBox রিলে (প্লেলিস্ট-টেক্সট বা 302)
+    { const rlM = p.match(/^\/rel\/([vm])\/([A-Za-z0-9_=-]{8,4000})$/);
+      if (rlM) return void relServe(req, res, rlM[1], rlM[2]); }
     // ★ v1.27.0: প্রতি-রিকোয়েস্ট প্লেব্যাক-টোকেন (`/t/<tok>/x.m3u8`) ⇒ ভিতরের আসল পথে রিভার্স
     { const gwM2 = p.match(/^\/t\/([A-Za-z0-9_-]{6,80})(?:\/[^\/]*)?$/);
       if (gwM2) {
         const _tgt = (typeof gwGet === 'function') ? gwGet(gwM2[1]) : null;
         if (!_tgt) { res.writeHead(404, { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'cache-control': 'no-store' }); return res.end('{"error":"link expired"}'); }
         p = _tgt; try { req.url = _tgt; } catch (eT) { }   // কুয়েরি (?r=1/?d=1) হ্যান্ডলার req.url-ই পড়ে
+        // ★ v1.27.3: টোকেনের ভিতরের পথ /rel/ হলে সরাসরি সেখানেই পাঠাই (রুট-অর্ডারে আগে যায়নি)
+        const _rl = p.match(/^\/rel\/([vm])\/([A-Za-z0-9_=-]{8,4000})$/);
+        if (_rl) return void relServe(req, res, _rl[1], _rl[2]);
       } }
     VSP_PUB = originOf(req) || VSP_PUB; // v1.15.71: রিলে-বেস (x-forwarded-host-সচেতন)
     if (p === '/' || p === '/config' || p === '/configure') return sendFile2(res, 'config.html');
