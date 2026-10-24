@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.26.2';
+const VERSION = '1.26.3';
 const V1NOTE_47 = 'v1.17.47 (ইউজার: "stream cut kore fast na — 6-8s laguk, sob stream asuk") — হারভেস্ট-কাট বাতিল: আগে ৪.৬সে-এ ৬-কার্ড-হলেই কাট, ৪.৯সে হার্ড-ক্যাপ ⇒ দেরিতে-আসা সোর্সের কার্ড ফেলত। এখন **সব লাইভ-সোর্স সেটেল হলেই ফেরা**, নইলে ৭.৮সে ক্যাপ (Beamup ১২সে-সীমার ভিতরে)। সাথে: nx ৫.১→৭.২সে (MB আর কাটা পড়ে না), mm/m4u ৭.০সে সব-সাইট, hm-রেস ৩.২→৬.৬সে (কোল্ড-চেইনও একই রেসপন্সে), m4u-তে ৩ pd-id + ২ জীবিত মিরর (আগে ১ম-সফলেই-থামা), sky-তে ৩ pd-id/hub, PD_MAX env-নব। মাপা (১৬ রিকোয়েস্ট, লোকাল): avg 5.52s · সর্বোচ্চ 6.66s (আগে 3.75s-কাট-সংস্করণে ৮২৪ কার্ড), HindMovie ৮/১৬ (আগে ৩/১৬), MB ১৬/১৬, mm ১৬/১৬, m4u ১৪/১৬, sky ১২/১৬, কার্ড ৮৩৯ ⇒ **কার্ড কমেনি, বেড়েছে**।';
 
 const V1NOTE_48 = 'v1.17.48 (ইউজার: "M4u thik koro, Hindi movie add koro, configuration page ta o thik koro") — ★ কনফিগ-পেজ-মেরামত: SRC-তালিকা থেকেই সুইচ-বাইন্ড (bf সরানোর পর bindSwitch-এ null.classList-এ পুরো IIFE থেমে যেত ⇒ tune-কার্ড/সেভ/প্রিভিউ কিছুই রেন্ডার হতো না) + bindSwitch-এ null-গার্ড; HindMovie প্যানেল + tune-hm কার্ড যোগ। ★ Movies4u: একাধিক সার্চ-হিট-চেষ্টা (per_page 12), আর্টিকেল-বাদ-দিয়ে-পুনঃসার্চ, modpro-শাখা এখন আসলেই চলে (post খালি থাকলে lastPost দিয়ে) — মৃত-মিরর Range-প্রমাণ ছাড়া কার্ড-নয়। ★ প্রতি-সারি-deadline: এক-সারির-ঢিলামিতে সব-কার্ড বাতিল হতো (3 Idiots ৮.৬সে→৪.৭সে)। ★ HindMovie: 404/410-এ প্রক্সি-পুল-বন্ধ (Silence ১২.২সে→৬.১সে, কার্ড-আসে)। বেঞ্চ: avg ৪.৭৪সে (আগে ৫.৫২), max ৭.০২, m4u ১৪/১৬, HM ৮/১৬, Sky ১৪/১৬।';const V1NOTE_46 = 'v1.17.46 (HindMovie নতুন সোর্স): live search (REST → HTML ফলব্যাক, বছর-মুক্ত কুয়েরি) → পোস্ট (IMDb-id গার্ড) → mvlink (মুভি) / mvlink /web/<id> (সিজন×কোয়ালিটি) → hshare → hcloud b64 → workers.dev direct MKV (২০৬, সিক-যোগ্য)। ক্যাশ ৬ঘণ্টা (search/post/mvlink/final); ডিরেক্ট আগে, 403/429/5xx-তে পুল-রেস। ব্যাচ .zip কখনো কার্ড নয়। hmRace ৩.২s ⇒ কোল্ড-চেইন রেসপন্স আটকায় না, পেছনে ক্যাশ ভরে। মাপা (১৬ রিকোয়েস্ট): avg 3.75s, MB 15/16, mm 16/16, m4u 14/16, sky 13/16, hm 3/16 (হলিউড-ক্লাসিক বেঞ্চে; সিরিজে BB/GoT S1E1 = ৩ কার্ড)।';
@@ -8443,8 +8443,8 @@ async function withSources(cardsP, srcs, cfg, t0, mkey, lookupP) {
   const SKEY = mkey ? String(mkey).split(' [')[0] : '';
   // ★ v1.26.2: নাম/TMDB-লুকআপ কত সময় নিল — সোর্সগুলো ওই সময়ের **পরে** শুরু হয়, তাই ওদের বাজেট
   //   ন্যায্যভাবে ওই সময়টুকু বেশি পাবে (নাহলে প্রথম ট্যাপেই tw/rt/az কেটে যেত, দ্বিতীয় ট্যাপে আসত)।
-  let _lookMs = 0;
-  if (lookupP) { try { lookupP.then(() => { _lookMs = Date.now() - t0; }).catch(() => { }); } catch (e) { } }
+  const _LK = { ms: 0, done: false };
+  if (lookupP) { try { lookupP.then(() => { _LK.ms = Date.now() - t0; _LK.done = true; if (DBG) console.error('[lookMs] +' + _LK.ms + 'ms (ep ' + (Date.now() - t0) + 'ms)'); }).catch(() => { _LK.done = true; }); } catch (e) { _LK.done = true; } }
   // ★ v1.17.26: **সোর্স-রেস আগে শুরু, vidy-কার্ডের অপেক্ষা পরে** — আগে vidy ৩–৪ সে খেয়ে ফেলত,
   //   তারপর অন্য সোর্সদের দিকে তাকানো হত ⇒ হারভেস্ট-ঘড়িও ৩ সে দেরিতে শুরু হয়ে মোট ৫.৭সে-তে ঠেকত।
   //   এখন দুটোই সমান্তরাল: vidy + ৯ সোর্স একসাথে দৌড়ায়, ৬ কার্ড হলেই গ্রেস-শেষে উত্তর।
@@ -8461,13 +8461,14 @@ async function withSources(cardsP, srcs, cfg, t0, mkey, lookupP) {
     //   পুরনো "৬ কার্ড হলেই ৪.৬সে-এ কাট" নিয়ম **বাতিল** — সেটাই দেরিতে-আসা সোর্সের
     //   (sky/m4u/hm/nx) কার্ড ফেলে দিত। এখন: **সব লাইভ-সোর্স সেটেল হলেই ফেরা**,
     //   নইলে শুধু ৮.২সে হার্ড-ক্যাপ (Beamup-এর ১২সে-কাটঅফের ভিতরে)।
-    const MIN_WAIT_MS = Number(process.env.VFLOOR || 1200), HARD_CAP_MS = Math.min(11800, Number(process.env.VCAP || 10200) + _lookMs); // v1.26.2: লুকআপ-সময় যোগ (১২সে-হার্ড-ক্যাপের ভিতরে) // v1.26.1: ১২সে-হার্ড-ক্যাপের ভিতরে ১০.২সে পর্যন্ত কাজে লাগাই // v1.17.52: ৭.৮সে-ক্যাপেই sky/hm/m4u/nx কাটা পড়ত ⇒ ১০.৫সে
+    const MIN_WAIT_MS = Number(process.env.VFLOOR || 1200), HARD_CAP_MS = Number(process.env.VCAP || 10200); // v1.26.2: লুকআপ-সময় যোগ (১২সে-হার্ড-ক্যাপের ভিতরে) // v1.26.1: ১২সে-হার্ড-ক্যাপের ভিতরে ১০.২সে পর্যন্ত কাজে লাগাই // v1.17.52: ৭.৮সে-ক্যাপেই sky/hm/m4u/nx কাটা পড়ত ⇒ ১০.৫সে
     let lit = 0, settled = 0, fireCut = null;
     _cutP = new Promise(r => { fireCut = r; });
     _watch = setInterval(() => {
       if (cutFlag) return;
       const el2 = Date.now() - t0;
-      if (el2 >= HARD_CAP_MS) { cutFlag = true; try { fireCut(true); } catch (e) { } } // ক্যাপ: যা এসেছে তাই
+      const _hc = Math.min(11800, HARD_CAP_MS + _LK.ms);   // ★ v1.26.3: লুকআপ-সময়সহ (লাইভ)
+      if (el2 >= _hc) { cutFlag = true; try { fireCut(true); } catch (e) { } } // ক্যাপ: যা এসেছে তাই
       else if (el2 >= MIN_WAIT_MS && settled >= live.length) { cutFlag = true; try { fireCut(true); } catch (e) { } } // সব সেটেল → আর অপেক্ষা নয়
     }, 60);
     if (_watch.unref) _watch.unref();
@@ -8478,16 +8479,21 @@ async function withSources(cardsP, srcs, cfg, t0, mkey, lookupP) {
     const SRC_CAP_MS = Number(process.env.VSCAP || 9600); // v1.17.58: 9.3s-cap-e prod-e 10.2-10.6s hoi (edge-er kache) // ★ v1.17.52: প্রতি-সোর্স-ক্যাপ — একটি ঝুলন্ত সোর্স (ott/tw/nx) পুরো তালিকাকে ক্যাপে টেনে নিত
     const track = x => { // ★ v1.17.52: টাইমার ক্লিয়ার হয় — নইলে সেটেল হওয়া সোর্সের জন্যও ভুল '[srccap]' ছাপ পড়ত
       let _tm = null;
-      const capMs = Math.min(SRC_CAP_MS, SRC_CAP_MAP[x.key] || SRC_CAP_MS) + _lookMs; // v1.26.2: নিজের ঘড়ি — লুকআপের সময় চুরি যায় না
-      const capP = new Promise(r => { _tm = setTimeout(() => { if (DBG) console.error('[srccap] ' + x.key + ' @' + capMs + 'ms'); r(null); }, capMs); });
-      return Promise.race([x.p, capP]).then(v => { clearTimeout(_tm);
+      // ★ v1.26.3 (আগের ফিক্সটা ভুল ছিল — লগ-প্রমাণ: `[srccap]` সবসময় base মানে ফায়ার করত):
+      //   `_LK.ms` মাইক্রোটাস্কে সেট হয়, আর ক্যাপের মান ৪০–৬০ms পর **ফায়ার করার সময়** পড়া হয়।
+      const base = Math.min(SRC_CAP_MS, SRC_CAP_MAP[x.key] || SRC_CAP_MS);
+      const capP = new Promise(r => { _tm = setInterval(() => {
+        const lim = Math.min(11800, base + _LK.ms);
+        if (Date.now() - t0 >= lim) { clearInterval(_tm); if (DBG) console.error('[srccap] ' + x.key + ' @' + lim + 'ms' + (_LK.ms ? ' (base ' + base + ' + look ' + _LK.ms + ')' : '')); r(null); }
+      }, 50); });
+      return Promise.race([x.p, capP]).then(v => { clearInterval(_tm);
       if (v && v.length) lit += v.length;
       settled++;
       if (DBG) console.error('[srcsettle] ' + x.key + ' @' + (Date.now() - t0) + 'ms n=' + ((v || []).length) + ' (' + settled + '/' + live.length + ')');
       return v;
-      }, () => { clearTimeout(_tm); errFlag = true; settled++; if (DBG) console.error('[srcsettle] ' + x.key + ' ERR @' + (Date.now() - t0) + 'ms (' + settled + '/' + live.length + ')'); return null; });
+      }, () => { clearInterval(_tm); errFlag = true; settled++; if (DBG) console.error('[srcsettle] ' + x.key + ' ERR @' + (Date.now() - t0) + 'ms (' + settled + '/' + live.length + ')'); return null; });
     };
-    const uniLeft0 = Math.max(0, Math.min(NXDEADLINE, 9300) + _lookMs - (Date.now() - t0)); // v1.17.52
+    const uniLeft0 = Math.max(0, Math.min(NXDEADLINE, 9300) + _LK.ms - (Date.now() - t0)); // v1.17.52
     // ★ v1.17.29: **nx (MovieBox)-এর নিজস্ব কাট-ঘড়ি** — child-এর রিজলভ ৪–৮ সে নেয়, তাই সাধারণ
     //   হারভেস্ট-কাটে (৪.১ সে) কেটে যেত ⇒ "MovieBox নেই" দেখাত। এখন nx পায় `NX_FIRST_MS` পর্যন্ত
     //   (বাকিরা আগের মতোই); ক্যাশ-হিট হলে (৩০ মিন) আগেই ফেরে ⇒ দ্রুত।
@@ -8504,7 +8510,7 @@ async function withSources(cardsP, srcs, cfg, t0, mkey, lookupP) {
       (x.key === 'nx' ? nxCutP : _cutP).then(() => null)
     ]))).finally(() => clearInterval(_watch));
   }
-  const cLeft = Math.max(500, Math.min(10600, Number(process.env.VPICK || 9600) + 1200) + _lookMs - (Date.now() - t0)); // ★ v1.20.2: vidy-কার্ড-কাট 5.7সে (আগে 9.2সে) // ⚠️ v1.17.27: ৪.৬সে-ক্যাপ **ফেরত নেওয়া হলো** — মাপা: vidy ৪.৩সে-তে ৩০+ কার্ড দেয়, ক্যাপ করলে E9/E12/E14-এ ১–১০ কার্ডে নেমে যায়
+  const cLeft = Math.max(500, Math.min(10600, Number(process.env.VPICK || 9600) + 1200) + _LK.ms - (Date.now() - t0)); // ★ v1.20.2: vidy-কার্ড-কাট 5.7সে (আগে 9.2সে) // ⚠️ v1.17.27: ৪.৬সে-ক্যাপ **ফেরত নেওয়া হলো** — মাপা: vidy ৪.৩সে-তে ৩০+ কার্ড দেয়, ক্যাপ করলে E9/E12/E14-এ ১–১০ কার্ডে নেমে যায়
   const cards = await Promise.race([
     cardsP.catch(e => { if (DBG) console.error('[srcdbg] cardsP died: ' + String(e && e.message || e).slice(0, 90)); return []; }),
     new Promise(r => setTimeout(() => r([]), cLeft))
