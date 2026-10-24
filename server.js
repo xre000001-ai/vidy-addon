@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.27.0';
+const VERSION = '1.27.1';
 const V1NOTE_47 = 'v1.17.47 (ইউজার: "stream cut kore fast na — 6-8s laguk, sob stream asuk") — হারভেস্ট-কাট বাতিল: আগে ৪.৬সে-এ ৬-কার্ড-হলেই কাট, ৪.৯সে হার্ড-ক্যাপ ⇒ দেরিতে-আসা সোর্সের কার্ড ফেলত। এখন **সব লাইভ-সোর্স সেটেল হলেই ফেরা**, নইলে ৭.৮সে ক্যাপ (Beamup ১২সে-সীমার ভিতরে)। সাথে: nx ৫.১→৭.২সে (MB আর কাটা পড়ে না), mm/m4u ৭.০সে সব-সাইট, hm-রেস ৩.২→৬.৬সে (কোল্ড-চেইনও একই রেসপন্সে), m4u-তে ৩ pd-id + ২ জীবিত মিরর (আগে ১ম-সফলেই-থামা), sky-তে ৩ pd-id/hub, PD_MAX env-নব। মাপা (১৬ রিকোয়েস্ট, লোকাল): avg 5.52s · সর্বোচ্চ 6.66s (আগে 3.75s-কাট-সংস্করণে ৮২৪ কার্ড), HindMovie ৮/১৬ (আগে ৩/১৬), MB ১৬/১৬, mm ১৬/১৬, m4u ১৪/১৬, sky ১২/১৬, কার্ড ৮৩৯ ⇒ **কার্ড কমেনি, বেড়েছে**।';
 
 const V1NOTE_48 = 'v1.17.48 (ইউজার: "M4u thik koro, Hindi movie add koro, configuration page ta o thik koro") — ★ কনফিগ-পেজ-মেরামত: SRC-তালিকা থেকেই সুইচ-বাইন্ড (bf সরানোর পর bindSwitch-এ null.classList-এ পুরো IIFE থেমে যেত ⇒ tune-কার্ড/সেভ/প্রিভিউ কিছুই রেন্ডার হতো না) + bindSwitch-এ null-গার্ড; HindMovie প্যানেল + tune-hm কার্ড যোগ। ★ Movies4u: একাধিক সার্চ-হিট-চেষ্টা (per_page 12), আর্টিকেল-বাদ-দিয়ে-পুনঃসার্চ, modpro-শাখা এখন আসলেই চলে (post খালি থাকলে lastPost দিয়ে) — মৃত-মিরর Range-প্রমাণ ছাড়া কার্ড-নয়। ★ প্রতি-সারি-deadline: এক-সারির-ঢিলামিতে সব-কার্ড বাতিল হতো (3 Idiots ৮.৬সে→৪.৭সে)। ★ HindMovie: 404/410-এ প্রক্সি-পুল-বন্ধ (Silence ১২.২সে→৬.১সে, কার্ড-আসে)। বেঞ্চ: avg ৪.৭৪সে (আগে ৫.৫২), max ৭.০২, m4u ১৪/১৬, HM ৮/১৬, Sky ১৪/১৬।';const V1NOTE_46 = 'v1.17.46 (HindMovie নতুন সোর্স): live search (REST → HTML ফলব্যাক, বছর-মুক্ত কুয়েরি) → পোস্ট (IMDb-id গার্ড) → mvlink (মুভি) / mvlink /web/<id> (সিজন×কোয়ালিটি) → hshare → hcloud b64 → workers.dev direct MKV (২০৬, সিক-যোগ্য)। ক্যাশ ৬ঘণ্টা (search/post/mvlink/final); ডিরেক্ট আগে, 403/429/5xx-তে পুল-রেস। ব্যাচ .zip কখনো কার্ড নয়। hmRace ৩.২s ⇒ কোল্ড-চেইন রেসপন্স আটকায় না, পেছনে ক্যাশ ভরে। মাপা (১৬ রিকোয়েস্ট): avg 3.75s, MB 15/16, mm 16/16, m4u 14/16, sky 13/16, hm 3/16 (হলিউড-ক্লাসিক বেঞ্চে; সিরিজে BB/GoT S1E1 = ৩ কার্ড)।';
@@ -9687,7 +9687,10 @@ function gwRewriteBody(body, origin) {
     for (const c of arr) {
       const u = String((c && c.url) || '');
       if (u.indexOf(origin + '/') !== 0) continue;
-      const rest = u.slice(origin.length);           // '/mm/..../mini.m3u8?r=1'
+      let rest = u.slice(origin.length);             // '/mm/..../mini.m3u8?r=1' বা পুরোনো '/t/<tok>/x.m3u8'
+      // ★ v1.27.1: আগেই-টোকেন-করা লিংক (ক্যাপচার-রিপ্লে / জমা-বডি) হলেও **নতুন** টোকেন পাবে
+      const tm2 = /^\/t\/([A-Za-z0-9_-]{6,80})(?:\/[^\/]*)?$/.exec(rest.split('?')[0]);
+      if (tm2) { const inner = gwGet(tm2[1]); if (!inner) continue; rest = inner; }
       let hit = false; for (const pr of GW_PRE) if (rest.indexOf(pr) === 0) { hit = true; break; }
       if (!hit) continue;
       const ext = (/\.m3u8(\?|$)/i.test(rest) ? 'x.m3u8' : (/\.mp4(\?|$)/i.test(rest) ? 'v.mp4' : 'v.mkv'));
@@ -9745,13 +9748,15 @@ function rtCapture(res) {
   w.__cap = cap; w.__rawEnd = rawEnd; w.__rawHead = rawHead;
   return { w, cap };
 }
-function rtReplay(res, cap) {
+function rtReplay(res, cap, origin) {
   if (!cap) return;
   // ★ প্রতি-কলার আলাদা res — একই capture একাধিক অনুগামীকে পাঠাতে পারে (আগে এক-ফ্ল্যাগে
   //   দ্বিতীয় কলার চিরকাল অপেক্ষায় ঝুলে থাকত: মাপা ৬০সে-টাইমআউট)।
   try {
     if (res.writableEnded || res.destroyed) return;
-    const body = cap.chunks.length ? Buffer.concat(cap.chunks) : Buffer.from('{"streams":[]}'); // খালি-শরীর কখনো নয়
+    let body = cap.chunks.length ? Buffer.concat(cap.chunks) : Buffer.from('{"streams":[]}'); // খালি-শরীর কখনো নয়
+    // ★ v1.27.0: অনুগামী লিডারের লিংক পাবে না — নিজের টোকেন বসাও
+    try { const _s = body.toString('utf8'); const _r = gwRewriteBody(_s, origin || ''); if (_r !== _s) body = Buffer.from(_r); } catch (eG) { }
     res.writeHead(cap.chunks.length ? (cap.status || 200) : 200,
       cap.chunks.length ? Object.assign({}, cap.headers) : { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'cache-control': 'no-store' });
     res.end(body);
@@ -9807,7 +9812,9 @@ const server = http.createServer((req, res) => {
       if (hit) {
         logReq(p, 0, 0, 'cache-hit', RVA);
         res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'cache-control': 'no-store', 'x-vidy-cache': 'hit' });
-        return res.end(hit.body);
+        // ★ v1.27.0: ক্যাশ থেকে এলেও প্রতি ইউজার নিজের টোকেন-লিংক পায়
+        let _cb = hit.body; try { _cb = gwRewriteBody(hit.body, originOf(req)); } catch (eG) { _cb = hit.body; }
+        return res.end(_cb);
       }
     }
     // ★ v1.17.56: একই-URL-এর দ্বিতীয় অনুরোধ প্রথমটির সঙ্গে যোগ দেয় (কোটা-সাশ্রয়, ১১.৫সে-দেয়াল থেকে বাঁচা)
@@ -9825,7 +9832,7 @@ const server = http.createServer((req, res) => {
         let jdone = false;
         const jtm = setTimeout(() => { if (jdone) return; jdone = true; RT_INFLIGHT.delete(kRT); try { sendJson(res, 200, { streams: [] }); } catch (_) { } }, 13000);
         if (jtm.unref) jtm.unref();
-        ex.then(cap => { if (jdone) return; jdone = true; clearTimeout(jtm); try { rtReplay(res, cap); } catch (_) { } },
+        ex.then(cap => { if (jdone) return; jdone = true; clearTimeout(jtm); try { rtReplay(res, cap, originOf(req)); } catch (_) { } },
                 () => { if (jdone) return; jdone = true; clearTimeout(jtm); try { sendJson(res, 200, { streams: [] }); } catch (_) { } });
         return;
       }
