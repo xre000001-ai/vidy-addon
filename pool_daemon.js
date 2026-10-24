@@ -84,8 +84,20 @@ async function session(px) {
 }
 const readVer = () => { try { return JSON.parse(fs.readFileSync(OUT, 'utf8')); } catch (e) { return {}; } };
 function saveVer(found) {
+  // ★★ v1.25.7 (মাপা: verified-ফাইলের ৮৪১ নোডের **একটাও** ts ছিল না, আর লাইভ-মাপে ওই পুলের
+  //   মাত্র ২৫% আসল সেশন পারত ⇒ ৬৫% ছিল মরা নোড, তবু ফাইলে চিরকাল থাকত)। এখন ফাইল আগে-পুরোনো বাদ দেয়,
+  //   আর প্রতিটা এন্ট্রি তার যাচাই-সময় বহন করে — সার্ভার রিস্টার্টেও বয়স অক্ষত থাকে।
   const cur = readVer(); const m = Object.assign({}, cur, found);
-  fs.writeFileSync(OUT, JSON.stringify(m)); return Object.keys(m).length;
+  const now = Date.now(), KEEP = Number(process.env.FKEEP || 2700000); // ৪৫ মিনিট
+  let cut = 0;
+  for (const k of Object.keys(m)) {
+    const ts = m[k] && m[k].ts;
+    if (!ts || now - ts > KEEP) { delete m[k]; cut++; }        // বয়স-অজানা/বাসি = জঞ্জাল
+    else if ((m[k].ms || 9999) > MSMAX) { delete m[k]; cut++; }
+  }
+  fs.writeFileSync(OUT, JSON.stringify(m));
+  console.log('[save] kept=' + Object.keys(m).length + ' cut=' + cut + ' fresh=' + Object.keys(found).length);
+  return Object.keys(m).length;
 }
 (async () => {
   console.log('[daemon] start workers=' + WORKERS + ' perCycle=' + PER_CYCLE + ' cycle=' + (CYCLE_MS / 1000) + 's MSMAX=' + MSMAX);
@@ -118,7 +130,7 @@ function saveVer(found) {
     await Promise.all(Array.from({ length: WORKERS }, async () => {
       while (si < alive.length) {
         const px = alive[si++];
-        try { const ms = await session(px); if (ms <= MSMAX) { found[px] = { ms: ms }; ok++; } } catch (e) { }
+        try { const ms = await session(px); if (ms <= MSMAX) { found[px] = { ms: ms, ts: Date.now() }; ok++; } } catch (e) { } // v1.25.7: ts ছাড়া ফাইলে বয়সই থাকত না
       }
     }));
     const n = saveVer(found);
