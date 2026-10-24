@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.25.5';
+const VERSION = '1.25.6';
 const V1NOTE_47 = 'v1.17.47 (ইউজার: "stream cut kore fast na — 6-8s laguk, sob stream asuk") — হারভেস্ট-কাট বাতিল: আগে ৪.৬সে-এ ৬-কার্ড-হলেই কাট, ৪.৯সে হার্ড-ক্যাপ ⇒ দেরিতে-আসা সোর্সের কার্ড ফেলত। এখন **সব লাইভ-সোর্স সেটেল হলেই ফেরা**, নইলে ৭.৮সে ক্যাপ (Beamup ১২সে-সীমার ভিতরে)। সাথে: nx ৫.১→৭.২সে (MB আর কাটা পড়ে না), mm/m4u ৭.০সে সব-সাইট, hm-রেস ৩.২→৬.৬সে (কোল্ড-চেইনও একই রেসপন্সে), m4u-তে ৩ pd-id + ২ জীবিত মিরর (আগে ১ম-সফলেই-থামা), sky-তে ৩ pd-id/hub, PD_MAX env-নব। মাপা (১৬ রিকোয়েস্ট, লোকাল): avg 5.52s · সর্বোচ্চ 6.66s (আগে 3.75s-কাট-সংস্করণে ৮২৪ কার্ড), HindMovie ৮/১৬ (আগে ৩/১৬), MB ১৬/১৬, mm ১৬/১৬, m4u ১৪/১৬, sky ১২/১৬, কার্ড ৮৩৯ ⇒ **কার্ড কমেনি, বেড়েছে**।';
 
 const V1NOTE_48 = 'v1.17.48 (ইউজার: "M4u thik koro, Hindi movie add koro, configuration page ta o thik koro") — ★ কনফিগ-পেজ-মেরামত: SRC-তালিকা থেকেই সুইচ-বাইন্ড (bf সরানোর পর bindSwitch-এ null.classList-এ পুরো IIFE থেমে যেত ⇒ tune-কার্ড/সেভ/প্রিভিউ কিছুই রেন্ডার হতো না) + bindSwitch-এ null-গার্ড; HindMovie প্যানেল + tune-hm কার্ড যোগ। ★ Movies4u: একাধিক সার্চ-হিট-চেষ্টা (per_page 12), আর্টিকেল-বাদ-দিয়ে-পুনঃসার্চ, modpro-শাখা এখন আসলেই চলে (post খালি থাকলে lastPost দিয়ে) — মৃত-মিরর Range-প্রমাণ ছাড়া কার্ড-নয়। ★ প্রতি-সারি-deadline: এক-সারির-ঢিলামিতে সব-কার্ড বাতিল হতো (3 Idiots ৮.৬সে→৪.৭সে)। ★ HindMovie: 404/410-এ প্রক্সি-পুল-বন্ধ (Silence ১২.২সে→৬.১সে, কার্ড-আসে)। বেঞ্চ: avg ৪.৭৪সে (আগে ৫.৫২), max ৭.০২, m4u ১৪/১৬, HM ৮/১৬, Sky ১৪/১৬।';const V1NOTE_46 = 'v1.17.46 (HindMovie নতুন সোর্স): live search (REST → HTML ফলব্যাক, বছর-মুক্ত কুয়েরি) → পোস্ট (IMDb-id গার্ড) → mvlink (মুভি) / mvlink /web/<id> (সিজন×কোয়ালিটি) → hshare → hcloud b64 → workers.dev direct MKV (২০৬, সিক-যোগ্য)। ক্যাশ ৬ঘণ্টা (search/post/mvlink/final); ডিরেক্ট আগে, 403/429/5xx-তে পুল-রেস। ব্যাচ .zip কখনো কার্ড নয়। hmRace ৩.২s ⇒ কোল্ড-চেইন রেসপন্স আটকায় না, পেছনে ক্যাশ ভরে। মাপা (১৬ রিকোয়েস্ট): avg 3.75s, MB 15/16, mm 16/16, m4u 14/16, sky 13/16, hm 3/16 (হলিউড-ক্লাসিক বেঞ্চে; সিরিজে BB/GoT S1E1 = ৩ কার্ড)।';
@@ -705,18 +705,25 @@ async function enrichPool() {
     //    openproxy.space 521 · free-proxy.cz TLS-রিসেট। SOCKS-তালিকা (cyber-gateway/free-socks-list) অচল —
     //    আমাদের স্ট্যাক HTTP-CONNECT।
     //    ⇒ quality tier = মাপা-সেরা ৪টি (নতুন ৩টি সহ), তারপর বাকি সব।
-    const QLISTS = ['https://raw.githubusercontent.com/proxmint/free-proxy-list/main/proxies/http.txt',
-                    'https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&protocol=http&proxy_format=ipport&format=text&timeout=5000',
-                    'https://free-proxy-list.net/ssl-proxy.html',   // sslproxies.org 301→ এখানেই (রিডাইরেক্ট-ফ্রি)
-                    'https://free-proxy-list.net/',
-                    // মধ্যম টিয়ার (আগের মাপা: monosans ৩২→১০%, litport ১৭%, thordata ১০%)
-                    'https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt',
-                    'https://raw.githubusercontent.com/litportnet/free-proxy-list/live/proxies/http.txt',
-                    'https://raw.githubusercontent.com/Thordata/awesome-free-proxy-list/main/proxies/http.txt'];
-    const lists = ['https://raw.githubusercontent.com/TheSpeedX/PROXY-LIST/master/http.txt',
+    // ★ v1.25.6: প্রতিটা লিস্ট আমাদের নিজের টার্গেটে মাপা (60-120 র‍্যান্ডম আইপি, CONNECT→TLS→vidy seed)।
+    //   ক্রম = মাপা সফলতার ক্রম; প্রথম QT1 টা hot-tier, বাকিরা mid-tier। GitHub স্টার ≠ সফলতা
+    //   (proxifly ৬.৯হা. স্টার ⇒ ৩.৩%, MuRongPIG ১ লাখ রো ⇒ ০%, TheSpeedX ১৫%→২.৫% অস্থির ⇒ বাদ)।
+    const QLISTS = ['https://raw.githubusercontent.com/proxmint/free-proxy-list/main/proxies/http.txt',                                  // 25-33%
+                    'https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&protocol=http&proxy_format=ipport&format=text&timeout=5000', // 21.7%
+                    'https://free-proxy-list.net/ssl-proxy.html',   // sslproxies.org 301→ এখানেই (রিডাইরেক্ট-ফ্রি) — 18.3%
+                    'https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt',                                  // 15.8%
+                    'https://free-proxy-list.net/',                                                                                // 11.7%
+                    'https://raw.githubusercontent.com/zloi-user/hideip.me/main/http.txt',                                          // 10.0-13.3% (নতুন)
+                    // মধ্যম টিয়ার
+                    'https://raw.githubusercontent.com/Zaeem20/FREE_PROXIES_LIST/master/http.txt',                                  // 8.3% (নতুন)
+                    'https://raw.githubusercontent.com/ALIILAPRO/Proxy/main/http.txt',                                              // 8.3% (নতুন)
+                    'https://raw.githubusercontent.com/litportnet/free-proxy-list/live/proxies/http.txt',                            // 17.5% (আগের মাপ)
+                    'https://raw.githubusercontent.com/Thordata/awesome-free-proxy-list/main/proxies/http.txt'];                     // 10% (আগের মাপ)
+    // ★ v1.25.6: TheSpeedX (২.৫% @১২০ নমুনা) ও proxifly-http (৩.৩%, মিডিয়ান ৩.৯সে) বাদ — মাপা জঞ্জাল।
+    const lists = ['https://raw.githubusercontent.com/zloi-user/hideip.me/main/http.txt',
                    'https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt',
                    'https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=3000',
-                   'https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/protocols/http/data.txt',
+                   // ★ v1.25.6: proxifly-http বাদ (মাপা ৩.৩%, মিডিয়ান ৩.৯সে)
                    // ★ v1.18.5 (ইউজার: "Proxyscrape er API use koro") — v4 ফ্রি-লিস্ট API, HTTPS-সক্ষম ও দেশভিত্তিক
                    'https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&protocol=http&proxy_format=ipport&format=text&timeout=5000',
                    'https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&protocol=http&proxy_format=ipport&format=text&timeout=5000&supports_https=true',
@@ -745,7 +752,7 @@ async function enrichPool() {
     //   T2 = মধ্যম (monosans/litport/thordata)। প্রতি tier আলাদা করে shuffle ⇒ বৈচিত্র্য থাকে, কিন্তু
     //   premium সোর্সের নোড আগে যাচাই হয়।
     const t1 = new Set(), t2 = new Set();
-    qtxts.forEach((t, i2) => { if (!t) return; const set = (i2 < Number(process.env.QT1 || 4)) ? t1 : t2; for (const px of (t.match(rx) || [])) set.add(px); for (const px of rxHtml(t)) set.add(px); });
+    qtxts.forEach((t, i2) => { if (!t) return; const set = (i2 < Number(process.env.QT1 || 6)) ? t1 : t2; for (const px of (t.match(rx) || [])) set.add(px); for (const px of rxHtml(t)) set.add(px); });
     const cands = shuffle(all.filter(px => t1.has(px)))       // T1 (premium)
       .concat(shuffle(all.filter(px => !t1.has(px) && t2.has(px))))  // T2
       .concat(shuffle(all.filter(px => !t1.has(px) && !t2.has(px)))); // বাকি সব

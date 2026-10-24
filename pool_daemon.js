@@ -14,11 +14,14 @@ const QLISTS = [
   'https://raw.githubusercontent.com/proxmint/free-proxy-list/main/proxies/http.txt',
   'https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&protocol=http&proxy_format=ipport&format=text&timeout=5000',
   'https://free-proxy-list.net/ssl-proxy.html',
-  'https://free-proxy-list.net/',
   'https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt',
+  'https://free-proxy-list.net/',
+  'https://raw.githubusercontent.com/zloi-user/hideip.me/main/http.txt',
+  'https://raw.githubusercontent.com/Zaeem20/FREE_PROXIES_LIST/master/http.txt',
+  'https://raw.githubusercontent.com/ALIILAPRO/Proxy/main/http.txt',
   'https://raw.githubusercontent.com/litportnet/free-proxy-list/live/proxies/http.txt',
   'https://raw.githubusercontent.com/Thordata/awesome-free-proxy-list/main/proxies/http.txt'
-]; // v1.25.5: measured pass rates on our target — best four first
+]; // v1.25.6: order = measured pass rate on OUR target; first QT1 = hot tier
 // HTML তালিকায় IP ও port আলাদা <td>-তে থাকে ⇒ জোড়া-ম্যাচ
 const RXPAIR = /((?:\d{1,3}\.){3}\d{1,3})\s*<\/td>\s*<td[^>]*>\s*(\d{2,5})\b/g;
 function htmlPairs(t) { const o = []; let m; RXPAIR.lastIndex = 0; while ((m = RXPAIR.exec(t))) { const p = +m[2]; if (p >= 20 && p <= 65535) o.push(m[1] + ':' + p); } return o; }
@@ -32,8 +35,7 @@ const LISTS = [
   'https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&protocol=http&proxy_format=ipport&format=text&timeout=5000&country=id',
   'https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&protocol=http&proxy_format=ipport&format=text&timeout=5000&country=vn',
   'https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&protocol=http&proxy_format=ipport&format=text&timeout=5000&country=tr',
-  'https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/protocols/http/data.txt',
-  'https://raw.githubusercontent.com/TheSpeedX/PROXY-LIST/master/http.txt',
+  'https://raw.githubusercontent.com/zloi-user/hideip.me/main/http.txt',
   'https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt'
 ];
 const sp = px => { const i = px.indexOf(':'); return [px.slice(0, i), +px.slice(i + 1) || 8080]; };
@@ -98,7 +100,7 @@ function saveVer(found) {
     const all = [...new Set((ttxt.match(rx) || []).concat(htmlPairs(ttxt)).concat([...qset]))];
     // v1.25.5: tier — T1 = মাপা-সেরা ৪টি সোর্স, T2 = মধ্যম; premium নোড আগে যাচাই হবে
     const t1 = new Set(), t2 = new Set();
-    qtxts.forEach((t, i2) => { if (!t) return; const set = (i2 < 4) ? t1 : t2; for (const px of (t.match(rx) || [])) set.add(px); for (const px of htmlPairs(t)) set.add(px); });
+    qtxts.forEach((t, i2) => { if (!t) return; const set = (i2 < Number(process.env.QT1 || 6)) ? t1 : t2; for (const px of (t.match(rx) || [])) set.add(px); for (const px of htmlPairs(t)) set.add(px); });
     const qfirst = all.filter(x => t1.has(x)), mid = all.filter(x => !t1.has(x) && t2.has(x)), rest = all.filter(x => !t1.has(x) && !t2.has(x));
     for (let i = qfirst.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); const w = qfirst[i]; qfirst[i] = qfirst[j]; qfirst[j] = w; }
     for (let i = rest.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); const w = rest[i]; rest[i] = rest[j]; rest[j] = w; }
