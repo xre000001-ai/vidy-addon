@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.27.16';
+const VERSION = '1.27.17';
 const V1NOTE_47 = 'v1.17.47 (ইউজার: "stream cut kore fast na — 6-8s laguk, sob stream asuk") — হারভেস্ট-কাট বাতিল: আগে ৪.৬সে-এ ৬-কার্ড-হলেই কাট, ৪.৯সে হার্ড-ক্যাপ ⇒ দেরিতে-আসা সোর্সের কার্ড ফেলত। এখন **সব লাইভ-সোর্স সেটেল হলেই ফেরা**, নইলে ৭.৮সে ক্যাপ (Beamup ১২সে-সীমার ভিতরে)। সাথে: nx ৫.১→৭.২সে (MB আর কাটা পড়ে না), mm/m4u ৭.০সে সব-সাইট, hm-রেস ৩.২→৬.৬সে (কোল্ড-চেইনও একই রেসপন্সে), m4u-তে ৩ pd-id + ২ জীবিত মিরর (আগে ১ম-সফলেই-থামা), sky-তে ৩ pd-id/hub, PD_MAX env-নব। মাপা (১৬ রিকোয়েস্ট, লোকাল): avg 5.52s · সর্বোচ্চ 6.66s (আগে 3.75s-কাট-সংস্করণে ৮২৪ কার্ড), HindMovie ৮/১৬ (আগে ৩/১৬), MB ১৬/১৬, mm ১৬/১৬, m4u ১৪/১৬, sky ১২/১৬, কার্ড ৮৩৯ ⇒ **কার্ড কমেনি, বেড়েছে**।';
 
 const V1NOTE_48 = 'v1.17.48 (ইউজার: "M4u thik koro, Hindi movie add koro, configuration page ta o thik koro") — ★ কনফিগ-পেজ-মেরামত: SRC-তালিকা থেকেই সুইচ-বাইন্ড (bf সরানোর পর bindSwitch-এ null.classList-এ পুরো IIFE থেমে যেত ⇒ tune-কার্ড/সেভ/প্রিভিউ কিছুই রেন্ডার হতো না) + bindSwitch-এ null-গার্ড; HindMovie প্যানেল + tune-hm কার্ড যোগ। ★ Movies4u: একাধিক সার্চ-হিট-চেষ্টা (per_page 12), আর্টিকেল-বাদ-দিয়ে-পুনঃসার্চ, modpro-শাখা এখন আসলেই চলে (post খালি থাকলে lastPost দিয়ে) — মৃত-মিরর Range-প্রমাণ ছাড়া কার্ড-নয়। ★ প্রতি-সারি-deadline: এক-সারির-ঢিলামিতে সব-কার্ড বাতিল হতো (3 Idiots ৮.৬সে→৪.৭সে)। ★ HindMovie: 404/410-এ প্রক্সি-পুল-বন্ধ (Silence ১২.২সে→৬.১সে, কার্ড-আসে)। বেঞ্চ: avg ৪.৭৪সে (আগে ৫.৫২), max ৭.০২, m4u ১৪/১৬, HM ৮/১৬, Sky ১৪/১৬।';const V1NOTE_46 = 'v1.17.46 (HindMovie নতুন সোর্স): live search (REST → HTML ফলব্যাক, বছর-মুক্ত কুয়েরি) → পোস্ট (IMDb-id গার্ড) → mvlink (মুভি) / mvlink /web/<id> (সিজন×কোয়ালিটি) → hshare → hcloud b64 → workers.dev direct MKV (২০৬, সিক-যোগ্য)। ক্যাশ ৬ঘণ্টা (search/post/mvlink/final); ডিরেক্ট আগে, 403/429/5xx-তে পুল-রেস। ব্যাচ .zip কখনো কার্ড নয়। hmRace ৩.২s ⇒ কোল্ড-চেইন রেসপন্স আটকায় না, পেছনে ক্যাশ ভরে। মাপা (১৬ রিকোয়েস্ট): avg 3.75s, MB 15/16, mm 16/16, m4u 14/16, sky 13/16, hm 3/16 (হলিউড-ক্লাসিক বেঞ্চে; সিরিজে BB/GoT S1E1 = ৩ কার্ড)।';
@@ -5251,11 +5251,33 @@ function mlbdDec(b64, seedHex, rounds) { // সাইটের নিজের d
   for (let j = 0; j < raw.length; j++) { x = (Math.imul(x, 1103515245) + 12345) >>> 0; out[j] = raw[j] ^ ((x >>> 16) & 255); }
   return out.toString('utf8');
 }
+function mlbdToksLab(html) {   // v1.27.17: token + label + exact filename (sig) -- anchor-based
+  const out = []; const seen = new Set();
+  const re = /<a\b[^>]*?data-dl="([^"]*)"[^>]*>/g;
+  let m;
+  while ((m = re.exec(html))) {
+    const tag = m[0];
+    const dl = m[1] || '';
+    const ds = (tag.match(/data-ds="([^"]*)"/) || [])[1] || '';
+    const dr = parseInt((tag.match(/data-dr="(\d+)"/) || [])[1], 10) || 0;
+    if (!dl) continue;
+    let t = ''; try { t = mlbdDec(dl, ds, dr); } catch (e) { continue; }
+    if (!(/^\/?file\//.test(t) || /^[A-Za-z0-9_-]{8,}$/.test(t))) continue;
+    if (seen.has(t)) continue; seen.add(t);
+    let nm = ''; const sig = (tag.match(/data-mlbd-download-sig="([^"]*)"/) || [])[1] || '';
+    if (sig) { nm = String(sig.split('|')[1] || '').replace(/^\s*[^|]*?\s-\s/, '').trim(); }
+    const rest = html.slice(re.lastIndex, re.lastIndex + 520);
+    const stop = rest.search(/data-dl=|<\/a>/);
+    const win = stop >= 0 ? rest.slice(0, stop) : rest;
+    const lab = ((win.match(/\[([^\]]{2,80})\]/) || [])[1] || '').trim();
+    const q = parseInt(((nm.match(/(\d{3,4})\s*p/i) || lab.match(/(\d{3,4})\s*p/i) || [])[1]), 10) || 0;
+    const sz = ((lab.match(/([\d.]+)\s*(GB|MB|TB)/i) || [])[0] || '').trim();
+    out.push({ t: t, lab: lab, q: q, name: nm, size: sz });
+  }
+  return out;
+}
 function mlbdToks(html) {
-  const out = [];
-  const re = /data-dl="([^"]+)"\s+data-ds="([^"]+)"\s+data-dr="(\d+)"/g;
-  let m; while ((m = re.exec(html))) { try { out.push(mlbdDec(m[1], m[2], +m[3])); } catch (e) { } }
-  return [...new Set(out)].filter(x => /^\/?file\//.test(x) || /^[A-Za-z0-9_-]{8,}$/.test(x));
+  return mlbdToksLab(html).map(x => x.t);
 }
 async function mlbdSearch(base, q, ms) {
   const r = await mlbdGet(base + '/search?q=' + encodeURIComponent(q), { ms: ms });
@@ -5346,17 +5368,21 @@ function mlbdEpGroups(html) {
     const en = parseInt((/data-episode-number="(\d{1,4})"/.exec(seg) || [])[1], 10) || (r ? r.e : 0);
     const sn = parseInt((/data-season-number="(\d{1,2})"/.exec(seg) || [])[1], 10) || (r ? r.s : 0);
     if (!en) continue;
-    out.push({ s: sn, e: en, toks: mlbdToks(seg) });
+    out.push({ s: sn, e: en, toks: mlbdToks(seg), labs: mlbdToksLab(seg).map(x => ({ t: mlbdAbs('', x.t), q: x.q, lab: x.lab })) });
   }
   return out;
 }
 async function mlbdTitleFiles(base, path, ms) {
   const r = await mlbdGet(base + path, { ms: ms });
   if (DBG) console.error('[mlbd] page ' + String(path).slice(-10) + ' st=' + r.st + ' len=' + String(r.body || '').length + ' ep=' + ((String(r.body || '').match(/data-ep=/g) || []).length) + ' dl=' + ((String(r.body || '').match(/data-dl=/g) || []).length));
-  if (r.st !== 200) return { toks: [], groups: [] };
+  if (r.st !== 200) return { toks: [], groups: [], lab: {} };
+  // v1.27.17: label map (token -> quality/size) -- file page kholar agei quality guna jai
+  const lab = {}; const LS = mlbdToksLab(r.body);
+  for (const x of LS) lab[mlbdAbs(base, x.t)] = { q: x.q, lab: x.lab, name: x.name, size: x.size };
   return {
     toks: mlbdToks(r.body).map(t => mlbdAbs(base, t)),
-    groups: mlbdEpGroups(r.body).map(g => ({ s: g.s, e: g.e, toks: g.toks.map(t => mlbdAbs(base, t)) }))
+    groups: mlbdEpGroups(r.body).map(g => ({ s: g.s, e: g.e, toks: g.toks.map(t => mlbdAbs(base, t)) })),
+    lab: lab
   };
 }
 function mlbdAttr(html, id, attr) { // hubcloud-পাতার `id="fsl"` ইত্যাদি — attribute-ক্রম যেকোনো
@@ -5375,7 +5401,7 @@ function mlbdTrusted(u) { try { return MLBD_RANGE_TRUST.test(new URL(u).hostname
 // ★ v1.27.13 (ইউজার: "ekta server keno only, seekable sob server thakbe"): এক ফাইলনামে **সব জীবিত
 //   Range-মিরর** ফেরত দিই (একটা নয়) — FSL (fsldownload), HubCloud-r2, HubCloud-workers।
 //   প্রতিটি URL নিজে প্রমাণিত (`hdProbe` ২০৬) অথবা মাপা-trust-হোস্ট (প্রোব-টাইমআউট ≠ Range-নেই)।
-async function mlbdOne(base, fileUrl, dl) {
+async function mlbdOne(base, fileUrl, dl, labQ, labTxt) {
   const left = () => Math.max(600, dl - Date.now());
   let pg = null;
   try { pg = await mlbdGet(fileUrl, { ms: Math.min(5200, left()) }); } catch (e) { return null; }
@@ -5392,7 +5418,7 @@ async function mlbdOne(base, fileUrl, dl) {
   const pick = async (u, srv, out) => {
     if (!u || seenM.has(u) || left() < 900) return;
     seenM.add(u);
-    if (await mlbdRng(u, Math.min(2200, left()))) out.push({ u: u, s: srv });
+    if (await mlbdRng(u, Math.min(1600, left()))) out.push({ u: u, s: srv });
     else if (mlbdTrusted(u)) out.push({ u: u, s: srv, soft: 1 });
   };
   // ① নেস্টেড-পেজ → FSL (fsldownload)
@@ -5440,10 +5466,11 @@ async function mlbdOne(base, fileUrl, dl) {
     return out;
   };
   const groups = await Promise.all([fslBranch(), hubBranch(), gdBranch()]);
+  if (DBG) console.error('[mlbd1] ' + String(fileUrl).slice(-12) + ' nest=' + (nested ? 1 : 0) + ' hub=' + (hub ? 1 : 0) + ' ic=' + (ic ? 1 : 0) + ' got=' + groups.map(g => g.length).join('/') + ' left=' + left() + 'ms');
   const mirrors = [];
   for (const g of groups) for (const m of g) if (!mirrors.some(x => x.u === m.u)) mirrors.push(m);
   if (!mirrors.length) return null;
-  return { name: name, size: size, mirrors: mirrors };
+  return { name: name, size: size, mirrors: mirrors, q: labQ || 0, lab: labTxt || '' };
 }
 function mlbdLangs(fn) {
   const S = String(fn || '').toLowerCase();
@@ -5465,7 +5492,7 @@ async function mlbdStreams(name, year, type, s, e, cap) {
     //   থাকে ("S04 [Ep 01-08 Added]" + "S04 [Epi 9-13]") — সেরা পেজে ঠিক-এপিসোড না থাকলে পরের পেজ,
     //   আর সব পেজের মিরর একসাথে (union) নিই; ক্যাশ-পেজ ব্যর্থ হলে ফ্রেশ সার্চ ফলব্যাক।
     const grab = async (list) => {                 // পেজ-তালিকা → {toks, files, usedPath}
-      const usedT = new Set(), allT = [], rawT = []; let usedPath = ''; let f0 = null; const failed = [];
+      const usedT = new Set(), allT = [], rawT = []; let usedPath = ''; let f0 = null; const failed = []; const labA = {};
       const getF = async (path) => {               // এক পেজ (২০-মিনিট ক্যাশ); ব্যর্থ হলে null
         const c1 = MLBD_FILE_C.get(path);
         if (c1 && Date.now() - c1.ts < 20 * 60e3) return c1.f;
@@ -5479,13 +5506,21 @@ async function mlbdStreams(name, year, type, s, e, cap) {
           const f = await getF(path);
           if (!f) { failed.push(path); continue; }                 // নেট-ব্যর্থ ⇒ শেষে আরেক দফা
           if (!f0) f0 = f;
+          if (f.lab) for (const k in f.lab) labA[k] = f.lab[k];
           let t = f.toks || [];
           if (type === 'series') {                 // সিজন-প্যাক বাদ — ঠিক-এপিসোডের টোকেনই
-            if (!(f.groups || []).length) {        // data-ep-হীন পোস্ট (প্যাক-ধাঁচ) ⇒ শেষ-উপায়
-              for (const x of (f.toks || [])) rawT.push(x);
+            const epRe = new RegExp('s0*' + SE + 'e0*' + EP + '(?!\\d)', 'i');   // v1.27.17
+            const nmOf = z => ((f.lab && f.lab[z] && f.lab[z].name) || '');
+            const named = (f.toks || []).filter(z => epRe.test(nmOf(z)));
+            if (named.length) {
+              t = named;                               // button-er nijer file-name theke ep-mil
+            } else {
+              if (!(f.groups || []).length) {           // data-ep-hin post (pack-dhach) => shesh-upay
+                for (const x of (f.toks || [])) rawT.push(x);
+              }
+              const g = (f.groups || []).find(x => (x.s === SE || x.s === 0) && x.e === EP);
+              t = g ? g.toks : [];
             }
-            const g = (f.groups || []).find(x => (x.s === SE || x.s === 0) && x.e === EP);
-            t = g ? g.toks : [];
           }
           for (const x of t) if (!usedT.has(x)) { usedT.add(x); allT.push(x); }
           if (t.length) usedPath = usedPath || path;
@@ -5504,7 +5539,7 @@ async function mlbdStreams(name, year, type, s, e, cap) {
         const re = failed.slice(); failed.length = 0;
         await pass(re, '(retry)');
       }
-      return { toks: allT, files: f0, usedPath: usedPath };
+      return { toks: allT, files: f0, usedPath: usedPath, lab: labA };
     };
     let res = null;
     const c0 = MLBD_PATH_C.get(ck);                 // একই নাম+বছর+সিজন+এপিসোড ⇒ একই পেজ
@@ -5533,11 +5568,20 @@ async function mlbdStreams(name, year, type, s, e, cap) {
     }
     if (!res) return [];
     if (res.usedPath) { MLBD_PATH_C.set(ck, { path: res.usedPath, ts: Date.now() }); if (MLBD_PATH_C.size > 400) MLBD_PATH_C.clear(); }
-    const toks = res.toks.slice(0, Number(process.env.MLBDN || 6));
+    // v1.27.17 (user: "1080p website e thaka sotteo stream dicche na"): token-er nijer label theke
+    //   quality jana jay -- tai (a) cap-er upore gele agei bad, (b) 1080p age, tarpor 720/480.
+    const LAB = res.lab || {};
+    const capN = Number(cap || 0);
+    const qOf = t => (LAB[t] && LAB[t].q) || 0;
+    let tokAll = res.toks.slice();
+    if (capN) tokAll = tokAll.filter(t => { const q = qOf(t); return !q || q <= capN; });
+    tokAll.sort((a, b) => (qOf(b) - qOf(a)) || (res.toks.indexOf(a) - res.toks.indexOf(b)));
+    const toks = tokAll.slice(0, Number(process.env.MLBDN || 6));
+    if (DBG) console.error('[mlbd] toks=' + toks.length + '/' + res.toks.length + ' ' + toks.map(t => ((LAB[t] && LAB[t].lab) || '?')).join(' | '));
     if (!toks.length) { if (DBG) console.error('[mlbd] no-tokens @' + (Date.now() - T0) + 'ms (groups=' + (((res.files || {}).groups || []).length) + ')'); return []; }
     const dl = T0 + B;
     const NTOK = Number(process.env.MLBDN || 6);
-    const jobs = toks.slice(0, NTOK).map(t => mlbdOne(base, t, dl).catch(() => null));
+    const jobs = toks.slice(0, NTOK).map(t => mlbdOne(base, t, dl, qOf(t), (LAB[t] && LAB[t].lab) || '').catch(() => null));
     let got = (await Promise.all(jobs)).filter(Boolean);
     if (!got.length && Date.now() < dl - 900) {          // পুরো-ব্যর্থ (SAN-ফ্লেক) ⇒ এক দফা আবার
       if (DBG) console.error('[mlbd] 2nd-wave @' + (Date.now() - T0) + 'ms');
@@ -5554,7 +5598,7 @@ async function mlbdStreams(name, year, type, s, e, cap) {
     const cand = [];
     for (const g of got) {
       if (sm && !sm.test(g.name)) continue;                       // সিরিজে ঠিক-এপিসোড ছাড়া নয়
-      const h = parseInt((String(g.name).match(/(\d{3,4})p/i) || [])[1], 10) || 0;
+      const h = parseInt((String(g.name).match(/(\d{3,4})p/i) || [])[1], 10) || (g.q || 0);   // v1.27.17: label-fallback
       if (maxh && h && h > maxh) continue;
       for (const m of (g.mirrors || [])) cand.push({ h: h, u: m.u, srv: m.s || srvLabel(m.u) || '', name: g.name });   // চেইন-লেবেল আগে
     }
@@ -5585,9 +5629,12 @@ async function mlbdStreams(name, year, type, s, e, cap) {
 
 // নাম/বছর জোগাড় করে mlbdStreams ডাকে (infoP = findTmdbInfo, nameP = nmP/tp) — কখনো-throw-নয়
 function mlbdTask(nameP, infoP, type, s, e, cap) {
+  // v1.27.17: infoP (TMDB/IMDb info) dhire ele mlb derite shuru hoto -> cap-e kete jeto.
+  //   Name pelei shuru; year/info 1.6s er beshi na dhore.
+  const fastInfo = infoP ? Promise.race([Promise.resolve(infoP).catch(() => null), new Promise(r => setTimeout(() => r(null), 1600))]) : Promise.resolve(null);
   return Promise.all([
     (nameP ? Promise.resolve(nameP).catch(() => '') : Promise.resolve('')),
-    (infoP ? Promise.resolve(infoP).catch(() => null) : Promise.resolve(null))
+    fastInfo
   ]).then(([nm, info]) => {
     const nm2 = String((info && info.name) || nm || '').trim();
     const yr = String((info && info.year) || '').slice(0, 4);
@@ -11329,6 +11376,7 @@ cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'movie', s: 0, e: 0 }
       const t0 = Date.now();
       const tp = nameForTmdb(Number(m[1]), 'series');
       const vOn = !(cfg && cfg.v === 0), nxOn = !(cfg && cfg.nx === 0); // per-source masters
+      const infoP = null;   // v1.27.17 FIX: ei route-e infoP define chilo na -> mlbdTask/withSources 500 'infoP is not defined'
       const nxP = nxOn ? nxFor('series', String(m[1]), Number(m[2] || 1), Number(m[3] || 1)) : null;
       const twP = (TWBASE && !(cfg && cfg.tw === 0)) ? tp.then(n => twrStreams(TWBASE, 'toonworld', n, 'series', Number(m[2] || 1), Number(m[3] || 1))).catch(() => []) : null;
       const rtP = (RTBASE && !(cfg && cfg.rt === 0)) ? tp.then(n => twrStreams(RTBASE, 'raretoons', n, 'series', Number(m[2] || 1), Number(m[3] || 1))).catch(() => []) : null;
