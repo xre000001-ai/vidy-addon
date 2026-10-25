@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.27.11';
+const VERSION = '1.27.12';
 const V1NOTE_47 = 'v1.17.47 (ইউজার: "stream cut kore fast na — 6-8s laguk, sob stream asuk") — হারভেস্ট-কাট বাতিল: আগে ৪.৬সে-এ ৬-কার্ড-হলেই কাট, ৪.৯সে হার্ড-ক্যাপ ⇒ দেরিতে-আসা সোর্সের কার্ড ফেলত। এখন **সব লাইভ-সোর্স সেটেল হলেই ফেরা**, নইলে ৭.৮সে ক্যাপ (Beamup ১২সে-সীমার ভিতরে)। সাথে: nx ৫.১→৭.২সে (MB আর কাটা পড়ে না), mm/m4u ৭.০সে সব-সাইট, hm-রেস ৩.২→৬.৬সে (কোল্ড-চেইনও একই রেসপন্সে), m4u-তে ৩ pd-id + ২ জীবিত মিরর (আগে ১ম-সফলেই-থামা), sky-তে ৩ pd-id/hub, PD_MAX env-নব। মাপা (১৬ রিকোয়েস্ট, লোকাল): avg 5.52s · সর্বোচ্চ 6.66s (আগে 3.75s-কাট-সংস্করণে ৮২৪ কার্ড), HindMovie ৮/১৬ (আগে ৩/১৬), MB ১৬/১৬, mm ১৬/১৬, m4u ১৪/১৬, sky ১২/১৬, কার্ড ৮৩৯ ⇒ **কার্ড কমেনি, বেড়েছে**।';
 
 const V1NOTE_48 = 'v1.17.48 (ইউজার: "M4u thik koro, Hindi movie add koro, configuration page ta o thik koro") — ★ কনফিগ-পেজ-মেরামত: SRC-তালিকা থেকেই সুইচ-বাইন্ড (bf সরানোর পর bindSwitch-এ null.classList-এ পুরো IIFE থেমে যেত ⇒ tune-কার্ড/সেভ/প্রিভিউ কিছুই রেন্ডার হতো না) + bindSwitch-এ null-গার্ড; HindMovie প্যানেল + tune-hm কার্ড যোগ। ★ Movies4u: একাধিক সার্চ-হিট-চেষ্টা (per_page 12), আর্টিকেল-বাদ-দিয়ে-পুনঃসার্চ, modpro-শাখা এখন আসলেই চলে (post খালি থাকলে lastPost দিয়ে) — মৃত-মিরর Range-প্রমাণ ছাড়া কার্ড-নয়। ★ প্রতি-সারি-deadline: এক-সারির-ঢিলামিতে সব-কার্ড বাতিল হতো (3 Idiots ৮.৬সে→৪.৭সে)। ★ HindMovie: 404/410-এ প্রক্সি-পুল-বন্ধ (Silence ১২.২সে→৬.১সে, কার্ড-আসে)। বেঞ্চ: avg ৪.৭৪সে (আগে ৫.৫২), max ৭.০২, m4u ১৪/১৬, HM ৮/১৬, Sky ১৪/১৬।';const V1NOTE_46 = 'v1.17.46 (HindMovie নতুন সোর্স): live search (REST → HTML ফলব্যাক, বছর-মুক্ত কুয়েরি) → পোস্ট (IMDb-id গার্ড) → mvlink (মুভি) / mvlink /web/<id> (সিজন×কোয়ালিটি) → hshare → hcloud b64 → workers.dev direct MKV (২০৬, সিক-যোগ্য)। ক্যাশ ৬ঘণ্টা (search/post/mvlink/final); ডিরেক্ট আগে, 403/429/5xx-তে পুল-রেস। ব্যাচ .zip কখনো কার্ড নয়। hmRace ৩.২s ⇒ কোল্ড-চেইন রেসপন্স আটকায় না, পেছনে ক্যাশ ভরে। মাপা (১৬ রিকোয়েস্ট): avg 3.75s, MB 15/16, mm 16/16, m4u 14/16, sky 13/16, hm 3/16 (হলিউড-ক্লাসিক বেঞ্চে; সিরিজে BB/GoT S1E1 = ৩ কার্ড)।';
@@ -5091,6 +5091,304 @@ async function azStreams(tmdbId, type, s, e, azq) { // সার্চ→সি�
   } catch (e2) { if (DBG) console.error('[az] ' + tmdbId + ' ERR ' + String(e2 && e2.message).slice(0, 60) + ' @' + (Date.now() - t3) + 'ms'); return []; }
 }
 // ---------- v1.15.40-local: Movies4u (M4U) — lookup.php-সার্চ + hubcloud→gamerxyt→FSL-R2 সরাসরি-MKV ----------
+// ================= MovieLinkBD (v1.27.12 — সোর্স-প্রস্তুতি; ডিফল্ট বন্ধ) =================
+//   রিসার্চ + প্রোটোটাইপ-প্রমাণ: /home/user/REVIEW-movielinkbd-*.md ও mlbd_resolver.js
+//   নীতি (ইউজার-নির্দেশ মেনে):
+//     (১) **কোনো মিরর-হোস্ট হার্ডকোড নয়** — সিড-অ্যাপেক্স (movielinkbd.com/.at/…) থেকে
+//         হোমপেজে-ঘোষিত মিরর-হোস্ট আবিষ্কার করে **যাচাই (২০০)** করে তবেই ব্যবহার।
+//     (২) **Range-প্রমাণ ছাড়া কার্ড নয়** (`hdProbe`) — FSL (`fsldownload.com/d/…`, r2-presigned)
+//         আর HubCloud (r2/workers.dev) দুটোই ২০৬ দেয়। InstantCloud→Google
+//         (`video-downloads.googleusercontent.com`) Range মানে না ⇒ `MLBD_GD=1` ছাড়া বাদ।
+//     (৩) ডাইরেক্ট-লিংক **কখনো ক্যাশ নয়** (presigned/স্বল্পায়ু); শুধু স্থির-আইডি
+//         (টাইটেল-পাথ, `/file/<token>`) ৬ঘণ্টা/২০মিনিট ক্যাশ — লিংক নয়।
+//     (৪) টাইটেল-মিল কড়া (নাম + বছর), না-মিললে **সৎ-শূন্য** — ভুল-টাইটেল কার্ড নয়।
+const MLBD_SEEDS = ['https://movielinkbd.com/', 'https://movielinkbd.at/', 'https://movielinkbd.app/', 'https://movielinkbd.cc/'];
+const MLBD_ON_ENV = process.env.MLBD === '1';
+const mlbdOn = cfg => !!(MLBD_ON_ENV || (cfg && cfg.mlb === 1)); // কনফিগ-টগল বা env ⇒ অপ্ট-ইন
+let MLBD_BASE = '', MLBD_BASE_TS = 0;
+const MLBD_PATH_C = new Map();  // 'name|year|type' → {path, ts}   (স্থির-আইডি)
+const MLBD_FILE_C = new Map();  // path → {toks:[], ts}              (স্থির-টোকেন)
+function mlbdNorm(s) { return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); }
+const MLBD_WL = { n: 0, q: [] }; // ★ v1.27.12: মুভিলিংক-সাইটে একসাথে সর্বোচ্চ ৪টি রিকোয়েস্ট (নিজেদের সকেট-চাপ এড়াতে)
+async function mlbdLimit(fn) {
+  const MAX = Number(process.env.MLBDC || 4);
+  while (MLBD_WL.n >= MAX) await new Promise(r => MLBD_WL.q.push(r));
+  MLBD_WL.n++;
+  try { return await fn(); } finally { MLBD_WL.n--; const nx2 = MLBD_WL.q.shift(); if (nx2) nx2(); }
+}
+// কখনো-throw-নয়: নেটওয়ার্ক-ব্যর্থতায় একবার রিট্রাই, শেষ-ব্যর্থতায় st:0 (কলার তখন [] ফেরায়)
+async function mlbdGet(u, opt) {
+  opt = opt || {};
+  for (let at = 0; at < 2; at++) {
+    try {
+      return await mlbdLimit(async () => {
+        const r = await fetch(u, {
+          headers: Object.assign({ 'User-Agent': UA, 'Accept': 'text/html,application/xhtml+xml,*/*' }, opt.headers || {}),
+          redirect: 'manual', signal: AbortSignal.timeout(Math.max(800, opt.ms || 6000))
+        });
+        let body = '';
+        if (opt.body !== false) { try { body = await r.text(); } catch (e) { } }
+        return { st: r.status, loc: r.headers.get('location') || '', body: body };
+      });
+    } catch (e) {
+      if (at === 1) { if (DBG) console.error('[mlbd] get-fail ' + String(u).slice(0, 60) + ' :: ' + (e && e.message)); return { st: 0, loc: '', body: '' }; }
+      await new Promise(r => setTimeout(r, 150 + Math.floor(Math.random() * 250)));
+    }
+  }
+  return { st: 0, loc: '', body: '' };
+}
+async function mlbdMirror(force) {
+  if (!force && MLBD_BASE && Date.now() - MLBD_BASE_TS < 3 * 3600e3) return MLBD_BASE;
+  for (const seed of MLBD_SEEDS) {
+    let r = null;
+    try { r = await mlbdGet(seed, { ms: 4500 }); } catch (e) { continue; }
+    if (!r || r.st !== 200 || !r.body) continue;
+    const cands = [...new Set((r.body.match(/https:\/\/[a-z0-9]{4,12}\.movielinkbd\.[a-z]{2,6}/gi) || []))].slice(0, 4);
+    for (const c of cands) {                          // ঘোষিত-মিরর: **যাচাই করে** নিই
+      try { const t = await mlbdGet(c + '/', { ms: 3500, body: false }); if (t.st === 200) { MLBD_BASE = c; MLBD_BASE_TS = Date.now(); if (DBG) console.error('[mlbd] base=' + c); return MLBD_BASE; } } catch (e) { }
+    }
+    MLBD_BASE = seed.replace(/\/$/, ''); MLBD_BASE_TS = Date.now(); // মিরর-লিংক না-থাকলে নিজেই
+    if (DBG) console.error('[mlbd] base(seed)=' + MLBD_BASE);
+    return MLBD_BASE;
+  }
+  return MLBD_BASE;
+}
+function mlbdDec(b64, seedHex, rounds) { // সাইটের নিজের dec(): XOR-LCG (প্রোটোটাইপে byte-exact প্রমাণিত)
+  let x = parseInt(seedHex, 16) >>> 0;
+  for (let i = 0; i < (rounds | 0); i++) x = (Math.imul(x, 1103515245) + 12345) >>> 0;
+  const raw = Buffer.from(String(b64 || ''), 'base64');
+  const out = Buffer.alloc(raw.length);
+  for (let j = 0; j < raw.length; j++) { x = (Math.imul(x, 1103515245) + 12345) >>> 0; out[j] = raw[j] ^ ((x >>> 16) & 255); }
+  return out.toString('utf8');
+}
+function mlbdToks(html) {
+  const out = [];
+  const re = /data-dl="([^"]+)"\s+data-ds="([^"]+)"\s+data-dr="(\d+)"/g;
+  let m; while ((m = re.exec(html))) { try { out.push(mlbdDec(m[1], m[2], +m[3])); } catch (e) { } }
+  return [...new Set(out)].filter(x => /^\/?file\//.test(x) || /^[A-Za-z0-9_-]{8,}$/.test(x));
+}
+async function mlbdSearch(base, q, ms) {
+  const r = await mlbdGet(base + '/search?q=' + encodeURIComponent(q), { ms: ms });
+  if (r.st !== 200) return [];
+  const seen = new Set(), items = [];
+  const re = /href="([^"]*\/(movie|series|anime|drama)\/([A-Za-z0-9_-]{10,}))"[^>]*>([\s\S]{0,600}?)<\/a>/g;
+  let m;
+  while ((m = re.exec(r.body))) {
+    const path = '/' + m[2] + '/' + m[3];
+    if (seen.has(path)) continue; seen.add(path);
+    const blk = m[4] || '';
+    const title = ((blk.match(/mlbd-lm-title">([^<]+)/) || [])[1] || (blk.match(/alt="([^"]+)"/) || [])[1] || '').trim();
+    const year = (title.match(/\((\d{4})\)/) || [])[1] || '';
+    items.push({ path: path, title: title.replace(/\([^)]*\)/g, ' ').trim(), year: year, type: /series|anime|drama/i.test(m[2]) ? 'series' : 'movie' });
+  }
+  return items;
+}
+function mlbdSeasonOf(t) { // "Breaking Bad (2008) S04 [Ep 01-08 Added]" → 4 ; "S05 Completed" → 5
+  const m = /(?:^|[^A-Za-z0-9])S0*(\d{1,2})(?![0-9])/.exec(String(t || ''));
+  const n = m ? parseInt(m[1], 10) : 0;
+  return (n >= 0 && n <= 60) ? n : 0;
+}
+function mlbdPick(items, name, year, type, season) { // কড়া-মিল: নাম + বছর + (সিরিজে) সিজন; নইলে শূন্য
+  const W = mlbdNorm(name); if (!W) return null;
+  let cands = items.filter(x => (type === 'movie' ? x.type === 'movie' : x.type === 'series'));
+  if (type !== 'movie') {                       // ★ v1.27.12: MovieLinkBD-তে **প্রতি সিজন আলাদা পেজ**
+    const want = parseInt(season, 10) || 1;
+    const withS = cands.filter(x => mlbdSeasonOf(x.title) === want);
+    const noS = cands.filter(x => !mlbdSeasonOf(x.title));
+    cands = withS.length ? withS : noS;         // সিজন-মার্কার-হীন পেজ শুধু ফলব্যাক
+    if (!cands.length) return null;
+  }
+  const score = x => {
+    const n = mlbdNorm(x.title);
+    let s = 0;
+    if (n === W) s += 100; else if (n.startsWith(W + ' ') || n === W + '') s += 70;
+    else if (n.indexOf(' ' + W + ' ') >= 0 || n.indexOf(W) >= 0) s += 40;
+    if (year && x.year === String(year)) s += 60; else if (year && x.year && x.year !== String(year)) s -= 80;
+    return s;
+  };
+  const best = cands.map(x => ({ x: x, s: score(x) })).sort((a, b) => b.s - a.s)[0];
+  if (!best || best.s < 60) return null;                       // দুর্বল-মিল ⇒ সৎ-শূন্য
+  return best.x;
+}
+function mlbdAbs(base, t) { return (/^https?:/.test(t) ? t : base + (String(t).charAt(0) === '/' ? t : '/file/' + t)); }
+// পেজের `data-ep="s05e01 …"` কার্ড-সীমানা ধরে প্রতি-এপিসোডের টোকেন (সিজন-প্যাক আলাদা থাকে)
+function mlbdEpGroups(html) {
+  const marks = []; const re = /data-ep="([^"]{0,90})"/g; let m;
+  while ((m = re.exec(html))) marks.push({ i: m.index, ep: m[1] });
+  const out = [];
+  for (let k = 0; k < marks.length; k++) {
+    const seg = html.slice(marks[k].i, (k + 1 < marks.length) ? marks[k + 1].i : html.length);
+    const c = /s0*(\d{1,2})\s*e0*(\d{1,3})/i.exec(marks[k].ep);
+    if (!c) continue;
+    out.push({ s: parseInt(c[1], 10) || 0, e: parseInt(c[2], 10) || 0, toks: mlbdToks(seg) });
+  }
+  return out;
+}
+async function mlbdTitleFiles(base, path, ms) {
+  const r = await mlbdGet(base + path, { ms: ms });
+  if (r.st !== 200) return { toks: [], groups: [] };
+  return {
+    toks: mlbdToks(r.body).map(t => mlbdAbs(base, t)),
+    groups: mlbdEpGroups(r.body).map(g => ({ s: g.s, e: g.e, toks: g.toks.map(t => mlbdAbs(base, t)) }))
+  };
+}
+function mlbdAttr(html, id, attr) { // hubcloud-পাতার `id="fsl"` ইত্যাদি — attribute-ক্রম যেকোনো
+  const o1 = new RegExp('<[a-zA-Z][^>]*\\bid="' + id + '"[^>]*>', 'g');
+  let m; while ((m = o1.exec(html))) { const a = new RegExp('\\b' + attr + '="([^"]*)"').exec(m[0]); if (a) return a[1].replace(/&amp;/g, '&'); }
+  const m2 = new RegExp('<[a-zA-Z][^>]*\\b' + attr + '="([^"]*)"[^>]*\\bid="' + id + '"[^>]*>').exec(html);
+  return m2 ? m2[1].replace(/&amp;/g, '&') : '';
+}
+async function mlbdRng(u, ms) { try { const x = await hdProbe(u, Math.max(1500, ms)); return !!(x && x.ok); } catch (e) { return false; } }
+// ★ v1.27.12: **মাপা-হোস্ট** — FSL / r2-presigned / workers.dev তিনটিই ২০৬-প্রমাণিত (রিসার্চ-ম্যাট্রিক্স)।
+//   তাই পুরো-সার্ভারে ১২ সোর্স একসাথে চলার চাপে আমাদের প্রোব-টাইমআউট হলে কার্ড ফেলে দেওয়া হয় না
+//   (প্রোব-ব্যর্থতা ≠ Range-অনুপস্থিতি)। অচেনা হোস্টে প্রমাণ ছাড়া কার্ড **নেই**।
+const MLBD_RANGE_TRUST = /^(?:[a-z0-9.-]*\.)?(?:fsldownload\.com|r2\.cloudflarestorage\.com|[a-z0-9.-]*\.workers\.dev)$/i;
+function mlbdTrusted(u) { try { return MLBD_RANGE_TRUST.test(new URL(u).hostname); } catch (e) { return false; } }
+// এক ফাইল-টোকেন → {url, srv, name} — মিরর-অগ্রাধিকার FSL → HubCloud(r2) → workers.dev; （Google বাদ)
+async function mlbdOne(base, fileUrl, dl) {
+  const left = () => Math.max(600, dl - Date.now());
+  let pg = null;
+  try { pg = await mlbdGet(fileUrl, { ms: Math.min(5200, left()) }); } catch (e) { return null; }
+  if (!pg || pg.st !== 200 || !pg.body) return null;
+  const H = pg.body;
+  const name = ((H.match(/class="dlh-htitle[^"]*">([^<]+)/) || [])[1] || (/<title>([^<]*)/.exec(H) || [])[1] || '').trim();
+  const size = ((H.match(/fa-database[^>]*><\/i>\s*([^<]+)/) || [])[1] || '').trim();
+  const hub = (H.match(/https:\/\/hubcloud\.[a-z.]+\/drive\/[A-Za-z0-9]+/) || [])[0] || '';
+  const nested = (H.match(/href="(\/file\/[A-Za-z0-9_-]{40,})"/) || [])[1] || '';
+  const ic = (H.match(/https:\/\/instantcloud\.org\/file\/[A-Za-z0-9]+/) || [])[0] || '';
+  const urlOnly = (u, srv) => ({ url: u, srv: srv, name: name, size: size });
+  // ① FSL (নেস্টেড-পেজ) — সেরা মিরর (২০৬, ~১২–১৪ MB/s)
+  const fslBranch = async () => {
+    if (!nested || left() < 1500) return null;
+    try {
+      const p2 = await mlbdGet(base + nested, { ms: Math.min(4200, left()) });
+      const fsl = (String(p2.body).match(/https:\/\/fsldownload\.com\/d\/[A-Za-z0-9._-]+/) || [])[0] || '';
+      if (!fsl) return null;
+      if (await mlbdRng(fsl, Math.min(2200, left()))) return urlOnly(fsl, 'FSL');
+      return mlbdTrusted(fsl) ? urlOnly(fsl, 'FSL') : null;
+    } catch (e) { return null; }
+  };
+  // ② HubCloud: drive → (302) ist → gamerxyt → r2-presigned / workers.dev
+  const hubBranch = async () => {
+    if (!hub || left() < 1800) return null;
+    try {
+      const h1 = await mlbdGet(hub, { ms: Math.min(4200, left()) });
+      const ist = h1.loc ? new URL(h1.loc, hub).href : hub;
+      const h2 = (ist === hub) ? h1 : await mlbdGet(ist, { ms: Math.min(4200, left()) });
+      const gx = (String(h2.body).match(/https:\/\/gamerxyt\.com\/hubcloud\.php\?[^"'\s<>]+/) || [])[0] || '';
+      if (!gx) return null;
+      const h3 = await mlbdGet(gx, { ms: Math.min(4200, left()), headers: { Referer: ist } });
+      const r2 = mlbdAttr(String(h3.body), 'fsl', 'href');
+      const wk = (String(h3.body).match(/https:\/\/[a-z0-9.\-]*workers\.dev\/[^"'\s<>]+/) || [])[0] || '';
+      for (const c of [{ u: r2, s: 'FSL' }, { u: wk, s: 'HubCloud' }]) {
+        if (!c.u) continue;
+        if (await mlbdRng(c.u, Math.min(2000, left()))) return urlOnly(c.u, c.s);
+        if (mlbdTrusted(c.u)) return urlOnly(c.u, c.s);
+      }
+      return null;
+    } catch (e) { return null; }
+  };
+  // ③ Google (Range নেই) — শুধু MLBD_GD=1 হলে (ডিফল্ট বন্ধ, ইউজার-নির্দেশ)
+  const gdBranch = async () => {
+    if (process.env.MLBD_GD !== '1' || !ic) return null;
+    try {
+      const r = await mlbdGet(ic + '/download', { ms: Math.min(3800, left()), body: false });
+      return /^https:\/\/video-downloads\.googleusercontent\.com\//.test(r.loc) ? urlOnly(r.loc, 'Google') : null;
+    } catch (e) { return null; }
+  };
+  // দুটো শাখাই **সমান্তরাল** (আগে ক্রমিক ছিল ⇒ ১–১.৫সে নষ্ট); প্রথম-সফলটাই নিই, FSL-কে অগ্রাধিকার
+  const both = await Promise.all([fslBranch(), hubBranch()]);
+  if (both[0]) return both[0];
+  if (both[1]) return both[1];
+  return await gdBranch();
+}
+function mlbdLangs(fn) {
+  const S = String(fn || '').toLowerCase();
+  const out = [];
+  const map = [['hindi', 'Hindi'], ['english', 'English'], ['tamil', 'Tamil'], ['telugu', 'Telugu'], ['malayalam', 'Malayalam'], ['kannada', 'Kannada'], ['bengali', 'Bengali'], ['japanese', 'Japanese'], ['korean', 'Korean'], ['urdu', 'Urdu'], ['punjabi', 'Punjabi']];
+  for (const m of map) if (new RegExp('\\b' + m[0] + '\\b').test(S)) out.push(m[1]);
+  if (!out.length) { if (/\bdual\b/.test(S)) out.push('Dual-Audio'); else if (/\bmulti\b/.test(S)) out.push('Multi-Audio'); }
+  return out.slice(0, 4).join(' \u00b7 ');
+}
+async function mlbdStreams(name, year, type, s, e, cap) {
+  const T0 = Date.now(); const B = Number(process.env.MLBDB || 6500);
+  const left = () => Math.max(400, B - (Date.now() - T0));
+  const hard = new Promise(r => setTimeout(() => r(null), B + 250));
+  const work = (async () => {
+    const base = await mlbdMirror(); if (!base) return [];
+    const SE = parseInt(s, 10) || 1, EP = parseInt(e, 10) || 1;
+    const ck = mlbdNorm(name) + '|' + (year || '') + '|' + type + (type === 'series' ? '|S' + SE : '');
+    let path = ''; const c0 = MLBD_PATH_C.get(ck);
+    if (c0 && Date.now() - c0.ts < 6 * 3600e3) path = c0.path;
+    if (!path) {
+      const items = await mlbdSearch(base, name, Math.min(4200, left()));
+      const pick = mlbdPick(items, name, year, type, SE);
+      if (!pick) { if (DBG) console.error('[mlbd] no-title-match n=' + items.length + ' @' + (Date.now() - T0) + 'ms'); return []; }
+      path = pick.path; MLBD_PATH_C.set(ck, { path: path, ts: Date.now() });
+      if (MLBD_PATH_C.size > 400) MLBD_PATH_C.clear();
+    }
+    let files = null; const c1 = MLBD_FILE_C.get(path);
+    if (c1 && Date.now() - c1.ts < 20 * 60e3) files = c1.f;
+    if (!files) {
+      files = await mlbdTitleFiles(base, path, Math.min(4600, left()));
+      if (files.toks.length) { MLBD_FILE_C.set(path, { f: files, ts: Date.now() }); if (MLBD_FILE_C.size > 300) MLBD_FILE_C.clear(); }
+    }
+    let toks = files.toks || [];
+    if (type === 'series') {                      // সিজন-প্যাক বাদ — ঠিক-এপিসোডের টোকেনই
+      const g = (files.groups || []).find(x => x.s === SE && x.e === EP);
+      toks = g ? g.toks : [];
+    }
+    if (!toks.length) { if (DBG) console.error('[mlbd] no-tokens @' + (Date.now() - T0) + 'ms (groups=' + ((files.groups || []).length) + ')'); return []; }
+    const dl = T0 + B;
+    const jobs = toks.slice(0, Number(process.env.MLBDN || 6)).map(t => mlbdOne(base, t, dl).catch(() => null));
+    const got = (await Promise.all(jobs)).filter(Boolean);
+    if (DBG && (type === 'series' || process.env.MLBDBG === '1')) console.error('[mlbd] got=' + got.length + ' names: ' + got.map(g => String(g.name).slice(0, 60) + '{' + g.srv + '}').join(' | '));
+    if (!got.length) { if (DBG) console.error('[mlbd] no-mirror @' + (Date.now() - T0) + 'ms (tok=' + toks.length + ')'); return []; }
+    const maxh = Number(cap || 0);
+    const out = []; const seenU = new Set(); const seenQ = new Set();
+    const ttl = String(name).trim();
+    for (const g of got.sort((a, b) => (parseInt((String(b.name).match(/(\d{3,4})p/i) || [])[1], 10) || 0) - (parseInt((String(a.name).match(/(\d{3,4})p/i) || [])[1], 10) || 0))) {
+      if (seenU.has(g.url)) continue; seenU.add(g.url);
+      if (type === 'series') {                                     // সঠিক এপিসোড ছাড়া কিছু নয়
+        const sm = new RegExp('S0*' + SE + 'E0*' + EP + '(?!\\d)', 'i');
+        if (!sm.test(g.name)) continue;
+      }
+      const h = parseInt((String(g.name).match(/(\d{3,4})p/i) || [])[1], 10) || 0;
+      if (maxh && h && h > maxh) continue;
+      const qk = (h || 'a') + '|' + g.srv;
+      if (seenQ.has(qk)) continue; seenQ.add(qk);
+      if (out.length >= Number(process.env.MLBDCAP || 4)) break;
+      const langs = mlbdLangs(g.name);
+      const txt = '\u29c9 ' + ttl + (year ? ' | ' + year + ' |' : ' |') + '\n'
+        + (type === 'series' ? '\u29e0 S' + SE + 'E' + EP : '\u29e0 Movie') + '\n'
+        + '\u229e MovieLinkBD' + (langs ? ' \u2317 ' + langs : '');
+      out.push({
+        name: '\u25a5 ' + (h ? String(h) : 'Auto') + ' \u25a5', title: txt, description: txt, quality: String(h || ''),
+        url: g.url,
+        behaviorHints: { notWebReady: false, isBingeable: true, proxyHeaders: { request: { 'User-Agent': UA } }, filename: (g.name || 'movielinkbd.mkv') },
+        bingeGroup: 'mlb|' + mlbdNorm(ttl) + '::' + (type === 'series' ? 'S' + SE + 'E' + EP : 'm')
+      });
+    }
+    if (DBG) console.error('[mlbd] cards=' + out.length + ' @' + (Date.now() - T0) + 'ms (tok=' + toks.length + ' got=' + got.length + ')');
+    return out;
+  })().catch(e => { if (DBG) console.error('[mlbd] err ' + (e && e.message)); return []; });
+  const r = await Promise.race([work, hard]);
+  return r || [];
+}
+
+// নাম/বছর জোগাড় করে mlbdStreams ডাকে (infoP = findTmdbInfo, nameP = nmP/tp) — কখনো-throw-নয়
+function mlbdTask(nameP, infoP, type, s, e, cap) {
+  return Promise.all([
+    (nameP ? Promise.resolve(nameP).catch(() => '') : Promise.resolve('')),
+    (infoP ? Promise.resolve(infoP).catch(() => null) : Promise.resolve(null))
+  ]).then(([nm, info]) => {
+    const nm2 = String((info && info.name) || nm || '').trim();
+    const yr = String((info && info.year) || '').slice(0, 4);
+    if (!nm2) return [];
+    return mlbdStreams(nm2, yr, type, s, e, cap).catch(() => []);
+  }).catch(() => []);
+}
+
 // ================= HDHub4u (v1.17.49) =================
 // ★ কীভাবে খুঁজে পেলাম (মাপা, ২৩-১০-২০২৬): সাইটের **হুবহু একই পোস্ট** মিররভেদে আলাদা লিঙ্ক-প্রোভাইডার দেয় —
 //   `new8.hdhub4u.cl`-এ greenmotors (অ্যাড-ফানেল, obfuscated JS, সিক-যোগ্য ফাইল নেই) কিন্তু
@@ -8938,7 +9236,7 @@ async function withSources(cardsP, srcs, cfg, t0, mkey, lookupP) {
     // ★ v1.17.56: **গৌণ-সোর্সের নিজস্ব ছোট-ক্যাপ** — ott/tw/rt/az বসে-থাকলে পুরো উত্তর ১১.৫সে-দেয়ালে
     //   গিয়ে ঠেকত (প্রোড-লগে জোড়ায়-জোড়ায় 11.5s), অথচ ওরা কার্ড দিচ্ছিল না (n=0)। এখন ৬.৫সে।
     // ★ v1.20.2 (মাপা: ৮.২সে-র কারণ ছিল hm — ০ কার্ড দিয়ে ৮.২সে পর্যন্ত ধরে রাখত; tw/rt তেমনই)
-    const SRC_CAP_MAP = { ott: 9400, tw: 9600, rt: 9400, az: 9600, hm: 9000, vsp: 9400, nx: 9200, m4u: 9200, sky: 9000, mm: 9600 }; // v1.26.1: toonworld-এর রেজলভারই ৭.৫সে নেয় (মাপা) — ৮.৫সে-ক্যাপে ওটা সবসময় কাটা পড়ত // ★ v1.22.3: prod-মাপা — এই সোর্সগুলো prod-এ ৭-৮সে নেয়, আগের ক্যাপে তারা সবসময় 'cut' হতো
+    const SRC_CAP_MAP = { ott: 9400, tw: 9600, rt: 9400, az: 9600, hm: 9000, vsp: 9400, nx: 9200, m4u: 9200, sky: 9000, mm: 9600, mlb: 7000 }; // v1.26.1: toonworld-এর রেজলভারই ৭.৫সে নেয় (মাপা) — ৮.৫সে-ক্যাপে ওটা সবসময় কাটা পড়ত // ★ v1.22.3: prod-মাপা — এই সোর্সগুলো prod-এ ৭-৮সে নেয়, আগের ক্যাপে তারা সবসময় 'cut' হতো
     const SRC_CAP_MS = Number(process.env.VSCAP || 9600); // v1.17.58: 9.3s-cap-e prod-e 10.2-10.6s hoi (edge-er kache) // ★ v1.17.52: প্রতি-সোর্স-ক্যাপ — একটি ঝুলন্ত সোর্স (ott/tw/nx) পুরো তালিকাকে ক্যাপে টেনে নিত
     const track = x => { // ★ v1.17.52: টাইমার ক্লিয়ার হয় — নইলে সেটেল হওয়া সোর্সের জন্যও ভুল '[srccap]' ছাপ পড়ত
       let _tm = null;
@@ -9531,6 +9829,10 @@ function parseCfgFromObj(o) {
     if (o.ottq !== undefined && o.ottq !== null && o.ottq !== '') c.ottq = qToList(o.ottq).filter(x => [480, 720, 1080, 2160].indexOf(x) >= 0).sort((a, b) => b - a).slice(0, 4); // v1.15.72: AsianTV-নিজের-মান-ছাঁকনি
     if (o.az === 0 || o.az === '0') c.az = 0; // v1.15.76: AniZone-মাস্টার-সুইচ
     if (o.azq !== undefined && o.azq !== null && o.azq !== '') c.azq = qToList(o.azq).filter(x => [480, 720, 1080, 2160].indexOf(x) >= 0).sort((a, b) => b - a).slice(0, 4); // v1.15.76: AniZone-নিজের-মান-ছাঁকনি
+    // ★ v1.27.12: MovieLinkBD — **অপ্ট-ইন** (mlb:1 না দিলে সোর্স চলে না; ইউজার-নির্দেশে প্রস্তুতি-অবস্থায়)
+    if (o.mlb === 1 || o.mlb === '1' || o.mlb === true) c.mlb = 1;
+    else if (o.mlb === 0 || o.mlb === '0' || o.mlb === false) c.mlb = 0;
+    if (o.mlbr !== undefined && o.mlbr !== null && o.mlbr !== '') { const mv = parseInt(o.mlbr, 10) || 0; if ([0, 480, 720, 1080, 2160].indexOf(mv) >= 0) c.mlbr = mv; }
   }
   return c;
 }
@@ -9665,6 +9967,17 @@ function fmtCardText(c, hint) {
   let rest = s.replace(/^[\u2318\u229e]\s*/, '').trim();
   rest = rest.replace(/\s*\u2022\s*([A-Za-z0-9 ._-]{1,24})\s*$/, (m0, lb) => (FMT_SRV_SET.has(lb.trim()) ? '' : m0)); // idempotent
   const srv = srvLabel(c.url);
+  // ★ v1.27.12 (ইউজার: "description quality keno diso, oita toh title ei ase"): **কোয়ালিটি (1080p/720p/4K)**
+  //   বাদ (রেজোলিউশন তো `name`-এই `▥ 1080 ▥` আছে ⇒ ডাবল দেখাত)। **সাইজ (3.1GB) থাকে** — ওটা আর কোথাও নেই।
+  //   ভাষা/অডিও (Hindi · English · Dual-Audio) সবই থাকে; `⌗`-এর আগের সোর্স-নামও অটুট।
+  const qDrop = x => x.replace(/\b(?:2160|1440|1080|720|480|360)\s?[pP]\b/g, ' ').replace(/\b(?:4K|UHD)\b/gi, ' ')
+    .replace(/\s{2,}/g, ' ').trim();
+  const ci = rest.indexOf('\u2317');
+  const srcName = qDrop(ci >= 0 ? rest.slice(0, ci) : rest);
+  const tparts = ci < 0 ? [] : rest.slice(ci + 1).split('\u00b7').map(qDrop).filter(Boolean);
+  rest = (srcName || '') + (tparts.length ? ' \u2317 ' + tparts.join(' \u00b7 ') : '');
+  rest = rest.replace(/[\s\u00b7]+$/, '').trim();
+  if (!rest) return c;                                                   // সব বাদ পড়ে খালি ⇒ পুরোনো-লেখাই-থাক
   const sLine = ' \u2318 ' + rest + (srv ? ' \u2022 ' + srv : '');
   const out = [headLine, epLine, sLine].concat(tail).filter(Boolean).join('\n');
   if (out === desc) return c;
@@ -9685,11 +9998,11 @@ function yearForTmdb(tmdbId, type) { // মুভি=release_date, সিরি�
     YEAR_CACHE.set(k, y); return y;
   }).catch(() => { YEAR_CACHE.set(k, 0); return 0; });
 }
-const UNIFY_SRV = { sky: 'Sky Movies', m4u: 'Movies4u', bf: 'BollyFlix', mm: 'Multimovies', tw: 'ToonWorld', rt: 'RareToons', vsp: 'Vidsrc', ott: 'AsianTV', az: 'AniZone' };
+const UNIFY_SRV = { sky: 'Sky Movies', m4u: 'Movies4u', bf: 'BollyFlix', mm: 'Multimovies', tw: 'ToonWorld', rt: 'RareToons', vsp: 'Vidsrc', ott: 'AsianTV', az: 'AniZone', mlb: 'MovieLinkBD' };
 async function unifyCards(cards, meta) { // শুধু-টেক্সট-বদলায়: name/quality/url/bingeGroup/_lang/_hq/সাব — সব-অস্পৃশ্য (ফিল্টার-নিরাপদ)
   try {
     if (!cards || !cards.length || !meta || (!meta.tmdbId && !meta.title)) return cards;
-    const tcards = cards.filter(c => /^(sky|m4u|bf|mm|tw|rt)\|/.test(String(c.bingeGroup || '')));
+    const tcards = cards.filter(c => /^(sky|m4u|bf|mm|tw|rt|mlb)\|/.test(String(c.bingeGroup || '')));
     // ★ v1.27.10: tcards খালি হলেও থামি না — বছর-পূরণের ধাপটা সব-সোর্সে চালু থাকবে
     const _uT=Date.now();
     // ★ v1.27.11 (ইউজার: "Pilot eikhane ep title ja mone hoi IMDb theke newo"): সিরিজে এপিসোড-নাম
@@ -10769,7 +11082,8 @@ const server = http.createServer((req, res) => {
       const azP = !(cfg && cfg.az === 0) ? azStreams(Number(m[1]), 'movie', 0, 0, cfg && cfg.azq || []).catch(() => []) : null; // v1.15.76: AniZone
       kickSubs('tmdb' + m[1], 'movie', null, null, cfg);
       const lookP = Promise.all([typeof tp !== 'undefined' ? tp : null, typeof nmP !== 'undefined' ? nmP : null, typeof infoP !== 'undefined' ? infoP : null].filter(Boolean)).catch(() => []); // v1.26.2
-      return withDeadline(withSources(vOn ? getSources(Number(m[1]), 'movie', null, null, '', cfg, tp) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: hmP, key: 'hm' }, { p: hdP, key: 'hd' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0, p, lookP), 10200 /* v1.23.0: 11.9s deadline + unify/network-e prod-e 12.4s-e theke chilo => 10.2s: NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
+      const mlbP = mlbdOn(cfg) ? mlbdTask(tp, infoP, 'movie', 0, 0, (cfg && cfg.mlbr) || 0) : null;
+      return withDeadline(withSources(vOn ? getSources(Number(m[1]), 'movie', null, null, '', cfg, tp) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: hmP, key: 'hm' }, { p: hdP, key: 'hd' }, { p: mlbP, key: 'mlb' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0, p, lookP), 10200 /* v1.23.0: 11.9s deadline + unify/network-e prod-e 12.4s-e theke chilo => 10.2s: NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
 cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'movie', s: 0, e: 0 }).then(u => sendStreams(res, req.url, p, Date.now() - t0, u, RVA, cfg)); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }
@@ -10793,7 +11107,8 @@ cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'movie', s: 0, e: 0 }
       twRtPrewarm(tp, 'series', Number(m[2] || 1), Number(m[3] || 1));
       kickSubs('tmdb' + m[1], 'series', Number(m[2] || 1), Number(m[3] || 1), cfg);
       const lookP = Promise.all([typeof tp !== 'undefined' ? tp : null, typeof nmP !== 'undefined' ? nmP : null, typeof infoP !== 'undefined' ? infoP : null].filter(Boolean)).catch(() => []); // v1.26.2
-      return withDeadline(withSources(vOn ? getSources(Number(m[1]), 'tv', Number(m[2] || 1), Number(m[3] || 1), '', cfg, tp) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: hmP, key: 'hm' }, { p: hdP, key: 'hd' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0, p, lookP), 10200 /* v1.23.0 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
+      const mlbP = mlbdOn(cfg) ? mlbdTask(tp, infoP, 'series', Number(m[2] || 1), Number(m[3] || 1), (cfg && cfg.mlbr) || 0) : null;
+      return withDeadline(withSources(vOn ? getSources(Number(m[1]), 'tv', Number(m[2] || 1), Number(m[3] || 1), '', cfg, tp) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: hmP, key: 'hm' }, { p: hdP, key: 'hd' }, { p: mlbP, key: 'mlb' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0, p, lookP), 10200 /* v1.23.0 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
 cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'series', s: Number(m[2] || 1), e: Number(m[3] || 1) }).then(u => sendStreams(res, req.url, p, Date.now() - t0, u, RVA, cfg)); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }
@@ -10817,7 +11132,8 @@ cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'series', s: Number(m
       const azP = !(cfg && cfg.az === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? azStreams(info.id, 'movie', 0, 0, cfg && cfg.azq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.76: AniZone
       kickSubs(m[1], 'movie', null, null, cfg);
       const lookP = Promise.all([typeof tp !== 'undefined' ? tp : null, typeof nmP !== 'undefined' ? nmP : null, typeof infoP !== 'undefined' ? infoP : null].filter(Boolean)).catch(() => []); // v1.26.2
-      return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'movie', null, null, info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: hmP, key: 'hm' }, { p: hdP, key: 'hd' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0, p, lookP), 10200 /* v1.23.0 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
+      const mlbP = mlbdOn(cfg) ? mlbdTask(nmP, infoP, 'movie', 0, 0, (cfg && cfg.mlbr) || 0) : null;
+      return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'movie', null, null, info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: hmP, key: 'hm' }, { p: hdP, key: 'hd' }, { p: mlbP, key: 'mlb' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0, p, lookP), 10200 /* v1.23.0 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
 cards => { if (DBG) console.error('[rt] cards-ready @' + (Date.now() - t0) + 'ms n=' + (cards || []).length); Promise.all([infoP, nmP]).then(([info, nm]) => { if (DBG) console.error('[rt] info/nm ready @' + (Date.now() - t0) + 'ms'); return unifyCards(cards, { tmdbId: info && info.id, title: (info && info.name) || nm, type: 'movie', s: 0, e: 0, year: info && info.year }); }).then(u => { if (DBG) console.error('[rt] sending @' + (Date.now() - t0) + 'ms'); sendStreams(res, req.url, p, Date.now() - t0, u, RVA, cfg); }); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }
@@ -10842,7 +11158,8 @@ cards => { if (DBG) console.error('[rt] cards-ready @' + (Date.now() - t0) + 'ms
       twRtPrewarm(nmP, 'series', Number(m[2]), Number(m[3]));
       kickSubs(m[1], 'series', Number(m[2]), Number(m[3]), cfg);
       const lookP = Promise.all([typeof tp !== 'undefined' ? tp : null, typeof nmP !== 'undefined' ? nmP : null, typeof infoP !== 'undefined' ? infoP : null].filter(Boolean)).catch(() => []); // v1.26.2
-      return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'tv', Number(m[2]), Number(m[3]), info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: hmP, key: 'hm' }, { p: hdP, key: 'hd' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0, p, lookP), 10200 /* v1.23.0 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
+      const mlbP = mlbdOn(cfg) ? mlbdTask(nmP, infoP, 'series', Number(m[2]), Number(m[3]), (cfg && cfg.mlbr) || 0) : null;
+      return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'tv', Number(m[2]), Number(m[3]), info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: hmP, key: 'hm' }, { p: hdP, key: 'hd' }, { p: mlbP, key: 'mlb' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0, p, lookP), 10200 /* v1.23.0 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
 cards => { Promise.all([infoP, nmP]).then(([info, nm]) => unifyCards(cards, { tmdbId: info && info.id, title: (info && info.name) || nm, type: 'series', s: Number(m[2]), e: Number(m[3]), year: info && info.year })).then(u => sendStreams(res, req.url, p, Date.now() - t0, u, RVA, cfg)); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }
@@ -10867,7 +11184,8 @@ cards => { Promise.all([infoP, nmP]).then(([info, nm]) => unifyCards(cards, { tm
       twRtPrewarm(nmP, 'series', 1, 1);
       kickSubs(m[1], 'series', 1, 1, cfg);
       const lookP = Promise.all([typeof tp !== 'undefined' ? tp : null, typeof nmP !== 'undefined' ? nmP : null, typeof infoP !== 'undefined' ? infoP : null].filter(Boolean)).catch(() => []); // v1.26.2
-      return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'tv', 1, 1, info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: hmP, key: 'hm' }, { p: hdP, key: 'hd' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0, p, lookP), 10200 /* v1.15.26 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
+      const mlbP = mlbdOn(cfg) ? mlbdTask(nmP, infoP, 'series', 1, 1, (cfg && cfg.mlbr) || 0) : null;
+      return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'tv', 1, 1, info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: hmP, key: 'hm' }, { p: hdP, key: 'hd' }, { p: mlbP, key: 'mlb' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0, p, lookP), 10200 /* v1.15.26 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
 cards => { Promise.all([infoP, nmP]).then(([info, nm]) => unifyCards(cards, { tmdbId: info && info.id, title: (info && info.name) || nm, type: 'series', s: 1, e: 1, year: info && info.year })).then(u => sendStreams(res, req.url, p + ' [no-s:e]', Date.now() - t0, u, RVA, cfg)); },
         e => { logReq(p + ' [no-s:e]', Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }
@@ -11082,4 +11400,4 @@ if (process.argv[2] === 'selftest') {
     process.exit(ok ? 0 : 1);
   } catch (e) { console.log('selftest ✗', e.message); process.exit(1); }
 }
-module.exports = { vidyDecrypt, getSources, findTmdb, _internal: { keystream, mix, fnv1a } };
+module.exports = { vidyDecrypt, getSources, findTmdb, mlbdStreams, mlbdTask, mlbdOn, mlbdMirror, _internal: { keystream, mix, fnv1a } };
