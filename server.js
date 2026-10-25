@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.27.14';
+const VERSION = '1.27.15';
 const V1NOTE_47 = 'v1.17.47 (ইউজার: "stream cut kore fast na — 6-8s laguk, sob stream asuk") — হারভেস্ট-কাট বাতিল: আগে ৪.৬সে-এ ৬-কার্ড-হলেই কাট, ৪.৯সে হার্ড-ক্যাপ ⇒ দেরিতে-আসা সোর্সের কার্ড ফেলত। এখন **সব লাইভ-সোর্স সেটেল হলেই ফেরা**, নইলে ৭.৮সে ক্যাপ (Beamup ১২সে-সীমার ভিতরে)। সাথে: nx ৫.১→৭.২সে (MB আর কাটা পড়ে না), mm/m4u ৭.০সে সব-সাইট, hm-রেস ৩.২→৬.৬সে (কোল্ড-চেইনও একই রেসপন্সে), m4u-তে ৩ pd-id + ২ জীবিত মিরর (আগে ১ম-সফলেই-থামা), sky-তে ৩ pd-id/hub, PD_MAX env-নব। মাপা (১৬ রিকোয়েস্ট, লোকাল): avg 5.52s · সর্বোচ্চ 6.66s (আগে 3.75s-কাট-সংস্করণে ৮২৪ কার্ড), HindMovie ৮/১৬ (আগে ৩/১৬), MB ১৬/১৬, mm ১৬/১৬, m4u ১৪/১৬, sky ১২/১৬, কার্ড ৮৩৯ ⇒ **কার্ড কমেনি, বেড়েছে**।';
 
 const V1NOTE_48 = 'v1.17.48 (ইউজার: "M4u thik koro, Hindi movie add koro, configuration page ta o thik koro") — ★ কনফিগ-পেজ-মেরামত: SRC-তালিকা থেকেই সুইচ-বাইন্ড (bf সরানোর পর bindSwitch-এ null.classList-এ পুরো IIFE থেমে যেত ⇒ tune-কার্ড/সেভ/প্রিভিউ কিছুই রেন্ডার হতো না) + bindSwitch-এ null-গার্ড; HindMovie প্যানেল + tune-hm কার্ড যোগ। ★ Movies4u: একাধিক সার্চ-হিট-চেষ্টা (per_page 12), আর্টিকেল-বাদ-দিয়ে-পুনঃসার্চ, modpro-শাখা এখন আসলেই চলে (post খালি থাকলে lastPost দিয়ে) — মৃত-মিরর Range-প্রমাণ ছাড়া কার্ড-নয়। ★ প্রতি-সারি-deadline: এক-সারির-ঢিলামিতে সব-কার্ড বাতিল হতো (3 Idiots ৮.৬সে→৪.৭সে)। ★ HindMovie: 404/410-এ প্রক্সি-পুল-বন্ধ (Silence ১২.২সে→৬.১সে, কার্ড-আসে)। বেঞ্চ: avg ৪.৭৪সে (আগে ৫.৫২), max ৭.০২, m4u ১৪/১৬, HM ৮/১৬, Sky ১৪/১৬।';const V1NOTE_46 = 'v1.17.46 (HindMovie নতুন সোর্স): live search (REST → HTML ফলব্যাক, বছর-মুক্ত কুয়েরি) → পোস্ট (IMDb-id গার্ড) → mvlink (মুভি) / mvlink /web/<id> (সিজন×কোয়ালিটি) → hshare → hcloud b64 → workers.dev direct MKV (২০৬, সিক-যোগ্য)। ক্যাশ ৬ঘণ্টা (search/post/mvlink/final); ডিরেক্ট আগে, 403/429/5xx-তে পুল-রেস। ব্যাচ .zip কখনো কার্ড নয়। hmRace ৩.২s ⇒ কোল্ড-চেইন রেসপন্স আটকায় না, পেছনে ক্যাশ ভরে। মাপা (১৬ রিকোয়েস্ট): avg 3.75s, MB 15/16, mm 16/16, m4u 14/16, sky 13/16, hm 3/16 (হলিউড-ক্লাসিক বেঞ্চে; সিরিজে BB/GoT S1E1 = ৩ কার্ড)।';
@@ -5120,6 +5120,7 @@ async function mlbdLimit(fn) {
 // কখনো-throw-নয়: নেটওয়ার্ক-ব্যর্থতায় একবার রিট্রাই, শেষ-ব্যর্থতায় st:0 (কলার তখন [] ফেরায়)
 async function mlbdGet(u, opt) {
   opt = opt || {};
+  const T0 = Date.now(), BUD = Math.max(900, opt.ms || 6000);   // ★ মোট-বাজেট (রিট্রাই মিলিয়ে)
   const delays = [200, 600, 1300];
   for (let at = 0; at < 4; at++) {
     try {
@@ -5142,10 +5143,14 @@ async function mlbdGet(u, opt) {
         return { st: 0, loc: '', body: '' };
       });
     } catch (e) {
-      if (at === 3) { if (DBG) console.error('[mlbd] get-fail ' + String(u).slice(0, 60) + ' :: ' + (e && (e.message || e)) + ' | ' + ((e && e.cause && (e.cause.code || e.cause.message)) || '')); return { st: 0, loc: '', body: '' }; }
+      if (at === 3 || Date.now() - T0 > BUD) {                   // ★ এক-কলের মোট-সময় budget-এ সীমিত
+        if (DBG) console.error('[mlbd] get-fail ' + String(u).slice(0, 60) + ' :: ' + (e && (e.message || e)) + ' | ' + ((e && e.cause && (e.cause.code || e.cause.message)) || '') + ' @' + (Date.now() - T0) + 'ms');
+        return { st: 0, loc: '', body: '' };
+      }
       // ★ v1.27.14: ডাইরেক্ট-ফেচ ব্যর্থ (SAN-এ ECONNRESET) ⇒ **প্রক্সি-সুরঙ্গে** একই URL — এটাই সবচেয়ে বড় নির্ভরযোগ্যতা-লাভ
-      if (at >= 1) {
+      if (at >= 1 && Date.now() - T0 < BUD) {
         for (let k = 0; k < 2; k++) {
+          if (Date.now() - T0 > BUD) break;
           const px = vspPick(null); if (!px) break;
           try {
             const txt = await proxiedGet(px.px, u, Math.max(1800, Math.min(opt.ms || 6000, 3500)));
@@ -5205,8 +5210,12 @@ async function mlbdSearch(base, q, ms) {
   }
   return items;
 }
-function mlbdSeasonOf(t) { // "Breaking Bad (2008) S04 [Ep 01-08 Added]" → 4 ; "S05 Completed" → 5
-  const m = /(?:^|[^A-Za-z0-9])S0*(\d{1,2})(?![0-9])/.exec(String(t || ''));
+function mlbdSeasonOf(t) { // "Breaking Bad (2008) S04 [Ep 01-08 Added]" → 4 ; "S05 Completed" → 5 ; "Season 4" → 4
+  const tx = String(t || '');
+  // ★ v1.27.15: কিছু পোস্টে "S04" নয়, **"Season 4"** লেখা (Game of Thrones) — আগে সিজন-শূন্য ধরে
+  //   ভুল পেজ বাছাই হত ⇒ ঠিক-সিজনের এপিসোডই পাওয়া যেত না।
+  const mSeason = /\bseason\s*0*(\d{1,2})(?!\d)/i.exec(tx);
+  const m = /(?:^|[^A-Za-z0-9])S0*(\d{1,2})(?![0-9])/.exec(tx) || mSeason;
   const n = m ? parseInt(m[1], 10) : 0;
   return (n >= 0 && n <= 60) ? n : 0;
 }
@@ -5268,9 +5277,13 @@ function mlbdEpGroups(html) {
   const out = [];
   for (let k = 0; k < marks.length; k++) {
     const seg = html.slice(marks[k].i, (k + 1 < marks.length) ? marks[k + 1].i : html.length);
-    const c = mlbdEpNum(marks[k].ep);
-    if (!c) continue;
-    out.push({ s: c.s, e: c.e, toks: mlbdToks(seg) });
+    // ★ v1.27.15: কিছু পোস্টে `data-ep="episode 1 episode 1"` — সিজন/এপি-নম্বর আলাদা অ্যাট্রিবিউটে
+    //   (`data-episode-number`, `data-season-number`) থাকে; পেজ নিজেই সিজন-নির্দিষ্ট।
+    const r = mlbdEpNum(marks[k].ep);
+    const en = parseInt((/data-episode-number="(\d{1,4})"/.exec(seg) || [])[1], 10) || (r ? r.e : 0);
+    const sn = parseInt((/data-season-number="(\d{1,2})"/.exec(seg) || [])[1], 10) || (r ? r.s : 0);
+    if (!en) continue;
+    out.push({ s: sn, e: en, toks: mlbdToks(seg) });
   }
   return out;
 }
@@ -5408,7 +5421,7 @@ async function mlbdStreams(name, year, type, s, e, cap) {
             if (!(f.groups || []).length) {        // data-ep-হীন পোস্ট (প্যাক-ধাঁচ) ⇒ শেষ-উপায়
               for (const x of (f.toks || [])) rawT.push(x);
             }
-            const g = (f.groups || []).find(x => x.s === SE && x.e === EP);
+            const g = (f.groups || []).find(x => (x.s === SE || x.s === 0) && x.e === EP);
             t = g ? g.toks : [];
           }
           for (const x of t) if (!usedT.has(x)) { usedT.add(x); allT.push(x); }
@@ -10105,8 +10118,14 @@ function fmtCardText(c, hint) {
   // ★ v1.27.12 (ইউজার: "description quality keno diso, oita toh title ei ase"): **কোয়ালিটি (1080p/720p/4K)**
   //   বাদ (রেজোলিউশন তো `name`-এই `▥ 1080 ▥` আছে ⇒ ডাবল দেখাত)। **সাইজ (3.1GB) থাকে** — ওটা আর কোথাও নেই।
   //   ভাষা/অডিও (Hindi · English · Dual-Audio) সবই থাকে; `⌗`-এর আগের সোর্স-নামও অটুট।
-  const qDrop = x => x.replace(/\b(?:2160|1440|1080|720|480|360)\s?[pP]\b/g, ' ').replace(/\b(?:4K|UHD)\b/gi, ' ')
-    .replace(/\s{2,}/g, ' ').trim();
+  // ★ v1.27.15: কিছু সোর্স কোড-নাম দেয় ("esla", "ptbr") — কার্ডে আসল ভাষার নাম দেখাই
+  const LANG_FIX = { esla: 'Spanish', eslatino: 'Spanish', ptbr: 'Portuguese', ptpt: 'Portuguese', latino: 'Spanish', tamilrockers: 'Tamil' };
+  const qDrop = x => {
+    let y = x.replace(/\b(?:2160|1440|1080|720|480|360)\s?[pP]\b/g, ' ').replace(/\b(?:4K|UHD)\b/gi, ' ')
+      .replace(/\s{2,}/g, ' ').trim();
+    const lf = LANG_FIX[y.toLowerCase().replace(/[^a-z]/g, '')];
+    return lf && y.length <= 12 ? lf : y;
+  };
   const ci = rest.indexOf('\u2317');
   const srcName = qDrop(ci >= 0 ? rest.slice(0, ci) : rest);
   const tparts = ci < 0 ? [] : rest.slice(ci + 1).split('\u00b7').map(qDrop).filter(Boolean);
