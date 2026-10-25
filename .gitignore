@@ -1,2 +1,6 @@
 phoenix_logo.png
 node_modules/
+
+# স্থানীয় ব্যাকআপ/স্ক্র্যাচ — git-এ নয়
+server.js.*.bak
+pxbig.json

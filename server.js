@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.27.26';
+const VERSION = '1.28.1';
 const V1NOTE_47 = 'v1.17.47 (ইউজার: "stream cut kore fast na — 6-8s laguk, sob stream asuk") — হারভেস্ট-কাট বাতিল: আগে ৪.৬সে-এ ৬-কার্ড-হলেই কাট, ৪.৯সে হার্ড-ক্যাপ ⇒ দেরিতে-আসা সোর্সের কার্ড ফেলত। এখন **সব লাইভ-সোর্স সেটেল হলেই ফেরা**, নইলে ৭.৮সে ক্যাপ (Beamup ১২সে-সীমার ভিতরে)। সাথে: nx ৫.১→৭.২সে (MB আর কাটা পড়ে না), mm/m4u ৭.০সে সব-সাইট, hm-রেস ৩.২→৬.৬সে (কোল্ড-চেইনও একই রেসপন্সে), m4u-তে ৩ pd-id + ২ জীবিত মিরর (আগে ১ম-সফলেই-থামা), sky-তে ৩ pd-id/hub, PD_MAX env-নব। মাপা (১৬ রিকোয়েস্ট, লোকাল): avg 5.52s · সর্বোচ্চ 6.66s (আগে 3.75s-কাট-সংস্করণে ৮২৪ কার্ড), HindMovie ৮/১৬ (আগে ৩/১৬), MB ১৬/১৬, mm ১৬/১৬, m4u ১৪/১৬, sky ১২/১৬, কার্ড ৮৩৯ ⇒ **কার্ড কমেনি, বেড়েছে**।';
 
 const V1NOTE_48 = 'v1.17.48 (ইউজার: "M4u thik koro, Hindi movie add koro, configuration page ta o thik koro") — ★ কনফিগ-পেজ-মেরামত: SRC-তালিকা থেকেই সুইচ-বাইন্ড (bf সরানোর পর bindSwitch-এ null.classList-এ পুরো IIFE থেমে যেত ⇒ tune-কার্ড/সেভ/প্রিভিউ কিছুই রেন্ডার হতো না) + bindSwitch-এ null-গার্ড; HindMovie প্যানেল + tune-hm কার্ড যোগ। ★ Movies4u: একাধিক সার্চ-হিট-চেষ্টা (per_page 12), আর্টিকেল-বাদ-দিয়ে-পুনঃসার্চ, modpro-শাখা এখন আসলেই চলে (post খালি থাকলে lastPost দিয়ে) — মৃত-মিরর Range-প্রমাণ ছাড়া কার্ড-নয়। ★ প্রতি-সারি-deadline: এক-সারির-ঢিলামিতে সব-কার্ড বাতিল হতো (3 Idiots ৮.৬সে→৪.৭সে)। ★ HindMovie: 404/410-এ প্রক্সি-পুল-বন্ধ (Silence ১২.২সে→৬.১সে, কার্ড-আসে)। বেঞ্চ: avg ৪.৭৪সে (আগে ৫.৫২), max ৭.০২, m4u ১৪/১৬, HM ৮/১৬, Sky ১৪/১৬।';const V1NOTE_46 = 'v1.17.46 (HindMovie নতুন সোর্স): live search (REST → HTML ফলব্যাক, বছর-মুক্ত কুয়েরি) → পোস্ট (IMDb-id গার্ড) → mvlink (মুভি) / mvlink /web/<id> (সিজন×কোয়ালিটি) → hshare → hcloud b64 → workers.dev direct MKV (২০৬, সিক-যোগ্য)। ক্যাশ ৬ঘণ্টা (search/post/mvlink/final); ডিরেক্ট আগে, 403/429/5xx-তে পুল-রেস। ব্যাচ .zip কখনো কার্ড নয়। hmRace ৩.২s ⇒ কোল্ড-চেইন রেসপন্স আটকায় না, পেছনে ক্যাশ ভরে। মাপা (১৬ রিকোয়েস্ট): avg 3.75s, MB 15/16, mm 16/16, m4u 14/16, sky 13/16, hm 3/16 (হলিউড-ক্লাসিক বেঞ্চে; সিরিজে BB/GoT S1E1 = ৩ কার্ড)।';
@@ -1272,6 +1272,11 @@ const SPOOL = new Map();          // srcKey -> Map(px -> {ms, ok, fail, ts, ban}
 const SPOOL_FILE = require('path').join(__dirname, 'src_pools.json');
 const SPOOL_TGT = Number(process.env.SPTGT || 72);   // v1.25.1 (user: 'bakigula 8x') 9 -> 72 per source   // v1.23.0: প্রতি সোর্সে ৯টি তাজা-যাচাই নোড (ইউজার: ৮-১০)   // প্রতি সোর্সে লক্ষ্য-ভেরিফায়েড নোড
 const SPOOL_TRIED = new Map();    // `${srcKey}|${px}` -> ts (ব্যর্থ-কুলডাউন ২০মিন)
+/* ★ v1.28.1: **প্রোব-ভার্সন** — কোনো সোর্সের যাচাই-মার্কার কড়া/বদলালে পুরোনো নোডগুলো আর 'প্রমাণিত' নয়
+   (মাপা: az-এর নরম মার্কার `/anizone|anime|href/` ৪০০-বাইট প্রক্সি-এরর-পাতাকেও পাস করিয়ে দিয়েছিল)।
+   ভার্সন না-মিললে লোড-হওয়া নোড বাদ, spoolCheck আবার যাচাই করে। */
+const PROBE_VER = { az: 3 };
+function probeVer(k) { return PROBE_VER[k] || 1; }
 function srcPool(key) { let m = SPOOL.get(key); if (!m) { m = new Map(); SPOOL.set(key, m); } return m; }
 function spoolLoad() {
   try {
@@ -1279,14 +1284,28 @@ function spoolLoad() {
     // ★ v1.24.2 (মাপা: ডিপ্লয়ের পর প্রথম অনুরোধ ১৫-১৯সে — লোড-হওয়া নোডের ts=0 ⇒ 'বাসি' ⇒ কিছুই সার্ভ হয় না):
     //   ফাইল থেকে লোড-হওয়া নোড এখনই ব্যবহারযোগ্য (ts = ১ মিনিট আগে), আর ৩০সে পরেই রি-ভেরিফাই শুরু।
     const _t0 = Date.now() - 60000;
-    for (const k of Object.keys(j)) for (const px of Object.keys(j[k] || {})) srcPool(k).set(px, { ms: j[k][px].ms || 3000, ok: 1, fail: 0, ts: _t0, ban: 0 });
+    let stale = 0;
+    for (const k of Object.keys(j)) for (const px of Object.keys(j[k] || {})) {
+      if ((j[k][px].v || 1) !== probeVer(k)) { stale++; continue; }   // পুরোনো-মার্কারে যাচাই ⇒ বাদ
+      srcPool(k).set(px, { ms: j[k][px].ms || 3000, ok: 1, fail: 0, ts: _t0, ban: 0 });
+    }
+    if (stale && process.env.VDBG) console.error('[spool] বাসি-মার্কার বাদ ' + stale + ' নোড');
     if (process.env.VDBG) console.error('[spool] লোড ' + SPOOL.size + ' পুল, মোট ' + [...SPOOL.values()].reduce((a, m) => a + m.size, 0) + ' নোড');
   } catch (e) { }
 }
 function spoolSave() {
   try {
     const o = {}; const cur = (() => { try { return JSON.parse(fs.readFileSync(SPOOL_FILE, 'utf8')) || {}; } catch (e) { return {}; } })();
-    for (const [k, m] of SPOOL) { const bucket = Object.assign({}, cur[k] || {}); for (const [px, e] of m) if ((e.ok || 0) > 0) bucket[px] = { ms: e.ms || 3000 }; o[k] = bucket; }
+    for (const [k, m] of SPOOL) {
+      const bucket = {};
+      for (const [px, e] of m) if ((e.ok || 0) > 0) bucket[px] = { ms: e.ms || 3000, v: e.pv || probeVer(k) };
+      if (!Object.keys(bucket).length) {   // মেমরি-খালি ⇒ আগের ফাইলের শুধু বৈধ-ভার্সনের নোড রাখি (মুছে ফেলা নয়)
+        for (const px of Object.keys(cur[k] || {})) if ((cur[k][px].v || 1) === probeVer(k)) bucket[px] = { ms: cur[k][px].ms || 3000, v: probeVer(k) };
+      }
+      const ks = Object.keys(bucket);   // ★ ক্যাপ: প্রতি-সোর্সে সেরা 150 (ms-ক্রম) — ফাইল আর ফুলবে না
+      if (ks.length > 150) { ks.sort((a, b) => (bucket[a].ms || 9999) - (bucket[b].ms || 9999)); for (const px of ks.slice(150)) delete bucket[px]; }
+      o[k] = bucket;
+    }
     fs.writeFileSync(SPOOL_FILE, JSON.stringify(o));
   } catch (e) { }
 }
@@ -1321,6 +1340,9 @@ function srcKeyFor(pxKey) {
   if (/^m4u:|^pd$|^pd:|movies4u/i.test(k)) return 'm4u';
   if (/^hd:|^hub|^wk|^gx/.test(k)) return 'hd';
   if (/hindmovie/i.test(k)) return 'hm';
+  if (/mvlink/i.test(k)) return 'mv';        // v1.28.0
+  if (/hshare/i.test(k)) return 'hs';
+  if (/hcloud/i.test(k)) return 'hc';
   if (/anizone/i.test(k)) return 'az';
   if (/devcorp/i.test(k)) return 'ott';
   if (/vidy/i.test(k)) return 'vidy';
@@ -1333,10 +1355,16 @@ function srcKeyFor(pxKey) {
 //   + কনটেন্ট-মার্কার + ন্যূনতম দৈর্ঘ্য, আর পুরোনো নোড পুনঃযাচাই হয় — তাজা না হলে সার্ভ করে না।
 const SRC_PROBE = {
   hm: { u: () => 'https://' + HM_HOST + '/wp-json/wp/v2/search?search=inception&per_page=1', min: 200, mark: /"id"|"slug"|"title"/ },
+  // ★ v1.28.0 (ইউজার: "ডেডিকেটেড প্রক্সি-পুল"): mvlink/hshare/hcloud/movielinkbd আলাঢ6া হোস্ট —
+  //   একটি নোঢ1 mvlink পারে কিন্তু hshare পারে না — তাই প্রতিটির নিজের যাচাই-প্রোব।
+  mv: { u: () => 'https://mvlink.blog/', min: 4000, mark: /mvlink|hshare|href/i },
+  hs: { u: () => 'https://hshare.lol/', min: 400, mark: /hshare|id=|form|html/i },
+  hc: { u: () => 'https://hcloud.ink/', min: 200, mark: /hcloud|redirect|html|404/i },
+  mlb: { prep: () => mlbdMirror(), u: () => (MLBD_BASE || MLBD_SEEDS[0]) + '/search?q=inception', min: 1500, mark: /mlbd-lm-title|\/movie\/|\/series\/|\/drama\//i },
   hd: { u: () => HD_BASE + '/', min: 3000, mark: /hdhub|post_title|movies|download/i },
   m4u: { u: () => M4U_LIVE + '/', min: 3000, mark: /movies4u|post|href/i },   // ★ v1.27.2: এখানে await চলবে না (sync প্রোব-বিল্ডার)
   sky: { u: () => SKY_ANNOUNCERS[0], min: 1000, mark: /sky|movie|href/i },
-  az: { u: () => AZ_BASE + '/', min: 3000, mark: /anizone|anime|href/i },
+  az: { u: () => AZ_BASE + '/anime?search=one', min: 20000, mark: /<title>Anime Index[\s\S]*JSON\.parse/i },   // ★ v1.28.1: সার্চ-পথে প্রোব (মাপা: search=one → 82KB + JSON.parse)   // ★ v1.28.1: আগের মার্কারে প্রক্সি-এরর-পাতাও "ফ্রেশ" হয়ে যায়
   ott: { u: () => OTT_HOSTS[0] + '/vod/search?page=1&keyword=inception', min: 60, mark: /vod|[\{]/i }
 };
 function spoolFresh(e) { return !!e && (e.ok || 0) > 0 && (!e.ban || e.ban <= Date.now()) && (Date.now() - (e.ts || 0) < Number(process.env.SPFRESH || 600000)); }
@@ -1345,9 +1373,11 @@ async function spoolCheck(k, px) { // এক নোড → ওই সোর্�
   const spec = SRC_PROBE[k]; if (!spec) return false;
   const t0 = Date.now();
   try {
+    if (spec.prep) { try { await spec.prep(); } catch (e) { } }   // v1.28.0: mlb-mirror taazaa kore nei
     const b = await proxiedGet(px, spec.u(), Number(process.env.SPTMO || 5000));
     const good = !!b && b.length >= spec.min && spec.mark.test(b);
     spoolRec(k, px, good, Date.now() - t0);
+    if (good) { const e = srcPool(k).get(px); if (e) e.pv = probeVer(k); }
     if (good && DBG) console.error('[spool] + ' + k + ' ' + px + ' ' + (Date.now() - t0) + 'ms ' + b.length + 'B');
     return good;
   } catch (e) { spoolRec(k, px, false, 0); return false; }
@@ -1718,6 +1748,16 @@ vidyVLoad();
   };
   setTimeout(spawnD, 8000);
 })();
+/* ★ v1.28.1: **মেমোরি-ওয়াট্চডোগ** — ব্যাটারি-চালাকালে কার্নেল OOM-kill হয়েছিল (896MB) ⇒ প্রতি 20সে-য়ে RSS/heap আর বড় ক্যাশের আকার লগগ্র করিলুালাম — লিক-স্থান প্রমাণে ধরা পড়েই। */
+let MEMW_PEAK = 0;
+if (process.env.MEMW !== '0') setInterval(() => {
+  try {
+    const m = process.memoryUsage(), sz = o => { try { return o instanceof Map ? o.size : (Array.isArray(o) ? o.length : 0); } catch (e) { return 0; } };
+    const rss = Math.round(m.rss / 1048576); MEMW_PEAK = Math.max(MEMW_PEAK, rss);
+    if (process.env.VDBG && (rss > 260 || process.env.MEMW === '2')) console.error('[mem] rss=' + rss + 'MB peak=' + MEMW_PEAK + ' heap=' + Math.round(m.heapUsed / 1048576) + ' ext=' + Math.round((m.external || 0) / 1048576) + ' MM_WC=' + sz(MM_WC) + ' AZ_MEMO=' + sz(AZ_MEMO) + ' OTT=' + sz(OTT_MEMO) + ' VSP=' + sz(VSP_MEMO) + ' PTUN=' + sz(PTUN) + ' VIDY_OK=' + sz(VIDY_OK) + ' POOL=' + POOL.length);
+    if (rss > Number(process.env.MEMCAP || 700) && global.gc) global.gc();
+  } catch (e) { }
+}, 20000).unref();
 let vidySweepTimer = null;
 function vidySweepNext(ms) { if (vidySweepTimer) clearTimeout(vidySweepTimer); vidySweepTimer = setTimeout(() => vidySweep(Number(process.env.VPXW || 240)), ms); if (vidySweepTimer.unref) vidySweepTimer.unref(); }   // ★ v1.26.9: প্রতি-চক্রে ৬০ → ২৪০ প্রার্থী
 setTimeout(() => vidySweep(Number(process.env.VPXW || 720)), 2500);
@@ -2160,7 +2200,7 @@ async function vidyFetch(o) { // ★ v1.17.56: verified-pool **ক্রমব�
     }, 120); if (iv.unref) iv.unref();
   });
 }
-function racePool(url, n, timeoutMs, srcKey) {
+function racePool(url, n, timeoutMs, srcKey, accept) {   // ★ v1.28.1: accept(body) → false মানে ওই উত্তর বাতিল, রেস চলবে
   // v1.11.2: সুস্থতা-ব্যান্ড-জুড়ে-ছড়ানো-নমুনা — আগে-তালিকার-প্রথম-n-টা-নিত; ওই-৫টা-একসাথে-মৃত-থাকলে
   // বাকি ১৯-সুস্থ-px-থাকতেও-পুরো-পুল 'pool-exhausted' ঘোষিত-হত ( BreakingBad-runে-ঠিক-তা-ই-হয়েছিল)
   // v1.15.0: ক্রম-রানটাইম-স্কোরে (ব্যর্থতা-ভারী-পিছিয়ে), মৃত-ভারী-পুলে-রেস-প্রস্থ-বাড়ে, ফল-PX_RUN-এ-জমে
@@ -2186,6 +2226,12 @@ function racePool(url, n, timeoutMs, srcKey) {
     for (const c of cands) {
       const tP = Date.now();
       proxiedGet(c.px, url, timeoutMs).then(body => {
+        if (accept && !accept(body)) {   // ★ v1.28.1: প্রক্সি-এরর-পাতা/চ্যালেঞ্জ-পাতা = ব্যর্থ (প্রমাণ: ৩৭২–৪১০ বাইট, title ছাড়া)
+          if (srcKey) spoolRec(srcKey, c.px, false, 0);
+          pxRec(c.px, false, 0);
+          if (!done && ++fails === cands.length) { done = true; clearTimeout(to); reject(new Error('bad-body')); }
+          return;
+        }
         if (srcKey) spoolRec(srcKey, c.px, true, Date.now() - tP);
         pxRec(c.px, true, Date.now() - tP);
         if (done) return;
@@ -4279,6 +4325,14 @@ const HM_TTL = 6 * 3600 * 1000;
 const HM_S = new Map(); const HM_P = new Map(); const HM_M = new Map(); const HM_F = new Map();
 function hmGet(m, k) { if (NOCACHE) return null; const c = m.get(k); return (c && Date.now() - c.ts < HM_TTL) ? c.v : null; }
 function hmSet(m, k, v) { if (m.size > 900) m.clear(); m.set(k, { ts: Date.now(), v: v }); }
+function hmPoolKey(u) {   // ★ v1.28.1: **sync** — async থাকায় `racePool(..., hmPoolKey(u))` Promise-কী পাচ্ছিল
+  //   ⇒ নিবেদিত hm/mv/hs/hc পুল কার্য়ত নিষ্ক্রিয়, সব জমছিল "[object Promise]" নামের ভুয়া পুলে (src_pools.json-এ 6 নোড)   // v1.28.0: হোস্ট-অনুযায়ী ডেডিকেটেড পুল
+  const h = hostOf(u);
+  if (/^mvlink\./i.test(h)) return 'mv';
+  if (/^hshare\./i.test(h)) return 'hs';
+  if (/^hcloud\./i.test(h)) return 'hc';
+  return 'hm';
+}
 async function hmText(u, ms, ref) { // ডিরেক্ট → ব্যর্থ হলে পুল-রেস (IP-ফ্ল্যাগ-বাইপাস)
   const h = { 'User-Agent': UA, 'Accept-Language': 'en-US,en;q=0.9', 'Accept': 'text/html,application/json;q=0.9,*/*;q=0.8' };
   if (ref) h.Referer = ref;
@@ -4304,7 +4358,7 @@ async function hmText(u, ms, ref) { // ডিরেক্ট → ব্যর্
   //   আগে ডায়রেক্ট 3.5s টাইমআউট সহ্য করে তবে পুলে যাত ⇒ প্রতি-হোপে 2-4s নষ্ট।
   const poolP = async (msl) => {
     try {
-      const x = await racePool(u, 4, Math.max(1200, msl), 'hm');
+      const x = await racePool(u, 4, Math.max(1200, msl), hmPoolKey(u));
       const t = String((x && x.body) || '');
       return t.length > 200 ? { st: 200, t: t, via: 'px', el: 0 } : { st: 0, t: '', err: true, el: 0 };
     } catch (e) { return { st: 0, t: '', err: true, el: 0 }; }
@@ -5094,13 +5148,22 @@ function azQueries(T0) { // anizone-সার্চ-আক্ষরিক-সা
   if (one.length >= 3 && qs.indexOf(one) < 0) qs.push(one); // ১ম-শব্দ — সংক্ষিপ্ত-কোয়েরি-সবচেয়ে-নির্ভরযোগ্য
   return qs.slice(0, 4);
 }
-async function azGet(u, mkey, mttl, tmo) { // পুল-অনলি-রেস (সরাসরি-নিষেধ: anizone-সাইট-সার্ভার-IP-ফ্ল্যাগ — ইউজার-নির্দেশ); ৬-প্রক্সি-সমান্তরাল-রেস (সাইট-রেপুটেশন-ব্লক-আছে-কিছু-IP — ম্যাট্রিক্স-প্রোব-প্রমাণ; 403/টাইমআউট-রেসে-হার-জুড়ে-pxRec-নিজে-দণ্ডিত-করে), মেমো-১০-৩০মিনিট
+async function azGet(u, mkey, mttl, tmo, att) { // পুল-অনলি-রেস (সরাসরি-নিষেধ: anizone-সাইট-সার্ভার-IP-ফ্ল্যাগ — ইউজার-নির্দেশ); ৬-প্রক্সি-সমান্তরাল-রেস (সাইট-রেপুটেশন-ব্লক-আছে-কিছু-IP — ম্যাট্রিক্স-প্রোব-প্রমাণ; 403/টাইমআউট-রেসে-হার-জুড়ে-pxRec-নিজে-দণ্ডিত-করে), মেমো-১০-৩০মিনিট
   if (mkey) { const m = AZ_MEMO.get(mkey); if (!NOCACHE && m && Date.now() - m.ts < (mttl || 600000)) return m.v; }   // ★ v1.17.52: ক্যাশ নেই
   let t = '';
-  try { const r = await racePool(u, 6, tmo || 9500, 'az'); t = (r && r.body) || ''; if (t && DBG) console.error('[az] রেস ✓ ' + String(r.px).slice(0, 22) + ' ' + u.slice(21, 48)); }
+  /* ★ v1.28.1 (মাপা-বাগ): কিছু প্রক্সি ৩৭২–৪০৮ বাইটের এরর-পাতা ফেরাত — সেটাই "সফল" ধরা হতো,
+     azItems→০, আর ১২০-অক্ষরের বেশি বলে **৩০ মিনিটের মেমোতে বিষিয়ে যেত** ⇒ anizone কার্ড চিরতরে উধাও।
+     এখন বডি-যাচাই: anizone-এর আসল পাতা (≥৩কেবি + csrf/JSON.parse) না হলে ব্যর্থ; ভুল-বডি হলে আরেক রাউন্ড রেস। */
+  const bodyOK = b => !!b && b.length >= 3000 && /csrf-token|JSON\.parse/.test(b) && /anizone/i.test(b);
+  try {
+    const r = await racePool(u, att || 10, tmo || 9500, 'az', bodyOK);   // ★ v1.28.1: ভুল-বডি রেস জেতাতে পারে না
+    const b = (r && r.body) || '';
+    if (bodyOK(b)) { t = b; if (DBG) console.error('[az] রেস ✓ ' + String(r.px).slice(0, 22) + ' ' + u.slice(21, 48) + ' len=' + b.length + ' items=' + azItems(b).length); }
+    else if (DBG) console.error('[az] রেস-শেষ ভুল-বডি len=' + b.length);
+  }
   catch (e3) { if (DBG) console.error('[az] রেস-ব্যর্থ (' + String(e3 && e3.message).slice(0, 30) + ') → শূন্য (সরাসরি-নিষেধ: IP-ফ্ল্যাগ)'); }
   if (!t) return null;
-  if (mkey && t.length > 120) AZ_MEMO.set(mkey, { ts: Date.now(), v: t }); // খাঁটি-উত্তর-ই-ক্যাশ (চ্যালেঞ্জ/খালি-পাতা-নয়)
+  if (mkey && t.length > 120) AZ_MEMO.set(mkey, { ts: Date.now(), v: t }); // খাঁটি-উত্তর-ই-ক্যাশ (v1.28.1: bodyOK পাস করা বডি — ভুল-পাতা ক্যাশে ঢোকে না)
   return t;
 }
 function azSubsFor(pType, idStr) { // '/subtitles/series/tmdb209867:1:1' → [{id,url,lang}] (AniZone-ট্র্যাক-ক্যাশ-থেকে)
@@ -5131,10 +5194,26 @@ async function azStreams(tmdbId, type, s, e, azq) { // সার্চ→সি�
     let list = [];
     { // v1.15.77: সব-কোয়েরি-সমান্তরাল (আগে-পরপর-ল্যাডার — q1-টাইমআউট-হলে-q2-আরো-৭.৫সে-খেত; উইন্ডো-কাটার-মূল-কারণ) + ফল-ইউনিয়ন (সংক্ষিপ্ত-কোয়েরি-বেশি-প্রার্থী-দেয় — সিজন-এন্ট্রি-ঢাকার-সুযোগ-বাড়ে; বাছাই-স্কোরারের)
       const qs = azQueries(T0);
-      const rws = await Promise.all(qs.map(q => azGet(AZ_BASE + '/anime?search=' + encodeURIComponent(q), 's:' + azNorm(q), 1800000, 7500).catch(() => null)));
+      const rws = await Promise.all(qs.map(q => azGet(AZ_BASE + '/anime?search=' + encodeURIComponent(q), 's:' + azNorm(q), 1800000, 4200, 6).catch(() => null)));
       const seen = new Map();
       rws.forEach((pg, i) => { const l2 = pg ? azItems(pg) : []; if (DBG) console.error('[az] q[' + i + ']="' + qs[i] + '" → ' + l2.length); for (const it of l2) if (!seen.has(it.slug)) seen.set(it.slug, it); });
       list = [...seen.values()];
+      /* ★ v1.28.1: **ফেচ-ব্যর্থ আর সত্যিকারের শূন্য-ফল আলাদা** — আগে প্রক্সি-টাইমআউটকেও "সার্চ-শূন্য" ধরে
+         চুপচাপ ফাঁকা ফেরানো হতো (anizone বেশিরভাগ ডেটাসেন্টার-IP ব্লক করে ⇒ কার্ড প্রায়ই উধাও)।
+         এখন সবচেয়ে ছোট কোয়েরিটা (হিট-রেট সর্বোচ্চ — সাইট-প্রোব: 'frieren'→২, পূর্ণ-শিরোনাম→০) বাকি-বাজেটে আরেক দফা। */
+      const failed = rws.filter(r => !r).length;
+      if (!list.length && failed) {
+        const qS = qs.slice().sort((a, b) => a.length - b.length)[0];
+        const left = Math.max(0, 8600 - (Date.now() - t3));
+        if (DBG) console.error('[az] পুনঃচেষ্টা "' + qS + '" — ফেচ-ব্যর্থ ' + failed + '/' + qs.length + ', বাকি ' + left + 'ms');
+        if (left > 2200) {
+          const pg2 = await azGet(AZ_BASE + '/anime?search=' + encodeURIComponent(qS), 's:' + azNorm(qS), 1800000, left, 12).catch(() => null);
+          const l3 = pg2 ? azItems(pg2) : [];
+          if (DBG) console.error('[az] পুনঃচেষ্টা → ' + l3.length);
+          for (const it of l3) if (!seen.has(it.slug)) seen.set(it.slug, it);
+          list = [...seen.values()];
+        }
+      }
       if (DBG && list.length) console.error('[az] ' + T0 + ' সার্চ ✓ ইউনিয়ন ' + list.length + '-প্রার্থী');
     }
     if (!list.length) { if (DBG) console.error('[az] ' + T0 + ' সার্চ-শূন্য (সব-কোয়েরি)'); return []; }
@@ -5227,15 +5306,15 @@ async function mlbdGet(u, opt) {
   opt = opt || {};
   const T0 = Date.now(), BUD = Math.max(900, opt.ms || 6000);   // ★ মোট-বাজেট (রিট্রাই মিলিয়ে)
   const delays = [200, 600, 1300];
-  const pxTry = async () => {                      // v1.27.25: প্রক্সি-চেষ্টা (হোস্ট-ব্লকের-মূখ্য-উপায়)
-    for (let k = 0; k < 2; k++) {
-      if (Date.now() - T0 > BUD) break;
-      const px = vspPick(null); if (!px) break;
-      try {
-        const txt = await proxiedGet(px.px, u, Math.max(1800, Math.min(opt.ms || 6000, 3500)));
-        if (txt && txt.length > 200) { diag('mlbd', 'px-ok ' + String(u).replace(/^https?:\/\//, '').slice(0, 44)); return { st: 200, loc: '', body: txt }; }
-      } catch (e2) { }
-    }
+  // ★ v1.28.0 (ইউজার: "ডেডিকেটেড প্রক্সি পুল"): আগে সাধারণ vsp-পুল থেকে এক-এক-করে নোড নেওয়া হত;
+  //   এখন মিরর-হোস্টে যাচাই-করা **নিজের পুল** (`mlb`) থেকে 3-নোডের রেস; ফল পুলে ফেরত-জমা।
+  const pxTry = async () => {
+    if (Date.now() - T0 > BUD) return null;
+    try {
+      const x = await racePool(u, 3, Math.max(1500, Math.min(opt.ms || 6000, 3500)), 'mlb');
+      const txt = String((x && x.body) || '');
+      if (txt.length > 200) { diag('mlbd', 'px-ok ' + String(u).replace(/^https?:\/\//, '').slice(0, 44) + ' via ' + (x.px || '?')); return { st: 200, loc: '', body: txt }; }
+    } catch (e2) { }
     return null;
   };
   for (let at = 0; at < 4; at++) {
@@ -5273,15 +5352,9 @@ async function mlbdGet(u, opt) {
         return { st: 0, loc: '', body: '' };
       }
       // ★ v1.27.14: ডাইরেক্ট-ফেচ ব্যর্থ (SAN-এ ECONNRESET) ⇒ **প্রক্সি-সুরঙ্গে** একই URL — এটাই সবচেয়ে বড় নির্ভরযোগ্যতা-লাভ
-      if (at >= 1 && Date.now() - T0 < BUD) {
-        for (let k = 0; k < 2; k++) {
-          if (Date.now() - T0 > BUD) break;
-          const px = vspPick(null); if (!px) break;
-          try {
-            const txt = await proxiedGet(px.px, u, Math.max(1800, Math.min(opt.ms || 6000, 3500)));
-            if (txt && txt.length > 200) { if (DBG) console.error('[mlbd] px-ok ' + px.px + ' ' + String(u).slice(-16)); return { st: 200, loc: '', body: txt }; }
-          } catch (e2) { }
-        }
+      if (at >= 1 && Date.now() - T0 < BUD) {                 // v1.28.0: নিজের `mlb` পুল — 3-নোডের রেস
+        const pr = await pxTry();
+        if (pr) { hostOK(u); return pr; }
       }
       await new Promise(r => setTimeout(r, (delays[at] || 600) + Math.floor(Math.random() * 200)));
     }
@@ -5847,8 +5920,18 @@ function hdProbe(u, ms) { // Range-প্রমাণ: 206/200 + non-html + Cont
   const direct = hdProbeD(u, ms);
   return direct.then(r => { // ★ v1.17.54: direct মৃত ⇒ আমাদের IP-ব্লক হতে পারে — পুল দিয়ে একবার
     if (r && r.ok) return r;
+    // ★★ v1.28.1: **404/410 = সিদ্ধান্তমূলক মৃত্যু** — পুলে গিয়ে "সবুজ" বানানো চলবে না
+    //   (মাপা: pixeldrain `negn6f` → 404 + 94B JSON, অথচ পুল-পথে body>200 দেখে কার্ড হয়ে যেত,
+    //    আর ব্যাটারিতে ওই কার্ডই 404 দিত)। এখন 404/410 হলে পুল-চেষ্টা বাদ।
+    if (r && (r.st === 404 || r.st === 410 || r.st === 451)) return r;
     return pxsGet(u, { key: 'hd:' + pxsKeyOf(u), n: Number(process.env.PXHN || 2), tmo: Math.max(1500, Math.min(4000, ms)) })
-      .then(b => (b && b.length > 200) ? { ok: true, ct: 'pool', cr: '' } : r).catch(() => r);
+      .then(b => {
+        if (!b || b.length < 200) return r;
+        const head = String(b.slice(0, 120)).trim();          // JSON-এরর-বডি ("message"/"detail") = মৃত
+        if (/^\s*[\{\[]/.test(head) && /"?(message|detail|error)"?\s*:/i.test(head)) return r;
+        if (/^\s*<(!doctype|html)/i.test(head)) return r;
+        return { ok: true, ct: 'pool', cr: '', st: 200 };
+      }).catch(() => r);
   });
 }
 function hdProbeD(u, ms) {
@@ -5858,8 +5941,8 @@ function hdProbeD(u, ms) {
       const cr = String(r.headers.get('content-range') || '');
       const cl = +(r.headers.get('content-length') || 0);
       try { r.body && r.body.cancel && r.body.cancel(); } catch (e) { }
-      return { ok: (r.status === 206 || r.status === 200) && !/text\/html/i.test(ct) && (!!cr || cl > 2000), ct: ct, cr: cr };
-    }).catch(() => ({ ok: false, ct: '', cr: '' }));
+      return { ok: (r.status === 206 || r.status === 200) && !/text\/html/i.test(ct) && (!!cr || cl > 2000), ct: ct, cr: cr, st: r.status };
+    }).catch(() => ({ ok: false, ct: '', cr: '', st: 0 }));
 }
 async function hdDrive(driveUrl, ms) { // hubcloud drive → gamerxyt → প্রার্থী লিঙ্ক + আসল ফাইলনাম
   const p1 = await hdText(driveUrl, HD_BASE + '/', ms);
@@ -6569,8 +6652,17 @@ function pdProbeRaw(u) {
   // ★ v1.17.54: direct-প্রোব 'dead' বললে পুল দিয়ে একবার যাচাই — vidy-পুল থেকে ভিন্ন IP, ভুল-নেগেটিভ কমে
   const pr = pdProbeRaw0(u).then(r => {
     if (r && r.alive) return r;
+    // ★★ v1.28.1: pixeldrain **404/410 = ফাইলই নেই** ⇒ পুল-ফলব্যাক নয়। আগে পুল-পথে `body.length>200`
+    //   দেখেই মৃত লিঙ্ক "জীবিত" হয়ে কার্ডে ঢুকত (মাপা: ব্যাটারিতে `Movies4u • Pixeldrain` 404 94B)।
+    if (r && (r.st === 404 || r.st === 410 || r.st === 451)) return r;
     return pxsGet(u, { key: 'pd', n: Number(process.env.PXPN || 3), tmo: 4500 })
-      .then(b => (b && b.length > 200) ? { alive: true, name: '', total: 0, via: 'pool' } : r)
+      .then(b => {
+        if (!b || b.length < 200) return r;
+        const head = String(b.slice(0, 120)).trim();
+        if (/^\s*[\{\[]/.test(head) && /"?(message|detail|error)"?\s*:/i.test(head)) return r;
+        if (/^\s*<(!doctype|html)/i.test(head)) return r;
+        return { alive: true, name: '', total: 0, via: 'pool', st: 200 };
+      })
       .catch(() => r);
   });
   if (DBG) pr.then(r => console.error('[pdr] ' + String(u).split('/').pop() + ' dur=' + (Date.now() - _t0) + 'ms alive=' + (r && r.alive)));
@@ -6583,11 +6675,11 @@ function pdProbeRaw0(u) { // 1KB-রেঞ্জ-GET-প্রোব — pixeldr
         const nm = ((res.headers['content-disposition'] || '').match(/filename="?([^"\r\n;]+)/i) || [])[1] || '';
         const tot = +(((res.headers['content-range'] || '').split('/')[1] || res.headers['content-length'] || '0') + '').replace(/[^0-9]/g, '') || 0;
         res.destroy();
-        resolve({ alive: res.statusCode === 206 || res.statusCode === 200, name: nm, total: tot });
+        resolve({ alive: res.statusCode === 206 || res.statusCode === 200, name: nm, total: tot, st: res.statusCode });
       });
       req.on('timeout', () => req.destroy(new Error('timeout')));
-      req.on('error', () => resolve({ alive: false, name: '', total: 0 }));
-    } catch { resolve({ alive: false, name: '', total: 0 }); }
+      req.on('error', () => resolve({ alive: false, name: '', total: 0, st: 0 }));
+    } catch { resolve({ alive: false, name: '', total: 0, st: 0 }); }
   });
 }
 // ─── v1.15.91: Movies4u MKV **সিক-সংস্কার** — Cues-স্থানান্তর প্রক্সি (/m4p/) ───
@@ -10116,7 +10208,7 @@ function qToList(q) { // মাল্টি-রেজোলিউশন: অ্�
   const n = Math.min(2160, Math.max(0, Number(q) || 0));
   return n ? QH.filter(h => h <= n) : [];
 }
-const DEFAULT_CFG = { q: 0, sub: 1, cat: 'kd,mv', lang: '', sort: 'pop', era: '', g: [], srv: [], v: 1, nx: 1, nxq: 0, nxl: [], tw: 1, rt: 1, twq: [], rtl: [], mmr: 0, m4u: 1, m4ur: 0, sky: 1, skyr: 0, hm: 1, hmr: 0, hd: 1, hdr: 0, bf: 1, bfr: 0, mm: 1, mmrelay: 0, mmdirect: 0, vsp: 1, vspq: 0, ott: 1, ottq: 0, az: 1, azq: 0, rtsrv: [], rtq: [], mmq: [], m4uq: [], skyq: [], bfq: [], twl: [], mml: [], m4ul: [], skyl: [], bfl: [], vspl: [], ottl: [], azl: [] } // v1.15.80-wip: সর্ব-উৎস-রেজো-সাদৃশ্য (rtq/mmq/m4uq/skyq/bfq) + সর্ব-উৎস-ভাষা-সাদৃশ্য (twl…azl); // v1.15.71: vsp=Vidsrc-মাস্টার-সুইচ, vspq=Vidsrc-নিজের-মান-ছাঁকনি (0=সব) // v1.15.54: mmrelay=1 → MM-মিনি-মিডিয়া-আমাদের-সার্ভার-রিলে (ব্যবহারকারীর-IP-CDN-আটকালে) // mmr = Multimovies-রেজোলিউশন-ছাঁকনি (0=সব) // v/nx/tw/rt/mm/m4u/sky/bf = per-source master switches
+const DEFAULT_CFG = { q: 0, sub: 1, cat: 'kd,mv', lang: '', sort: 'pop', era: '', g: [], srv: [], v: 1, nx: 1, nxq: 0, nxl: [], tw: 1, rt: 1, twq: [], rtl: [], mmr: 0, m4u: 1, m4ur: 0, sky: 1, skyr: 0, hm: 1, hmr: 0, hd: 1, hdr: 0, bf: 1, bfr: 0, mm: 1, mmrelay: 0, mmdirect: 0, vsp: 1, vspq: 0, ott: 1, ottq: 0, az: 1, azq: 0, mlb: 1, mlbr: 0, rtsrv: [], rtq: [], mmq: [], m4uq: [], skyq: [], bfq: [], twl: [], mml: [], m4ul: [], skyl: [], bfl: [], vspl: [], ottl: [], azl: [] } // v1.15.80-wip: সর্ব-উৎস-রেজো-সাদৃশ্য (rtq/mmq/m4uq/skyq/bfq) + সর্ব-উৎস-ভাষা-সাদৃশ্য (twl…azl); // v1.15.71: vsp=Vidsrc-মাস্টার-সুইচ, vspq=Vidsrc-নিজের-মান-ছাঁকনি (0=সব) // v1.15.54: mmrelay=1 → MM-মিনি-মিডিয়া-আমাদের-সার্ভার-রিলে (ব্যবহারকারীর-IP-CDN-আটকালে) // mmr = Multimovies-রেজোলিউশন-ছাঁকনি (0=সব) // v/nx/tw/rt/mm/m4u/sky/bf = per-source master switches
 function parseCfgFromObj(o) {
   const c = Object.assign({}, DEFAULT_CFG, { g: [] });
   if (o) {
@@ -10151,6 +10243,8 @@ function parseCfgFromObj(o) {
     if (o.hdr !== undefined && o.hdr !== null && o.hdr !== '') { const hdv = parseInt(o.hdr, 10) || 0; if ([0, 480, 720, 1080, 2160].indexOf(hdv) >= 0) c.hdr = hdv; }
     if (o.hdq !== undefined && o.hdq !== null && o.hdq !== '') c.hdq = qToList(o.hdq).filter(x => [480, 720, 1080, 2160].indexOf(x) >= 0).sort((a, b) => b - a).slice(0, 4);
     if (Array.isArray(o.hdl)) c.hdl = o.hdl.map(x => String(x).toLowerCase().replace(/[^a-z]/g, '')).filter(x => x.length >= 2 && x.length <= 12).slice(0, 14);
+    if (o.hmq !== undefined && o.hmq !== null && o.hmq !== '') c.hmq = qToList(o.hmq).filter(x => [480, 720, 1080, 2160].indexOf(x) >= 0).sort((a, b) => b - a).slice(0, 4);   // v1.28.0: UI-পাঠানো hmq/hml আগে ফেলে-দেওয়া-হতো
+    if (Array.isArray(o.hml)) c.hml = o.hml.map(x => String(x).toLowerCase().replace(/[^a-z]/g, '')).filter(x => x.length >= 2 && x.length <= 12).slice(0, 14);
     if (o.hmr !== undefined && o.hmr !== null && o.hmr !== '') { const hv = parseInt(o.hmr, 10) || 0; if ([0, 480, 720, 1080, 2160].indexOf(hv) >= 0) c.hmr = hv; }
     if (o.skyr !== undefined && o.skyr !== null && o.skyr !== '') { const sv2 = parseInt(o.skyr, 10) || 0; if ([0, 480, 720, 1080, 2160].indexOf(sv2) >= 0) c.skyr = sv2; } // v1.15.86: Sky-নিজস্ব-রেজো-ক্যাপ (আগে **m4ur** — মুভিজ4ইউ-এর সেটিং স্কাই-তে বসানো হত)
     if (o.bf === 0 || o.bf === '0') c.bf = 0; // BollyFlix-মাস্টার-সুইচ
@@ -10766,7 +10860,26 @@ function sendStreams(res, skey, plog, ms, cards, ua, cfg) {
   logReq(plog, ms, n, null, ua);
   const _sk = sresKey(plog, cfg);
   fmtCards(cards);                                          // ★ v1.27.10: সব-সোর্স-সব-কার্ড এক-ছাঁচে (শুধু লেখা)
-  let body = JSON.stringify({ streams: stripCards(cards) });
+  // ★ v1.28.0: প্রতিটি কার্ডে `headers` অবশ্য — মাপা: UA ছাড়া pixeldrain ২০০ দেয় না (ব্যাটারিতে 404), আর অনেক ক্লায়েন্ট `behaviorHints.proxyHeaders` পড়ে না।
+  let _cards = stripCards(cards);
+  /* ★★ v1.28.1 (মাপা-বাগ): **IP-লক টোকেন-কার্ড বাদ**।
+     vidy-এর কিছু সার্ভার (যেমন delhi → i-arch-400.deton444eik.com) HLS-টোকেনে **যে IP থেকে API কল হয়েছে সেটা বোধা থাকে**
+     (`:…:1792933118:49.37.110.231:<sig>:`)। আমাদের মিন্ট-প্রক্সির IP আর ইউজারের IP কভোই মিলবে না
+     ⇒ প্লেয়ারে **404 146B nginx** (প্রমাণ: স্যান্ডবক্স — সরাসরি 404 কিন্তু উন্মিন্ট-প্রক্সিতে 200)।
+     এমন কার্ড দেওয়া = ভাঙা লিঙ্ক দেওয়া ⇒ বাদ। */
+  const IP_LOCK = /:\d{1,3}(?:\.\d{1,3}){3}:[A-Za-z0-9]+:=/;
+  const _drop = _cards.filter(c => c && c.url && IP_LOCK.test(String(c.url)));
+  if (_drop.length) {
+    _cards = _cards.filter(c => !(c && c.url && IP_LOCK.test(String(c.url))));
+    if (DBG) console.error('[iplock] ' + _drop.length + ' কার্ড বাদ (IP-লক টোকেন — প্লেয়ারে 404 হবে): ' + _drop.slice(0, 3).map(c => String(c.url).split('/')[2]).join(', '));
+  }
+  for (const c0 of _cards) {
+    if (!c0 || !c0.url) continue;
+    const ph = c0.behaviorHints && c0.behaviorHints.proxyHeaders && c0.behaviorHints.proxyHeaders.request;
+    if (!c0.headers) c0.headers = Object.assign({ 'User-Agent': UA }, ph || {});
+    else if (ph) c0.headers = Object.assign({ 'User-Agent': UA }, ph, c0.headers);
+  }
+  let body = JSON.stringify({ streams: _cards });
   // ★★ v1.21.8: মার্জ **উত্তর দেওয়ার আগেই** (v1.21.7-এ শুধু ক্যাশে মার্জ হচ্ছিল, তাই ওই ট্যাপেই কম-তালিকা দেখা যেত)
   try { body = sresMerge(_sk, body); } catch (e) { }
   try { if (String(plog).indexOf('fresh=1') < 0) sresPut(_sk, body, partial); } catch (e) { }
@@ -10834,7 +10947,13 @@ const server = http.createServer((req, res) => {
     if (cm2) { cfg = decodeCfg(cm2[1]); p = cm2[2]; cfgged = true; }
     else {
       const qs = new URL(req.url, 'http://x').searchParams;
-      if ([...qs.keys()].length) cfg = parseCfgFromObj({ q: qs.get('q') || qs.get('maxq'), sub: qs.get('sub') === '0' ? 0 : 1, cat: qs.get('cat') || '', lang: qs.get('lang') || '', sort: qs.get('sort') || '', era: qs.get('era') || '', g: (qs.get('g') || '').split(',').filter(Boolean), srv: (qs.get('srv') || '').split(',').filter(Boolean), v: qs.get('v') === '0' ? 0 : undefined, nx: qs.get('nx') === '0' ? 0 : undefined, tw: qs.get('tw') === '0' ? 0 : undefined, rt: qs.get('rt') === '0' ? 0 : undefined, m4u: qs.get('m4u') === '0' ? 0 : undefined, m4ur: qs.get('m4ur') || undefined, sky: qs.get('sky') === '0' ? 0 : undefined, skyr: qs.get('skyr') || undefined, bf: qs.get('bf') === '0' ? 0 : undefined, bfr: qs.get('bfr') || undefined, mm: qs.get('mm') === '0' ? 0 : undefined, mmrelay: qs.get('mmrelay') === '1' ? 1 : undefined, mmdirect: qs.get('mmdirect') === '1' ? 1 : undefined, vsp: qs.get('vsp') === '0' ? 0 : undefined, vspq: qs.get('vspq') || undefined, ott: qs.get('ott') === '0' ? 0 : undefined, ottq: qs.get('ottq') || undefined, az: qs.get('az') === '0' ? 0 : undefined, azq: qs.get('azq') || undefined, rtl: qs.get('rtl') ? qs.get('rtl').split(',') : undefined, nxq: qs.get('nxq') || undefined, nxl: qs.get('nxl') ? qs.get('nxl').split(',') : undefined, rtq: qs.get('rtq') || undefined, mmq: qs.get('mmq') || undefined, m4uq: qs.get('m4uq') || undefined, skyq: qs.get('skyq') || undefined, bfq: qs.get('bfq') || undefined, twl: qs.get('twl') ? qs.get('twl').split(',') : undefined, mml: qs.get('mml') ? qs.get('mml').split(',') : undefined, m4ul: qs.get('m4ul') ? qs.get('m4ul').split(',') : undefined, skyl: qs.get('skyl') ? qs.get('skyl').split(',') : undefined, bfl: qs.get('bfl') ? qs.get('bfl').split(',') : undefined, vspl: qs.get('vspl') ? qs.get('vspl').split(',') : undefined, ottl: qs.get('ottl') ? qs.get('ottl').split(',') : undefined, azl: qs.get('azl') ? qs.get('azl').split(',') : undefined });
+      if ([...qs.keys()].length) cfg = parseCfgFromObj({ q: qs.get('q') || qs.get('maxq'), sub: qs.get('sub') === '0' ? 0 : 1, cat: qs.get('cat') || '', lang: qs.get('lang') || '', sort: qs.get('sort') || '', era: qs.get('era') || '', g: (qs.get('g') || '').split(',').filter(Boolean), srv: (qs.get('srv') || '').split(',').filter(Boolean), v: qs.get('v') === '0' ? 0 : undefined, nx: qs.get('nx') === '0' ? 0 : undefined, tw: qs.get('tw') === '0' ? 0 : undefined, twq: qs.get('twq') || undefined,
+      // ★ v1.28.0 (রিভিশন-আবিষ্কার): `?hm=0`, `?hd=0`, `?mlb=0` কুয়েরিতে কাজ করত না —
+      //   parseCfgFromObj ঐগুলো চিনেনা, কিন্তু এই তালিকায় আর-পাঠানো-হয় নি (মাপা: hm=0 দিয়েও HindMovie-কার্ড আসত)।
+      hm: qs.get('hm') === '0' ? 0 : undefined, hmr: qs.get('hmr') || undefined, hmq: qs.get('hmq') || undefined, hml: qs.get('hml') ? qs.get('hml').split(',') : undefined, hdl: qs.get('hdl') ? qs.get('hdl').split(',') : undefined,
+      hd: qs.get('hd') === '0' ? 0 : undefined, hdr: qs.get('hdr') || undefined, hdq: qs.get('hdq') || undefined,
+      mlb: qs.get('mlb') === '0' ? 0 : undefined, mlbr: qs.get('mlbr') || undefined,
+      mmr: qs.get('mmr') || undefined, rtsrv: qs.get('rtsrv') ? qs.get('rtsrv').split(',') : undefined, rt: qs.get('rt') === '0' ? 0 : undefined, m4u: qs.get('m4u') === '0' ? 0 : undefined, m4ur: qs.get('m4ur') || undefined, sky: qs.get('sky') === '0' ? 0 : undefined, skyr: qs.get('skyr') || undefined, bf: qs.get('bf') === '0' ? 0 : undefined, bfr: qs.get('bfr') || undefined, mm: qs.get('mm') === '0' ? 0 : undefined, mmrelay: qs.get('mmrelay') === '1' ? 1 : undefined, mmdirect: qs.get('mmdirect') === '1' ? 1 : undefined, vsp: qs.get('vsp') === '0' ? 0 : undefined, vspq: qs.get('vspq') || undefined, ott: qs.get('ott') === '0' ? 0 : undefined, ottq: qs.get('ottq') || undefined, az: qs.get('az') === '0' ? 0 : undefined, azq: qs.get('azq') || undefined, rtl: qs.get('rtl') ? qs.get('rtl').split(',') : undefined, nxq: qs.get('nxq') || undefined, nxl: qs.get('nxl') ? qs.get('nxl').split(',') : undefined, rtq: qs.get('rtq') || undefined, mmq: qs.get('mmq') || undefined, m4uq: qs.get('m4uq') || undefined, skyq: qs.get('skyq') || undefined, bfq: qs.get('bfq') || undefined, twl: qs.get('twl') ? qs.get('twl').split(',') : undefined, mml: qs.get('mml') ? qs.get('mml').split(',') : undefined, m4ul: qs.get('m4ul') ? qs.get('m4ul').split(',') : undefined, skyl: qs.get('skyl') ? qs.get('skyl').split(',') : undefined, bfl: qs.get('bfl') ? qs.get('bfl').split(',') : undefined, vspl: qs.get('vspl') ? qs.get('vspl').split(',') : undefined, ottl: qs.get('ottl') ? qs.get('ottl').split(',') : undefined, azl: qs.get('azl') ? qs.get('azl').split(',') : undefined });
     }
     if (!cfg) cfg = Object.assign({}, DEFAULT_CFG, { g: [], srv: [] });
     // ★ v1.27.3: vidy/MovieBox রিলে (প্লেলিস্ট-টেক্সট বা 302)
@@ -10912,6 +11031,11 @@ const server = http.createServer((req, res) => {
       res = w;
     }
     if (p === '/_health') { const _vf = [...VIDY_OK.values()].filter(v => v.ts && Date.now() - v.ts < Number(process.env.PXFRESH || 240000)).length; return sendJson(res, 200, { ok: 1, version: VERSION, up: Math.round(process.uptime()), deploy: 'v' + VERSION, pool: POOL.length, pxbench: POOL.filter(c => PX_SITE.has(c.px)).length, pxbf: PX_BF.size, memo: memo.size, gw: (typeof GW !== 'undefined' ? GW.size : -1), nx: NEXBASE ? 1 : 0, nxpool: NXBENCH, nxwaves: NXWAVES, nxsize: NXSIZE, tw: TWBASE ? 1 : 0, rt: RTBASE ? 1 : 0, vsp: VSP_POOL.length, vy: VIDY_OK.size, vyfresh: _vf }); } // ★ v1.21.9: vy=verified vidy নোড, vyfresh=৪মিন-তাজা // v1.15.71: vsp=Vidsrc-পুল-আকার // v1.15.18: pxbench=সাইট-প্রমাণিত-বেঞ্চ (v1.15.8: nxpool=MB-বেঞ্চ)
+    if (p === '/_mem') { /* ★ v1.28.1: মেমোরি-ডিয়াগনস্টিক — OOM-ক্ষতির কারন খুঁজতে (প্রমাণ: ব্যাটারি-চালাকালে node 896MB-তে kernel-OOM-kill) */
+      const m = process.memoryUsage(); const sz = o => { try { return o instanceof Map ? o.size : (Array.isArray(o) ? o.length : -1); } catch (e) { return -1; } };
+      return sendJson(res, 200, { up: Math.round(process.uptime()), rssMB: Math.round(m.rss / 1048576), heapMB: Math.round(m.heapUsed / 1048576), extMB: Math.round((m.external || 0) / 1048576),
+        c: { MM_WC: sz(MM_WC), MM_WC_INFLIGHT: sz(MM_WC_INFLIGHT), VSP_MEMO: sz(VSP_MEMO), OTT_MEMO: sz(OTT_MEMO), AZ_MEMO: sz(AZ_MEMO), AZ_CARD: sz(AZ_CARD), SRC_STASH: sz(SRC_STASH), PTUN: sz(PTUN), POOL: POOL.length, VIDY_OK: sz(VIDY_OK), PXS: sz(PXS), reqLog: sz(reqLog), SPOOL: sz(SPOOL) } });
+    }
     if (p === '/_lastsrc') return sendJson(res, 200, LAST_SRC || {});
     if (p === '/_pools') { // ★ v1.22.0: প্রতি-সোর্স প্রক্সি-পুলের অবস্থা
       const now = Date.now(), out = {};
@@ -10944,6 +11068,21 @@ const server = http.createServer((req, res) => {
       const _t = Object.assign({ fill: poolsFill(), scan: _scan, live: PTUN.size, cool: PTUN_COOL.size, subnets: (() => { const m = new Map(); for (const px of VIDY_OK.keys()) { const k = sub24(px); m.set(k, (m.get(k) || 0) + 1); } return { distinct: m.size, nodes: VIDY_OK.size }; })(), snban: SNBAN.size, cap: VCAP.size, aff: [...PXAFF.entries()].map(([k, m]) => k + ':' + m.size).join(',') }, TST);
       for (const k2 of ['srv', 'sw']) if (_t[k2]) _t[k2] = Object.assign({ rate: (_t[k2].ok + '/' + _t[k2].req) }, _t[k2]);
       return sendJson(res, 200, { keys: Object.keys(out).length, pool: POOL.length, site: PX_SITE.size, tun: _t, src: out });
+    }
+    if (p === '/_spool') { /* ★ v1.28.1: ওন-ডিমান্ড স্পুল-য়াচাই — `/_spool?k=az&n=24` (রিপোর্ট/ডিবাগ; স্ট্রিম-পথকে ছুঁয় না) */
+      const _sq = new URL(req.url, 'http://x').searchParams;
+      const k = String(_sq.get('k') || ''), nn = Math.max(1, Math.min(60, Number(_sq.get('n') || 12)));
+      if (!SRC_PROBE[k]) return sendJson(res, 400, { err: 'no-src', keys: Object.keys(SRC_PROBE) });
+      const have = srcPool(k), cands = [];
+      for (const px of VIDY_OK.keys()) if (!have.has(px) && cands.indexOf(px) < 0) cands.push(px);
+      for (const c of POOL) if (!have.has(c.px) && cands.indexOf(c.px) < 0) cands.push(c.px);
+      const pick = cands.slice(0, nn), t0s = Date.now();
+      Promise.all(pick.map(px => spoolCheck(k, px))).then(rs => {
+        const okN = rs.filter(Boolean).length;
+        const nodes = [...have.entries()].filter(([, e]) => spoolFresh(e)).length;
+        return sendJson(res, 200, { k: k, tried: pick.length, ok: okN, ms: Date.now() - t0s, fresh: nodes, pool: have.size });
+      }).catch(e => sendJson(res, 200, { k: k, err: String(e && e.message).slice(0, 60) }));
+      return;
     }
     if (p === '/_pool') return sendJson(res, 200, POOL.map(c => Object.assign({}, c, PX_RUN.get(c.px) || {}))); // v1.15.0: রানটাইম-স্বাস্থ্য-সহ
     if (p === '/_nxring') { if (!NEXBASE) return sendJson(res, 200, { off: 1 }); directGet(NEXBASE + '/debug/ring', 4000).then(b => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(b); }).catch(() => { res.writeHead(200, { 'content-type': 'application/json' }); res.end('{"err":1}'); }); return; } // v2.10.2 চাইল্ড-রিজলভ-ধাপ-প্রমাণ

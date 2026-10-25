@@ -75,7 +75,10 @@ async function session(px) {
   console.log('[big] প্রার্থী=' + cands.length + ' verified-আগে=' + Object.keys(ver).length + ' MSMAX=' + MSMAX + ' PCONC=' + PCONC + ' SCONC=' + SCONC);
   const t0 = Date.now(), deadline = t0 + SECS * 1000;
   let pi = 0, alive = [], tried = 0, ok = 0; const found = {};
-  const save = () => { const m = Object.assign({}, ver, Object.fromEntries(Object.entries(found).map(([k, v]) => [k, { ms: v }]))); fs.writeFileSync(OUT, JSON.stringify(m)); return Object.keys(m).length; };
+  const save = () => { // ★ ফাইল-থেকে-তाजা-পড়ে-মার্জ (দুই ট্রেনার একসাথে চললেও কেউ কারো ফল মোছে না)
+    let cur = {}; try { cur = JSON.parse(fs.readFileSync(OUT, 'utf8')); } catch (e) { }
+    const m = Object.assign({}, cur, ver, Object.fromEntries(Object.entries(found).map(([k, v]) => [k, { ms: v }])));
+    fs.writeFileSync(OUT, JSON.stringify(m)); return Object.keys(m).length; };
 
   // ধাপ-১: CONNECT-যোগ্যতা
   await Promise.all(Array.from({ length: PCONC }, async () => {

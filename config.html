@@ -477,9 +477,9 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     /* বহু-দেশীয় */
     ['arabic','Arabic','_ar','ARA']
   ];
-  var CAPS=[[0,'All'],[1080,'≤1080p'],[720,'≤720p'],[480,'≤480p']];
+  // ★ v1.28.0: CAPS দুইবার ডিক্লেয়ার ছিল (প্রথমটা মৃত) — একটাই রাখলাম। cap = "≤X" অর্থে।
+  var CAPS=[[0,'All'],[480,'≤480p'],[720,'≤720p'],[1080,'≤1080p']];
   var SUBS=[[1,'On'],[0,'No subs']];
-  var CAPS=[[0,'All'],[480,'480p cap'],[720,'720p cap'],[1080,'1080p cap'],[2160,'2160p cap']];
 
   /* ─────────── state (server-contract keys) ─────────── */
   var st={v:1,q:[],sub:1,srv:SRVS.map(function(x){return x[0];}),nx:1,nxq:[],nxl:[],rt:1,rtl:[],rtq:[],tw:1,twq:[],twl:[],mm:1,mmr:0,mmq:[],mml:[],m4u:1,m4ur:0,m4uq:[],m4ul:[],sky:1,skyr:0,hm:1,hmr:0,skyq:[],hmq:[],skyl:[],hml:[],hd:1,hdr:0,hdq:[],hdl:[],vsp:1,vspq:[],vspl:[],ott:1,ottq:[],ottl:[],az:1,azq:[],azl:[],mlb:1,mlbr:0,rtsrv:[]}; /* rtsrv: খালি=MQ+Pixeldrain-দুটোই (সার্ভার-চুক্তি: খালি=সব) */
@@ -970,13 +970,12 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     if(st.ott===1&&(st.ottq.length||st.ottl.length))f++;
     if(st.az===1&&(st.azq.length||st.azl.length))f++;
     $('bdTune').textContent=f;
-    var tot=on+(st.v===1?st.srv.length:0);
     $('mobCnt').textContent=on+' source'+(on===1?'':'s')+(st.v===1?' · '+(st.srv.length||SRVS.length)+' servers':'')+' armed'; /* v1.16.3: খালি=সব-১৬ (আগে \"0 servers armed\" দেখাত) */
   }
   function summary(){
     var s=$('summ');s.innerHTML='';
-    var QK={v:'q',nx:'nxq',rt:'rtq',tw:'twq',mm:'mmq',m4u:'m4uq',sky:'skyq',hm:'hmq',hd:'hdq',mlb:'mlbq',vsp:'vspq',ott:'ottq',az:'azq'};
-    var LKK={nx:'nxl',rt:'rtl',tw:'twl',mm:'mml',m4u:'m4ul',sky:'skyl',hm:'hml',hd:'hdl',mlb:'mlbl',vsp:'vspl',ott:'ottl',az:'azl'};
+    var QK={v:'q',nx:'nxq',rt:'rtq',tw:'twq',mm:'mmq',m4u:'m4uq',sky:'skyq',hm:'hmq',hd:'hdq',mlb:'mlbr',vsp:'vspq',ott:'ottq',az:'azq'};   // ★ v1.28.0: mlbq/mlbl অস্তিত্বহীন কী ছিল
+    var LKK={nx:'nxl',rt:'rtl',tw:'twl',mm:'mml',m4u:'m4ul',sky:'skyl',hm:'hml',hd:'hdl',vsp:'vspl',ott:'ottl',az:'azl'};
     SRC.forEach(function(x){
       if(st[x[0]]!==1)return;
       s.appendChild(el('div','chip on',x[4]));
@@ -985,7 +984,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
       if(x[0]==='m4u'&&!ql.length&&st.m4ur)ql=[st.m4ur];
       if(x[0]==='sky'&&!ql.length&&st.skyr)ql=[st.skyr];
       if(x[0]==='hm'&&!ql.length&&st.hmr)ql=[st.hmr];
-      if(x[0]==='mlb'&&!ql.length&&st.mlbr)ql=[st.mlbr];
+      if(x[0]==='mlb'&&!ql.length&&st.mlbr)ql=[st.mlbr];   // .mlbr = MovieLinkBD-cap
       if(ql.length)s.appendChild(el('div','chip',x[4]+' ≤'+Math.max.apply(null,ql)+'p'));
       if(ll.length)s.appendChild(el('div','chip',x[4]+' '+ll.slice(0,2).join('/')+(ll.length>2?'+'+ll.length:'')));
     });
@@ -1043,7 +1042,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
   }catch(e){/* fetch-নেই-এমন-এমবেডেড-কনটেক্সটে-নীরব */}
   drawSrv(); /* v1.15.81: বুটে-সার্ভার-টাইল + RT-গ্রুপের-সারাংশ-আঁকা (আগে প্রথম-লোডে সব-টাইল-অনির্বাচিত-দেখাত) */
   rebuild();
-  window.__cfg={st:st,rebuild:rebuild,preview:preview,SRVS:SRVS}; /* ডিবাগ/সাপোর্ট-হ্যান্ডেল */
+  window.__cfg={st:st,rebuild:rebuild,preview:preview,SRVS:SRVS,SRC:SRC,CAPS:CAPS,SUBS:SUBS,counts:counts,summary:summary}; /* ডিবাগ/সাপোর্ট-হ্যান্ডেল */
 })();
 </script>
 </body>
