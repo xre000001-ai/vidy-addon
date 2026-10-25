@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.27.19';
+const VERSION = '1.27.22';
 const V1NOTE_47 = 'v1.17.47 (ইউজার: "stream cut kore fast na — 6-8s laguk, sob stream asuk") — হারভেস্ট-কাট বাতিল: আগে ৪.৬সে-এ ৬-কার্ড-হলেই কাট, ৪.৯সে হার্ড-ক্যাপ ⇒ দেরিতে-আসা সোর্সের কার্ড ফেলত। এখন **সব লাইভ-সোর্স সেটেল হলেই ফেরা**, নইলে ৭.৮সে ক্যাপ (Beamup ১২সে-সীমার ভিতরে)। সাথে: nx ৫.১→৭.২সে (MB আর কাটা পড়ে না), mm/m4u ৭.০সে সব-সাইট, hm-রেস ৩.২→৬.৬সে (কোল্ড-চেইনও একই রেসপন্সে), m4u-তে ৩ pd-id + ২ জীবিত মিরর (আগে ১ম-সফলেই-থামা), sky-তে ৩ pd-id/hub, PD_MAX env-নব। মাপা (১৬ রিকোয়েস্ট, লোকাল): avg 5.52s · সর্বোচ্চ 6.66s (আগে 3.75s-কাট-সংস্করণে ৮২৪ কার্ড), HindMovie ৮/১৬ (আগে ৩/১৬), MB ১৬/১৬, mm ১৬/১৬, m4u ১৪/১৬, sky ১২/১৬, কার্ড ৮৩৯ ⇒ **কার্ড কমেনি, বেড়েছে**।';
 
 const V1NOTE_48 = 'v1.17.48 (ইউজার: "M4u thik koro, Hindi movie add koro, configuration page ta o thik koro") — ★ কনফিগ-পেজ-মেরামত: SRC-তালিকা থেকেই সুইচ-বাইন্ড (bf সরানোর পর bindSwitch-এ null.classList-এ পুরো IIFE থেমে যেত ⇒ tune-কার্ড/সেভ/প্রিভিউ কিছুই রেন্ডার হতো না) + bindSwitch-এ null-গার্ড; HindMovie প্যানেল + tune-hm কার্ড যোগ। ★ Movies4u: একাধিক সার্চ-হিট-চেষ্টা (per_page 12), আর্টিকেল-বাদ-দিয়ে-পুনঃসার্চ, modpro-শাখা এখন আসলেই চলে (post খালি থাকলে lastPost দিয়ে) — মৃত-মিরর Range-প্রমাণ ছাড়া কার্ড-নয়। ★ প্রতি-সারি-deadline: এক-সারির-ঢিলামিতে সব-কার্ড বাতিল হতো (3 Idiots ৮.৬সে→৪.৭সে)। ★ HindMovie: 404/410-এ প্রক্সি-পুল-বন্ধ (Silence ১২.২সে→৬.১সে, কার্ড-আসে)। বেঞ্চ: avg ৪.৭৪সে (আগে ৫.৫২), max ৭.০২, m4u ১৪/১৬, HM ৮/১৬, Sky ১৪/১৬।';const V1NOTE_46 = 'v1.17.46 (HindMovie নতুন সোর্স): live search (REST → HTML ফলব্যাক, বছর-মুক্ত কুয়েরি) → পোস্ট (IMDb-id গার্ড) → mvlink (মুভি) / mvlink /web/<id> (সিজন×কোয়ালিটি) → hshare → hcloud b64 → workers.dev direct MKV (২০৬, সিক-যোগ্য)। ক্যাশ ৬ঘণ্টা (search/post/mvlink/final); ডিরেক্ট আগে, 403/429/5xx-তে পুল-রেস। ব্যাচ .zip কখনো কার্ড নয়। hmRace ৩.২s ⇒ কোল্ড-চেইন রেসপন্স আটকায় না, পেছনে ক্যাশ ভরে। মাপা (১৬ রিকোয়েস্ট): avg 3.75s, MB 15/16, mm 16/16, m4u 14/16, sky 13/16, hm 3/16 (হলিউড-ক্লাসিক বেঞ্চে; সিরিজে BB/GoT S1E1 = ৩ কার্ড)।';
@@ -4292,26 +4292,38 @@ async function hmText(u, ms, ref) { // ডিরেক্ট → ব্যর্
       return { st: 0, t: '', err: true, el: Date.now() - t1 };
     }
   };
-  return one(ms).then(r0 => {
-    const retry = async () => {
-      if (r0.t && r0.st < 400) return r0;
-      if (r0.err && ms > 1600 && (r0.el || 0) < 900) {   // দ্রুত-ব্যর্থতা-শুধু (timeout-এর-পর-আর-ওটিন-নয়)
-        const r1 = await one(Math.floor(ms * 0.75));
-        if (DBG) console.error('[hm] RETRY ' + String(u).slice(0, 40) + ' st=' + r1.st + ' bytes=' + r1.t.length);
-        if (r1.t && r1.st < 400) return r1;
-        return r1.t ? r1 : r0;
-      }
-      return r0;
-    };
-    return retry();
-  })
-    .then(r => {
-      if (r.t && r.st < 400) return fin(r);
-      // ★ v1.17.48 (মাপা: Silence — ৪-প্রক্সি-পুলে-একটি-404-পেছনে-প্রায়-২সে-নষ্ট, তার-ওপর-hshare-প্রায়-৩.৫সে):
-      //   404/410 = সাইটের-চূড়ান্ত-উত্তর — প্রক্সি-পুলে-আবার-চেষ্টা-অর্থহীন (ক্যাশ-ভরতে-পারে-না)।
-      if (r.st === 404 || r.st === 410) return fin(r);
-      return racePool(u, 4, Math.max(1200, ms), 'hm').then(x => fin({ st: 200, t: String(x.body || ''), via: 'px' })).catch(() => fin(r));
-    });
+  // ★ v1.27.20 (প্রোড-/_diag: beamup থেকে hindmovie/mvlink/hshare বারবার *TimeoutError*,
+  //   আমাদের-স্যান্ডবক্স থেকে সাফল): প্রক্সি-পুল আর ডায়রেক্ট-ফেচ **একসাথে দৌড়ায়** —
+  //   আগে ডায়রেক্ট 3.5s টাইমআউট সহ্য করে তবে পুলে যাত ⇒ প্রতি-হোপে 2-4s নষ্ট।
+  const poolP = async (msl) => {
+    try {
+      const x = await racePool(u, 4, Math.max(1200, msl), 'hm');
+      const t = String((x && x.body) || '');
+      return t.length > 200 ? { st: 200, t: t, via: 'px', el: 0 } : { st: 0, t: '', err: true, el: 0 };
+    } catch (e) { return { st: 0, t: '', err: true, el: 0 }; }
+  };
+  const d = one(ms);
+  const SLOW = 600;                                   // এর-ভিতরে-না-এলে-পুল-ও-দৌড়ায়
+  const early = await Promise.race([d, new Promise(r => setTimeout(() => r(null), SLOW))]);
+  let r0 = early;
+  if (!r0) {                                          // ★ পুল-ব্যর্থ-হলেও ডায়রেক্ট-ফেচ **বাতিল হয় না** (আগে এখানে-ঝুকে সফল-ডায়রেক্ট-ফেচ বাদ পড়ত)
+    const pr = await Promise.race([d, poolP(Math.floor(ms * 0.85))]);
+    if (pr && pr.t && pr.st < 400) return fin(pr);
+    const dr = await d;                               // bounded by ms
+    r0 = (dr && dr.t) ? dr : (pr || dr || { st: 0, t: '', err: true, el: 0 });
+  }
+  if (r0.t && r0.st < 400) return fin(r0);
+  if (r0.err && ms > 1600 && (r0.el || 0) < 900) {      // দ্রুত-ব্যর্থতা (রিসেট/রিফিউজ) ⇒ এক-রিট্রাই
+    const r1 = await one(Math.floor(ms * 0.75));
+    if (DBG) console.error('[hm] RETRY ' + String(u).slice(0, 40) + ' st=' + r1.st + ' bytes=' + r1.t.length);
+    if (r1.t && r1.st < 400) return fin(r1);
+    if (r1.t) return fin(r1);
+  }
+  if (r0.st === 404 || r0.st === 410) return fin(r0);   // সাইটের-চূড়ান্ত-উত্তর
+  const px = await poolP(Math.max(1200, ms));
+  if (px.t) return fin(px);
+  diag('hm', 'dead ' + String(u).replace(/^https?:\/\//, '').slice(0, 54));
+  return fin(r0);
 }
 function hmIsDead(u) { const c = HM_HCD.get(String(u).split('/')[2] || ''); return !!(c && Date.now() - c < 30 * 60 * 1000); }
 const HM_HCD = new Map();
@@ -4375,7 +4387,7 @@ function hmCard(T, epLine, h, url, fn) {
 function hmRace(p, ms) { // v1.17.46: কোল্ড-চেইন ৫–১২s — রেসপন্স আটকাবে না, পেছনে ক্যাশ ভরতে থাকবে
   // ★ v1.27.19 (প্রোড-/_diag প্রমাণ: My Demon S1E1 এ hm কার্ড 7509ms-এ আসতো, রেস 6600ms-এ কেটে যাওয়ায় ০ কার্ড)
   //   6600 -> 8200। hmStreams নিজেই HM_RC-ক্যাশ ভরে, তাই পরের ট্যাপে তাৎক্ষণিক।
-  return Promise.race([Promise.resolve(p).catch(() => []), new Promise(r => setTimeout(() => r([]), ms || 8200))]);
+  return Promise.race([Promise.resolve(p).catch(() => []), new Promise(r => setTimeout(() => r([]), ms || 9400))]);
 }
 async function hmPool(items, n, fn) { // ★ mvlink-এ >৩ সমান্তরালে গেলে সাইট ভুল-পেজ ফেরায় (মাপা) — তাই সীমিত
   const out = new Array(items.length); let i = 0;
@@ -4406,7 +4418,7 @@ function hmStreams(tmdbId, title, type, s, e, origin, maxh) {
   return p;
 }
 async function hmStreamsRaw(tmdbId, title, type, s, e, origin, maxh) {
-  const T0 = Date.now(); const B = 5600; const left = () => Math.max(700, B - (Date.now() - T0)); // v1.17.46: কোল্ড-চেইন ~৫.৫s — হ্যাং নয়, কাট-রুলই ঠিক করে
+  const T0 = Date.now(); const B = 7600; const left = () => Math.max(700, B - (Date.now() - T0)); // v1.27.21: 5600-e hindmovie/mvlink/hshare-চেইন 8.6s-এ-শেষ হত ⇒ ০ কার্ড: কোল্ড-চেইন ~৫.৫s — হ্যাং নয়, কাট-রুলই ঠিক করে
   const isTv = type === 'series' || type === 'tv';
   const SE = parseInt(s, 10) || 1, EP = parseInt(e, 10) || 1;
   try {
@@ -4418,12 +4430,18 @@ async function hmStreamsRaw(tmdbId, title, type, s, e, origin, maxh) {
     if (!posts) {
       const rq = Math.min(2800, left());
       const HMB = await hmBase();
-      const r1 = await hmText(HMB + '/wp-json/wp/v2/search?search=' + encodeURIComponent(T) + '&per_page=5&_fields=url', rq);
+      // ★ v1.27.21 (প্রমাণ: 2026-10-25 — সাইটটি `&_fields=url` এ **HTTP 400** দয়;
+      //   সেই-কারণে-প্রতি-টাইটেলে-সার্চ-ফেল ⇒ HindMovie-০ কার্ড)। এখন ফিল্ড-প্যারাম ছাড়া (মাত্র 2.6KB) কল)
+      const r1 = await hmText(HMB + '/wp-json/wp/v2/search?search=' + encodeURIComponent(T) + '&per_page=5', rq);
+      if (!(r1.t && r1.st < 400)) diag('hm', 'rest st=' + r1.st + ' bytes=' + (r1.t || '').length);
       try { const a = JSON.parse(r1.t); if (Array.isArray(a)) posts = a.map(x => String(x.url || '')).filter(u => /^https:\/\/hindmovie\.[a-z]{2,6}\/[a-z0-9][a-z0-9\-]*\/?$/i.test(u)); } catch (e) { }
       if (!posts || !posts.length) {
-        const r2 = await hmText(HMB + '/?s=' + encodeURIComponent(T), rq);
-        posts = [...new Set((r2.t.match(/href="https:\/\/hindmovie\.[a-z]{2,6}\/[a-z0-9\-]{6,}\//gi) || []).map(z => z.slice(6, -1)))]
-          .filter(u => !/\/(genre|category|tag|page|author|dramas|anime|movies|quality|web-series)\//i.test(u)).slice(0, 6);
+        const r2 = await hmText(HMB + '/?s=' + encodeURIComponent(T), Math.min(4300, Math.max(rq, left())));
+        diag('hm', 'html st=' + r2.st + ' bytes=' + (r2.t || '').length);
+        posts = [...new Set((r2.t.match(/href="(https:\/\/hindmovie\.[a-z]{2,6}\/[a-z0-9][a-z0-9\-]*\/)"/gi) || []).map(z => z.slice(6, -1)))]
+          .filter(u => !/\/(wp-content|wp-json|genre|category|tag|page|author|dramas|anime|movies|language|quality|web-?series|contact|about|privacy|dmca|how2unzip|feed|search)\/?$/i.test(u))
+          .filter(u => (u.match(/-/g) || []).length >= 2)     // v1.27.21: nav-অব্রাজ বাদ (আগে wp-content/movies/quality-ও-পাস-করত)
+          .slice(0, 6);
       }
       // স্লাগ-ফিল্টার: শুধু আসল পোস্ট-ইউআরএল (এক-সেগমেন্ট + বছর + টাইটেল-টোকেন); wp-content/series-genre বাদ
       const toks = T.toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/).filter(z => z.length > 2 && z !== 'the' && z !== 'and');
@@ -4520,7 +4538,7 @@ async function hmStreamsRaw(tmdbId, title, type, s, e, origin, maxh) {
     diag('hm', 'cards=' + cards.length + ' @' + (Date.now() - T0) + 'ms');
     if (DBG) console.error('[hm] ' + tmdbId + ' "' + T.slice(0, 26) + '" cards=' + cards.length + ' @' + (Date.now() - T0) + 'ms');
     return cards;
-  } catch (e2) { if (DBG) console.error('[hm] ERR ' + String(e2 && e2.message).slice(0, 60)); return []; }
+  } catch (e2) { diag('hm', 'THROW ' + String(e2 && e2.message).slice(0, 90)); if (DBG) console.error('[hm] ERR ' + String(e2 && e2.message).slice(0, 60)); return []; }
 }
 
 async function mmStreams(tmdbId, title, type, s, e, origin, maxh, rel) { // v1.15.54: rel=MM-মিডিয়া-সার্ভার-রিলে // v1.15.28: Multimovies source — vidout index + vidbolt resolve; origin: mini-master URLs; maxh: MM-রেজোলিউশন-ছাঁকনি (v1.15.39, 0=সব)
@@ -9516,7 +9534,7 @@ async function withSources(cardsP, srcs, cfg, t0, mkey, lookupP) {
     // ★ v1.17.56: **গৌণ-সোর্সের নিজস্ব ছোট-ক্যাপ** — ott/tw/rt/az বসে-থাকলে পুরো উত্তর ১১.৫সে-দেয়ালে
     //   গিয়ে ঠেকত (প্রোড-লগে জোড়ায়-জোড়ায় 11.5s), অথচ ওরা কার্ড দিচ্ছিল না (n=0)। এখন ৬.৫সে।
     // ★ v1.20.2 (মাপা: ৮.২সে-র কারণ ছিল hm — ০ কার্ড দিয়ে ৮.২সে পর্যন্ত ধরে রাখত; tw/rt তেমনই)
-    const SRC_CAP_MAP = { ott: 9400, tw: 9600, rt: 9400, az: 9600, hm: 9200, vsp: 9400, nx: 9200, m4u: 9200, sky: 9000, mm: 9600, mlb: 9000 };   // v1.27.19: hm 8200-race + mlb 8200-বাজেটের জন্য ক্যাপ বাড়ানো // v1.26.1: toonworld-এর রেজলভারই ৭.৫সে নেয় (মাপা) — ৮.৫সে-ক্যাপে ওটা সবসময় কাটা পড়ত // ★ v1.22.3: prod-মাপা — এই সোর্সগুলো prod-এ ৭-৮সে নেয়, আগের ক্যাপে তারা সবসময় 'cut' হতো
+    const SRC_CAP_MAP = { ott: 9400, tw: 9600, rt: 9400, az: 9600, hm: 9700, vsp: 9400, nx: 9200, m4u: 9200, sky: 9000, mm: 9600, mlb: 9000 };   // v1.27.19: hm 8200-race + mlb 8200-বাজেটের জন্য ক্যাপ বাড়ানো // v1.26.1: toonworld-এর রেজলভারই ৭.৫সে নেয় (মাপা) — ৮.৫সে-ক্যাপে ওটা সবসময় কাটা পড়ত // ★ v1.22.3: prod-মাপা — এই সোর্সগুলো prod-এ ৭-৮সে নেয়, আগের ক্যাপে তারা সবসময় 'cut' হতো
     const SRC_CAP_MS = Number(process.env.VSCAP || 9600); // v1.17.58: 9.3s-cap-e prod-e 10.2-10.6s hoi (edge-er kache) // ★ v1.17.52: প্রতি-সোর্স-ক্যাপ — একটি ঝুলন্ত সোর্স (ott/tw/nx) পুরো তালিকাকে ক্যাপে টেনে নিত
     const track = x => { // ★ v1.17.52: টাইমার ক্লিয়ার হয় — নইলে সেটেল হওয়া সোর্সের জন্যও ভুল '[srccap]' ছাপ পড়ত
       let _tm = null;
