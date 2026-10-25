@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.27.12';
+const VERSION = '1.27.14';
 const V1NOTE_47 = 'v1.17.47 (ইউজার: "stream cut kore fast na — 6-8s laguk, sob stream asuk") — হারভেস্ট-কাট বাতিল: আগে ৪.৬সে-এ ৬-কার্ড-হলেই কাট, ৪.৯সে হার্ড-ক্যাপ ⇒ দেরিতে-আসা সোর্সের কার্ড ফেলত। এখন **সব লাইভ-সোর্স সেটেল হলেই ফেরা**, নইলে ৭.৮সে ক্যাপ (Beamup ১২সে-সীমার ভিতরে)। সাথে: nx ৫.১→৭.২সে (MB আর কাটা পড়ে না), mm/m4u ৭.০সে সব-সাইট, hm-রেস ৩.২→৬.৬সে (কোল্ড-চেইনও একই রেসপন্সে), m4u-তে ৩ pd-id + ২ জীবিত মিরর (আগে ১ম-সফলেই-থামা), sky-তে ৩ pd-id/hub, PD_MAX env-নব। মাপা (১৬ রিকোয়েস্ট, লোকাল): avg 5.52s · সর্বোচ্চ 6.66s (আগে 3.75s-কাট-সংস্করণে ৮২৪ কার্ড), HindMovie ৮/১৬ (আগে ৩/১৬), MB ১৬/১৬, mm ১৬/১৬, m4u ১৪/১৬, sky ১২/১৬, কার্ড ৮৩৯ ⇒ **কার্ড কমেনি, বেড়েছে**।';
 
 const V1NOTE_48 = 'v1.17.48 (ইউজার: "M4u thik koro, Hindi movie add koro, configuration page ta o thik koro") — ★ কনফিগ-পেজ-মেরামত: SRC-তালিকা থেকেই সুইচ-বাইন্ড (bf সরানোর পর bindSwitch-এ null.classList-এ পুরো IIFE থেমে যেত ⇒ tune-কার্ড/সেভ/প্রিভিউ কিছুই রেন্ডার হতো না) + bindSwitch-এ null-গার্ড; HindMovie প্যানেল + tune-hm কার্ড যোগ। ★ Movies4u: একাধিক সার্চ-হিট-চেষ্টা (per_page 12), আর্টিকেল-বাদ-দিয়ে-পুনঃসার্চ, modpro-শাখা এখন আসলেই চলে (post খালি থাকলে lastPost দিয়ে) — মৃত-মিরর Range-প্রমাণ ছাড়া কার্ড-নয়। ★ প্রতি-সারি-deadline: এক-সারির-ঢিলামিতে সব-কার্ড বাতিল হতো (3 Idiots ৮.৬সে→৪.৭সে)। ★ HindMovie: 404/410-এ প্রক্সি-পুল-বন্ধ (Silence ১২.২সে→৬.১সে, কার্ড-আসে)। বেঞ্চ: avg ৪.৭৪সে (আগে ৫.৫২), max ৭.০২, m4u ১৪/১৬, HM ৮/১৬, Sky ১৪/১৬।';const V1NOTE_46 = 'v1.17.46 (HindMovie নতুন সোর্স): live search (REST → HTML ফলব্যাক, বছর-মুক্ত কুয়েরি) → পোস্ট (IMDb-id গার্ড) → mvlink (মুভি) / mvlink /web/<id> (সিজন×কোয়ালিটি) → hshare → hcloud b64 → workers.dev direct MKV (২০৬, সিক-যোগ্য)। ক্যাশ ৬ঘণ্টা (search/post/mvlink/final); ডিরেক্ট আগে, 403/429/5xx-তে পুল-রেস। ব্যাচ .zip কখনো কার্ড নয়। hmRace ৩.২s ⇒ কোল্ড-চেইন রেসপন্স আটকায় না, পেছনে ক্যাশ ভরে। মাপা (১৬ রিকোয়েস্ট): avg 3.75s, MB 15/16, mm 16/16, m4u 14/16, sky 13/16, hm 3/16 (হলিউড-ক্লাসিক বেঞ্চে; সিরিজে BB/GoT S1E1 = ৩ কার্ড)।';
@@ -5103,9 +5103,10 @@ async function azStreams(tmdbId, type, s, e, azq) { // সার্চ→সি�
 //         (টাইটেল-পাথ, `/file/<token>`) ৬ঘণ্টা/২০মিনিট ক্যাশ — লিংক নয়।
 //     (৪) টাইটেল-মিল কড়া (নাম + বছর), না-মিললে **সৎ-শূন্য** — ভুল-টাইটেল কার্ড নয়।
 const MLBD_SEEDS = ['https://movielinkbd.com/', 'https://movielinkbd.at/', 'https://movielinkbd.app/', 'https://movielinkbd.cc/'];
-const MLBD_ON_ENV = process.env.MLBD === '1';
-const mlbdOn = cfg => !!(MLBD_ON_ENV || (cfg && cfg.mlb === 1)); // কনফিগ-টগল বা env ⇒ অপ্ট-ইন
-let MLBD_BASE = '', MLBD_BASE_TS = 0;
+// ★ v1.27.13 (ইউজার: "default babei movielinksbd on thakbe"): এখন **ডিফল্ট চালু** — বন্ধ করতে
+//   কনফিগ-পেজের টগল (`mlb:0`) বা সার্ভার-env `MLBD=0`।
+const mlbdOn = cfg => (process.env.MLBD !== '0') && !(cfg && cfg.mlb === 0);
+let MLBD_BASE = '', MLBD_BASE_TS = 0, MLBD_BASE_WEAK = false; // WEAK = যাচাই-না-করা seed (কম সময় ক্যাশ)
 const MLBD_PATH_C = new Map();  // 'name|year|type' → {path, ts}   (স্থির-আইডি)
 const MLBD_FILE_C = new Map();  // path → {toks:[], ts}              (স্থির-টোকেন)
 function mlbdNorm(s) { return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); }
@@ -5119,35 +5120,56 @@ async function mlbdLimit(fn) {
 // কখনো-throw-নয়: নেটওয়ার্ক-ব্যর্থতায় একবার রিট্রাই, শেষ-ব্যর্থতায় st:0 (কলার তখন [] ফেরায়)
 async function mlbdGet(u, opt) {
   opt = opt || {};
-  for (let at = 0; at < 2; at++) {
+  const delays = [200, 600, 1300];
+  for (let at = 0; at < 4; at++) {
     try {
       return await mlbdLimit(async () => {
-        const r = await fetch(u, {
-          headers: Object.assign({ 'User-Agent': UA, 'Accept': 'text/html,application/xhtml+xml,*/*' }, opt.headers || {}),
-          redirect: 'manual', signal: AbortSignal.timeout(Math.max(800, opt.ms || 6000))
-        });
-        let body = '';
-        if (opt.body !== false) { try { body = await r.text(); } catch (e) { } }
-        return { st: r.status, loc: r.headers.get('location') || '', body: body };
+        let url = u;                                   // ★ 301/302 (movielinkbd.com → mirror) নিজেই ফলো করি
+        for (let hop = 0; hop < 3; hop++) {
+          const r = await fetch(url, {
+            headers: Object.assign({ 'User-Agent': UA, 'Accept': 'text/html,application/xhtml+xml,*/*' }, opt.headers || {}),
+            redirect: 'manual', signal: AbortSignal.timeout(Math.max(800, Math.min(opt.ms || 6000, 3200)))
+          });
+          const loc = r.headers.get('location') || '';
+          if ((r.status === 301 || r.status === 302 || r.status === 303 || r.status === 307 || r.status === 308) && loc) {
+            try { url = /^https?:/i.test(loc) ? loc : new URL(loc, url).toString(); } catch (e) { return { st: r.status, loc: loc, body: '' }; }
+            continue;
+          }
+          let body = '';
+          if (opt.body !== false) { try { body = await r.text(); } catch (e) { } }
+          return { st: r.status, loc: loc, body: body };
+        }
+        return { st: 0, loc: '', body: '' };
       });
     } catch (e) {
-      if (at === 1) { if (DBG) console.error('[mlbd] get-fail ' + String(u).slice(0, 60) + ' :: ' + (e && e.message)); return { st: 0, loc: '', body: '' }; }
-      await new Promise(r => setTimeout(r, 150 + Math.floor(Math.random() * 250)));
+      if (at === 3) { if (DBG) console.error('[mlbd] get-fail ' + String(u).slice(0, 60) + ' :: ' + (e && (e.message || e)) + ' | ' + ((e && e.cause && (e.cause.code || e.cause.message)) || '')); return { st: 0, loc: '', body: '' }; }
+      // ★ v1.27.14: ডাইরেক্ট-ফেচ ব্যর্থ (SAN-এ ECONNRESET) ⇒ **প্রক্সি-সুরঙ্গে** একই URL — এটাই সবচেয়ে বড় নির্ভরযোগ্যতা-লাভ
+      if (at >= 1) {
+        for (let k = 0; k < 2; k++) {
+          const px = vspPick(null); if (!px) break;
+          try {
+            const txt = await proxiedGet(px.px, u, Math.max(1800, Math.min(opt.ms || 6000, 3500)));
+            if (txt && txt.length > 200) { if (DBG) console.error('[mlbd] px-ok ' + px.px + ' ' + String(u).slice(-16)); return { st: 200, loc: '', body: txt }; }
+          } catch (e2) { }
+        }
+      }
+      await new Promise(r => setTimeout(r, (delays[at] || 600) + Math.floor(Math.random() * 200)));
     }
   }
   return { st: 0, loc: '', body: '' };
 }
 async function mlbdMirror(force) {
-  if (!force && MLBD_BASE && Date.now() - MLBD_BASE_TS < 3 * 3600e3) return MLBD_BASE;
+  // যাচাই-করা মিরর ৩ ঘণ্টা; শুধু-seed (WEAK) ১০ মিনিট — নইলে মৃত-বেস আটকে থাকত
+  if (!force && MLBD_BASE && Date.now() - MLBD_BASE_TS < (MLBD_BASE_WEAK ? 10 * 60e3 : 3 * 3600e3)) return MLBD_BASE;
   for (const seed of MLBD_SEEDS) {
     let r = null;
     try { r = await mlbdGet(seed, { ms: 4500 }); } catch (e) { continue; }
     if (!r || r.st !== 200 || !r.body) continue;
     const cands = [...new Set((r.body.match(/https:\/\/[a-z0-9]{4,12}\.movielinkbd\.[a-z]{2,6}/gi) || []))].slice(0, 4);
     for (const c of cands) {                          // ঘোষিত-মিরর: **যাচাই করে** নিই
-      try { const t = await mlbdGet(c + '/', { ms: 3500, body: false }); if (t.st === 200) { MLBD_BASE = c; MLBD_BASE_TS = Date.now(); if (DBG) console.error('[mlbd] base=' + c); return MLBD_BASE; } } catch (e) { }
+      try { const t = await mlbdGet(c + '/', { ms: 3500, body: false }); if (t.st === 200) { MLBD_BASE = c; MLBD_BASE_TS = Date.now(); MLBD_BASE_WEAK = false; if (DBG) console.error('[mlbd] base=' + c); return MLBD_BASE; } } catch (e) { }
     }
-    MLBD_BASE = seed.replace(/\/$/, ''); MLBD_BASE_TS = Date.now(); // মিরর-লিংক না-থাকলে নিজেই
+    MLBD_BASE = seed.replace(/\/$/, ''); MLBD_BASE_TS = Date.now(); MLBD_BASE_WEAK = true; // মিরর-লিংক না-থাকলে নিজেই
     if (DBG) console.error('[mlbd] base(seed)=' + MLBD_BASE);
     return MLBD_BASE;
   }
@@ -5188,15 +5210,19 @@ function mlbdSeasonOf(t) { // "Breaking Bad (2008) S04 [Ep 01-08 Added]" → 4 ;
   const n = m ? parseInt(m[1], 10) : 0;
   return (n >= 0 && n <= 60) ? n : 0;
 }
-function mlbdPick(items, name, year, type, season) { // কড়া-মিল: নাম + বছর + (সিরিজে) সিজন; নইলে শূন্য
-  const W = mlbdNorm(name); if (!W) return null;
+function mlbdEpRange(t) { // "S04 [Ep 01-08]" → [1,8] ; সিরিজ-পোস্টের এপিসোড-সীমা
+  const m = /(?:Ep|Epi|Episode|Episodes)\s*\.?\s*0*(\d{1,3})\s*[-–~]\s*0*(\d{1,3})/i.exec(String(t || ''));
+  return m ? [parseInt(m[1], 10), parseInt(m[2], 10)] : null;
+}
+function mlbdPicks(items, name, year, type, season, ep) { // ★ v1.27.14: স্কোর-ক্রমে **সব** যোগ্য পেজ (একই টাইটেলের একাধিক পেজ থাকে)
+  const W = mlbdNorm(name); if (!W) return [];
   let cands = items.filter(x => (type === 'movie' ? x.type === 'movie' : x.type === 'series'));
   if (type !== 'movie') {                       // ★ v1.27.12: MovieLinkBD-তে **প্রতি সিজন আলাদা পেজ**
     const want = parseInt(season, 10) || 1;
     const withS = cands.filter(x => mlbdSeasonOf(x.title) === want);
     const noS = cands.filter(x => !mlbdSeasonOf(x.title));
     cands = withS.length ? withS : noS;         // সিজন-মার্কার-হীন পেজ শুধু ফলব্যাক
-    if (!cands.length) return null;
+    if (!cands.length) return [];
   }
   const score = x => {
     const n = mlbdNorm(x.title);
@@ -5204,28 +5230,53 @@ function mlbdPick(items, name, year, type, season) { // কড়া-মিল: 
     if (n === W) s += 100; else if (n.startsWith(W + ' ') || n === W + '') s += 70;
     else if (n.indexOf(' ' + W + ' ') >= 0 || n.indexOf(W) >= 0) s += 40;
     if (year && x.year === String(year)) s += 60; else if (year && x.year && x.year !== String(year)) s -= 80;
+    if (type !== 'movie' && parseInt(ep, 10)) {      // ★ পোস্টের এপ-রেঞ্জে ইপি থাকলে আগে, না-থাকলে পরে
+      const rg = mlbdEpRange(x.title);
+      if (rg) s += (parseInt(ep, 10) >= rg[0] && parseInt(ep, 10) <= rg[1]) ? 30 : -40;
+    }
     return s;
   };
-  const best = cands.map(x => ({ x: x, s: score(x) })).sort((a, b) => b.s - a.s)[0];
-  if (!best || best.s < 60) return null;                       // দুর্বল-মিল ⇒ সৎ-শূন্য
-  return best.x;
+  const seen = new Set(), out = [];
+  cands.map(x => ({ x: x, s: score(x) })).sort((a, b) => b.s - a.s).forEach(o => {
+    if (o.s < 60 || seen.has(o.x.path)) return;   // দুর্বল-মিল ⇒ সৎ-শূন্য
+    seen.add(o.x.path); out.push(o.x);
+  });
+  return out;
+}
+function mlbdPick(items, name, year, type, season, ep) { // কড়া-মিল: নাম + বছর + (সিরিজে) সিজন; নইলে শূন্য
+  const l = mlbdPicks(items, name, year, type, season, ep);
+  return l.length ? l[0] : null;
 }
 function mlbdAbs(base, t) { return (/^https?:/.test(t) ? t : base + (String(t).charAt(0) === '/' ? t : '/file/' + t)); }
 // পেজের `data-ep="s05e01 …"` কার্ড-সীমানা ধরে প্রতি-এপিসোডের টোকেন (সিজন-প্যাক আলাদা থাকে)
+// ★ v1.27.14: পোস্ট-ভেদে `data-ep` এর মান দুই ধাঁচের —
+//   নতুন: "s04e09 s04 • episode 9"   পুরোনো: "season 4 episode 1 s04 • episode 1"
+//   আগে শুধু `sXXeYY` ধরা হত ⇒ পুরোনো পোস্টে গ্রুপ=০ হয়ে ঠিক-এপিসোড হারিয়ে যেত (S4E8-এ ধরা পড়েছে)।
+function mlbdEpNum(raw) {
+  const t = String(raw || '');
+  let m = /s0*(\d{1,2})\s*[.\-_ ]?\s*e0*(\d{1,3})(?!\d)/i.exec(t);      // s04e08 / s04.e08 / s04 e08
+  if (m) return { s: parseInt(m[1], 10) || 0, e: parseInt(m[2], 10) || 0 };
+  m = /season\s*0*(\d{1,2})\s*(?:•|-|–|episode)\s*(?:episode\s*)?0*(\d{1,4})/i.exec(t); // season 4 episode 1
+  if (m) return { s: parseInt(m[1], 10) || 0, e: parseInt(m[2], 10) || 0 };
+  m = /s0*(\d{1,2})\s*•\s*(?:episode\s*)?0*(\d{1,4})/i.exec(t);          // s04 • episode 9
+  if (m) return { s: parseInt(m[1], 10) || 0, e: parseInt(m[2], 10) || 0 };
+  return null;
+}
 function mlbdEpGroups(html) {
   const marks = []; const re = /data-ep="([^"]{0,90})"/g; let m;
   while ((m = re.exec(html))) marks.push({ i: m.index, ep: m[1] });
   const out = [];
   for (let k = 0; k < marks.length; k++) {
     const seg = html.slice(marks[k].i, (k + 1 < marks.length) ? marks[k + 1].i : html.length);
-    const c = /s0*(\d{1,2})\s*e0*(\d{1,3})/i.exec(marks[k].ep);
+    const c = mlbdEpNum(marks[k].ep);
     if (!c) continue;
-    out.push({ s: parseInt(c[1], 10) || 0, e: parseInt(c[2], 10) || 0, toks: mlbdToks(seg) });
+    out.push({ s: c.s, e: c.e, toks: mlbdToks(seg) });
   }
   return out;
 }
 async function mlbdTitleFiles(base, path, ms) {
   const r = await mlbdGet(base + path, { ms: ms });
+  if (DBG) console.error('[mlbd] page ' + String(path).slice(-10) + ' st=' + r.st + ' len=' + String(r.body || '').length + ' ep=' + ((String(r.body || '').match(/data-ep=/g) || []).length) + ' dl=' + ((String(r.body || '').match(/data-dl=/g) || []).length));
   if (r.st !== 200) return { toks: [], groups: [] };
   return {
     toks: mlbdToks(r.body).map(t => mlbdAbs(base, t)),
@@ -5245,6 +5296,9 @@ async function mlbdRng(u, ms) { try { const x = await hdProbe(u, Math.max(1500, 
 const MLBD_RANGE_TRUST = /^(?:[a-z0-9.-]*\.)?(?:fsldownload\.com|r2\.cloudflarestorage\.com|[a-z0-9.-]*\.workers\.dev)$/i;
 function mlbdTrusted(u) { try { return MLBD_RANGE_TRUST.test(new URL(u).hostname); } catch (e) { return false; } }
 // এক ফাইল-টোকেন → {url, srv, name} — মিরর-অগ্রাধিকার FSL → HubCloud(r2) → workers.dev; （Google বাদ)
+// ★ v1.27.13 (ইউজার: "ekta server keno only, seekable sob server thakbe"): এক ফাইলনামে **সব জীবিত
+//   Range-মিরর** ফেরত দিই (একটা নয়) — FSL (fsldownload), HubCloud-r2, HubCloud-workers।
+//   প্রতিটি URL নিজে প্রমাণিত (`hdProbe` ২০৬) অথবা মাপা-trust-হোস্ট (প্রোব-টাইমআউট ≠ Range-নেই)।
 async function mlbdOne(base, fileUrl, dl) {
   const left = () => Math.max(600, dl - Date.now());
   let pg = null;
@@ -5252,55 +5306,68 @@ async function mlbdOne(base, fileUrl, dl) {
   if (!pg || pg.st !== 200 || !pg.body) return null;
   const H = pg.body;
   const name = ((H.match(/class="dlh-htitle[^"]*">([^<]+)/) || [])[1] || (/<title>([^<]*)/.exec(H) || [])[1] || '').trim();
+  if (DBG) console.error('[mlbd] file ' + String(fileUrl).slice(-14) + ' st=' + pg.st + ' len=' + H.length + ' name=' + name.slice(0, 40));
   const size = ((H.match(/fa-database[^>]*><\/i>\s*([^<]+)/) || [])[1] || '').trim();
   const hub = (H.match(/https:\/\/hubcloud\.[a-z.]+\/drive\/[A-Za-z0-9]+/) || [])[0] || '';
   const nested = (H.match(/href="(\/file\/[A-Za-z0-9_-]{40,})"/) || [])[1] || '';
   const ic = (H.match(/https:\/\/instantcloud\.org\/file\/[A-Za-z0-9]+/) || [])[0] || '';
-  const urlOnly = (u, srv) => ({ url: u, srv: srv, name: name, size: size });
-  // ① FSL (নেস্টেড-পেজ) — সেরা মিরর (২০৬, ~১২–১৪ MB/s)
+  // एक मिरर प्रमाण: ২০৬ ⇒ নাও; প্রোব-ব্যর্থ হলেও trust-হোস্ট হলে নাও
+  const seenM = new Set();
+  const pick = async (u, srv, out) => {
+    if (!u || seenM.has(u) || left() < 900) return;
+    seenM.add(u);
+    if (await mlbdRng(u, Math.min(2200, left()))) out.push({ u: u, s: srv });
+    else if (mlbdTrusted(u)) out.push({ u: u, s: srv, soft: 1 });
+  };
+  // ① নেস্টেড-পেজ → FSL (fsldownload)
   const fslBranch = async () => {
-    if (!nested || left() < 1500) return null;
+    const out = [];
+    if (!nested || left() < 1500) return out;
     try {
       const p2 = await mlbdGet(base + nested, { ms: Math.min(4200, left()) });
       const fsl = (String(p2.body).match(/https:\/\/fsldownload\.com\/d\/[A-Za-z0-9._-]+/) || [])[0] || '';
-      if (!fsl) return null;
-      if (await mlbdRng(fsl, Math.min(2200, left()))) return urlOnly(fsl, 'FSL');
-      return mlbdTrusted(fsl) ? urlOnly(fsl, 'FSL') : null;
-    } catch (e) { return null; }
+      await pick(fsl, 'FSL', out);
+    } catch (e) { }
+    return out;
   };
-  // ② HubCloud: drive → (302) ist → gamerxyt → r2-presigned / workers.dev
+  // ② HubCloud: drive → (302) ist → gamerxyt → r2-presigned **এবং** workers.dev (দুটোই আলাদা সার্ভার)
   const hubBranch = async () => {
-    if (!hub || left() < 1800) return null;
+    const out = [];
+    if (!hub || left() < 1800) return out;
     try {
       const h1 = await mlbdGet(hub, { ms: Math.min(4200, left()) });
       const ist = h1.loc ? new URL(h1.loc, hub).href : hub;
       const h2 = (ist === hub) ? h1 : await mlbdGet(ist, { ms: Math.min(4200, left()) });
-      const gx = (String(h2.body).match(/https:\/\/gamerxyt\.com\/hubcloud\.php\?[^"'\s<>]+/) || [])[0] || '';
-      if (!gx) return null;
-      const h3 = await mlbdGet(gx, { ms: Math.min(4200, left()), headers: { Referer: ist } });
-      const r2 = mlbdAttr(String(h3.body), 'fsl', 'href');
-      const wk = (String(h3.body).match(/https:\/\/[a-z0-9.\-]*workers\.dev\/[^"'\s<>]+/) || [])[0] || '';
-      for (const c of [{ u: r2, s: 'FSL' }, { u: wk, s: 'HubCloud' }]) {
-        if (!c.u) continue;
-        if (await mlbdRng(c.u, Math.min(2000, left()))) return urlOnly(c.u, c.s);
-        if (mlbdTrusted(c.u)) return urlOnly(c.u, c.s);
+      const txt = String(h2.body || '');
+      const gx = (txt.match(/https:\/\/gamerxyt\.com\/hubcloud\.php\?[^"'\s<>]+/) || [])[0] || '';
+      // gamerxyt-পাতায় সরাসরি r2/worker থাকলে সেটাও ধরার চেষ্টা (কখনো কখনো ওখানেই থাকে)
+      const direct = [];
+      const r2a = mlbdAttr(txt, 'fsl', 'href'); if (r2a) direct.push({ u: r2a, s: 'HubCloud' });
+      const wka = (txt.match(/https:\/\/[a-z0-9.\-]*workers\.dev\/[^"'\s<>]+/) || [])[0]; if (wka) direct.push({ u: wka, s: 'HubCloud' });
+      if (gx) {
+        const h3 = await mlbdGet(gx, { ms: Math.min(4200, left()), headers: { Referer: ist } });
+        const r2 = mlbdAttr(String(h3.body), 'fsl', 'href'); if (r2) direct.push({ u: r2, s: 'HubCloud' });
+        for (const wk of (String(h3.body).match(/https:\/\/[a-z0-9.\-]*workers\.dev\/[^"'\s<>]+/g) || []).slice(0, 2)) direct.push({ u: wk, s: 'HubCloud' });
       }
-      return null;
-    } catch (e) { return null; }
+      for (const c of direct) await pick(c.u, c.s, out);
+    } catch (e) { }
+    return out;
   };
-  // ③ Google (Range নেই) — শুধু MLBD_GD=1 হলে (ডিফল্ট বন্ধ, ইউজার-নির্দেশ)
+  // ③ Google (Range নেই) — শুধু MLBD_GD=1 হলে
   const gdBranch = async () => {
-    if (process.env.MLBD_GD !== '1' || !ic) return null;
+    const out = [];
+    if (process.env.MLBD_GD !== '1' || !ic || left() < 1200) return out;
     try {
       const r = await mlbdGet(ic + '/download', { ms: Math.min(3800, left()), body: false });
-      return /^https:\/\/video-downloads\.googleusercontent\.com\//.test(r.loc) ? urlOnly(r.loc, 'Google') : null;
-    } catch (e) { return null; }
+      if (/^https:\/\/video-downloads\.googleusercontent\.com\//.test(r.loc)) out.push({ u: r.loc, s: 'Google' });
+    } catch (e) { }
+    return out;
   };
-  // দুটো শাখাই **সমান্তরাল** (আগে ক্রমিক ছিল ⇒ ১–১.৫সে নষ্ট); প্রথম-সফলটাই নিই, FSL-কে অগ্রাধিকার
-  const both = await Promise.all([fslBranch(), hubBranch()]);
-  if (both[0]) return both[0];
-  if (both[1]) return both[1];
-  return await gdBranch();
+  const groups = await Promise.all([fslBranch(), hubBranch(), gdBranch()]);
+  const mirrors = [];
+  for (const g of groups) for (const m of g) if (!mirrors.some(x => x.u === m.u)) mirrors.push(m);
+  if (!mirrors.length) return null;
+  return { name: name, size: size, mirrors: mirrors };
 }
 function mlbdLangs(fn) {
   const S = String(fn || '').toLowerCase();
@@ -5315,57 +5382,121 @@ async function mlbdStreams(name, year, type, s, e, cap) {
   const left = () => Math.max(400, B - (Date.now() - T0));
   const hard = new Promise(r => setTimeout(() => r(null), B + 250));
   const work = (async () => {
-    const base = await mlbdMirror(); if (!base) return [];
+    let base = await mlbdMirror(); if (!base) return [];
     const SE = parseInt(s, 10) || 1, EP = parseInt(e, 10) || 1;
-    const ck = mlbdNorm(name) + '|' + (year || '') + '|' + type + (type === 'series' ? '|S' + SE : '');
-    let path = ''; const c0 = MLBD_PATH_C.get(ck);
-    if (c0 && Date.now() - c0.ts < 6 * 3600e3) path = c0.path;
-    if (!path) {
-      const items = await mlbdSearch(base, name, Math.min(4200, left()));
-      const pick = mlbdPick(items, name, year, type, SE);
-      if (!pick) { if (DBG) console.error('[mlbd] no-title-match n=' + items.length + ' @' + (Date.now() - T0) + 'ms'); return []; }
-      path = pick.path; MLBD_PATH_C.set(ck, { path: path, ts: Date.now() });
-      if (MLBD_PATH_C.size > 400) MLBD_PATH_C.clear();
+    const ck = mlbdNorm(name) + '|' + (year || '') + '|' + type + (type === 'series' ? '|S' + SE + 'E' + EP : '');
+    // ★ v1.27.14 (ইউজার: "thik season e thik ep dicche toh"): একই সিজন/টাইটেলের **একাধিক পোস্ট-পেজ**
+    //   থাকে ("S04 [Ep 01-08 Added]" + "S04 [Epi 9-13]") — সেরা পেজে ঠিক-এপিসোড না থাকলে পরের পেজ,
+    //   আর সব পেজের মিরর একসাথে (union) নিই; ক্যাশ-পেজ ব্যর্থ হলে ফ্রেশ সার্চ ফলব্যাক।
+    const grab = async (list) => {                 // পেজ-তালিকা → {toks, files, usedPath}
+      const usedT = new Set(), allT = [], rawT = []; let usedPath = ''; let f0 = null; const failed = [];
+      const getF = async (path) => {               // এক পেজ (২০-মিনিট ক্যাশ); ব্যর্থ হলে null
+        const c1 = MLBD_FILE_C.get(path);
+        if (c1 && Date.now() - c1.ts < 20 * 60e3) return c1.f;
+        if (left() < 700) return null;
+        const f = await mlbdTitleFiles(base, path, Math.min(4600, left()));
+        if (f && f.toks.length) { MLBD_FILE_C.set(path, { f: f, ts: Date.now() }); if (MLBD_FILE_C.size > 300) MLBD_FILE_C.clear(); return f; }
+        return null;
+      };
+      const pass = async (paths, tag) => {
+        for (const path of paths) {
+          const f = await getF(path);
+          if (!f) { failed.push(path); continue; }                 // নেট-ব্যর্থ ⇒ শেষে আরেক দফা
+          if (!f0) f0 = f;
+          let t = f.toks || [];
+          if (type === 'series') {                 // সিজন-প্যাক বাদ — ঠিক-এপিসোডের টোকেনই
+            if (!(f.groups || []).length) {        // data-ep-হীন পোস্ট (প্যাক-ধাঁচ) ⇒ শেষ-উপায়
+              for (const x of (f.toks || [])) rawT.push(x);
+            }
+            const g = (f.groups || []).find(x => x.s === SE && x.e === EP);
+            t = g ? g.toks : [];
+          }
+          for (const x of t) if (!usedT.has(x)) { usedT.add(x); allT.push(x); }
+          if (t.length) usedPath = usedPath || path;
+          else if (DBG) console.error('[mlbd] page no-ep S' + SE + 'E' + EP + tag + ' t=' + String(path).slice(-10) + ' @' + (Date.now() - T0) + 'ms');
+          if (left() < 700) break;
+        }
+      };
+      await pass(list.slice(0, 5).map(x => x.path), '');
+      // কোনো পেজে ঠিক-এপিসোডের গ্রুপই নেই ⇒ পেজের সব টোকেন নিই; নামে SxxExx না-মিললে পরে বাদ পড়বে
+      if (!allT.length && rawT.length) {
+        for (const x of rawT) if (!usedT.has(x)) { usedT.add(x); allT.push(x); }
+        if (DBG) console.error('[mlbd] no-group-fallback toks=' + allT.length + ' @' + (Date.now() - T0) + 'ms');
+      }
+      // সব পেজ নেট-ব্যর্থ হলে (এই SAN-এ মাঝে-মাঝে fetch failed) একবার শেষ-চেষ্টা — ততক্ষণে চাপ কমে যায়
+      if (!allT.length && failed.length && left() > 1100) {
+        const re = failed.slice(); failed.length = 0;
+        await pass(re, '(retry)');
+      }
+      return { toks: allT, files: f0, usedPath: usedPath };
+    };
+    let res = null;
+    const c0 = MLBD_PATH_C.get(ck);                 // একই নাম+বছর+সিজন+এপিসোড ⇒ একই পেজ
+    if (c0 && Date.now() - c0.ts < 6 * 3600e3) res = await grab([{ path: c0.path }]);
+    if (!res || !res.toks.length) {
+      // ★ v1.27.14: সাইটের সার্চ **প্রতি-বার আলাদা পোস্ট** দেয় ⇒ নাম + "নাম S0N" দুটো সার্চ একসাথে চালিয়ে
+      //   পোস্ট-ইউনিয়ন নিই ("S04 [Ep 01-08]" পোস্ট আর "S04 [Epi 9-13]" পোস্ট আলাদা দুটো)।
+      const qw = Math.min(3800, left());
+      const S2 = SE < 10 ? '0' + SE : String(SE);
+      const qs = type === 'series'
+        ? [name, name + ' S' + S2, name + ' S' + SE, name + ' Season ' + SE]     // একই পোস্ট বার-বার না-আসায় কয়েক ভ্যারিয়েন্ট
+        : [name, name + (year ? ' ' + year : '')];
+      const ss = await Promise.all(qs.map(q => mlbdSearch(base, q, qw).catch(() => [])));
+      let items = [];
+      for (const arr of ss) for (const x of (arr || [])) items.push(x);
+      if (DBG) console.error('[mlbd] search n=' + items.map((a, i) => (ss[i] || []).length).join('/') + ' qs=' + qs.length + ' @' + (Date.now() - T0) + 'ms');
+      if (!items.length && left() > 2200) {           // ★ মিরর মৃত/রিডাইরেক্ট-ব্রোকেন ⇒ নতুন মিরর খুঁজি
+        const b2 = await mlbdMirror(true);
+        if (b2 && b2 !== base) { base = b2; items = await mlbdSearch(base, name, Math.min(4200, left())).catch(() => []); }
+      }
+      const picks = mlbdPicks(items, name, year, type, SE, EP);
+      if (DBG) console.error('[mlbd] picks=' + picks.length + ' ' + picks.slice(0, 5).map(x => String(x.title).slice(0, 34)).join(' ‖ '));
+      if (!picks.length) { if (DBG) console.error('[mlbd] no-title-match n=' + items.length + ' @' + (Date.now() - T0) + 'ms'); return []; }
+      const r2 = await grab(picks);
+      if (r2.toks.length || !res) res = r2;
     }
-    let files = null; const c1 = MLBD_FILE_C.get(path);
-    if (c1 && Date.now() - c1.ts < 20 * 60e3) files = c1.f;
-    if (!files) {
-      files = await mlbdTitleFiles(base, path, Math.min(4600, left()));
-      if (files.toks.length) { MLBD_FILE_C.set(path, { f: files, ts: Date.now() }); if (MLBD_FILE_C.size > 300) MLBD_FILE_C.clear(); }
-    }
-    let toks = files.toks || [];
-    if (type === 'series') {                      // সিজন-প্যাক বাদ — ঠিক-এপিসোডের টোকেনই
-      const g = (files.groups || []).find(x => x.s === SE && x.e === EP);
-      toks = g ? g.toks : [];
-    }
-    if (!toks.length) { if (DBG) console.error('[mlbd] no-tokens @' + (Date.now() - T0) + 'ms (groups=' + ((files.groups || []).length) + ')'); return []; }
+    if (!res) return [];
+    if (res.usedPath) { MLBD_PATH_C.set(ck, { path: res.usedPath, ts: Date.now() }); if (MLBD_PATH_C.size > 400) MLBD_PATH_C.clear(); }
+    const toks = res.toks.slice(0, Number(process.env.MLBDN || 6));
+    if (!toks.length) { if (DBG) console.error('[mlbd] no-tokens @' + (Date.now() - T0) + 'ms (groups=' + (((res.files || {}).groups || []).length) + ')'); return []; }
     const dl = T0 + B;
-    const jobs = toks.slice(0, Number(process.env.MLBDN || 6)).map(t => mlbdOne(base, t, dl).catch(() => null));
-    const got = (await Promise.all(jobs)).filter(Boolean);
-    if (DBG && (type === 'series' || process.env.MLBDBG === '1')) console.error('[mlbd] got=' + got.length + ' names: ' + got.map(g => String(g.name).slice(0, 60) + '{' + g.srv + '}').join(' | '));
+    const NTOK = Number(process.env.MLBDN || 6);
+    const jobs = toks.slice(0, NTOK).map(t => mlbdOne(base, t, dl).catch(() => null));
+    let got = (await Promise.all(jobs)).filter(Boolean);
+    if (!got.length && Date.now() < dl - 900) {          // পুরো-ব্যর্থ (SAN-ফ্লেক) ⇒ এক দফা আবার
+      if (DBG) console.error('[mlbd] 2nd-wave @' + (Date.now() - T0) + 'ms');
+      const j2 = toks.slice(0, Math.min(3, NTOK)).map(t => mlbdOne(base, t, dl).catch(() => null));
+      got = (await Promise.all(j2)).filter(Boolean);
+    }
+    if (DBG && (type === 'series' || process.env.MLBDBG === '1')) console.error('[mlbd] got=' + got.length + ' names: ' + got.map(g => String(g.name).slice(0, 52) + '{' + (g.mirrors || []).map(m => (srvLabel(m.u) || m.s || '?') + (m.soft ? '?' : '')).join('+') + '}').join(' | '));
     if (!got.length) { if (DBG) console.error('[mlbd] no-mirror @' + (Date.now() - T0) + 'ms (tok=' + toks.length + ')'); return []; }
     const maxh = Number(cap || 0);
     const out = []; const seenU = new Set(); const seenQ = new Set();
     const ttl = String(name).trim();
-    for (const g of got.sort((a, b) => (parseInt((String(b.name).match(/(\d{3,4})p/i) || [])[1], 10) || 0) - (parseInt((String(a.name).match(/(\d{3,4})p/i) || [])[1], 10) || 0))) {
-      if (seenU.has(g.url)) continue; seenU.add(g.url);
-      if (type === 'series') {                                     // সঠিক এপিসোড ছাড়া কিছু নয়
-        const sm = new RegExp('S0*' + SE + 'E0*' + EP + '(?!\\d)', 'i');
-        if (!sm.test(g.name)) continue;
-      }
+    const sm = type === 'series' ? new RegExp('S0*' + SE + 'E0*' + EP + '(?!\\d)', 'i') : null;
+    // ★ v1.27.13: প্রতি ফাইল-টোকেনের **সব Range-প্রমাণিত মিরর** → আলাদা কার্ড (সার্ভার-নাম আলাদা)
+    const cand = [];
+    for (const g of got) {
+      if (sm && !sm.test(g.name)) continue;                       // সিরিজে ঠিক-এপিসোড ছাড়া নয়
       const h = parseInt((String(g.name).match(/(\d{3,4})p/i) || [])[1], 10) || 0;
       if (maxh && h && h > maxh) continue;
-      const qk = (h || 'a') + '|' + g.srv;
-      if (seenQ.has(qk)) continue; seenQ.add(qk);
-      if (out.length >= Number(process.env.MLBDCAP || 4)) break;
-      const langs = mlbdLangs(g.name);
+      for (const m of (g.mirrors || [])) cand.push({ h: h, u: m.u, srv: srvLabel(m.u) || m.s || '', name: g.name });
+    }
+    const rank = x => (x.srv === 'FSL' ? 0 : x.srv === 'HubCloud' ? 1 : x.srv === 'Pixeldrain' ? 2 : 3);
+    cand.sort((a, b) => (b.h - a.h) || (rank(a) - rank(b)));
+    for (const c of cand) {
+      if (seenU.has(c.u)) continue; seenU.add(c.u);
+      const qk = (c.h || 'a') + '|' + c.srv;
+      if (seenQ.has(qk)) continue; seenQ.add(qk);                 // একই মান + একই সার্ভার একবারই
+      if (out.length >= Number(process.env.MLBDCAP || 6)) break;
+      const langs = mlbdLangs(c.name);
       const txt = '\u29c9 ' + ttl + (year ? ' | ' + year + ' |' : ' |') + '\n'
         + (type === 'series' ? '\u29e0 S' + SE + 'E' + EP : '\u29e0 Movie') + '\n'
         + '\u229e MovieLinkBD' + (langs ? ' \u2317 ' + langs : '');
       out.push({
-        name: '\u25a5 ' + (h ? String(h) : 'Auto') + ' \u25a5', title: txt, description: txt, quality: String(h || ''),
-        url: g.url,
-        behaviorHints: { notWebReady: false, isBingeable: true, proxyHeaders: { request: { 'User-Agent': UA } }, filename: (g.name || 'movielinkbd.mkv') },
+        name: '\u25a5 ' + (c.h ? String(c.h) : 'Auto') + ' \u25a5', title: txt, description: txt, quality: String(c.h || ''),
+        url: c.u,
+        behaviorHints: { notWebReady: false, isBingeable: true, proxyHeaders: { request: { 'User-Agent': UA } }, filename: (c.name || 'movielinkbd.mkv') },
         bingeGroup: 'mlb|' + mlbdNorm(ttl) + '::' + (type === 'series' ? 'S' + SE + 'E' + EP : 'm')
       });
     }
@@ -9962,6 +10093,10 @@ function fmtCardText(c, hint) {
     if (!nm && hint && hint.epT) nm = String(hint.epT).trim();
     nm = nm.replace(/[|•\s]+$/g, '').replace(/\s{2,}/g, ' ').slice(0, 80);
     epLine = ' \u23e3 S' + (parseInt(sm[1], 10) || 1) + 'E' + (parseInt(sm[2], 10) || 1) + (nm ? ' \u2022 ' + nm : '');
+  } else {
+    // প্যাক/অটো-মার্কার ("S1 Pack", "Complete") — SxEy নেই বলে লাইনটা ফেলে দেওয়া যাবে না
+    const bob = e.replace(/^[\u23e3\u29e0]\s*/, '').trim();
+    if (bob && !/^movie$/i.test(bob)) epLine = ' \u23e3 ' + bob.slice(0, 60);
   }
   // ---- সোর্স-লাইন (+ • সার্ভার) ----
   let rest = s.replace(/^[\u2318\u229e]\s*/, '').trim();
