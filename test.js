@@ -83,7 +83,7 @@ async function tap(label, url, checks) {
     ok(mb.length === 0 || mb.every(c => c.bingeGroup && String(c.bingeGroup).indexOf('mbxr|') === 0), 'moviebox cards carry bingeGroup');
     ok(s.every(c => !c.behaviorHints || typeof c.behaviorHints === 'object'), 'behaviorHints sane');
     ok(v.every(c => !Array.isArray(c.subtitles) || c.subtitles.every(u2 => u2 && typeof u2.url === 'string')), 'vidy cards: subs shape sane (embedded subs retired — /subtitles resource serves them)');
-    ok(mb.length === 0 || mb.every(c => Array.isArray(c.subtitles) && c.subtitles.length > 0), 'moviebox cards carry subtitle tracks too');
+    ok(mb.length === 0 || mb.every(c => !c.subtitles || (Array.isArray(c.subtitles) && c.subtitles.every(u2 => u2 && typeof u2.url === 'string'))), 'moviebox subs: /subtitles resource (card-level retired — v1.21.x ডিজাইন)');
   });
 
   // ── 2) Hindi movie ──

@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.27.9';
+const VERSION = '1.27.10';
 const V1NOTE_47 = 'v1.17.47 (ইউজার: "stream cut kore fast na — 6-8s laguk, sob stream asuk") — হারভেস্ট-কাট বাতিল: আগে ৪.৬সে-এ ৬-কার্ড-হলেই কাট, ৪.৯সে হার্ড-ক্যাপ ⇒ দেরিতে-আসা সোর্সের কার্ড ফেলত। এখন **সব লাইভ-সোর্স সেটেল হলেই ফেরা**, নইলে ৭.৮সে ক্যাপ (Beamup ১২সে-সীমার ভিতরে)। সাথে: nx ৫.১→৭.২সে (MB আর কাটা পড়ে না), mm/m4u ৭.০সে সব-সাইট, hm-রেস ৩.২→৬.৬সে (কোল্ড-চেইনও একই রেসপন্সে), m4u-তে ৩ pd-id + ২ জীবিত মিরর (আগে ১ম-সফলেই-থামা), sky-তে ৩ pd-id/hub, PD_MAX env-নব। মাপা (১৬ রিকোয়েস্ট, লোকাল): avg 5.52s · সর্বোচ্চ 6.66s (আগে 3.75s-কাট-সংস্করণে ৮২৪ কার্ড), HindMovie ৮/১৬ (আগে ৩/১৬), MB ১৬/১৬, mm ১৬/১৬, m4u ১৪/১৬, sky ১২/১৬, কার্ড ৮৩৯ ⇒ **কার্ড কমেনি, বেড়েছে**।';
 
 const V1NOTE_48 = 'v1.17.48 (ইউজার: "M4u thik koro, Hindi movie add koro, configuration page ta o thik koro") — ★ কনফিগ-পেজ-মেরামত: SRC-তালিকা থেকেই সুইচ-বাইন্ড (bf সরানোর পর bindSwitch-এ null.classList-এ পুরো IIFE থেমে যেত ⇒ tune-কার্ড/সেভ/প্রিভিউ কিছুই রেন্ডার হতো না) + bindSwitch-এ null-গার্ড; HindMovie প্যানেল + tune-hm কার্ড যোগ। ★ Movies4u: একাধিক সার্চ-হিট-চেষ্টা (per_page 12), আর্টিকেল-বাদ-দিয়ে-পুনঃসার্চ, modpro-শাখা এখন আসলেই চলে (post খালি থাকলে lastPost দিয়ে) — মৃত-মিরর Range-প্রমাণ ছাড়া কার্ড-নয়। ★ প্রতি-সারি-deadline: এক-সারির-ঢিলামিতে সব-কার্ড বাতিল হতো (3 Idiots ৮.৬সে→৪.৭সে)। ★ HindMovie: 404/410-এ প্রক্সি-পুল-বন্ধ (Silence ১২.২সে→৬.১সে, কার্ড-আসে)। বেঞ্চ: avg ৪.৭৪সে (আগে ৫.৫২), max ৭.০২, m4u ১৪/১৬, HM ৮/১৬, Sky ১৪/১৬।';const V1NOTE_46 = 'v1.17.46 (HindMovie নতুন সোর্স): live search (REST → HTML ফলব্যাক, বছর-মুক্ত কুয়েরি) → পোস্ট (IMDb-id গার্ড) → mvlink (মুভি) / mvlink /web/<id> (সিজন×কোয়ালিটি) → hshare → hcloud b64 → workers.dev direct MKV (২০৬, সিক-যোগ্য)। ক্যাশ ৬ঘণ্টা (search/post/mvlink/final); ডিরেক্ট আগে, 403/429/5xx-তে পুল-রেস। ব্যাচ .zip কখনো কার্ড নয়। hmRace ৩.২s ⇒ কোল্ড-চেইন রেসপন্স আটকায় না, পেছনে ক্যাশ ভরে। মাপা (১৬ রিকোয়েস্ট): avg 3.75s, MB 15/16, mm 16/16, m4u 14/16, sky 13/16, hm 3/16 (হলিউড-ক্লাসিক বেঞ্চে; সিরিজে BB/GoT S1E1 = ৩ কার্ড)।';
@@ -9587,6 +9587,60 @@ function sendJson(res, code, obj) {
   res.end(b);
 }
 // v1.13.9 স্ট্রিম-উত্তর-ক্যাশ — nethex-v2.4.0-প্যারিটি: TTL-৩০মি + সর্বোচ্চ-৪০০, পুরনো-আগে-বাদ
+// ═══════════════ v1.27.10: **কার্ড-টেক্সট এক-ফরম্যাট** (ইউজার: "both series and stream er format bodlabo") ═══════════════
+//   চাওয়া ফরম্যাট (Miami যা দেয় — লাইভ থেকে তুলে নেওয়া):
+//       name : ▥ 2160 ▥
+//       ⧉ <শিরোনাম> | <বছর> |
+//       ⧠ Movie            (সিরিজে: ⧠ S1E1 • <নাম>)
+//       ⊞ <সোর্স> ⌗ <ভাষা>   (+ প্যাক/সাব-নোট থাকলে তার পরে)
+//   বাস্তব-আউটপুটে যেসব জায়গায় এই ছাঁচ ভাঙছিল (মাপা):
+//     • HDHub4u  → "⧉ The Dark Knight (2008) BluRay [Hindi (DD2.0) & English] 1080p 720p & 480p Dual"
+//     • Vidsrc / AsianTV → "⧉ The Dark Knight |"  (বছর নেই)
+//     • Sky Movies → "⊞ Sky Movies"           (⌗ ভাষা নেই)
+//   এই ফাংশন **শুধু লেখা** ঠিক করে — url / headers / behaviorHints / bingeGroup / quality ছোঁয় না
+//   ⇒ প্লেব্যাক-আচরণ অপরিবর্তিত (নিরাপদ-প্যাচ)। চেনা-ছাঁচ না মিললে কার্ডটা হুবহু আগের মতোই থাকে।
+const FMT_JUNK = /\b(?:2160|1440|1080|720|480|360)\s*p\b|\b(?:4K|UHD|HDR10?|HEVC|x265|x264|H\.?264|H\.?265|BluRay|Blu-Ray|BDRip|BRRip|WEB-?DL|WEBRip|HDRip|DVDRip|AAC(?:\s?\d(?:\.\d)?)?|AC3|EAC3|DTS|DD\s?\+?\s?[257]\.1|DD\s?[257]\.0|ESubs?|MSubs?)\b/gi;
+const FMT_BR = /\[[^\]]*(?:hindi|english|tamil|telugu|bengali|bangla|dual|aac|dd\s?[257]|dts|x26[45]|hevc|1080|720|480|esub|bluray|web-?dl)[^\]]*\]/gi;
+function fmtCardText(c) {
+  if (!c || typeof c !== 'object') return c;
+  const desc = String(c.description || c.title || '');
+  if (!desc) return c;
+  let t = '', e = '', s = '';
+  for (const raw of desc.split('\n')) {
+    const ln = raw.replace(/\s+$/, '');
+    if (!t && ln.charAt(0) === '\u29c9') t = ln;            // ⧉
+    else if (!e && ln.charAt(0) === '\u29e0') e = ln;       // ⧠
+    else if (!s && ln.charAt(0) === '\u229e') s = ln;       // ⊞
+  }
+  if (!t || !s) return c;                                    // চেনা-ছাঁচ নয় ⇒ হাত নয়
+  let body = t.replace(/^\u29c9\s*/, '');
+  let year = (/\|\s*((?:19|20)\d{2})\s*(?:\||$)/.exec(body) || [])[1] || '';
+  let head = (body.split('|')[0] || '').trim();
+  const py = /\(\s*((?:19|20)\d{2})\s*\)/.exec(head);
+  if (py) { year = year || py[1]; head = head.replace(py[0], ' '); }
+  head = head.replace(FMT_BR, ' ').replace(FMT_JUNK, ' ')
+    .replace(/\s*&\s*(?:Dual(?:\s?Audio)?|Audio)\b.*$/i, '')   // '[Hindi & English] … Dual' ⇒ লেজ-কাটা
+    .replace(/\bDual\s?Audio\b/gi, ' ')
+    .replace(/[\s&·,;\/\-–]+$/g, '')                            // লেজের বাড়তি চিহ্ন
+    .replace(/\s{2,}/g, ' ').trim();
+  if (!head || head.length > 140) return c;                  // খালি/অদ্ভুত ⇒ আগের-লেখাই-থাক
+  const head2 = '\u29c9 ' + head + (year ? ' | ' + year + ' |' : ' |');
+  // ⊞-লাইনের পরের বাড়তি লাইন (প্যাক-নোট ইত্যাদি) **কখনো বাদ যায় না** — আগের ক্রমেই থাকে
+  const tail = [];
+  let seenSlot = false;
+  for (const raw of desc.split('\n')) {
+    const ln = raw.replace(/\s+$/, '');
+    if (!ln) continue;
+    if (ln.charAt(0) === '\u229e') { seenSlot = true; continue; }
+    if (seenSlot) tail.push(ln);
+  }
+  const out = [head2, e, s].concat(tail).filter(Boolean).join('\n');
+  if (out === desc) return c;
+  c.description = out;
+  c.title = out;                                             // Miami-তে title == description
+  return c;
+}
+const fmtCards = cards => { if (!Array.isArray(cards)) return cards; for (const c of cards) fmtCardText(c); return cards; };
 const stripCards = cards => (cards || []).map(c => { const { _hq, _lang, _pack, _exoTwin, quality, headers, subtitles, ...r } = c || {}; if (headers && /^mm\|/.test(String(r.bingeGroup || ''))) r.headers = headers; return r; }); // v1.15.97: MM-কার্ডে falcon-ধাঁচার শীর্ষ-স্তরের headers অক্ষত রাখা
 // ---------- v1.15.52: সব-সোর্সের-কার্ড-এক-ফরম্যাটে (ইউজার: "প্রতি-সোর্সের-কার্ড-ফরম্যাট-এমনি-চাই") — decorate()-এর-ভিডি-ফরম্যাট:
 // ⧉ Title | Year |  /  ⧠ Movie|SsEe  /  ⊞ Server ⌗ Audio — mbxr-চাইল্ড-ইতিমধ্যে-এই-ফরম্যাটে-প্রমাণিত; বাকি-সোর্স-এখানে-বসে
@@ -9604,7 +9658,7 @@ async function unifyCards(cards, meta) { // শুধু-টেক্সট-ব�
   try {
     if (!cards || !cards.length || !meta || (!meta.tmdbId && !meta.title)) return cards;
     const tcards = cards.filter(c => /^(sky|m4u|bf|mm|tw|rt)\|/.test(String(c.bingeGroup || '')));
-    if (!tcards.length) return cards;
+    // ★ v1.27.10: tcards খালি হলেও থামি না — বছর-পূরণের ধাপটা সব-সোর্সে চালু থাকবে
     const _uT=Date.now();
     const T = (meta.tmdbId ? await Promise.race([nameForTmdb(meta.tmdbId, meta.type).catch(() => ''), new Promise(r => setTimeout(() => r(''), 600))]) : '') || String(meta.title || '').trim();
     if (!T) return cards; // টাইটেল-না-পেলে পুরনো-লেখাই-থাকে (খালি-কখনো-নয়)
@@ -9618,6 +9672,22 @@ async function unifyCards(cards, meta) { // শুধু-টেক্সট-ব�
       const txt = head + '\n' + epLine + '\n\u229e ' + (UNIFY_SRV[src] || src) + (au ? ' \u2317 ' + au : '') + pk;
       c.title = txt;
       c.description = txt + (pk ? '\n\u24d8 Full season in one file \u2014 starts at Ep 1' : '');
+    }
+    // ★ v1.27.10: **সব** সোর্সের কার্ডে বছর-পূরণ (Vidsrc/HDHub4u-র মতো যেগুলোতে বছরই ছিল না)
+    //   — শুধু হেড-লাইনের শেষে `| <বছর> |` বসে, শিরোনাম/url/অন্য-কিছু অপরিবর্তিত।
+    if (Y) {
+      const done = new Set(tcards);
+      const yRe = /\|\s*(?:19|20)\d{2}\s*\||\(\s*(?:19|20)\d{2}\s*\)/;
+      for (const c of cards) {
+        if (done.has(c)) continue;
+        const d = String(c.description || '');
+        const m2 = /^\u29c9 (.*)$/m.exec(d);
+        if (!m2 || yRe.test(m2[1])) continue;
+        const head = m2[1].replace(/\s*\|\s*$/, '').trim();
+        if (!head) continue;
+        const nd = d.replace(m2[0], '\u29c9 ' + head + ' | ' + Y + ' |');
+        c.description = nd; c.title = nd;
+      }
     }
     if (DBG) console.error('[unify] took=' + (Date.now() - _uT) + 'ms n=' + tcards.length);
     return cards;
@@ -9978,6 +10048,7 @@ function sendStreams(res, skey, plog, ms, cards, ua, cfg) {
   const n = (cards || []).length; // v1.15.8: কোনো-stash-নেই — প্রতি-উত্তর-তাজা
   logReq(plog, ms, n, null, ua);
   const _sk = sresKey(plog, cfg);
+  fmtCards(cards);                                          // ★ v1.27.10: সব-সোর্স-সব-কার্ড এক-ছাঁচে (শুধু লেখা)
   let body = JSON.stringify({ streams: stripCards(cards) });
   // ★★ v1.21.8: মার্জ **উত্তর দেওয়ার আগেই** (v1.21.7-এ শুধু ক্যাশে মার্জ হচ্ছিল, তাই ওই ট্যাপেই কম-তালিকা দেখা যেত)
   try { body = sresMerge(_sk, body); } catch (e) { }
