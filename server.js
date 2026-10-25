@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.27.7';
+const VERSION = '1.27.8';
 const V1NOTE_47 = 'v1.17.47 (ইউজার: "stream cut kore fast na — 6-8s laguk, sob stream asuk") — হারভেস্ট-কাট বাতিল: আগে ৪.৬সে-এ ৬-কার্ড-হলেই কাট, ৪.৯সে হার্ড-ক্যাপ ⇒ দেরিতে-আসা সোর্সের কার্ড ফেলত। এখন **সব লাইভ-সোর্স সেটেল হলেই ফেরা**, নইলে ৭.৮সে ক্যাপ (Beamup ১২সে-সীমার ভিতরে)। সাথে: nx ৫.১→৭.২সে (MB আর কাটা পড়ে না), mm/m4u ৭.০সে সব-সাইট, hm-রেস ৩.২→৬.৬সে (কোল্ড-চেইনও একই রেসপন্সে), m4u-তে ৩ pd-id + ২ জীবিত মিরর (আগে ১ম-সফলেই-থামা), sky-তে ৩ pd-id/hub, PD_MAX env-নব। মাপা (১৬ রিকোয়েস্ট, লোকাল): avg 5.52s · সর্বোচ্চ 6.66s (আগে 3.75s-কাট-সংস্করণে ৮২৪ কার্ড), HindMovie ৮/১৬ (আগে ৩/১৬), MB ১৬/১৬, mm ১৬/১৬, m4u ১৪/১৬, sky ১২/১৬, কার্ড ৮৩৯ ⇒ **কার্ড কমেনি, বেড়েছে**।';
 
 const V1NOTE_48 = 'v1.17.48 (ইউজার: "M4u thik koro, Hindi movie add koro, configuration page ta o thik koro") — ★ কনফিগ-পেজ-মেরামত: SRC-তালিকা থেকেই সুইচ-বাইন্ড (bf সরানোর পর bindSwitch-এ null.classList-এ পুরো IIFE থেমে যেত ⇒ tune-কার্ড/সেভ/প্রিভিউ কিছুই রেন্ডার হতো না) + bindSwitch-এ null-গার্ড; HindMovie প্যানেল + tune-hm কার্ড যোগ। ★ Movies4u: একাধিক সার্চ-হিট-চেষ্টা (per_page 12), আর্টিকেল-বাদ-দিয়ে-পুনঃসার্চ, modpro-শাখা এখন আসলেই চলে (post খালি থাকলে lastPost দিয়ে) — মৃত-মিরর Range-প্রমাণ ছাড়া কার্ড-নয়। ★ প্রতি-সারি-deadline: এক-সারির-ঢিলামিতে সব-কার্ড বাতিল হতো (3 Idiots ৮.৬সে→৪.৭সে)। ★ HindMovie: 404/410-এ প্রক্সি-পুল-বন্ধ (Silence ১২.২সে→৬.১সে, কার্ড-আসে)। বেঞ্চ: avg ৪.৭৪সে (আগে ৫.৫২), max ৭.০২, m4u ১৪/১৬, HM ৮/১৬, Sky ১৪/১৬।';const V1NOTE_46 = 'v1.17.46 (HindMovie নতুন সোর্স): live search (REST → HTML ফলব্যাক, বছর-মুক্ত কুয়েরি) → পোস্ট (IMDb-id গার্ড) → mvlink (মুভি) / mvlink /web/<id> (সিজন×কোয়ালিটি) → hshare → hcloud b64 → workers.dev direct MKV (২০৬, সিক-যোগ্য)। ক্যাশ ৬ঘণ্টা (search/post/mvlink/final); ডিরেক্ট আগে, 403/429/5xx-তে পুল-রেস। ব্যাচ .zip কখনো কার্ড নয়। hmRace ৩.২s ⇒ কোল্ড-চেইন রেসপন্স আটকায় না, পেছনে ক্যাশ ভরে। মাপা (১৬ রিকোয়েস্ট): avg 3.75s, MB 15/16, mm 16/16, m4u 14/16, sky 13/16, hm 3/16 (হলিউড-ক্লাসিক বেঞ্চে; সিরিজে BB/GoT S1E1 = ৩ কার্ড)।';
@@ -4571,11 +4571,14 @@ async function mmStreams(tmdbId, title, type, s, e, origin, maxh, rel) { // v1.1
     const T = String(title || 'Multimovies');
     const epLine = isSeries ? ('\u29e0 S' + (parseInt(s, 10) || 1) + 'E' + (parseInt(e, 10) || 1)) : '\u29e0 Movie';
     return vars.map(x => {
-      const q2 = x.h ? String(x.h) : (x.mp4 ? 'MP4' : 'HLS');
+      // ★ v1.27.8: উচ্চতা-অজানা কার্ডের নাম আগে "▥ HLS ▥"/"▥ MP4 ▥" হতো — টেস্ট-চুক্তি
+      //   (`▥ <সংখ্যা|Auto> ▥`) ভাঙত, আর একই ফিল্মে নাম বদলালে ইন্সটলে কার্ড-বদলানো মনে হতো।
+      //   এখন নাম **স্থির** `▥ Auto ▥`; MP4/HLS তথ্য আগের মতোই description-এ (MM-MP4/MM-HLS)।
+      const q2 = x.h ? String(x.h) : '';
       const aud = [x.aud, x.lang].filter(Boolean).filter((z, zi, za) => za.indexOf(z) === zi).join(' \u00b7 '); // v1.15.88: "hi · hi" ডুপ-লেবেল বন্ধ
       const txt = '\u29c9 ' + T + '\n' + epLine + '\n\u229e Multimovies \u00b7 ' + (x.mp4 ? 'MM-MP4' : 'MM-HLS') + (aud ? ' \u2317 ' + aud : '') + (subs.length ? ' \u2022 \ud83c\udfac' : '');
       return {
-        name: '\u25a5 ' + q2 + ' \u25a5',
+        name: '\u25a5 ' + (q2 || 'Auto') + ' \u25a5',
         title: txt,
         description: txt,
         quality: q2,
@@ -9717,7 +9720,7 @@ async function vhServe(req, res, b64) {
   const origin = originOf(req);
   const ck = target;
   const hit = VH_C.get(ck);
-  if (hit && Date.now() - hit.ts < VH_TTL) { res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl', 'access-control-allow-origin': '*', 'cache-control': 'max-age=300' }); return res.end(hit.v); }
+  if (hit && Date.now() - hit.ts < VH_TTL) { res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl', 'access-control-allow-origin': '*', 'cache-control': 'no-store' }); return res.end(vuStampPlaylist(hit.v)); }   // ★ v1.27.8: ক্যাশ-হিটেও নতুন `vu`
   const hdr = { 'User-Agent': UA, 'Referer': VIDY_REFERER, 'Accept': '*/*' };
   let body = '';
   try {
@@ -9730,9 +9733,9 @@ async function vhServe(req, res, b64) {
   if (!body) { res.writeHead(502, { 'content-type': 'text/plain', 'access-control-allow-origin': '*' }); return res.end('upstream-fail'); }
   const out = vhRewrite(body, target, origin);
   if (VH_C.size > 800) VH_C.clear();
-  VH_C.set(ck, { ts: Date.now(), v: out });
-  res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl', 'access-control-allow-origin': '*', 'cache-control': 'max-age=300' });
-  return res.end(out);
+  VH_C.set(ck, { ts: Date.now(), v: out });     // ★ ক্যাশে **কাঁচা** (স্ট্যাম্প-ছাড়া) থাকে
+  res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl', 'access-control-allow-origin': '*', 'cache-control': 'no-store' });
+  return res.end(vuStampPlaylist(out));
 }
 function vhFixCards(cards, origin) { // vidy-HLS কার্ডের url → /vh/ রিলে (বাকি সব অপরিবর্তিত)
   if (!origin) return cards;
@@ -9804,6 +9807,69 @@ const RELVU = (() => { try { return require('crypto'); } catch (e) { return null
 // ★ v1.27.7: প্রি-সাইনড (X-Amz-Signature) লিংকে **কোনো প্যারামিটার যোগ করা যাবে না** —
 //   সিগনেচার কুয়েরির অংশ ⇒ মাপা: `&vu=` দিলেই r2 403। তাই সেগুলোয় হাত দেওয়া হয় না।
 const isPresigned = u => /[?&](X-Amz-Signature|X-Amz-Credential)=/i.test(String(u || ''));
+// ================= v1.27.8: **সব পথে `vu`** (প্রতি-উত্তরে আলাদা লিংক) =================
+// ইউজার: "Sob pothe vu bosaw, carefully sabdane ... best performance"
+//   আগে `vu` শুধু vidy-প্লেলিস্ট আর MovieBox-mp4-এ বসত; pixeldrain-এর মতো API-লিংক,
+//   `/mm/`–`/mma/`-এর **সরাসরি CDN সেগমেন্ট** (relOn=0 হলে), `/vh/`-এর ভিতরের লাইন —
+//   সবই প্রতি-ইউজার **হুবহু এক** যাচ্ছিল। এখন একটাই কেন্দ্রীয় স্ট্যাম্পার।
+//   নীতি: (১) প্রি-সাইনড/আমাদের-ডোমেইন/ইতিমধ্যে-`vu`-থাকা লিংকে হাত **নয়**;
+//         (২) প্রমাণিত-হোস্টে (মাপা/প্রোডাকশনে চলছে) সরাসরি বসে;
+//         (৩) নতুন/অজানা হোস্টে **প্রথমবার চুপচাপ বাদ**, পেছনে ১-বাইট Range প্রোব চলে —
+//             ২০০/২০৬ এলে ২৪ ঘণ্টা ওই হোস্টে সব লিংকে `vu` বসবে, নইলে কখনোই বসবে না।
+//             ⇒ লেটেন্সি শূন্য, আর ভাঙার ঝুঁকি নেই (ভাঙা লিংক কোনদিন ইউজার পাবে না)।
+const VU_TTL = 24 * 3600e3;
+const VU_SAFE = /(?:^|\.)(?:goldenkite\.top|finalsignal\.top|deton444eik\.com|hakunaymatata\.com|pixeldrain\.(?:dev|com)|rousav\.tech|animecurx\.tech|acek-cdn\.com|dramiyos-cdn\.com|devcorp\.me|workers\.dev|terapiyo\d*\.\w+)$/i;
+const VU_HOST = new Map();      // host → {ok, ts}   (শুধু статус, কোনো কনটেন্ট নয়)
+const VU_KICK = new Map();      // host → in-flight promise (dedupe)
+function vuTok() { try { return 'vu=' + RELVU.randomBytes(6).toString('base64url'); } catch (e) { return 'vu=' + Math.random().toString(36).slice(2, 10); } }
+function vuJoinW(u, q) { return u + (u.indexOf('?') >= 0 ? (u.endsWith('?') || u.endsWith('&') ? '' : '&') : '?') + q; }
+function vuHostOk(host, sample) {              // sync — কখনো অপেক্ষা করে না
+  if (!host) return false;
+  const h = host.toLowerCase();
+  if (VU_SAFE.test(h)) return true;
+  const st = VU_HOST.get(h);
+  if (st && Date.now() - st.ts < VU_TTL) return !!st.ok;
+  if (!VU_KICK.has(h)) {                        // পেছনে যাচাই (প্রতি হোস্টে একবার)
+    const pr = (async () => {
+      let ok = false;
+      try {
+        const r = await fetch(vuJoinW(sample, 'vu=probe_' + Date.now().toString(36)), { headers: { 'User-Agent': UA, 'Accept': '*/*', Range: 'bytes=0-0' }, signal: AbortSignal.timeout(4000) });
+        const ct = String(r.headers.get('content-type') || '');
+        ok = (r.status === 200 || r.status === 206 || r.status === 416) && !/text\/html/i.test(ct);
+        try { r.body && r.body.cancel && r.body.cancel(); } catch (e) { }
+      } catch (e) { ok = false; }
+      VU_HOST.set(h, { ts: Date.now(), ok: ok });
+      if (DBG) console.error('[vu] ' + h + ' ⇒ ' + (ok ? 'stamp' : 'plain'));
+      return ok;
+    })().finally(() => { setTimeout(() => VU_KICK.delete(h), 1000); });
+    VU_KICK.set(h, pr);
+  }
+  return false;                                  // অজানা হোস্ট: এই উত্তরে বাদ (নিরাপদ)
+}
+function vuStampUrl(u) {                        // → '' অথবা 'vu=xxxx'
+  const s = String(u || '');
+  if (!/^https?:\/\//i.test(s)) return '';
+  if (/(?:^|[?&])vu=/.test(s)) return '';
+  if (isPresigned(s)) return '';                // মাপা: r2-তে প্যারামিটার যোগ = ৪০৩
+  let host = ''; try { host = new URL(s).host; } catch (e) { return ''; }
+  if (!host) return '';
+  return vuHostOk(host, s) ? vuTok() : '';
+}
+function vuStampLine(u) {                        // একক লিঙ্কে বসিয়ে দেয় (থাকলে অপরিবর্তিত)
+  const q = vuStampUrl(u);
+  return q ? vuJoinW(u, q) : u;
+}
+function vuStampPlaylist(txt) {                  // প্লেলিস্ট-টেক্সট: শুধু নন-কমেন্ট URL-লাইনে
+  if (!txt || txt.length < 40) return txt;
+  return String(txt).split('\n').map(ln => {
+    const t = ln.replace(/\r$/, '');
+    if (!t || t[0] === '#') return ln;           // #EXT-X-KEY/skill-URI-তে হাত নয় (সুরক্ষা)
+    if (!/^\s*https?:\/\//i.test(t)) return ln; // rel/আমাদের /mmr/–/vsp/ ⇒ অপরিবর্তিত
+    const sp = /\s+$/.exec(t); const core = sp ? t.slice(0, sp.index) : t;
+    const nu = vuStampLine(core);
+    return nu === core ? ln : nu + (sp ? sp[0] : '') + (ln.endsWith('\r') ? '\r' : '');
+  }).join('\n');
+}
 function relWrapBody(body, origin) {
   if (!REL_ON || !origin || !body || body.length < 40) return body;
   try {
@@ -9842,7 +9908,8 @@ function relWrapBody(body, origin) {
         }
         if (_mb) kind = 'm';
       }
-      if (!kind) continue;
+      // ★ v1.27.8: রিলে-প্রয়োজন নেই — তবু লিংকটা প্রতি-ইউজার আলাদা হোক (`vu`)
+      if (!kind) { const _q = vuStampUrl(u); if (_q) { c.url = vuJoinW(u, _q); n++; } continue; }
       c.url = origin + '/rel/' + kind + '/' + Buffer.from(u).toString('base64url');
       n++;
     }
@@ -9859,7 +9926,7 @@ async function relServe(req, res, kind, b64) {
     return res.end();
   }
   const hit = REL_C.get(target);
-  if (hit && Date.now() - hit.ts < REL_TTL) { res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl', 'access-control-allow-origin': '*', 'cache-control': 'no-store' }); return res.end(hit.b); }
+  if (hit && Date.now() - hit.ts < REL_TTL) { res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl', 'access-control-allow-origin': '*', 'cache-control': 'no-store' }); return res.end(vuStampPlaylist(hit.b)); }   // ★ v1.27.8
   let body = '', st = 0;
   const hdr = { 'User-Agent': UA, 'Referer': VIDY_REFERER, 'Accept': '*/*' };
   try {
@@ -9874,7 +9941,7 @@ async function relServe(req, res, kind, b64) {
   }).replace(/URI="([^"]*)"/g, (m0, u) => { try { return 'URI="' + new URL(u, target).toString() + '"'; } catch (e) { return m0; } });
   REL_C.set(target, { ts: Date.now(), b: out }); if (REL_C.size > 800) REL_C.clear();
   res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl', 'access-control-allow-origin': '*', 'cache-control': 'no-store' });
-  return res.end(out);
+  return res.end(vuStampPlaylist(out));
 }
 function gwStamp(body, origin) {            // ★ v1.27.3: rel-wrap (vidy/MovieBox) তারপর টোকেন — সব পথে একই
   try { return gwRewriteBody(relWrapBody(body, origin), origin); } catch (e) { return body; }
@@ -10241,6 +10308,7 @@ const server = http.createServer((req, res) => {
             miniOut = rw(mini);
           }
         }
+        miniOut = vuStampPlaylist(miniOut);          // ★ v1.27.8: relOn=0 হলেও সেগমেন্টে `vu`
         res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl', 'access-control-allow-origin': '*', 'cache-control': 'no-store', 'cdn-cache-control': 'no-store' });
         return res.end(miniOut);
       } catch { res.writeHead(502, { 'content-type': 'text/plain' }); return res.end('upstream-err'); }
@@ -10277,6 +10345,7 @@ const server = http.createServer((req, res) => {
             out = String(out).replace(/https?:\/\/[^\s"<>]+/g, uu => originOf(req) + '/mmr/' + Buffer.from(uu).toString('base64url') + '/s.m4s');
           }
         }
+        out = vuStampPlaylist(out);                  // ★ v1.27.8: অডিও/ভিডিও দুই পথেই
         res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl', 'access-control-allow-origin': '*', 'cache-control': 'no-store', 'cdn-cache-control': 'no-store' });
         return res.end(out);
       } catch { res.writeHead(502, { 'content-type': 'text/plain' }); return res.end('audio-err'); }
