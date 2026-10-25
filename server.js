@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.27.24';
+const VERSION = '1.27.25';
 const V1NOTE_47 = 'v1.17.47 (ইউজার: "stream cut kore fast na — 6-8s laguk, sob stream asuk") — হারভেস্ট-কাট বাতিল: আগে ৪.৬সে-এ ৬-কার্ড-হলেই কাট, ৪.৯সে হার্ড-ক্যাপ ⇒ দেরিতে-আসা সোর্সের কার্ড ফেলত। এখন **সব লাইভ-সোর্স সেটেল হলেই ফেরা**, নইলে ৭.৮সে ক্যাপ (Beamup ১২সে-সীমার ভিতরে)। সাথে: nx ৫.১→৭.২সে (MB আর কাটা পড়ে না), mm/m4u ৭.০সে সব-সাইট, hm-রেস ৩.২→৬.৬সে (কোল্ড-চেইনও একই রেসপন্সে), m4u-তে ৩ pd-id + ২ জীবিত মিরর (আগে ১ম-সফলেই-থামা), sky-তে ৩ pd-id/hub, PD_MAX env-নব। মাপা (১৬ রিকোয়েস্ট, লোকাল): avg 5.52s · সর্বোচ্চ 6.66s (আগে 3.75s-কাট-সংস্করণে ৮২৪ কার্ড), HindMovie ৮/১৬ (আগে ৩/১৬), MB ১৬/১৬, mm ১৬/১৬, m4u ১৪/১৬, sky ১২/১৬, কার্ড ৮৩৯ ⇒ **কার্ড কমেনি, বেড়েছে**।';
 
 const V1NOTE_48 = 'v1.17.48 (ইউজার: "M4u thik koro, Hindi movie add koro, configuration page ta o thik koro") — ★ কনফিগ-পেজ-মেরামত: SRC-তালিকা থেকেই সুইচ-বাইন্ড (bf সরানোর পর bindSwitch-এ null.classList-এ পুরো IIFE থেমে যেত ⇒ tune-কার্ড/সেভ/প্রিভিউ কিছুই রেন্ডার হতো না) + bindSwitch-এ null-গার্ড; HindMovie প্যানেল + tune-hm কার্ড যোগ। ★ Movies4u: একাধিক সার্চ-হিট-চেষ্টা (per_page 12), আর্টিকেল-বাদ-দিয়ে-পুনঃসার্চ, modpro-শাখা এখন আসলেই চলে (post খালি থাকলে lastPost দিয়ে) — মৃত-মিরর Range-প্রমাণ ছাড়া কার্ড-নয়। ★ প্রতি-সারি-deadline: এক-সারির-ঢিলামিতে সব-কার্ড বাতিল হতো (3 Idiots ৮.৬সে→৪.৭সে)। ★ HindMovie: 404/410-এ প্রক্সি-পুল-বন্ধ (Silence ১২.২সে→৬.১সে, কার্ড-আসে)। বেঞ্চ: avg ৪.৭৪সে (আগে ৫.৫২), max ৭.০২, m4u ১৪/১৬, HM ৮/১৬, Sky ১৪/১৬।';const V1NOTE_46 = 'v1.17.46 (HindMovie নতুন সোর্স): live search (REST → HTML ফলব্যাক, বছর-মুক্ত কুয়েরি) → পোস্ট (IMDb-id গার্ড) → mvlink (মুভি) / mvlink /web/<id> (সিজন×কোয়ালিটি) → hshare → hcloud b64 → workers.dev direct MKV (২০৬, সিক-যোগ্য)। ক্যাশ ৬ঘণ্টা (search/post/mvlink/final); ডিরেক্ট আগে, 403/429/5xx-তে পুল-রেস। ব্যাচ .zip কখনো কার্ড নয়। hmRace ৩.২s ⇒ কোল্ড-চেইন রেসপন্স আটকায় না, পেছনে ক্যাশ ভরে। মাপা (১৬ রিকোয়েস্ট): avg 3.75s, MB 15/16, mm 16/16, m4u 14/16, sky 13/16, hm 3/16 (হলিউড-ক্লাসিক বেঞ্চে; সিরিজে BB/GoT S1E1 = ৩ কার্ড)।';
@@ -2378,6 +2378,11 @@ const DBG = !!process.env.VDBG;
 // ★ v1.27.18: প্রোডেশনে লগ দেখার উপায় -- স্ট্যাটিক রিং-বাফার (শেষ 600 লাইন), `/_diag` এন্ডপজেইন্টে দেখা যায়।
 //   mlbd/hm ফেল-কারণ (হোস্ট-ব্লক, পেজ-শূন্য, টাইম-ক্যাপ) এখানে জমা হয়।
 const DIAG = []; const DIAG_MAX = 600;
+const HOSTFAIL = new Map();   // v1.27.25: host -> {n, ts}  (টানা-ব্যর্থতা = সাইট-ব্লক; তখন প্রক্সি-পুলের-পথে-সরাসরি)
+function hostOf(u) { try { return new URL(String(u)).hostname; } catch (e) { return ''; } }
+function hostBad(u) { const x = HOSTFAIL.get(hostOf(u)); return !!(x && x.n >= 2 && Date.now() - x.ts < 10 * 60e3); }
+function hostOK(u) { const h = hostOf(u); if (h) HOSTFAIL.delete(h); }
+function hostFail(u) { const h = hostOf(u); if (!h) return; const x = HOSTFAIL.get(h); HOSTFAIL.set(h, { n: (x && Date.now() - x.ts < 10 * 60e3 ? x.n : 0) + 1, ts: Date.now() }); if (HOSTFAIL.size > 400) HOSTFAIL.clear(); }
 function diag(tag, msg) {
   try {
     DIAG.push({ t: Date.now(), g: String(tag), m: String(msg).slice(0, 260) });
@@ -4285,8 +4290,10 @@ async function hmText(u, ms, ref) { // ডিরেক্ট → ব্যর্
     try {
       const r = await fetch(u, { headers: h, redirect: 'follow', signal: AbortSignal.timeout(Math.max(700, msl)) });
       let t = ''; try { t = await r.text(); } catch { }
+      hostOK(u);                                        // v1.27.25
       return { st: r.status, t: t, el: Date.now() - t1 };
     } catch (e) {
+      hostFail(u);
       diag('hm', 'ERR ' + String(u).replace(/^https?:\/\//, '').slice(0, 60) + ' ' + (e && e.name) + ' ' + String((e && (e.cause && e.cause.code || e.message)) || '').slice(0, 34));
       if (DBG) console.error('[hm] DIRECT-ERR ' + String(u).slice(0, 46) + ' ' + (e && e.name) + ' ' + (e && (e.cause && e.cause.code || e.message) || '').slice(0, 40));
       return { st: 0, t: '', err: true, el: Date.now() - t1 };
@@ -4304,7 +4311,7 @@ async function hmText(u, ms, ref) { // ডিরেক্ট → ব্যর্
   };
   const d = one(ms);
   const SLOW = 600;                                   // এর-ভিতরে-না-এলে-পুল-ও-দৌড়ায়
-  const early = await Promise.race([d, new Promise(r => setTimeout(() => r(null), SLOW))]);
+  const early = hostBad(u) ? null : await Promise.race([d, new Promise(r => setTimeout(() => r(null), SLOW))]);   // v1.27.25
   let r0 = early;
   if (!r0) {                                          // ★ পুল-ব্যর্থ-হলেও ডায়রেক্ট-ফেচ **বাতিল হয় না** (আগে এখানে-ঝুকে সফল-ডায়রেক্ট-ফেচ বাদ পড়ত)
     const pr = await Promise.race([d, poolP(Math.floor(ms * 0.85))]);
@@ -5220,7 +5227,23 @@ async function mlbdGet(u, opt) {
   opt = opt || {};
   const T0 = Date.now(), BUD = Math.max(900, opt.ms || 6000);   // ★ মোট-বাজেট (রিট্রাই মিলিয়ে)
   const delays = [200, 600, 1300];
+  const pxTry = async () => {                      // v1.27.25: প্রক্সি-চেষ্টা (হোস্ট-ব্লকের-মূখ্য-উপায়)
+    for (let k = 0; k < 2; k++) {
+      if (Date.now() - T0 > BUD) break;
+      const px = vspPick(null); if (!px) break;
+      try {
+        const txt = await proxiedGet(px.px, u, Math.max(1800, Math.min(opt.ms || 6000, 3500)));
+        if (txt && txt.length > 200) { diag('mlbd', 'px-ok ' + String(u).replace(/^https?:\/\//, '').slice(0, 44)); return { st: 200, loc: '', body: txt }; }
+      } catch (e2) { }
+    }
+    return null;
+  };
   for (let at = 0; at < 4; at++) {
+    if (hostBad(u)) {                              // ★ হোস্ট-ইতিমাসে-ব্যর্থ ⇒ ডায়রেক্ট-চেষ্টা বাদ, সরাসরি-প্রক্সি
+      const pr = await pxTry();
+      if (pr) { hostOK(u); return pr; }
+      return { st: 0, loc: '', body: '' };
+    }
     try {
       return await mlbdLimit(async () => {
         let url = u;                                   // ★ 301/302 (movielinkbd.com → mirror) নিজেই ফলো করি
@@ -5236,12 +5259,14 @@ async function mlbdGet(u, opt) {
           }
           let body = '';
           if (opt.body !== false) { try { body = await r.text(); } catch (e) { } }
+          hostOK(u);
           if (r.status !== 200) diag('mlbd', 'http ' + r.status + ' ' + String(url).replace(/^https?:\/\//, '').slice(0, 70) + ' len=' + body.length);
           return { st: r.status, loc: loc, body: body };
         }
         return { st: 0, loc: '', body: '' };
       });
     } catch (e) {
+      hostFail(u);
       if (at === 3 || Date.now() - T0 > BUD) {                   // ★ এক-কলের মোট-সময় budget-এ সীমিত
         diag('mlbd', 'get-fail ' + String(u).replace(/^https?:\/\//, '').slice(0, 70) + ' :: ' + ((e && (e.cause && (e.cause.code || e.cause.message) || e.message)) || e) + ' @' + (Date.now() - T0) + 'ms');
         if (DBG) console.error('[mlbd] get-fail ' + String(u).slice(0, 60) + ' :: ' + (e && (e.message || e)) + ' | ' + ((e && e.cause && (e.cause.code || e.cause.message)) || '') + ' @' + (Date.now() - T0) + 'ms');
