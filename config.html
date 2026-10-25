@@ -351,13 +351,14 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
         <div class="pcard" id="pvO"><div class="dot n"></div><div class="pbody"><div class="hd n" id="pvOh"></div><div class="t" id="pvOt"></div></div><div class="q pq" id="pvOq"></div></div>
         <div class="pcard" id="pvA"><div class="dot n"></div><div class="pbody"><div class="hd n" id="pvAh"></div><div class="t" id="pvAt"></div></div><div class="q pq" id="pvAq"></div></div>
         <div class="pcard" id="pvP"><div class="dot n"></div><div class="pbody"><div class="hd n" id="pvPh"></div><div class="t" id="pvPt"></div></div><div class="q pq" id="pvPq"></div></div>
-        <div class="pcard" id="pvB"><div class="dot n"></div><div class="pbody"><div class="hd n" id="pvBh"></div><div class="t" id="pvBt"></div></div><div class="q pq" id="pvBq"></div></div>
+        <div class="pcard" id="pvH"><div class="dot n"></div><div class="pbody"><div class="hd n" id="pvHh"></div><div class="t" id="pvHt"></div></div><div class="q pq" id="pvHq"></div></div>
+        <div class="pcard" id="pvL"><div class="dot n"></div><div class="pbody"><div class="hd n" id="pvLh"></div><div class="t" id="pvLt"></div></div><div class="q pq" id="pvLq"></div></div>
       </div>
       <div class="anat">
         <div class="an"><i>▥</i><div><b>Resolution badge</b><span>Measured from the real manifest — never guessed.</span></div></div>
         <div class="an"><i>⧉</i><div><b>Title line</b><span>What you tapped, with year.</span></div></div>
-        <div class="an"><i>⧠</i><div><b>Episode line</b><span>Season · episode of this link.</span></div></div>
-        <div class="an"><i>⊞</i><div><b>Slot + audio</b><span>Provider and the actual audio language.</span></div></div>
+        <div class="an"><i>⏣</i><div><b>Episode line</b><span>Season · episode of this link (movies have none).</span></div></div>
+        <div class="an"><i>⌘</i><div><b>Source + audio</b><span>1 audio = its language · 2 = Dual Audio · 3+ = Multi Audio · then • server.</span></div></div>
       </div>
     </section>
 
@@ -478,9 +479,10 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
   ];
   var CAPS=[[0,'All'],[1080,'≤1080p'],[720,'≤720p'],[480,'≤480p']];
   var SUBS=[[1,'On'],[0,'No subs']];
+  var CAPS=[[0,'All'],[480,'480p cap'],[720,'720p cap'],[1080,'1080p cap'],[2160,'2160p cap']];
 
   /* ─────────── state (server-contract keys) ─────────── */
-  var st={v:1,q:[],sub:1,srv:SRVS.map(function(x){return x[0];}),nx:1,nxq:[],nxl:[],rt:1,rtl:[],rtq:[],tw:1,twq:[],twl:[],mm:1,mmr:0,mmq:[],mml:[],m4u:1,m4ur:0,m4uq:[],m4ul:[],sky:1,skyr:0,hm:1,hmr:0,skyq:[],hmq:[],skyl:[],hml:[],hd:1,hdr:0,hdq:[],hdl:[],vsp:1,vspq:[],vspl:[],ott:1,ottq:[],ottl:[],az:1,azq:[],azl:[],mlb:0,mlbr:0,rtsrv:[]}; /* rtsrv: খালি=MQ+Pixeldrain-দুটোই (সার্ভার-চুক্তি: খালি=সব) */
+  var st={v:1,q:[],sub:1,srv:SRVS.map(function(x){return x[0];}),nx:1,nxq:[],nxl:[],rt:1,rtl:[],rtq:[],tw:1,twq:[],twl:[],mm:1,mmr:0,mmq:[],mml:[],m4u:1,m4ur:0,m4uq:[],m4ul:[],sky:1,skyr:0,hm:1,hmr:0,skyq:[],hmq:[],skyl:[],hml:[],hd:1,hdr:0,hdq:[],hdl:[],vsp:1,vspq:[],vspl:[],ott:1,ottq:[],ottl:[],az:1,azq:[],azl:[],mlb:1,mlbr:0,rtsrv:[]}; /* rtsrv: খালি=MQ+Pixeldrain-দুটোই (সার্ভার-চুক্তি: খালি=সব) */
 
   /* source definitions: [key, tile, tileBg, tileFg, name, badge, badgeCls, blurb, hasTune] */
   var SRC=[
@@ -496,7 +498,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     ['vsp','VS','linear-gradient(135deg,#1b2337,#121826)','#a9b8e8','Vidsrc','HLS · Eng','', 'Own relay pool · wide catalog',1],
     ['ott','AT','linear-gradient(135deg,#102a26,#0b1d1a)','#7fe0cc','AsianTV','HLS · K/C/J/Thai','', 'Dramas & movies · embedded subs',1],
     ['az','AZ','linear-gradient(135deg,#221a33,#171122)','#c9b8ff','AniZone','HLS · Anime','new','Anime series & movies · multi-language subs',1],
-    ['mlb','MLB','linear-gradient(135deg,#0e1d2b,#0a1520)','#8fd6ff','MovieLinkBD','MKV · FSL','new','Bilingual DDL · FSL/HubCloud · Range-proven (beta)',0]
+    ['mlb','MLB','linear-gradient(135deg,#0e1d2b,#0a1520)','#8fd6ff','MovieLinkBD','MKV · FSL/HubCloud','','Bilingual DDL · all Range-proven mirrors · every seekable server',1]
   ];
 
   /* ─────────── utils ─────────── */
@@ -635,8 +637,9 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
       if(st.azq.length)c.azq=st.azq.slice();
       if(st.azl.length)c.azl=st.azl.slice();
     }
-    // ★ v1.27.12: MovieLinkBD — সার্ভারে **অপ্ট-ইন** (mlb:1); বন্ধ থাকলে স্পষ্ট mlb:0
-    if(st.mlb===1){ c.mlb=1; if(st.mlbr)c.mlbr=st.mlbr; } else c.mlb=0;
+    // ★ v1.27.16: MovieLinkBD এখন **অন্য সোর্সের মতোই ডিফল্ট চালু** — বন্ধ করলেই কেবল mlb:0 পাঠাই
+    if(st.mlb===0)c.mlb=0;
+    else if(st.mlbr)c.mlbr=st.mlbr;
     var u=base()+(Object.keys(c).length?'/cfg/'+b64u(c):'')+'/manifest.json';
     $('url').value=u;
     $('inst').href='stremio://'+u.replace(/^https?:\/\//,'');
@@ -902,58 +905,45 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     o=tuneCard('tune-az','az','AniZone','Anime series & movies · multi-language subs');h.appendChild(o.card);
     chipsInto(o.zone,'Resolutions',st.azq,RES,rebuild,'',1);
     chipsInto(o.zone,'Audio languages',st.azl,LANGS,rebuild);
+    /* MovieLinkBD — v1.27.16: নিজস্ব রেজোলিউশন-ক্যাপ (server: cfg.mlbr) */
+    o=tuneCard('tune-mlb','mlb','MovieLinkBD','Bilingual DDL · every Range-proven server as its own card');h.appendChild(o.card);
+    singleInto(o.zone,'Resolution cap','mlbr',CAPS,rebuild);
   })();
-  /* ─────────── preview (same texts as before) ─────────── */
+  /* ─────────── preview — আসল কার্ড-ছাঁচেই (v1.27.16) ─────────── */
+  function pvCard(id, on, q, opts){ /* opts={title,ep,src,audio,srv,note} */
+    var c=$(id);if(!c)return;c.style.display=on?'':'none';
+    if(!on)return;
+    var t=$(id+'h'),d=$(id+'t'),qq=$(id+'q');
+    if(t)t.textContent='\u25a5 '+(q||'Auto')+' \u25a5';
+    var lines=['\u29c9 '+opts.title];
+    if(opts.ep)lines.push(' \u23e3 '+opts.ep);                                  /* মুভিতে এপিসোড-লাইন নেই */
+    lines.push(' \u2318 '+opts.src+(opts.audio?' \u2317 '+opts.audio:'')+(opts.srv?' \u2022 '+opts.srv:''));
+    if(d)d.textContent=lines.join('\n');
+    if(qq)qq.textContent=opts.note||'';
+  }
+  function audioLabel(list){ /* ১ ⇒ ভাষা · ২ ⇒ Dual Audio · ৩+ ⇒ Multi Audio */
+    var a=(list||[]).filter(Boolean);
+    if(a.length===1)return cap1(a[0]);
+    if(a.length===2)return 'Dual Audio';
+    if(a.length>=3)return 'Multi Audio';
+    return '';
+  }
+  function cap1(x){x=String(x||'');return x?x.charAt(0).toUpperCase()+x.slice(1):'';}
   function preview(){
-    var vOn=st.v===1; /* srv=[] = সব-সার্ভার-অন (চুক্তি) */
-    var top=st.q.length?Math.max.apply(null,st.q):2160;
-    $('pvV').style.display=vOn?'':'none';
-    $('pvVh').textContent='\u25a5 '+top+' \u25a5';
-    $('pvVt').textContent='\u29c9 Queen of Tears | 2024 |\n\u29e0 S1E1 \u2022 Episode Title\n\u229e '+(vOn?(st.srv[0]||'miami').charAt(0).toUpperCase()+(st.srv[0]||'miami').slice(1):'Miami')+' \u2317 '+(st.sub===1?'Original':'No Subs');
-    $('pvVq').textContent=qsel(st.q);
+    var vOn=st.v===1, top=st.q.length?Math.max.apply(null,st.q):2160;
+    pvCard('pvV',vOn,top,{title:'Queen of Tears | 2024 |',ep:'S1E1 \u2022 Episode Title',src:vOn?cap1(st.srv[0]||'Miami'):'Miami',audio:st.sub===1?'Korean':'Korean',note:qsel(st.q)});
     var nq=st.nxq.length?Math.max.apply(null,st.nxq):1080;
-    $('pvN').style.display=st.nx?'':'none';
-    $('pvNh').textContent='\u25a5 '+nq+' \u25a5';
-    $('pvNt').textContent='\u29c9 Demon Slayer | 2019 |\n\u29e0 S1E5 \u2022 Episode Title\n\u229e MovieBox \u2317 '+(st.nxl.length?st.nxl[0].charAt(0).toUpperCase()+st.nxl[0].slice(1):'All audio');
-    $('pvNq').textContent=qsel(st.nxq);
-    $('pvR').style.display=(st.rt&&st.rtsrv.length<2)?'':'none'; /* v1.15.81: দুটো-সার্ভারই-বাদ → RT-কার্ড-নেই */
-    $('pvRh').textContent='\u25a5 1080 \u25a5'; /* RT-কার্ড-সর্বোচ্চ-১০৮০-লেবেল (Auto-নয় — ইউজার-নির্দেশ) */
-    var cap1=a=>a.length?a[0].charAt(0).toUpperCase()+a[0].slice(1):'';
-    /* v1.15.81: প্রিভিউ-লেখা = আসল-কার্ড (unifyCards-এ ⊞ RareToons ⌗ Audio — কোনো-হোস্ট-প্রত্যয়-নেই) */
-    $('pvRt').textContent='\u29c9 Demon Slayer | 2019 |\n\u29e0 S1E5 \u2022 Episode Title\n\u229e RareToons \u2317 '+(st.rtl.length?cap1(st.rtl):'All dubs');
-    $('pvRq').textContent=st.rtq.length?('≤'+Math.max.apply(null,st.rtq)+'p'):(st.rtl.length?(cap1(st.rtl)+(st.rtl.length>1?' +'+(st.rtl.length-1):'')):'All'); /* সংক্ষিপ্ত — ওভারফ্লো-নয় */
-    $('pvT').style.display=st.tw?'':'none';
-    $('pvTh').textContent='\u25a5 '+(st.twq.length?Math.max.apply(null,st.twq):1080)+' \u25a5';
-    $('pvTt').textContent='\u29c9 Scarlet | 2025 |\n\u29e0 Movie\n\u229e ToonWorld \u2317 '+(st.twl.length?cap1(st.twl):'Multi Audio');
-    $('pvTq').textContent=qsel(st.twq);
-    $('pvM').style.display=st.mm?'':'none';
-    $('pvMh').textContent='\u25a5 1080 \u25a5';
-    $('pvMt').textContent='\u29c9 Scarlet | 2025 |\n\u29e0 Movie\n\u229e Multimovies \u00b7 MM-HLS \u2317 '+(st.mml.length?cap1(st.mml):'Bengali');
-    $('pvMq').textContent=st.mmq.length?('≤'+Math.max.apply(null,st.mmq)+'p'):(st.mmr?('cap '+st.mmr+'p'):'All');
-    $('pv4').style.display=st.m4u?'':'none';
-    $('pv4h').textContent='\u25a5 '+(st.m4uq.length?Math.max.apply(null,st.m4uq):(st.m4ur||2160))+' \u25a5';
-    $('pv4t').textContent='\u29c9 Deadpool & Wolverine | 2024 |\n\u29e0 Movie\n\u229e Movies4u \u00b7 HDR10+/DV \u00b7 MKV \u2317 '+(st.m4ul.length?cap1(st.m4ul):'Multi-Audio+Atmos');
-    $('pv4q').textContent=st.m4uq.length?('≤'+Math.max.apply(null,st.m4uq)+'p'):(st.m4ur?('cap '+st.m4ur+'p'):'All');
-    $('pvS').style.display=st.vsp?'':'none';
-    $('pvSh').textContent='\u25a5 '+(st.vspq.length?Math.max.apply(null,st.vspq):1080)+' \u25a5';
-    $('pvSt').textContent='\u29c9 The Dark Knight | 2008 |\n\u29e0 Movie\n\u229e Vidsrc \u2317 '+(st.vspl.length?cap1(st.vspl):'English');
-    $('pvSq').textContent=qsel(st.vspq);
-    $('pvO').style.display=st.ott?'':'none';
-    $('pvOh').textContent='\u25a5 '+(st.ottq.length?Math.max.apply(null,st.ottq):1080)+' \u25a5';
-    $('pvOt').textContent='\u29c9 Vincenzo | 2021 |\n\u29e0 S1E5 \u2022 Episode Title\n\u229e AsianTV \u2317 '+(st.ottl.length?cap1(st.ottl):'Korean');
-    $('pvOq').textContent=qsel(st.ottq);
-    $('pvA').style.display=st.az?'':'none';
-    $('pvAh').textContent='\u25a5 '+(st.azq.length?Math.max.apply(null,st.azq):1080)+' \u25a5';
-    $('pvAt').textContent='\u29c9 Frieren | 2023 |\n\u29e0 S1E1 \u2022 Episode Title\n\u229e AniZone \u2317 '+(st.azl.length?cap1(st.azl):'Subbed');
-    $('pvAq').textContent=qsel(st.azq);
-    $('pvP').style.display=st.sky?'':'none'; /* Sky Movies — v1.15.86: নিজস্ব সোর্স (Pengu সরানো) */
-    $('pvPh').textContent='\u25a5 '+(st.skyq.length?Math.max.apply(null,st.skyq):2160)+' \u25a5'; /* v1.15.81: নিজের-ডিফল্ট (আগে ভুলে Movies4u-র-m4ur-দেখাত) */
-    $('pvPt').textContent='\u29c9 Deadpool & Wolverine | 2024 |\n\u29e0 Movie\n\u229e Sky Movies \u00b7 MKV \u2317 '+(st.skyl.length?cap1(st.skyl):'Multi-Audio');
-    $('pvPq').textContent=st.skyq.length?('≤'+Math.max.apply(null,st.skyq)+'p'):'All'; /* v1.15.81: m4ur-লিক-বন্ধ */
-    $('pvB').style.display=st.m4u?'':'none';
-    $('pvBh').textContent='\u25a5 '+(st.m4uq.length?Math.max.apply(null,st.m4uq):(st.m4ur||2160))+' \u25a5';
-    $('pvBt').textContent='\u29c9 Sikandar | 2025 |\n\u29e0 Movie\n\u229e Movies4u \u2317 '+(st.m4ul.length?cap1(st.m4ul):'Hindi / Dual-Audio'); // v1.17.44: BF-প্রিভিউ → Movies4u
-    $('pvBq').textContent=st.m4uq.length?('≤'+Math.max.apply(null,st.m4uq)+'p'):(st.m4ur?('cap '+st.m4ur+'p'):'All');
+    pvCard('pvN',!!st.nx,nq,{title:'Demon Slayer | 2019 |',ep:'S1E5 \u2022 Episode Title',src:'MovieBox',audio:audioLabel(st.nxl)||'All audio',note:qsel(st.nxq)});
+    pvCard('pvR',!!(st.rt&&st.rtsrv.length<2),1080,{title:'Demon Slayer | 2019 |',ep:'S1E5 \u2022 Episode Title',src:'RareToons',audio:st.rtl.length?audioLabel(st.rtl):'All dubs',srv:'Pixeldrain',note:st.rtq.length?('\u2264'+Math.max.apply(null,st.rtq)+'p'):'All'});
+    pvCard('pvT',!!st.tw,st.twq.length?Math.max.apply(null,st.twq):1080,{title:'Scarlet | 2025 |',src:'ToonWorld',audio:audioLabel(st.twl)||'Multi Audio',note:qsel(st.twq)});
+    pvCard('pvM',!!st.mm,1080,{title:'Scarlet | 2025 |',src:'Multimovies',audio:audioLabel(st.mml)||'Bengali',note:st.mmq.length?('\u2264'+Math.max.apply(null,st.mmq)+'p'):(st.mmr?('cap '+st.mmr+'p'):'All')});
+    pvCard('pv4',!!st.m4u,(st.m4uq.length?Math.max.apply(null,st.m4uq):(st.m4ur||2160)),{title:'Deadpool & Wolverine | 2024 |',src:'Movies4u',audio:audioLabel(st.m4ul)||'Multi Audio',srv:'FSL',note:st.m4uq.length?('\u2264'+Math.max.apply(null,st.m4uq)+'p'):(st.m4ur?('cap '+st.m4ur+'p'):'All')});
+    pvCard('pvS',!!st.vsp,st.vspq.length?Math.max.apply(null,st.vspq):1080,{title:'The Dark Knight | 2008 |',src:'Vidsrc',audio:audioLabel(st.vspl)||'English',note:qsel(st.vspq)});
+    pvCard('pvO',!!st.ott,st.ottq.length?Math.max.apply(null,st.ottq):1080,{title:'Vincenzo | 2021 |',ep:'S1E5 \u2022 Episode Title',src:'AsianTV',audio:audioLabel(st.ottl)||'Korean',note:qsel(st.ottq)});
+    pvCard('pvA',!!st.az,st.azq.length?Math.max.apply(null,st.azq):1080,{title:'Frieren | 2023 |',ep:'S1E1 \u2022 Episode Title',src:'AniZone',audio:audioLabel(st.azl)||'Subbed',note:qsel(st.azq)});
+    pvCard('pvP',!!st.sky,st.skyq.length?Math.max.apply(null,st.skyq):2160,{title:'Deadpool & Wolverine | 2024 |',src:'Sky Movies',audio:audioLabel(st.skyl)||'Multi Audio',srv:'HubCloud',note:st.skyq.length?('\u2264'+Math.max.apply(null,st.skyq)+'p'):'All'});
+    pvCard('pvH',!!st.hm,st.hmq.length?Math.max.apply(null,st.hmq):1080,{title:'Inception | 2010 |',src:'HindMovie',audio:audioLabel(st.hml)||'Dual Audio',srv:'HubCloud',note:st.hmq.length?('\u2264'+Math.max.apply(null,st.hmq)+'p'):(st.hmr?('cap '+st.hmr+'p'):'All')});
+    pvCard('pvL',!!st.mlb,st.mlbr||1080,{title:'The Dark Knight | 2008 |',src:'MovieLinkBD',audio:'Dual Audio',srv:'FSL \u00b7 HubCloud',note:st.mlbr?('cap '+st.mlbr+'p'):'All'});
   }
 
   /* ─────────── counts + summary ─────────── */
@@ -972,6 +962,9 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     if(st.mm===1&&(st.mmq.length||st.mml.length||st.mmr))f++;
     if(st.m4u===1&&(st.m4uq.length||st.m4ul.length||st.m4ur))f++;
     if(st.sky===1&&(st.skyq.length||st.skyl.length))f++;
+    if(st.hm===1&&(st.hmq.length||st.hml.length||st.hmr))f++;
+    if(st.hd===1&&(st.hdq.length||st.hdl.length||st.hdr))f++;
+    if(st.mlb===1&&(st.mlbr))f++;
     /* v1.17.48: bf (BollyFlix) বাদ — গণনা থেকে-ও সরানো */
     if(st.vsp===1&&(st.vspq.length||st.vspl.length))f++;
     if(st.ott===1&&(st.ottq.length||st.ottl.length))f++;
@@ -982,14 +975,17 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
   }
   function summary(){
     var s=$('summ');s.innerHTML='';
-    var QK={v:'q',nx:'nxq',rt:'rtq',tw:'twq',mm:'mmq',m4u:'m4uq',sky:'skyq',bf:'bfq',vsp:'vspq',ott:'ottq',az:'azq'};
-    var LKK={nx:'nxl',rt:'rtl',tw:'twl',mm:'mml',m4u:'m4ul',sky:'skyl',bf:'bfl',vsp:'vspl',ott:'ottl',az:'azl'};
+    var QK={v:'q',nx:'nxq',rt:'rtq',tw:'twq',mm:'mmq',m4u:'m4uq',sky:'skyq',hm:'hmq',hd:'hdq',mlb:'mlbq',vsp:'vspq',ott:'ottq',az:'azq'};
+    var LKK={nx:'nxl',rt:'rtl',tw:'twl',mm:'mml',m4u:'m4ul',sky:'skyl',hm:'hml',hd:'hdl',mlb:'mlbl',vsp:'vspl',ott:'ottl',az:'azl'};
     SRC.forEach(function(x){
       if(st[x[0]]!==1)return;
       s.appendChild(el('div','chip on',x[4]));
       var ql=st[QK[x[0]]]||[],ll=st[LKK[x[0]]]||[];
       if(x[0]==='mm'&&!ql.length&&st.mmr)ql=[st.mmr];
       if(x[0]==='m4u'&&!ql.length&&st.m4ur)ql=[st.m4ur];
+      if(x[0]==='sky'&&!ql.length&&st.skyr)ql=[st.skyr];
+      if(x[0]==='hm'&&!ql.length&&st.hmr)ql=[st.hmr];
+      if(x[0]==='mlb'&&!ql.length&&st.mlbr)ql=[st.mlbr];
       if(ql.length)s.appendChild(el('div','chip',x[4]+' ≤'+Math.max.apply(null,ql)+'p'));
       if(ll.length)s.appendChild(el('div','chip',x[4]+' '+ll.slice(0,2).join('/')+(ll.length>2?'+'+ll.length:'')));
     });
@@ -1013,7 +1009,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     // ★ v1.17.48: হাতে-লেখা সোর্স-তালিকা বাদ (hm বাদ-পড়ে ছিল ⇒ Reset-এ HindMovie বন্ধ-ই থেকে যেত) —
     //   এখন `SRC` থেকেই সব সোর্স অন, আর আলাদা করে শুধু রেজো/অডিও-ডিফল্ট।
     SRC.forEach(function(x){st[x[0]]=1;});
-    st.mmr=0;st.m4ur=0;
+    st.mmr=0;st.m4ur=0;st.skyr=0;st.hmr=0;st.mlbr=0;
     syncAll(true);rebuild();toast('Reset');
   };
   function syncAll(collapse){ /* v1.15.81: collapse=সত্য → প্রসারিত-কার্ড-গুটানো (কেবল Reset) */

@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.27.15';
+const VERSION = '1.27.16';
 const V1NOTE_47 = 'v1.17.47 (ইউজার: "stream cut kore fast na — 6-8s laguk, sob stream asuk") — হারভেস্ট-কাট বাতিল: আগে ৪.৬সে-এ ৬-কার্ড-হলেই কাট, ৪.৯সে হার্ড-ক্যাপ ⇒ দেরিতে-আসা সোর্সের কার্ড ফেলত। এখন **সব লাইভ-সোর্স সেটেল হলেই ফেরা**, নইলে ৭.৮সে ক্যাপ (Beamup ১২সে-সীমার ভিতরে)। সাথে: nx ৫.১→৭.২সে (MB আর কাটা পড়ে না), mm/m4u ৭.০সে সব-সাইট, hm-রেস ৩.২→৬.৬সে (কোল্ড-চেইনও একই রেসপন্সে), m4u-তে ৩ pd-id + ২ জীবিত মিরর (আগে ১ম-সফলেই-থামা), sky-তে ৩ pd-id/hub, PD_MAX env-নব। মাপা (১৬ রিকোয়েস্ট, লোকাল): avg 5.52s · সর্বোচ্চ 6.66s (আগে 3.75s-কাট-সংস্করণে ৮২৪ কার্ড), HindMovie ৮/১৬ (আগে ৩/১৬), MB ১৬/১৬, mm ১৬/১৬, m4u ১৪/১৬, sky ১২/১৬, কার্ড ৮৩৯ ⇒ **কার্ড কমেনি, বেড়েছে**।';
 
 const V1NOTE_48 = 'v1.17.48 (ইউজার: "M4u thik koro, Hindi movie add koro, configuration page ta o thik koro") — ★ কনফিগ-পেজ-মেরামত: SRC-তালিকা থেকেই সুইচ-বাইন্ড (bf সরানোর পর bindSwitch-এ null.classList-এ পুরো IIFE থেমে যেত ⇒ tune-কার্ড/সেভ/প্রিভিউ কিছুই রেন্ডার হতো না) + bindSwitch-এ null-গার্ড; HindMovie প্যানেল + tune-hm কার্ড যোগ। ★ Movies4u: একাধিক সার্চ-হিট-চেষ্টা (per_page 12), আর্টিকেল-বাদ-দিয়ে-পুনঃসার্চ, modpro-শাখা এখন আসলেই চলে (post খালি থাকলে lastPost দিয়ে) — মৃত-মিরর Range-প্রমাণ ছাড়া কার্ড-নয়। ★ প্রতি-সারি-deadline: এক-সারির-ঢিলামিতে সব-কার্ড বাতিল হতো (3 Idiots ৮.৬সে→৪.৭সে)। ★ HindMovie: 404/410-এ প্রক্সি-পুল-বন্ধ (Silence ১২.২সে→৬.১সে, কার্ড-আসে)। বেঞ্চ: avg ৪.৭৪সে (আগে ৫.৫২), max ৭.০২, m4u ১৪/১৬, HM ৮/১৬, Sky ১৪/১৬।';const V1NOTE_46 = 'v1.17.46 (HindMovie নতুন সোর্স): live search (REST → HTML ফলব্যাক, বছর-মুক্ত কুয়েরি) → পোস্ট (IMDb-id গার্ড) → mvlink (মুভি) / mvlink /web/<id> (সিজন×কোয়ালিটি) → hshare → hcloud b64 → workers.dev direct MKV (২০৬, সিক-যোগ্য)। ক্যাশ ৬ঘণ্টা (search/post/mvlink/final); ডিরেক্ট আগে, 403/429/5xx-তে পুল-রেস। ব্যাচ .zip কখনো কার্ড নয়। hmRace ৩.২s ⇒ কোল্ড-চেইন রেসপন্স আটকায় না, পেছনে ক্যাশ ভরে। মাপা (১৬ রিকোয়েস্ট): avg 3.75s, MB 15/16, mm 16/16, m4u 14/16, sky 13/16, hm 3/16 (হলিউড-ক্লাসিক বেঞ্চে; সিরিজে BB/GoT S1E1 = ৩ কার্ড)।';
@@ -1332,7 +1332,7 @@ function srcKeyFor(pxKey) {
 //   আগের যাচাই ছিল একবার-২০০-হলেই-হল (৪০ বাইটের error পেজও পাস করত)। এখন প্রতি সোর্সে আসল API-কল
 //   + কনটেন্ট-মার্কার + ন্যূনতম দৈর্ঘ্য, আর পুরোনো নোড পুনঃযাচাই হয় — তাজা না হলে সার্ভ করে না।
 const SRC_PROBE = {
-  hm: { u: () => HM_BASE + '/wp-json/wp/v2/search?search=inception&per_page=1', min: 200, mark: /"id"|"slug"|"title"/ },
+  hm: { u: () => 'https://' + HM_HOST + '/wp-json/wp/v2/search?search=inception&per_page=1', min: 200, mark: /"id"|"slug"|"title"/ },
   hd: { u: () => HD_BASE + '/', min: 3000, mark: /hdhub|post_title|movies|download/i },
   m4u: { u: () => M4U_LIVE + '/', min: 3000, mark: /movies4u|post|href/i },   // ★ v1.27.2: এখানে await চলবে না (sync প্রোব-বিল্ডার)
   sky: { u: () => SKY_ANNOUNCERS[0], min: 1000, mark: /sky|movie|href/i },
@@ -4244,19 +4244,57 @@ async function mmServersLive(servers) {
 //   → base64-ডিকোডে ফাইনাল: *.workers.dev/0:/…/<name>.mkv  (২০৬, video/x-matroska, সিক-যোগ্য)
 // নিয়ম: ব্যাচ .zip **কখনো কার্ড নয়** (সাইট নিজেই এপিসোড ভেঙে দেয়); মৃত হোস্ট-ক্যাশ;
 //       ডিরেক্ট আগে, IP-ফ্ল্যাগ (403/429/5xx/নেট-ফেল) হলেই পুল-রেস।
-const HM_BASE = 'https://hindmovie.one';
+// ★ v1.27.16: সাইটের **ডোমেইন বদলায়** (hindmovie.one → .tax) — হার্ডকোড নয়; সিড থেকে রিডাইরেক্ট ফলো
+//   করে আসল হোস্ট ধরি (৩ ঘণ্টা ক্যাশ), তারপর সব URL/রেগেক্স সেই হোস্ট-পরিবারে চলে।
+let HM_HOST = 'hindmovie.one', HM_HOST_TS = 0;
+async function hmBase() {
+  if (HM_HOST_TS && Date.now() - HM_HOST_TS < 3 * 3600e3) return 'https://' + HM_HOST;
+  try {
+    const r = await fetch('https://hindmovie.one/', { headers: { 'User-Agent': UA }, redirect: 'follow', signal: AbortSignal.timeout(6000) });
+    const h = new URL(r.url || 'https://hindmovie.one/').hostname;
+    if (/^hindmovie\.[a-z]{2,6}$/i.test(h)) HM_HOST = h;
+    HM_HOST_TS = Date.now();
+    try { await r.arrayBuffer(); } catch (e) { }
+  } catch (e) {
+    if (!HM_HOST_TS) HM_HOST_TS = Date.now() - 2.9 * 3600e3;   // ১০ মিনিট পরে আবার চেষ্টা
+  }
+  return 'https://' + HM_HOST;
+}
+const HM_BASE = 'https://hindmovie.one';   // শুধু সিড/রেফারার (আসল URL hmBase() থেকে)
 const HM_TTL = 6 * 3600 * 1000;
 const HM_S = new Map(); const HM_P = new Map(); const HM_M = new Map(); const HM_F = new Map();
 function hmGet(m, k) { if (NOCACHE) return null; const c = m.get(k); return (c && Date.now() - c.ts < HM_TTL) ? c.v : null; }
 function hmSet(m, k, v) { if (m.size > 900) m.clear(); m.set(k, { ts: Date.now(), v: v }); }
-function hmText(u, ms, ref) { // ডিরেক্ট → ব্যর্থ হলে পুল-রেস (IP-ফ্ল্যাগ-বাইপাস)
+async function hmText(u, ms, ref) { // ডিরেক্ট → ব্যর্থ হলে পুল-রেস (IP-ফ্ল্যাগ-বাইপাস)
   const h = { 'User-Agent': UA, 'Accept-Language': 'en-US,en;q=0.9', 'Accept': 'text/html,application/json;q=0.9,*/*;q=0.8' };
   if (ref) h.Referer = ref;
   const t0 = Date.now();
   const fin = r => ({ st: r.st, t: r.t, ms: Date.now() - t0, via: r.via || 'd' });
-  return fetch(u, { headers: h, redirect: 'follow', signal: AbortSignal.timeout(Math.max(700, ms)) })
-    .then(r => r.text().then(t => ({ st: r.status, t: t })).catch(() => ({ st: r.status, t: '' })))
-    .catch(e => { if (DBG) console.error('[hm] DIRECT-ERR ' + String(u).slice(0, 46) + ' ' + (e && e.name) + ' ' + (e && (e.cause && e.cause.code || e.message) || '').slice(0, 40)); return { st: 0, t: '' }; })
+  // ★ v1.27.16: স্লো-পুলে-যাওয়ার-আগে দ্রুত-রিট্রাই (মাপা: কনকরেন্ট-চাপে-ECONNRESET-হলেও-একরিট্রাইতে-সাফল)
+  const one = async (msl) => {
+    const t1 = Date.now();
+    try {
+      const r = await fetch(u, { headers: h, redirect: 'follow', signal: AbortSignal.timeout(Math.max(700, msl)) });
+      let t = ''; try { t = await r.text(); } catch { }
+      return { st: r.status, t: t, el: Date.now() - t1 };
+    } catch (e) {
+      if (DBG) console.error('[hm] DIRECT-ERR ' + String(u).slice(0, 46) + ' ' + (e && e.name) + ' ' + (e && (e.cause && e.cause.code || e.message) || '').slice(0, 40));
+      return { st: 0, t: '', err: true, el: Date.now() - t1 };
+    }
+  };
+  return one(ms).then(r0 => {
+    const retry = async () => {
+      if (r0.t && r0.st < 400) return r0;
+      if (r0.err && ms > 1600 && (r0.el || 0) < 900) {   // দ্রুত-ব্যর্থতা-শুধু (timeout-এর-পর-আর-ওটিন-নয়)
+        const r1 = await one(Math.floor(ms * 0.75));
+        if (DBG) console.error('[hm] RETRY ' + String(u).slice(0, 40) + ' st=' + r1.st + ' bytes=' + r1.t.length);
+        if (r1.t && r1.st < 400) return r1;
+        return r1.t ? r1 : r0;
+      }
+      return r0;
+    };
+    return retry();
+  })
     .then(r => {
       if (r.t && r.st < 400) return fin(r);
       // ★ v1.17.48 (মাপা: Silence — ৪-প্রক্সি-পুলে-একটি-404-পেছনে-প্রায়-২সে-নষ্ট, তার-ওপর-hshare-প্রায়-৩.৫সে):
@@ -4279,7 +4317,10 @@ function hmDecode(html) { // hcloud.ink/redirect.php?url=<b64(b64)> → আস�
   return /^https?:\/\//.test(v) ? v : '';
 }
 function hmHsIds(txt) { // পেজ-টেক্সট → hshare ফাইল-আইডি (zip বাদ)
-  return [...new Set((String(txt || '').replace(/\\\//g, '/').match(/hshare\.lol\/\?id=([A-Za-z0-9._%\-]+)/g) || []).map(z => z.split('id=')[1]))]
+  // ★ v1.27.16: আইডি = **পুরো ফাইলনাম** ("Inception.(2010).1080p.Dual.Audio.(Hin-Eng).mkv") —
+  //   আগের [A-Za-z0-9._%-]+ রেগেক্স '(' -এ থেমে অসম্পূর্ণ আইডি দিত ⇒ hshare 404 ⇒ ০ কার্ড।
+  return [...new Set((String(txt || '').replace(/\\\//g, '/').match(/hshare\.lol\/\?id=([^"'&\s<>]+)/g) || []).map(z => z.slice(z.indexOf('id=') + 3)))]
+    .map(x => { try { return decodeURIComponent(x); } catch (e) { return x; } })
     .filter(x => x && !/\.zip$/i.test(x) && !/\.rar$/i.test(x));
 }
 async function hmPost(url, ms) { // পোস্ট-পেজ → {imdb, mv:[], web:[], title}
@@ -4297,7 +4338,7 @@ async function hmPost(url, ms) { // পোস্ট-পেজ → {imdb, mv:[], 
 }
 async function hmHs(mvId, ms, force, web) { // mvlink-পেজ → {ids, title}; web=true ⇒ /web/<id> (সিজন-পেজ)
   const k = (web ? 'w:' : 'm:') + mvId; if (!force) { const c = hmGet(HM_M, k); if (c) return c; }
-  const r = await hmText('https://mvlink.blog/' + (web ? 'web/' : '') + mvId, ms, HM_BASE + '/');
+  const r = await hmText('https://mvlink.blog/' + (web ? 'web/' : '') + mvId, ms, 'https://' + HM_HOST + '/');
   const v = { ids: hmHsIds(r.t), title: (String(r.t).match(/<title>([^<]*)<\/title>/) || [])[1] || '' };
   if (v.ids.length && v.title) hmSet(HM_M, k, v);
   return v;
@@ -4331,7 +4372,28 @@ async function hmPool(items, n, fn) { // ★ mvlink-এ >৩ সমান্ত�
   }));
   return out;
 }
-async function hmStreams(tmdbId, title, type, s, e, origin, maxh) {
+// ★ v1.27.16: টাইটেল-ভিত্তিক কার্ড-ক্যাশ + in-flight শেয়ারিং।
+//   মাপা: hm-চেইন কোল্ড অবস্থায় 8-10s (রেসপব্স-কাটআফ 6.6s) — তাই প্রথম রিকোয়েস্টে কার্ড
+//   না-আসলেও চেইন শেষ হলে ক্যাশে বসে — পরের রিকোয়েস্টে তাৎক্ষণিক (শূন্য-ফল ক্যাশ-হয়-না।
+const HM_RC = new Map(); const HM_INF = new Map(); const HM_RC_TTL = 20 * 60 * 1000;
+function hmStreams(tmdbId, title, type, s, e, origin, maxh) {
+  const k = [type || '', tmdbId || String(title || '').toLowerCase(), s || 0, e || 0, maxh || 0].join('|');
+  if (!NOCACHE) {
+    const c = HM_RC.get(k);
+    if (c && Date.now() - c.ts < HM_RC_TTL) { if (DBG) console.error('[hm] RC-hit n=' + c.v.length); return Promise.resolve(c.v); }
+  }
+  const inf = HM_INF.get(k);
+  if (inf && Date.now() - inf.ts < 60000) return inf.p;
+  if (HM_INF.size > 300) HM_INF.clear();
+  const p = hmStreamsRaw(tmdbId, title, type, s, e, origin, maxh).then(v => {
+    HM_INF.delete(k);
+    if (v && v.length) { if (HM_RC.size > 500) HM_RC.clear(); HM_RC.set(k, { ts: Date.now(), v: v }); }
+    return v || [];
+  }).catch(() => { HM_INF.delete(k); return []; });
+  HM_INF.set(k, { ts: Date.now(), p: p });
+  return p;
+}
+async function hmStreamsRaw(tmdbId, title, type, s, e, origin, maxh) {
   const T0 = Date.now(); const B = 5600; const left = () => Math.max(700, B - (Date.now() - T0)); // v1.17.46: কোল্ড-চেইন ~৫.৫s — হ্যাং নয়, কাট-রুলই ঠিক করে
   const isTv = type === 'series' || type === 'tv';
   const SE = parseInt(s, 10) || 1, EP = parseInt(e, 10) || 1;
@@ -4343,16 +4405,17 @@ async function hmStreams(tmdbId, title, type, s, e, origin, maxh) {
     let posts = hmGet(HM_S, 'q:' + T.toLowerCase());
     if (!posts) {
       const rq = Math.min(2800, left());
-      const r1 = await hmText(HM_BASE + '/wp-json/wp/v2/search?search=' + encodeURIComponent(T) + '&per_page=5&_fields=url', rq);
-      try { const a = JSON.parse(r1.t); if (Array.isArray(a)) posts = a.map(x => String(x.url || '')).filter(u => /^https:\/\/hindmovie\.one\/[a-z0-9\-]+\//i.test(u)); } catch (e) { }
+      const HMB = await hmBase();
+      const r1 = await hmText(HMB + '/wp-json/wp/v2/search?search=' + encodeURIComponent(T) + '&per_page=5&_fields=url', rq);
+      try { const a = JSON.parse(r1.t); if (Array.isArray(a)) posts = a.map(x => String(x.url || '')).filter(u => /^https:\/\/hindmovie\.[a-z]{2,6}\/[a-z0-9][a-z0-9\-]*\/?$/i.test(u)); } catch (e) { }
       if (!posts || !posts.length) {
-        const r2 = await hmText(HM_BASE + '/?s=' + encodeURIComponent(T), rq);
-        posts = [...new Set((r2.t.match(/href="https:\/\/hindmovie\.one\/[a-z0-9\-]{6,}\//gi) || []).map(z => z.slice(6, -1)))]
+        const r2 = await hmText(HMB + '/?s=' + encodeURIComponent(T), rq);
+        posts = [...new Set((r2.t.match(/href="https:\/\/hindmovie\.[a-z]{2,6}\/[a-z0-9\-]{6,}\//gi) || []).map(z => z.slice(6, -1)))]
           .filter(u => !/\/(genre|category|tag|page|author|dramas|anime|movies|quality|web-series)\//i.test(u)).slice(0, 6);
       }
       // স্লাগ-ফিল্টার: শুধু আসল পোস্ট-ইউআরএল (এক-সেগমেন্ট + বছর + টাইটেল-টোকেন); wp-content/series-genre বাদ
       const toks = T.toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/).filter(z => z.length > 2 && z !== 'the' && z !== 'and');
-      posts = (posts || []).map(String).filter(u => /^https:\/\/hindmovie\.one\/[a-z0-9][a-z0-9\-]*\/$/i.test(u) && !/wp-content|series-genre|web-series/i.test(u))
+      posts = (posts || []).map(String).filter(u => /^https:\/\/hindmovie\.[a-z]{2,6}\/[a-z0-9][a-z0-9\-]*\/?$/i.test(u) && !/wp-content|series-genre|web-series/i.test(u))
         .filter(u => { const sl = u.toLowerCase(); return /-\d{4}-/.test(sl) || /-season-\d/.test(sl) || toks.every(t => sl.indexOf(t) >= 0); })
         .sort((a, b) => { const sc = z => toks.filter(t => z.toLowerCase().indexOf(t) >= 0).length; return sc(b) - sc(a); })
         .slice(0, 6);
@@ -5493,7 +5556,7 @@ async function mlbdStreams(name, year, type, s, e, cap) {
       if (sm && !sm.test(g.name)) continue;                       // সিরিজে ঠিক-এপিসোড ছাড়া নয়
       const h = parseInt((String(g.name).match(/(\d{3,4})p/i) || [])[1], 10) || 0;
       if (maxh && h && h > maxh) continue;
-      for (const m of (g.mirrors || [])) cand.push({ h: h, u: m.u, srv: srvLabel(m.u) || m.s || '', name: g.name });
+      for (const m of (g.mirrors || [])) cand.push({ h: h, u: m.u, srv: m.s || srvLabel(m.u) || '', name: g.name });   // চেইন-লেবেল আগে
     }
     const rank = x => (x.srv === 'FSL' ? 0 : x.srv === 'HubCloud' ? 1 : x.srv === 'Pixeldrain' ? 2 : 3);
     cand.sort((a, b) => (b.h - a.h) || (rank(a) - rank(b)));
@@ -5508,7 +5571,7 @@ async function mlbdStreams(name, year, type, s, e, cap) {
         + '\u229e MovieLinkBD' + (langs ? ' \u2317 ' + langs : '');
       out.push({
         name: '\u25a5 ' + (c.h ? String(c.h) : 'Auto') + ' \u25a5', title: txt, description: txt, quality: String(c.h || ''),
-        url: c.u,
+        url: c.u, _srv: c.srv,
         behaviorHints: { notWebReady: false, isBingeable: true, proxyHeaders: { request: { 'User-Agent': UA } }, filename: (c.name || 'movielinkbd.mkv') },
         bingeGroup: 'mlb|' + mlbdNorm(ttl) + '::' + (type === 'series' ? 'S' + SE + 'E' + EP : 'm')
       });
@@ -6975,20 +7038,23 @@ async function m4uStreams(tmdbId, title, type, s, e, origin, maxh) { // maxh: cf
         }
       }
       // ২) FSL / FSL v2 — signed-S3 (HEAD-403-সত্ত্বেও-GET-রেঞ্জ-চলে; ইউজার-প্লেয়ারে-সিক-চলে):
-      if (!cands.length && s3s.length && left() > 1500) { // v1.15.51: FSL-শুধু-pd-শূন্যে (একই-ফাইলের-মিরর-ডুপ-নয়)
+      if (s3s.length && left() > 1500) {   // ★ v1.27.16: একই ফাইলের **সব** Range-প্রমাণিত সার্ভার আলাদা কার্ড
         for (let si = 0; si < s3s.length && left() > 1200; si++) {
           const sv = await m4uAlive(s3s[si]).catch(() => null);
           if (DBG) console.error('[m4u]   s3[' + si + '] alive=' + (sv && sv.alive) + ' name=' + ((sv && sv.name) || '').slice(0, 44));
           if (!sv || !sv.alive) continue;
-          furl = s3s[si];
-          try { fdec = decodeURIComponent((furl.match(/filename%3D%22(.*?)%22/i) || [''])[1] || ''); } catch { }
+          let nm = ''; try { nm = decodeURIComponent((s3s[si].match(/filename%3D%22(.*?)%22/i) || [''])[1] || ''); } catch { }
+          const sh = resOfName(nm || sv.name || '') || r.h;
+          if (maxh && sh && sh > maxh) continue;
+          if (cands.some(c => c.url === s3s[si])) continue;
+          cands.push({ h: sh, url: s3s[si], kind: 'file', spec: nm || sv.name || '', aud: '', dv: '' });
           fsrc = 's3';
-          break;
+          if (DBG) console.error('[m4u] s3-mirror ' + (sh || 0) + ' "' + String(nm || sv.name || '').slice(0, 52) + '"');
         }
       }
       // v1.15.82: S3/FSL-শাখা-আগে-মৃত-কোড ছিল — furl/fdec-সেট-হত কিন্তু cands-এ-push-হত-না, তাই
       // pd-মিরর-না-থাকা-সারি (বড়-ফাইল/4K-সাধারণত-এখানে) কখনোই-কার্ড-হত-না। m4uAlive-প্রোব-আগেই-জীবিত-যাচাই।
-      if (!cands.length && furl) {
+      if (furl && !cands.some(c => c.url === furl)) {
         let snd = fdec || '';
         if (!snd) { try { snd = decodeURIComponent((furl.split('?')[0].split('/').pop()) || ''); } catch { } }
         const sh = resOfName(snd) || r.h;
@@ -7001,7 +7067,7 @@ async function m4uStreams(tmdbId, title, type, s, e, origin, maxh) { // maxh: cf
       //    মাঝ-রেঞ্জে 206 + সঠিক Content-Range। সতর্কতা: Referer পাঠালে কোনো কোনো হোস্ট 403 দেয় —
       //    m4uAlive কোনো Referer পাঠায় না, তাই পার হয়। gpdl/pixel.hubcloud নয় — ওগুলো cryptonewz.online-এ
       //    বিজ্ঞাপন-রিডাইরেক্ট (ফাইল নয়)।
-      if (!cands.length && left() > 1500) {
+      if (left() > 1500) {
         for (const w of wkCands(gpage).slice(0, 2)) {
           if (left() < 700) break;                             // বাজেট — ধীর প্রোব যেন সারা-রিকোয়েস্ট না খায়
           const sv = await wkAlive(w).catch(() => null);
@@ -7032,9 +7098,9 @@ async function m4uStreams(tmdbId, title, type, s, e, origin, maxh) { // maxh: cf
     ]);
     for (const cl of rowLists) if (cl) for (const c2 of cl) { // মার্জ: প্রতি-রেজো-সর্বোচ্চ-২-ফাইল (আগে ১), মোট-ফাইল 3→7 (v1.15.51 — সাইটের-সব-ফাইল):
       if (out.some(o => o.url === c2.url)) continue;
-      if (out.filter(o => o.kind !== 'hls' && o.h === c2.h).length >= 2) continue;
+      if (out.filter(o => o.kind !== 'hls' && o.h === c2.h).length >= 3) continue;
       out.push(c2);
-      if (out.filter(o => o.kind !== 'hls').length >= 7) break;
+      if (out.filter(o => o.kind !== 'hls').length >= 9) break;
     }
     // ধাপ-৫-বাদ (1.15.49): TW-রেজলভার-মুভি-ইনডেক্স-করে-না (কার্টুন-সিরিজ-only; লাইভ-প্রোবে-সব-০) — hglink.to/skymovieshd-বাটন-ব্রাউজার-JS-ফানেল+drivebot-AES+gdflix-Turnstile = দেয়াল।
     await Promise.race([hlsP, new Promise(r2 => setTimeout(r2, Math.max(200, left() - 150)))]); // HLS-সমান্তরাল-ফল-অপেক্ষা (বাজেট-ভেতরে)
@@ -7176,16 +7242,16 @@ async function m4uSeries(tmdbId, title, s, e, origin, maxh) {
         if (maxh && ph && ph > maxh) continue;
         if (!seenU.has(pu)) { seenU.add(pu); out.push({ h: ph, url: pu, spec: (pv.name || mt.spec).replace(/\+/g, ' ') }); pdGot++; }
       }
-      if (!out.some(o => o.h === mt.h) && s3s.length && left() > 1500) {
+      if (s3s.length && left() > 1500) {   // ★ v1.27.16: প্রতি এপিসোডে সব সার্ভার (pd-এর পাশে FSL/S3)
         for (const s3 of s3s.slice(0, 2)) {
           const sv = await m4uAlive(s3).catch(() => null);
           if (!sv || !sv.alive) continue;
           if (!seenU.has(s3)) { seenU.add(s3); out.push({ h: mt.h, url: s3, spec: (sv.name || mt.spec).replace(/\+/g, ' ') }); }
-          break;
+
         }
       }
       // workers.dev (v1.15.84): সিক-যোগ্য পরিমাপিত — শেষ অবলম্বন (pd/S3 না থাকলে)। Referer নেই (403 এড়াতে)।
-      if (!out.length && left() > 1500) {
+      if (left() > 1500) {
         for (const w of wkCands(gp).slice(0, 2)) {
           if (left() < 700) break;
           const sv = await wkAlive(w).catch(() => null);
@@ -7202,7 +7268,7 @@ async function m4uSeries(tmdbId, title, s, e, origin, maxh) {
     if (DBG) console.error('[m4us] ' + tmdbId + ' "' + T + '" S' + SE + 'E' + EP + ' hub=' + hcN + ' epMatch=' + mts.length + ' cards=' + out.length + ' @' + (Date.now() - t3) + 'ms');
     out.sort((a, b) => b.h - a.h);
     const fin = []; const seenF = new Set();
-    for (const x of out) { if (seenF.has(x.url)) continue; seenF.add(x.url); fin.push(x); if (fin.length >= 4) break; }
+    for (const x of out) { if (seenF.has(x.url)) continue; seenF.add(x.url); fin.push(x); if (fin.length >= 9) break; }
     const epLine = '\u29e0 S' + SE + 'E' + EP;
     return fin.map(x => {
       const q2 = String(x.h || '');
@@ -10050,6 +10116,14 @@ const FMT_BR = /\[[^\]]*(?:hindi|english|tamil|telugu|bengali|bangla|dual|aac|dd
 // ★ v1.27.11: **সার্ভার-নাম** (কার্ডের url-হোস্ট থেকেই — বানানো-নয়)। ইউজার: "FSL eikhane server"।
 //   প্রমাণ (রিসার্চ/লাইভ): hubcloud → gamerxyt → FSL-presigned `*.r2.cloudflarestorage.com`; worker-মিরর
 //   `hubloud-downloadcdn.*.workers.dev`; pixeldrain/api; instantcloud → GCS; gdflix/GU → Google Drive।
+const FMT_LANG = { english: 'English', hindi: 'Hindi', bengali: 'Bengali', bangla: 'Bengali', tamil: 'Tamil', telugu: 'Telugu', malayalam: 'Malayalam', kannada: 'Kannada', marathi: 'Marathi', punjabi: 'Punjabi', urdu: 'Urdu', gujarati: 'Gujarati', nepali: 'Nepali', sinhala: 'Sinhala', assamese: 'Assamese', odia: 'Odia', bhojpuri: 'Bhojpuri', arabic: 'Arabic', persian: 'Persian', farsi: 'Persian', turkish: 'Turkish', hebrew: 'Hebrew', korean: 'Korean', japanese: 'Japanese', chinese: 'Chinese', mandarin: 'Mandarin', cantonese: 'Cantonese', thai: 'Thai', vietnamese: 'Vietnamese', indonesian: 'Indonesian', malay: 'Malay', filipino: 'Filipino', tagalog: 'Filipino', russian: 'Russian', ukrainian: 'Ukrainian', polish: 'Polish', czech: 'Czech', slovak: 'Slovak', hungarian: 'Hungarian', romanian: 'Romanian', bulgarian: 'Bulgarian', serbian: 'Serbian', croatian: 'Croatian', greek: 'Greek', german: 'German', french: 'French', italian: 'Italian', spanish: 'Spanish', latino: 'Spanish', esla: 'Spanish', portuguese: 'Portuguese', ptbr: 'Portuguese', dutch: 'Dutch', swedish: 'Swedish', norwegian: 'Norwegian', danish: 'Danish', finnish: 'Finnish', icelandic: 'Icelandic', albanian: 'Albanian', swahili: 'Swahili', amharic: 'Amharic', afrikaans: 'Afrikaans', burmese: 'Burmese', khmer: 'Khmer', mongolian: 'Mongolian', kazakh: 'Kazakh', georgian: 'Georgian', armenian: 'Armenian', azerbaijani: 'Azerbaijani', pashto: 'Pashto', kurdish: 'Kurdish', somali: 'Somali', catalan: 'Catalan' };
+function fmtLangOf(txt) { // একটি টোকেন আসল ভাষা-নাম কি না — হলে canonical নাম, নইলে ''
+  const k = String(txt || '').toLowerCase()
+    .replace(/\([^)]*\)/g, ' ')
+    .replace(/\b(?:dubbed|dub|audio|original|track|only|multi|dual|subbed|subs|esub|version)\b/g, ' ')
+    .replace(/[^a-z]/g, '');
+  return FMT_LANG[k] || '';
+}
 const FMT_SRV = [
   [/\.r2\.cloudflarestorage\.com$/, 'FSL'],
   [/(?:^|\.)fsldownload\.com$/, 'FSL'],
@@ -10114,7 +10188,7 @@ function fmtCardText(c, hint) {
   // ---- সোর্স-লাইন (+ • সার্ভার) ----
   let rest = s.replace(/^[\u2318\u229e]\s*/, '').trim();
   rest = rest.replace(/\s*\u2022\s*([A-Za-z0-9 ._-]{1,24})\s*$/, (m0, lb) => (FMT_SRV_SET.has(lb.trim()) ? '' : m0)); // idempotent
-  const srv = srvLabel(c.url);
+  const srv = (c && c._srv) || srvLabel(c.url);   // v1.27.16: চেইন-লেবেল (HubCloud/FSL) থাকলে সেটাই
   // ★ v1.27.12 (ইউজার: "description quality keno diso, oita toh title ei ase"): **কোয়ালিটি (1080p/720p/4K)**
   //   বাদ (রেজোলিউশন তো `name`-এই `▥ 1080 ▥` আছে ⇒ ডাবল দেখাত)। **সাইজ (3.1GB) থাকে** — ওটা আর কোথাও নেই।
   //   ভাষা/অডিও (Hindi · English · Dual-Audio) সবই থাকে; `⌗`-এর আগের সোর্স-নামও অটুট।
@@ -10128,8 +10202,18 @@ function fmtCardText(c, hint) {
   };
   const ci = rest.indexOf('\u2317');
   const srcName = qDrop(ci >= 0 ? rest.slice(0, ci) : rest);
+  // ★ v1.27.16 (ইউজার: 2 audio হলে dual, 3+ হলে multi, single হলে ওই ভাষার নাম):
+  //   ভাষা-টোকেন গুনে অডিও-লেবেল এক-নিয়মে — ১ ⇒ সেই ভাষা, ২ ⇒ Dual Audio, ৩+ ⇒ Multi Audio।
+  //   ভাষা-নয় এমন টোকেন (সাইজ · HEVC · Subbed · Dual-Audio…) অপরিবর্তিত; সোর্স-নাম অটুট।
   const tparts = ci < 0 ? [] : rest.slice(ci + 1).split('\u00b7').map(qDrop).filter(Boolean);
-  rest = (srcName || '') + (tparts.length ? ' \u2317 ' + tparts.join(' \u00b7 ') : '');
+  const _langs = [], _extras = [];
+  for (const _p of tparts) {
+    const _L = fmtLangOf(_p);
+    if (_L) { if (_langs.indexOf(_L) < 0) _langs.push(_L); } else _extras.push(_p);
+  }
+  const _au = _langs.length === 1 ? _langs[0] : _langs.length === 2 ? 'Dual Audio' : _langs.length >= 3 ? 'Multi Audio' : '';
+  const _bits = [_au].concat(_extras).filter(Boolean);
+  rest = (srcName || '') + (_bits.length ? ' \u2317 ' + _bits.join(' \u00b7 ') : '');
   rest = rest.replace(/[\s\u00b7]+$/, '').trim();
   if (!rest) return c;                                                   // সব বাদ পড়ে খালি ⇒ পুরোনো-লেখাই-থাক
   const sLine = ' \u2318 ' + rest + (srv ? ' \u2022 ' + srv : '');
@@ -10140,7 +10224,7 @@ function fmtCardText(c, hint) {
   return c;
 }
 const fmtCards = (cards, hint) => { if (!Array.isArray(cards)) return cards; for (const c of cards) fmtCardText(c, hint); return cards; };
-const stripCards = cards => (cards || []).map(c => { const { _hq, _lang, _pack, _exoTwin, quality, headers, subtitles, ...r } = c || {}; if (headers && /^mm\|/.test(String(r.bingeGroup || ''))) r.headers = headers; return r; }); // v1.15.97: MM-কার্ডে falcon-ধাঁচার শীর্ষ-স্তরের headers অক্ষত রাখা
+const stripCards = cards => (cards || []).map(c => { const { _hq, _lang, _pack, _exoTwin, _srv, quality, headers, subtitles, ...r } = c || {}; if (headers && /^mm\|/.test(String(r.bingeGroup || ''))) r.headers = headers; return r; }); // v1.15.97: MM-কার্ডে falcon-ধাঁচার শীর্ষ-স্তরের headers অক্ষত রাখা
 // ---------- v1.15.52: সব-সোর্সের-কার্ড-এক-ফরম্যাটে (ইউজার: "প্রতি-সোর্সের-কার্ড-ফরম্যাট-এমনি-চাই") — decorate()-এর-ভিডি-ফরম্যাট:
 // ⧉ Title | Year |  /  ⧠ Movie|SsEe  /  ⊞ Server ⌗ Audio — mbxr-চাইল্ড-ইতিমধ্যে-এই-ফরম্যাটে-প্রমাণিত; বাকি-সোর্স-এখানে-বসে
 const YEAR_CACHE = new Map();
