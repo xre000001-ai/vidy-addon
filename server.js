@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.27.10';
+const VERSION = '1.27.11';
 const V1NOTE_47 = 'v1.17.47 (ইউজার: "stream cut kore fast na — 6-8s laguk, sob stream asuk") — হারভেস্ট-কাট বাতিল: আগে ৪.৬সে-এ ৬-কার্ড-হলেই কাট, ৪.৯সে হার্ড-ক্যাপ ⇒ দেরিতে-আসা সোর্সের কার্ড ফেলত। এখন **সব লাইভ-সোর্স সেটেল হলেই ফেরা**, নইলে ৭.৮সে ক্যাপ (Beamup ১২সে-সীমার ভিতরে)। সাথে: nx ৫.১→৭.২সে (MB আর কাটা পড়ে না), mm/m4u ৭.০সে সব-সাইট, hm-রেস ৩.২→৬.৬সে (কোল্ড-চেইনও একই রেসপন্সে), m4u-তে ৩ pd-id + ২ জীবিত মিরর (আগে ১ম-সফলেই-থামা), sky-তে ৩ pd-id/hub, PD_MAX env-নব। মাপা (১৬ রিকোয়েস্ট, লোকাল): avg 5.52s · সর্বোচ্চ 6.66s (আগে 3.75s-কাট-সংস্করণে ৮২৪ কার্ড), HindMovie ৮/১৬ (আগে ৩/১৬), MB ১৬/১৬, mm ১৬/১৬, m4u ১৪/১৬, sky ১২/১৬, কার্ড ৮৩৯ ⇒ **কার্ড কমেনি, বেড়েছে**।';
 
 const V1NOTE_48 = 'v1.17.48 (ইউজার: "M4u thik koro, Hindi movie add koro, configuration page ta o thik koro") — ★ কনফিগ-পেজ-মেরামত: SRC-তালিকা থেকেই সুইচ-বাইন্ড (bf সরানোর পর bindSwitch-এ null.classList-এ পুরো IIFE থেমে যেত ⇒ tune-কার্ড/সেভ/প্রিভিউ কিছুই রেন্ডার হতো না) + bindSwitch-এ null-গার্ড; HindMovie প্যানেল + tune-hm কার্ড যোগ। ★ Movies4u: একাধিক সার্চ-হিট-চেষ্টা (per_page 12), আর্টিকেল-বাদ-দিয়ে-পুনঃসার্চ, modpro-শাখা এখন আসলেই চলে (post খালি থাকলে lastPost দিয়ে) — মৃত-মিরর Range-প্রমাণ ছাড়া কার্ড-নয়। ★ প্রতি-সারি-deadline: এক-সারির-ঢিলামিতে সব-কার্ড বাতিল হতো (3 Idiots ৮.৬সে→৪.৭সে)। ★ HindMovie: 404/410-এ প্রক্সি-পুল-বন্ধ (Silence ১২.২সে→৬.১সে, কার্ড-আসে)। বেঞ্চ: avg ৪.৭৪সে (আগে ৫.৫২), max ৭.০২, m4u ১৪/১৬, HM ৮/১৬, Sky ১৪/১৬।';const V1NOTE_46 = 'v1.17.46 (HindMovie নতুন সোর্স): live search (REST → HTML ফলব্যাক, বছর-মুক্ত কুয়েরি) → পোস্ট (IMDb-id গার্ড) → mvlink (মুভি) / mvlink /web/<id> (সিজন×কোয়ালিটি) → hshare → hcloud b64 → workers.dev direct MKV (২০৬, সিক-যোগ্য)। ক্যাশ ৬ঘণ্টা (search/post/mvlink/final); ডিরেক্ট আগে, 403/429/5xx-তে পুল-রেস। ব্যাচ .zip কখনো কার্ড নয়। hmRace ৩.২s ⇒ কোল্ড-চেইন রেসপন্স আটকায় না, পেছনে ক্যাশ ভরে। মাপা (১৬ রিকোয়েস্ট): avg 3.75s, MB 15/16, mm 16/16, m4u 14/16, sky 13/16, hm 3/16 (হলিউড-ক্লাসিক বেঞ্চে; সিরিজে BB/GoT S1E1 = ৩ কার্ড)।';
@@ -9601,18 +9601,43 @@ function sendJson(res, code, obj) {
 //   ⇒ প্লেব্যাক-আচরণ অপরিবর্তিত (নিরাপদ-প্যাচ)। চেনা-ছাঁচ না মিললে কার্ডটা হুবহু আগের মতোই থাকে।
 const FMT_JUNK = /\b(?:2160|1440|1080|720|480|360)\s*p\b|\b(?:4K|UHD|HDR10?|HEVC|x265|x264|H\.?264|H\.?265|BluRay|Blu-Ray|BDRip|BRRip|WEB-?DL|WEBRip|HDRip|DVDRip|AAC(?:\s?\d(?:\.\d)?)?|AC3|EAC3|DTS|DD\s?\+?\s?[257]\.1|DD\s?[257]\.0|ESubs?|MSubs?)\b/gi;
 const FMT_BR = /\[[^\]]*(?:hindi|english|tamil|telugu|bengali|bangla|dual|aac|dd\s?[257]|dts|x26[45]|hevc|1080|720|480|esub|bluray|web-?dl)[^\]]*\]/gi;
-function fmtCardText(c) {
+// ★ v1.27.11: **সার্ভার-নাম** (কার্ডের url-হোস্ট থেকেই — বানানো-নয়)। ইউজার: "FSL eikhane server"।
+//   প্রমাণ (রিসার্চ/লাইভ): hubcloud → gamerxyt → FSL-presigned `*.r2.cloudflarestorage.com`; worker-মিরর
+//   `hubloud-downloadcdn.*.workers.dev`; pixeldrain/api; instantcloud → GCS; gdflix/GU → Google Drive।
+const FMT_SRV = [
+  [/\.r2\.cloudflarestorage\.com$/, 'FSL'],
+  [/(?:^|\.)fsldownload\.com$/, 'FSL'],
+  [/(?:^|\.)(?:hubcloud|hubloud|hubdrive)[\w.-]*/, 'HubCloud'],
+  [/(?:^|\.)pixeldrain\.(?:dev|com)$/, 'Pixeldrain'],
+  [/(?:^|\.)instantcloud\.org$/, 'InstantCloud'],
+  [/(?:^|\.)(?:googleusercontent\.com|drive\.google\.com)$/, 'Google Drive'],
+  [/(?:^|\.)gdflix[\w.-]*/, 'Google Drive'],
+  [/(?:^|\.)xcloud[\w.-]*/, 'XCloud'],
+];
+const FMT_SRV_SET = new Set(FMT_SRV.map(x => x[1]));
+function srvLabel(url) {
+  let h = '';
+  try { h = new URL(String(url || '')).hostname.toLowerCase(); } catch (e) { return ''; }
+  for (const p of FMT_SRV) if (p[0].test(h)) return p[1];
+  return '';
+}
+function fmtCardText(c, hint) {
   if (!c || typeof c !== 'object') return c;
   const desc = String(c.description || c.title || '');
   if (!desc) return c;
   let t = '', e = '', s = '';
+  const tail = []; let seenSlot = false;
   for (const raw of desc.split('\n')) {
-    const ln = raw.replace(/\s+$/, '');
-    if (!t && ln.charAt(0) === '\u29c9') t = ln;            // ⧉
-    else if (!e && ln.charAt(0) === '\u29e0') e = ln;       // ⧠
-    else if (!s && ln.charAt(0) === '\u229e') s = ln;       // ⊞
+    const ln = String(raw).replace(/\s+$/, '').trim();
+    if (!ln) continue;
+    const ch = ln.charAt(0);
+    if (!t && ch === '\u29c9') { t = ln; continue; }                       // ⧉
+    if (!e && (ch === '\u23e3' || ch === '\u29e0')) { e = ln; continue; }  // ⏣ / ⧠
+    if (!s && (ch === '\u2318' || ch === '\u229e')) { s = ln; seenSlot = true; continue; } // ⌘ / ⊞
+    if (seenSlot) tail.push(ln);                                          // ⓘ/প্যাক-নোট — কখনো বাদ যায় না
   }
-  if (!t || !s) return c;                                    // চেনা-ছাঁচ নয় ⇒ হাত নয়
+  if (!t || !s) return c;                                                  // চেনা-ছাঁচ নয় ⇒ হাত নয়
+  // ---- শিরোনাম-লাইন ----
   let body = t.replace(/^\u29c9\s*/, '');
   let year = (/\|\s*((?:19|20)\d{2})\s*(?:\||$)/.exec(body) || [])[1] || '';
   let head = (body.split('|')[0] || '').trim();
@@ -9623,24 +9648,31 @@ function fmtCardText(c) {
     .replace(/\bDual\s?Audio\b/gi, ' ')
     .replace(/[\s&·,;\/\-–]+$/g, '')                            // লেজের বাড়তি চিহ্ন
     .replace(/\s{2,}/g, ' ').trim();
-  if (!head || head.length > 140) return c;                  // খালি/অদ্ভুত ⇒ আগের-লেখাই-থাক
-  const head2 = '\u29c9 ' + head + (year ? ' | ' + year + ' |' : ' |');
-  // ⊞-লাইনের পরের বাড়তি লাইন (প্যাক-নোট ইত্যাদি) **কখনো বাদ যায় না** — আগের ক্রমেই থাকে
-  const tail = [];
-  let seenSlot = false;
-  for (const raw of desc.split('\n')) {
-    const ln = raw.replace(/\s+$/, '');
-    if (!ln) continue;
-    if (ln.charAt(0) === '\u229e') { seenSlot = true; continue; }
-    if (seenSlot) tail.push(ln);
+  if (!head || head.length > 140) return c;                     // খালি/অদ্ভুত ⇒ আগের-লেখাই-থাক
+  const headLine = '\u29c9 ' + head + (year ? ' | ' + year + ' |' : ' |');
+  // ---- এপিসোড-লাইন (সিরিজ) — মুভিতে লাইনটাই বাদ ----
+  let epLine = '';
+  const sm = /S(\d{1,3})\s*E(\d{1,4})/i.exec(e);
+  if (sm) {
+    let nm = '';
+    const cut = e.indexOf('\u2022');
+    if (cut >= 0) nm = e.slice(cut + 1).trim();
+    if (!nm && hint && hint.epT) nm = String(hint.epT).trim();
+    nm = nm.replace(/[|•\s]+$/g, '').replace(/\s{2,}/g, ' ').slice(0, 80);
+    epLine = ' \u23e3 S' + (parseInt(sm[1], 10) || 1) + 'E' + (parseInt(sm[2], 10) || 1) + (nm ? ' \u2022 ' + nm : '');
   }
-  const out = [head2, e, s].concat(tail).filter(Boolean).join('\n');
+  // ---- সোর্স-লাইন (+ • সার্ভার) ----
+  let rest = s.replace(/^[\u2318\u229e]\s*/, '').trim();
+  rest = rest.replace(/\s*\u2022\s*([A-Za-z0-9 ._-]{1,24})\s*$/, (m0, lb) => (FMT_SRV_SET.has(lb.trim()) ? '' : m0)); // idempotent
+  const srv = srvLabel(c.url);
+  const sLine = ' \u2318 ' + rest + (srv ? ' \u2022 ' + srv : '');
+  const out = [headLine, epLine, sLine].concat(tail).filter(Boolean).join('\n');
   if (out === desc) return c;
   c.description = out;
-  c.title = out;                                             // Miami-তে title == description
+  c.title = out;                                                // Miami-তে title == description
   return c;
 }
-const fmtCards = cards => { if (!Array.isArray(cards)) return cards; for (const c of cards) fmtCardText(c); return cards; };
+const fmtCards = (cards, hint) => { if (!Array.isArray(cards)) return cards; for (const c of cards) fmtCardText(c, hint); return cards; };
 const stripCards = cards => (cards || []).map(c => { const { _hq, _lang, _pack, _exoTwin, quality, headers, subtitles, ...r } = c || {}; if (headers && /^mm\|/.test(String(r.bingeGroup || ''))) r.headers = headers; return r; }); // v1.15.97: MM-কার্ডে falcon-ধাঁচার শীর্ষ-স্তরের headers অক্ষত রাখা
 // ---------- v1.15.52: সব-সোর্সের-কার্ড-এক-ফরম্যাটে (ইউজার: "প্রতি-সোর্সের-কার্ড-ফরম্যাট-এমনি-চাই") — decorate()-এর-ভিডি-ফরম্যাট:
 // ⧉ Title | Year |  /  ⧠ Movie|SsEe  /  ⊞ Server ⌗ Audio — mbxr-চাইল্ড-ইতিমধ্যে-এই-ফরম্যাটে-প্রমাণিত; বাকি-সোর্স-এখানে-বসে
@@ -9660,6 +9692,11 @@ async function unifyCards(cards, meta) { // শুধু-টেক্সট-ব�
     const tcards = cards.filter(c => /^(sky|m4u|bf|mm|tw|rt)\|/.test(String(c.bingeGroup || '')));
     // ★ v1.27.10: tcards খালি হলেও থামি না — বছর-পূরণের ধাপটা সব-সোর্সে চালু থাকবে
     const _uT=Date.now();
+    // ★ v1.27.11 (ইউজার: "Pilot eikhane ep title ja mone hoi IMDb theke newo"): সিরিজে এপিসোড-নাম
+    //   IMDb/Cinemeta (v3-cinemeta — Stremio-র নিজের IMDb-CDN) থেকে; ৬ঘণ্টা-ক্যাশ (epMetaCore)।
+    //   T/Y-অপেক্ষার **সমান্তরালে** শুরু হয় ⇒ সাধারণত অতিরিক্ত সময় শূন্য; সর্বোচ্চ ৩০০ms-ক্যাপ।
+    const epP = (meta.type === 'series' && meta.tmdbId)
+      ? epMetaFor(String(meta.tmdbId), 'series', meta.s, meta.e).catch(() => null) : null;
     const T = (meta.tmdbId ? await Promise.race([nameForTmdb(meta.tmdbId, meta.type).catch(() => ''), new Promise(r => setTimeout(() => r(''), 600))]) : '') || String(meta.title || '').trim();
     if (!T) return cards; // টাইটেল-না-পেলে পুরনো-লেখাই-থাকে (খালি-কখনো-নয়)
     const Y = (parseInt(meta.year, 10) || 0) || (meta.tmdbId ? await Promise.race([yearForTmdb(meta.tmdbId, meta.type).catch(() => 0), new Promise(r => setTimeout(() => r(0), 600))]) : 0); // v1.15.52: imdb-রুটে Cinemeta-বছর-আগে (ম্যাপ-নিরপেক্ষ-সত্য)
@@ -9689,7 +9726,11 @@ async function unifyCards(cards, meta) { // শুধু-টেক্সট-ব�
         c.description = nd; c.title = nd;
       }
     }
-    if (DBG) console.error('[unify] took=' + (Date.now() - _uT) + 'ms n=' + tcards.length);
+    // ★ v1.27.11: সব-কার্ড নতুন ছাঁচে (⧉ / ⏣ / ⌘ + • সার্ভার, মুভিতে মাঝের লাইন বাদ) — এক-জায়গায়
+    let epT = '';
+    if (epP) { try { const m = await Promise.race([epP, new Promise(r => setTimeout(() => r(null), 300))]); epT = (m && m.epT) || ''; } catch (e) { } }
+    fmtCards(cards, { epT: epT });
+    if (DBG) console.error('[unify] took=' + (Date.now() - _uT) + 'ms n=' + tcards.length + ' epT=' + JSON.stringify(epT));
     return cards;
   } catch { return cards; }
 }

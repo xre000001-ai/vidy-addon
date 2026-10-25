@@ -12,8 +12,14 @@ const b64u = o => Buffer.from(JSON.stringify(o)).toString('base64url');
 const cfgUrl = (c, path) => BASE + (Object.keys(c || {}).length ? '/cfg/' + b64u(c) : '') + path;
 const NAME_RE = /^\u25a5 (Auto|\d{3,4}) \u25a5$/;
 const SERVER_WORDS = ['miami', 'boise', 'atlanta', 'phoenix', 'dallas', 'austin', 'seattle', 'delhi', 'munich', 'paris', 'orlando', 'reno', 'oakland', 'vegas', 'cancun', 'tampa'];
-const audioOf = c => { const last = String(c.description || '').split('\n').pop(); return last.includes('\u2317') ? last.split('\u2317')[1].trim() : ''; };
-const slotOf = c => { const last = String(c.description || '').split('\n').pop(); const m = /\u229e (.+) \u2317 /.exec(last); return m ? m[1] : ''; };
+const audioOf = c => { // ★ v1.27.11: টেইল-লাইনে-ভুল না পড়তে \u2318 লাইনটাই খুঁজি; "\u2022 সার্ভার" লেজ বাদ
+  const L = String(c.description || '').split('\n');
+  const ln = L.find(x => (x || '').trim().charAt(0) === '\u2318') || L.pop() || '';
+  return ln.includes('\u2317') ? ln.split('\u2317')[1].split('\u2022')[0].trim() : ''; };
+const slotOf = c => { // ★ v1.27.11: সোর্স-লাইন এখন " \u2318 <সোর্স> \u2317 <ভাষা>[ \u2022 <সার্ভার>]" (আগে \u229e) — টেইল-লাইন থাকলেও খুঁজে নেয়
+  const L = String(c.description || '').split('\n');
+  const ln = L.find(x => (x || '').trim().charAt(0) === '\u2318') || L.pop() || '';
+  const m = /\u2318 (.+?)(?: \u2317 | \u2022 |$)/.exec(ln); return m ? m[1].trim() : ''; };
 const rows = [];
 
 const v0len = s => s.filter(c => SERVER_WORDS.includes(slotOf(c).toLowerCase())).length === 0;
@@ -33,8 +39,10 @@ async function tap(label, url, checks) {
   ok(s.every(c => !String(c.description || '').includes('\u25a5')), 'description: no resolution');
   ok(s.every(c => !/subs/i.test(String(c.description || ''))), 'description: no "Subs" text');
   ok(s.every(c => String(c.description || '').startsWith('\u29c9 ')), 'description: \u29c9 title first');
-  ok(s.every(c => String(c.description || '').includes('\u29e0 ')), 'description: \u29e0 episode line');
-  ok(s.every(c => { const l = String(c.description || '').split('\n').pop().trim(); return /^\u229e .+$/.test(l) || /^\u29e0 .+$/.test(l); }), 'description: last line = slot (±audio) or episode (multi-source)');
+  // ★ v1.27.11: নতুন ছাঁচ — মুভিতে মাঝের এপিসোড-লাইন নেই, সিরিজে " \u23e3 SxEy[ \u2022 এপি-নাম]",
+  //   শেষ-লাইন " \u2318 সোর্স \u2317 ভাষা[ \u2022 সার্ভার]" (বা \u24d8 প্যাক-নোট)
+  ok(s.every(c => !/[\u29e0\u229e]/.test(String(c.description || ''))), 'description: পুরোনো \u29e0/\u229e আইকন নেই');
+  ok(s.every(c => { const L = String(c.description || '').split('\n'); const last = (L[L.length - 1] || '').trim(); const slot = L.find(x => (x || '').trim().charAt(0) === '\u2318'); return !!slot && /^(\u2318 .+|\u23e3 .+|\u24d8 .+)$/.test(last); }), 'description: \u2318 সোর্স-লাইন আছে ও শেষ-লাইন \u2318/\u23e3/\u24d8');
   ok(!s.some(c => audioOf(c) === 'Original'), 'audio: no lazy "Original" (real language names)');
   ok(s.every(c => !Array.isArray(c.subtitles) || c.subtitles.every(u2 => typeof u2.url === 'string' && /^https?:/.test(u2.url) && typeof u2.lang === 'string' && /^[a-z]{2}$/.test(u2.lang) && typeof u2.title === 'string')), 'subtitles: app-safe shape {title,url,lang:2-letter}');
   ok(s.every(c => c.quality === undefined || c.quality === '' || /^\d{3,4}$/.test(String(c.quality))), 'quality field sane (absent ok)');
@@ -95,14 +103,14 @@ async function tap(label, url, checks) {
   // ── 3) Korean series via tmdb-native id + episode title ──
   await tap('series tmdb93405:1:1 SquidGame (ko)', BASE + '/stream/series/tmdb93405%3A1%3A1.json', (s, mb, v) => {
     ok(v.length === 0 || v.every(c => audioOf(c) === 'Korean'), 'vidy audio = Korean');
-    ok(s.length === 0 || s.some(c => /\u29e0 S1E1/.test(c.description)), 'episode line present (title when resolver warm)');
+    ok(s.length === 0 || s.some(c => /\u23e3 S1E1/.test(c.description)), 'episode line present (title when resolver warm)');
   });
 
   // ── 4) more catalogue breadth ──
   await tap('movie tt0114369 Se7en', BASE + '/stream/movie/tt0114369.json'); // MB-কভারেজ-ওঠানামা-করে — presence-DarkKnight/BrBa/SquidGame-এ-কঠোরভাবে-যাচাই
   await tap('movie tt0120737 Fellowship', BASE + '/stream/movie/tt0120737.json');
   await tap('series tt0903747:2:1 BreakingBad-S2E1', BASE + '/stream/series/tt0903747%3A2%3A1.json', (s) => {
-    ok(s.length === 0 || s.some(c => /\u29e0 S2E1 \u2022 /.test(c.description)), 'S2E1 episode title');
+    ok(s.length === 0 || s.some(c => /\u23e3 S2E1 \u2022 /.test(c.description)), 'S2E1 episode title');
   });
   await tap('movie tmdb27205 Inception (native id)', BASE + '/stream/movie/tmdb27205.json', (s, mb, v) => {
     ok(v.filter(c => c.name === '\u25a5 Auto \u25a5').length <= 1, 'Auto \u22641 (geo-blocked ok)');
@@ -166,7 +174,7 @@ async function tap(label, url, checks) {
   await tap('AsianTV মুভি (Parasite tmdb496243)', BASE + '/stream/movie/tmdb496243.json', (s) => {
     const ot = otOf(s);
     if (!ot.length) return skip('AsianTV movie: no cards this run (upstream)');
-    ok(ot.every(c => /\u29e0 Movie/.test(String(c.description || ''))), 'AsianTV movie: ⧠ Movie লাইন');
+    ok(ot.every(c => !/\u23e3/.test(String(c.description || '')) && String(c.description || '').trim().split('\n').length === 2), 'AsianTV movie: মাঝের এপিসোড-লাইন নেই (২ লাইন)');
   });
   await tap('cfg ottq=[480] (AsianTV-ছাঁকনি)', cfgUrl({ ottq: [480] }, '/stream/series/tmdb93405%3A1%3A1.json'), (s) => {
     const ot = otOf(s);
@@ -234,7 +242,7 @@ async function tap(label, url, checks) {
 
   // ── safety-net: series without s:e → S1E1 ──
   await tap('series tt0903747 (no s:e safety-net)', BASE + '/stream/series/tt0903747.json', (s) => {
-    ok(s.length === 0 || s.every(c => /\u29e0 S1E1/.test(c.description)), 'defaults to S1E1');
+    ok(s.length === 0 || s.every(c => /\u23e3 S1E1/.test(c.description)), 'defaults to S1E1');
   });
 
   // ── summary ──
