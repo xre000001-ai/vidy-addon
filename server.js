@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.27.17';
+const VERSION = '1.27.18';
 const V1NOTE_47 = 'v1.17.47 (ইউজার: "stream cut kore fast na — 6-8s laguk, sob stream asuk") — হারভেস্ট-কাট বাতিল: আগে ৪.৬সে-এ ৬-কার্ড-হলেই কাট, ৪.৯সে হার্ড-ক্যাপ ⇒ দেরিতে-আসা সোর্সের কার্ড ফেলত। এখন **সব লাইভ-সোর্স সেটেল হলেই ফেরা**, নইলে ৭.৮সে ক্যাপ (Beamup ১২সে-সীমার ভিতরে)। সাথে: nx ৫.১→৭.২সে (MB আর কাটা পড়ে না), mm/m4u ৭.০সে সব-সাইট, hm-রেস ৩.২→৬.৬সে (কোল্ড-চেইনও একই রেসপন্সে), m4u-তে ৩ pd-id + ২ জীবিত মিরর (আগে ১ম-সফলেই-থামা), sky-তে ৩ pd-id/hub, PD_MAX env-নব। মাপা (১৬ রিকোয়েস্ট, লোকাল): avg 5.52s · সর্বোচ্চ 6.66s (আগে 3.75s-কাট-সংস্করণে ৮২৪ কার্ড), HindMovie ৮/১৬ (আগে ৩/১৬), MB ১৬/১৬, mm ১৬/১৬, m4u ১৪/১৬, sky ১২/১৬, কার্ড ৮৩৯ ⇒ **কার্ড কমেনি, বেড়েছে**।';
 
 const V1NOTE_48 = 'v1.17.48 (ইউজার: "M4u thik koro, Hindi movie add koro, configuration page ta o thik koro") — ★ কনফিগ-পেজ-মেরামত: SRC-তালিকা থেকেই সুইচ-বাইন্ড (bf সরানোর পর bindSwitch-এ null.classList-এ পুরো IIFE থেমে যেত ⇒ tune-কার্ড/সেভ/প্রিভিউ কিছুই রেন্ডার হতো না) + bindSwitch-এ null-গার্ড; HindMovie প্যানেল + tune-hm কার্ড যোগ। ★ Movies4u: একাধিক সার্চ-হিট-চেষ্টা (per_page 12), আর্টিকেল-বাদ-দিয়ে-পুনঃসার্চ, modpro-শাখা এখন আসলেই চলে (post খালি থাকলে lastPost দিয়ে) — মৃত-মিরর Range-প্রমাণ ছাড়া কার্ড-নয়। ★ প্রতি-সারি-deadline: এক-সারির-ঢিলামিতে সব-কার্ড বাতিল হতো (3 Idiots ৮.৬সে→৪.৭সে)। ★ HindMovie: 404/410-এ প্রক্সি-পুল-বন্ধ (Silence ১২.২সে→৬.১সে, কার্ড-আসে)। বেঞ্চ: avg ৪.৭৪সে (আগে ৫.৫২), max ৭.০২, m4u ১৪/১৬, HM ৮/১৬, Sky ১৪/১৬।';const V1NOTE_46 = 'v1.17.46 (HindMovie নতুন সোর্স): live search (REST → HTML ফলব্যাক, বছর-মুক্ত কুয়েরি) → পোস্ট (IMDb-id গার্ড) → mvlink (মুভি) / mvlink /web/<id> (সিজন×কোয়ালিটি) → hshare → hcloud b64 → workers.dev direct MKV (২০৬, সিক-যোগ্য)। ক্যাশ ৬ঘণ্টা (search/post/mvlink/final); ডিরেক্ট আগে, 403/429/5xx-তে পুল-রেস। ব্যাচ .zip কখনো কার্ড নয়। hmRace ৩.২s ⇒ কোল্ড-চেইন রেসপন্স আটকায় না, পেছনে ক্যাশ ভরে। মাপা (১৬ রিকোয়েস্ট): avg 3.75s, MB 15/16, mm 16/16, m4u 14/16, sky 13/16, hm 3/16 (হলিউড-ক্লাসিক বেঞ্চে; সিরিজে BB/GoT S1E1 = ৩ কার্ড)।';
@@ -2375,6 +2375,15 @@ function pooledGet(url, timeoutMs, n) {
 // vidy servers + NetHex (MovieBox direct-MP4) run in parallel; NetHex cards (♧, distinct style)
 // are appended after the vidy cards. Any NetHex failure/timeout/slow = vidy cards alone, never an error.
 const DBG = !!process.env.VDBG;
+// ★ v1.27.18: প্রোডেশনে লগ দেখার উপায় -- স্ট্যাটিক রিং-বাফার (শেষ 600 লাইন), `/_diag` এন্ডপজেইন্টে দেখা যায়।
+//   mlbd/hm ফেল-কারণ (হোস্ট-ব্লক, পেজ-শূন্য, টাইম-ক্যাপ) এখানে জমা হয়।
+const DIAG = []; const DIAG_MAX = 600;
+function diag(tag, msg) {
+  try {
+    DIAG.push({ t: Date.now(), g: String(tag), m: String(msg).slice(0, 260) });
+    if (DIAG.length > DIAG_MAX) DIAG.splice(0, DIAG.length - DIAG_MAX);
+  } catch (e) { }
+}
 // ★ v1.17.52 (ইউজার: "No cache for any source… bar bar refresh Dewar poreo oi specific stream pacchi na"):
 //   **সোর্স-ফল ক্যাশ সম্পূর্ণ বন্ধ** — প্রতিটি রিকোয়েস্ট নতুন করে ফেচ করে। ক্যাশ থাকলে একবার-আংশিক
 //   ফল ১২সে–২মিনিট ধরে আটকে থাকত ⇒ রিফ্রেশেও সেই পুরোনো (কম) তালিকাই ফিরত, আর সোর্স-কাট
@@ -4278,6 +4287,7 @@ async function hmText(u, ms, ref) { // ডিরেক্ট → ব্যর্
       let t = ''; try { t = await r.text(); } catch { }
       return { st: r.status, t: t, el: Date.now() - t1 };
     } catch (e) {
+      diag('hm', 'ERR ' + String(u).replace(/^https?:\/\//, '').slice(0, 60) + ' ' + (e && e.name) + ' ' + String((e && (e.cause && e.cause.code || e.message)) || '').slice(0, 34));
       if (DBG) console.error('[hm] DIRECT-ERR ' + String(u).slice(0, 46) + ' ' + (e && e.name) + ' ' + (e && (e.cause && e.cause.code || e.message) || '').slice(0, 40));
       return { st: 0, t: '', err: true, el: Date.now() - t1 };
     }
@@ -4423,6 +4433,7 @@ async function hmStreamsRaw(tmdbId, title, type, s, e, origin, maxh) {
       hmSet(HM_S, 'q:' + T.toLowerCase(), posts);
     }
     const imdb = await Promise.race([imdbP, new Promise(r => setTimeout(() => r(''), 800))]);
+    diag('hm', 'search posts=' + posts.length + ' @' + (Date.now() - T0) + 'ms');
     if (DBG) console.error('[hmT] searched @' + (Date.now() - T0) + 'ms posts=' + posts.length);
     const infos = await Promise.all(posts.slice(0, 4).map(u => hmPost(u, Math.min(1800, left())).catch(() => null)));
     let idx = -1;
@@ -4459,9 +4470,11 @@ async function hmStreamsRaw(tmdbId, title, type, s, e, origin, maxh) {
         if (!okTitle(ttl)) { if (DBG) console.error('[hm] mv-title-mismatch …' + ttl.slice(0, 26)); continue; } // সাইটের ভুল-পেজ গার্ড
         for (const id of x.ids) if (!seen.has(id)) { seen.add(id); cand.push({ id: id, h: resOfName(id) || resOfName(x.title) || 0 }); }
       }
+      diag('hm', 'mv-pages ids=' + cand.length + ' @' + (Date.now() - T0) + 'ms');
       if (DBG) console.error('[hmT] mv-pages @' + (Date.now() - T0) + 'ms ids=' + cand.length);
       const flt = (maxh ? cand.filter(x => x.h && x.h <= maxh) : cand).sort((a, b) => b.h - a.h).slice(0, 2);
       const fin = await Promise.all(flt.map(x => hmFinal(x.id, Math.min(4200, left())).catch(() => '')));
+      diag('hm', 'finals ok=' + fin.filter(Boolean).length + '/' + flt.length + ' @' + (Date.now() - T0) + 'ms');
       if (DBG) console.error('[hmT] hs-finals @' + (Date.now() - T0) + 'ms ok=' + fin.filter(Boolean).length);
       for (let i = 0; i < flt.length; i++) {
         const u = fin[i]; if (!u || hmIsDead(u)) continue;
@@ -4502,6 +4515,7 @@ async function hmStreamsRaw(tmdbId, title, type, s, e, origin, maxh) {
       }
       if (DBG && !cards.length) console.error('[hm] S' + SE + 'E' + EP + ' no-ep (web=' + ids.length + ' hits=' + hits.length + ' titles=' + pages.map(x => x && String(x.title).slice(0, 22)).slice(0, 4).join(' | ') + ')');
     }
+    diag('hm', 'cards=' + cards.length + ' @' + (Date.now() - T0) + 'ms');
     if (DBG) console.error('[hm] ' + tmdbId + ' "' + T.slice(0, 26) + '" cards=' + cards.length + ' @' + (Date.now() - T0) + 'ms');
     return cards;
   } catch (e2) { if (DBG) console.error('[hm] ERR ' + String(e2 && e2.message).slice(0, 60)); return []; }
@@ -5201,12 +5215,14 @@ async function mlbdGet(u, opt) {
           }
           let body = '';
           if (opt.body !== false) { try { body = await r.text(); } catch (e) { } }
+          if (r.status !== 200) diag('mlbd', 'http ' + r.status + ' ' + String(url).replace(/^https?:\/\//, '').slice(0, 70) + ' len=' + body.length);
           return { st: r.status, loc: loc, body: body };
         }
         return { st: 0, loc: '', body: '' };
       });
     } catch (e) {
       if (at === 3 || Date.now() - T0 > BUD) {                   // ★ এক-কলের মোট-সময় budget-এ সীমিত
+        diag('mlbd', 'get-fail ' + String(u).replace(/^https?:\/\//, '').slice(0, 70) + ' :: ' + ((e && (e.cause && (e.cause.code || e.cause.message) || e.message)) || e) + ' @' + (Date.now() - T0) + 'ms');
         if (DBG) console.error('[mlbd] get-fail ' + String(u).slice(0, 60) + ' :: ' + (e && (e.message || e)) + ' | ' + ((e && e.cause && (e.cause.code || e.cause.message)) || '') + ' @' + (Date.now() - T0) + 'ms');
         return { st: 0, loc: '', body: '' };
       }
@@ -5466,6 +5482,7 @@ async function mlbdOne(base, fileUrl, dl, labQ, labTxt) {
     return out;
   };
   const groups = await Promise.all([fslBranch(), hubBranch(), gdBranch()]);
+  diag('mlbd', 'hop nest=' + (nested ? 1 : 0) + ' hub=' + (hub ? 1 : 0) + ' got=' + groups.map(g => g.length).join('/') + ' st=' + pg.st + ' len=' + H.length);
   if (DBG) console.error('[mlbd1] ' + String(fileUrl).slice(-12) + ' nest=' + (nested ? 1 : 0) + ' hub=' + (hub ? 1 : 0) + ' ic=' + (ic ? 1 : 0) + ' got=' + groups.map(g => g.length).join('/') + ' left=' + left() + 'ms');
   const mirrors = [];
   for (const g of groups) for (const m of g) if (!mirrors.some(x => x.u === m.u)) mirrors.push(m);
@@ -5556,11 +5573,13 @@ async function mlbdStreams(name, year, type, s, e, cap) {
       let items = [];
       for (const arr of ss) for (const x of (arr || [])) items.push(x);
       if (DBG) console.error('[mlbd] search n=' + items.map((a, i) => (ss[i] || []).length).join('/') + ' qs=' + qs.length + ' @' + (Date.now() - T0) + 'ms');
+      diag('mlbd', 'search ' + items.length + ' qs=' + qs.length + ' @' + (Date.now() - T0) + 'ms');
       if (!items.length && left() > 2200) {           // ★ মিরর মৃত/রিডাইরেক্ট-ব্রোকেন ⇒ নতুন মিরর খুঁজি
         const b2 = await mlbdMirror(true);
         if (b2 && b2 !== base) { base = b2; items = await mlbdSearch(base, name, Math.min(4200, left())).catch(() => []); }
       }
       const picks = mlbdPicks(items, name, year, type, SE, EP);
+      diag('mlbd', 'picks=' + picks.length + ' ' + String((picks[0] || {}).title || '').slice(0, 40));
       if (DBG) console.error('[mlbd] picks=' + picks.length + ' ' + picks.slice(0, 5).map(x => String(x.title).slice(0, 34)).join(' ‖ '));
       if (!picks.length) { if (DBG) console.error('[mlbd] no-title-match n=' + items.length + ' @' + (Date.now() - T0) + 'ms'); return []; }
       const r2 = await grab(picks);
@@ -5577,6 +5596,7 @@ async function mlbdStreams(name, year, type, s, e, cap) {
     if (capN) tokAll = tokAll.filter(t => { const q = qOf(t); return !q || q <= capN; });
     tokAll.sort((a, b) => (qOf(b) - qOf(a)) || (res.toks.indexOf(a) - res.toks.indexOf(b)));
     const toks = tokAll.slice(0, Number(process.env.MLBDN || 6));
+    diag('mlbd', 'toks=' + toks.length + '/' + res.toks.length);
     if (DBG) console.error('[mlbd] toks=' + toks.length + '/' + res.toks.length + ' ' + toks.map(t => ((LAB[t] && LAB[t].lab) || '?')).join(' | '));
     if (!toks.length) { if (DBG) console.error('[mlbd] no-tokens @' + (Date.now() - T0) + 'ms (groups=' + (((res.files || {}).groups || []).length) + ')'); return []; }
     const dl = T0 + B;
@@ -5589,6 +5609,7 @@ async function mlbdStreams(name, year, type, s, e, cap) {
       got = (await Promise.all(j2)).filter(Boolean);
     }
     if (DBG && (type === 'series' || process.env.MLBDBG === '1')) console.error('[mlbd] got=' + got.length + ' names: ' + got.map(g => String(g.name).slice(0, 52) + '{' + (g.mirrors || []).map(m => (srvLabel(m.u) || m.s || '?') + (m.soft ? '?' : '')).join('+') + '}').join(' | '));
+    diag('mlbd', 'resolved=' + got.length + ' tok=' + toks.length + ' @' + (Date.now() - T0) + 'ms');
     if (!got.length) { if (DBG) console.error('[mlbd] no-mirror @' + (Date.now() - T0) + 'ms (tok=' + toks.length + ')'); return []; }
     const maxh = Number(cap || 0);
     const out = []; const seenU = new Set(); const seenQ = new Set();
@@ -9507,6 +9528,7 @@ async function withSources(cardsP, srcs, cfg, t0, mkey, lookupP) {
       return Promise.race([x.p, capP]).then(v => { clearInterval(_tm);
       if (v && v.length) lit += v.length;
       settled++;
+      diag('src', x.key + ' n=' + ((v || []).length) + ' @' + (Date.now() - t0) + 'ms');
       if (DBG) console.error('[srcsettle] ' + x.key + ' @' + (Date.now() - t0) + 'ms n=' + ((v || []).length) + ' (' + settled + '/' + live.length + ')');
       return v;
       }, () => { clearInterval(_tm); errFlag = true; settled++; if (DBG) console.error('[srcsettle] ' + x.key + ' ERR @' + (Date.now() - t0) + 'ms (' + settled + '/' + live.length + ')'); return null; });
@@ -10870,6 +10892,12 @@ const server = http.createServer((req, res) => {
     if (p === '/_pool') return sendJson(res, 200, POOL.map(c => Object.assign({}, c, PX_RUN.get(c.px) || {}))); // v1.15.0: রানটাইম-স্বাস্থ্য-সহ
     if (p === '/_nxring') { if (!NEXBASE) return sendJson(res, 200, { off: 1 }); directGet(NEXBASE + '/debug/ring', 4000).then(b => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(b); }).catch(() => { res.writeHead(200, { 'content-type': 'application/json' }); res.end('{"err":1}'); }); return; } // v2.10.2 চাইল্ড-রিজলভ-ধাপ-প্রমাণ
     if (p === '/_log') return sendJson(res, 200, reqLog.slice(-40).reverse());
+    if (p === '/_diag') { // v1.27.18: ?g=mlbd|hm|src|all&n=200
+      let g = 'all', n = 200;
+      try { const u2 = new URL(req.url, 'http://x'); g = u2.searchParams.get('g') || 'all'; n = Math.min(600, Number(u2.searchParams.get('n')) || 200); } catch (e) { }
+      const items = DIAG.filter(x => g === 'all' || x.g === g).slice(-n);
+      return sendJson(res, 200, { n: items.length, ver: VERSION, items: items });
+    }
     if (p === '/_servers') { const br = {}; for (const [k, v] of VSRV_H) br[k] = { ok: v.ok, fail: v.fail, openFor: v.until > Date.now() ? Math.round((v.until - Date.now()) / 1000) : 0, trips: v.trips || 0 }; return sendJson(res, 200, { order: srvOrder(), scores: SRV_SCORE, breaker: br }); } // কনফিগ-পেজের-লাইভ-হেলথ
     if (VSP_PUB && p.indexOf('/vsp/') === 0) return void vspRelay(req, res, p); // v1.15.71: Vidsrc-রিলে (/vsp/t|c|s)
     // v1.15.89: '=' (বেস৬৪-প্যাডিং) অনুমোদিত — কপি/পেস্ট বা মেসেঞ্জারে প্যাডিং যোগ হয়ে গেলে আগে রেগেক্স মেলত না → ২০০-এর বদলে ৪০৪
