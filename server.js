@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.28.11';
+const VERSION = '1.28.12';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -3056,37 +3056,56 @@ async function mlsGet(u, opt) {
     const dead = (Date.now() - (MLS_CURL_DEAD.get(host0) || 0)) < 600000;
     const good = MLS_GOOD.get(host0) || '';
     const pxs = opt.proxy ? (Array.isArray(opt.proxy) ? opt.proxy : [opt.proxy]) : mlsPxFor(host0);
-    // ★ v1.28.11: ক্রম = যেটা আগে কাজ করেছে › ডাইরেক্ট-curl (ডেড না হলে) › ফ্রি-প্রক্সি › রিডার › পুল
-    //   (আগে প্রক্সি-প্রথম ছিল ⇒ লোকালে যেখানে curl ০.৩সে-তে ২০০ দেয়, সেখানে ২-৫সে নষ্ট হত)
-    const tryPx = async () => {
-      for (const fp of pxs) {
-        if (left() < 1500) return null;
-        const cp2 = await mlsCurl(u, { ms: Math.min(5000, left()), json: !!opt.json, referer: opt.referer, proxy: fp });
-        const okb = cp2 && cp2.st >= 200 && cp2.st < 400 && (opt.json ? mlsOkJson(cp2.body) : mlsOkHtml(cp2.body));
-        if (okb) { mlsRec(u, cp2.st, String(cp2.body).length, 'px:' + fp.split(':')[0]); MLS_GOOD.set(host0, 'px:' + fp); return { st: cp2.st, body: cp2.body, url: u, ct: cp2.ct, px: fp }; }
-      }
-      return null;
-    };
-    const tryCurl = async (n) => {
-      for (let i = 0; i < n && left() > 1200; i++) {
-        const cu = await mlsCurl(u, { ms: Math.min(4500, left()), json: !!opt.json, referer: opt.referer });
-        if (cu && cu.st >= 200 && cu.st < 400 && (opt.json ? mlsOkJson(cu.body) : mlsOkHtml(cu.body))) {
-          mlsRec(u, cu.st, String(cu.body).length, 'curl' + (i + 1)); MLS_GOOD.set(host0, 'curl');
-          return { st: cu.st, body: cu.body, url: u, ct: cu.ct };
+    const valid = t => (opt.json ? mlsOkJson(t) : mlsOkHtml(t));
+    // ★ v1.28.12: **সমান্তরাল রেস** — আগে প্রক্সিগুলো এক-এক করে (প্রতিটি ≤৫সে) ⇒ sav-হপ ১৪সে নিত
+    //   (প্রোড-মাপা) ⇒ বাজেট(৯.২সে) শেষে কার্ড হারাত। এখন curl ×২ + প্রক্সি-দল + রিডার একসাথে,
+    //   **প্রথম বৈধ বডি** জেতে; বাকিগুলো abort।
+    const race = [];
+    const addRace = (tag, fn) => race.push(new Promise(res => fn().then(b => res(b ? { tag: tag, body: b } : null)).catch(() => res(null))));
+    if (!dead && good.indexOf('px:') !== 0) {
+      addRace('curl', async () => {
+        for (let i = 0; i < 2 && left() > 1200; i++) {
+          const cu = await mlsCurl(u, { ms: Math.min(4000, left()), json: !!opt.json, referer: opt.referer });
+          if (cu && cu.st >= 200 && cu.st < 400 && valid(cu.body)) return cu.body;
         }
-      }
-      return null;
-    };
-    let got = null;
-    if (good.indexOf('px:') === 0) got = await tryPx() || (dead ? null : await tryCurl(2));
-    else got = (dead ? null : await tryCurl(3)) || await tryPx();
-    if (got) return got;
-    if (!got) { MLS_CURL_DEAD.set(host0, Date.now()); if (DBG) console.error('[mlsd] direct+px ব্যর্থ ' + String(u).slice(0, 60)); }
-    if (process.env.MLSREADER !== '0') {
-      const rb = await mlsReader(u, Math.max(2600, Math.min(4200, left() || 3000)));
-      if (rb && (opt.json ? mlsOkJson(rb) : mlsOkHtml(rb))) { mlsRec(u, 200, rb.length, 'reader'); return { st: 200, body: rb, url: u, reader: 1 }; }
-      mlsRec(u, 0, String(rb || '').length, 'reader·bad');
+        return '';
+      });
     }
+    const pxGood = good.indexOf('px:') === 0 ? [good.slice(3)].concat(pxs.filter(x => x !== good.slice(3))) : pxs;
+    for (const fp of pxGood.slice(0, 4)) {
+      addRace('px:' + fp, async () => {
+        if (left() < 1200) return '';
+        const cp2 = await mlsCurl(u, { ms: Math.min(4500, left()), json: !!opt.json, referer: opt.referer, proxy: fp });
+        return (cp2 && cp2.st >= 200 && cp2.st < 400 && valid(cp2.body)) ? cp2.body : '';
+      });
+    }
+    if (process.env.MLSREADER !== '0') addRace('reader', async () => {
+      const rb = await mlsReader(u, Math.max(2600, Math.min(4500, left() || 3000)));
+      return valid(rb) ? rb : '';
+    });
+    let got = null;
+    if (race.length) {
+      const w = await new Promise(res => {
+        let n = 0, done = false;
+        const to = setTimeout(() => { if (!done) { done = true; res(null); } }, Math.max(2500, Math.min(6500, left() || 4000)));
+        for (const pr of race) pr.then(r => {
+          if (done) return;
+          if (r) { done = true; clearTimeout(to); res(r); return; }
+          if (++n >= race.length) { done = true; clearTimeout(to); res(null); }
+        });
+      });
+      if (w) {
+        const tag = w.tag || 'x';
+        mlsRec(u, 200, w.body.length, tag.split(':')[0]);
+        if (tag === 'curl') MLS_GOOD.set(host0, 'curl');
+        else if (tag.indexOf('px:') === 0) MLS_GOOD.set(host0, tag);
+        if (DBG) console.error('[mlsd] ' + host0 + ' ✓ ' + tag + ' ' + w.body.length + 'b @' + (Date.now() - T0) + 'ms');
+        return { st: 200, body: w.body, url: u, via: tag };
+      }
+    }
+    got = null;
+    MLS_CURL_DEAD.set(host0, Date.now());
+    if (DBG) console.error('[mlsd] সব পথ ব্যর্থ ' + String(u).slice(0, 60));
     try {
       const b = await mlsPoolFetch(u, Math.max(3000, Math.min(5600, left() || 3000)), opt.json ? mlsOkJson : mlsOkHtml);
       if (b) { mlsRec(u, 200, String(b).length, 'pool'); return { st: 200, body: String(b), url: u, px: 1 }; }
@@ -3241,16 +3260,21 @@ function mlsSavIds(html) {
 }
 
 // savelinks পেজ → ঘোষিত মিরর-হোস্ট (gdflix ▼ / multicloud watch)
+const MLS_SAV = new Map();                    // id → {ts,val} (১০ মিনিট; শুধু মিরর-লিংকের তালিকা — ডাইরেক্ট-লিংক ক্যাশ নয়)
 async function mlsSav(id, ms) {
+  const hit0 = MLS_SAV.get(id);
+  if (hit0 && Date.now() - hit0.ts < 600000) return hit0.val;
   const r = await mlsGet('https://savelinks.me/view/' + id, { ms: Math.min(ms, 5000), referer: MLS_BASE + '/' });
   const hs = mlsHrefs(r.body, 'https://savelinks.me/');
-  return {
+  const val = {
     // ★ v1.28.5h: `gdlink.dev/file/<id>` → ৩০১ → `new7.gdflix.io/file/<id>` (মাপা ২০০, validate.multiup2 লিংক-সহ)
     //   ⇒ একই gdflix-রেজলভার চলে; পুরোনো পোস্টের কভারেজ অনেক বাড়ে (`hubcloud.*`-এ কিছু নেই — বাদ)।
     gd: hs.filter(u => /gdflix|ddflix|gdlink/i.test(mlsHost(u))),
     mcl: hs.filter(u => /multicloudlinks|multidownload|fsldownload/i.test(mlsHost(u))),
     hosts: [...new Set(hs.map(mlsHost).filter(h => h && !/savelinks|mlsbd|google|gstatic|facebook|twitter|whatsapp|t\.me/i.test(h)))]
   };
+  if (val.gd.length || val.mcl.length) { MLS_SAV.set(id, { ts: Date.now(), val: val }); if (MLS_SAV.size > 200) MLS_SAV.clear(); }
+  return val;
 }
 
 // gdflix রেজলভ (cookies-মুক্ত রুট: inline-r2 / worker-direct / worker-inline) + Range-প্রমাণ
