@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.28.12';
+const VERSION = '1.28.13';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -3436,7 +3436,7 @@ const mlsMB = b => (b > 0 ? (b >= 1073741824 ? (b / 1073741824).toFixed(2) + 'GB
 
 async function mlsTask(nameP, infoP, type, s, e) {
   const T0 = Date.now();
-  const CAP = Number(process.env.MLSCAP || 9200);
+  const CAP = Number(process.env.MLSCAP || 9600);
   const work = (async () => {
     const info = infoP ? await Promise.race([infoP.catch(() => null), new Promise(r => setTimeout(() => r(null), 900))]) : null;
     const year = (info && (info.year || info.releaseInfo)) ? (parseInt(String(info.year || info.releaseInfo), 10) || 0) : 0;
@@ -3489,7 +3489,7 @@ async function mlsTask(nameP, infoP, type, s, e) {
         if (seenSav.has(it.id)) continue;
         seenSav.add(it.id);
         const q0 = it.q || mlsQ(p.title) || 0;
-        const chain = mlsSav(it.id, 3800).then(x => {
+        const chain = mlsSav(it.id, 4500).then(x => {
           if (MLS_HOSTDBG.length < 20) MLS_HOSTDBG.push(x.hosts);
           const inner = [];
           for (const u of x.mcl.slice(0, 2))     // ★ watch-online আগে (১ হপ, প্রোডে-খোলা — মাপা ২০৬)
@@ -3536,6 +3536,7 @@ async function mlsTask(nameP, infoP, type, s, e) {
     }
     // প্রতি ফাইলের সব সার্ভার — উচ্চ-কোয়ালিটি আগে
     out.sort((a, b) => (b._hq || 0) - (a._hq || 0));
+    diag('mlsd', 'cards=' + out.length + ' routes=' + JSON.stringify(resolved.map(x => (x.r && x.r.route) || (x.r && x.r.srv) || '?').slice(0, 4)) + ' @' + (Date.now() - T0) + 'ms');
     if (DBG) console.error('[mlsd] cards=' + out.length + ' @' + (Date.now() - T0) + 'ms');
     return out.slice(0, Number(process.env.MLSN || 6));
   })();
