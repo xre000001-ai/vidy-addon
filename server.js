@@ -1937,7 +1937,9 @@ let MEM_RECYCLE_N = 0;
 if (process.env.MEMRECYCLE !== '0') setInterval(() => {   // ★ v1.28.3-R3: ইউজার-নির্দেশ — **ডিফল্টে চালু** (MEMRECYCLE=0 দিলে বন্ধ)
   try {
     const rss = Math.round(process.memoryUsage().rss / 1048576);
-    const thr = Number(process.env.MEMRECYCLE_MB || 0) || Math.round((MEM_LIM.lim || 1024) * 0.65);
+    // ★ v1.28.3-M9: শুধু "সীমার ৬৫%" যথেষ্ট নয় — প্রোড-সীমা ১০২৪MB হলে ছাদ ৬৬৬MB-এ ঠেকত,
+    //   অথচ RAM-ঝাঁক ততক্ষণে OOM ডেকে আনতে পারে। তাই **পরম ছাদ ৪৮০MB** (MEMRECYCLE_MAX দিয়ে বদলানো যায়)।
+    const thr = Number(process.env.MEMRECYCLE_MB || 0) || Math.min(Math.round((MEM_LIM.lim || 1024) * 0.65), Number(process.env.MEMRECYCLE_MAX || 480));
     const idleMs = Date.now() - ACT_LAST;
     // ★ R4: বুট-লুপ-গার্ড — শুরুর ৫ মিনিটে কখনোই মরি না (নাহলে রিস্টার্ট-লুপে আডন অচল হয়ে যেত)
     const upMs = Math.round(process.uptime() * 1000);
@@ -11282,6 +11284,7 @@ const server = http.createServer((req, res) => {
       // ★ v1.28.3-M4: সীমা + purge-পরিসংখ্যান (কতবার, কোন স্তরে) — প্রোডে "মেমরি ফুল" কেন, একনজরে
       return sendJson(res, 200, { up: Math.round(process.uptime()), rssMB: Math.round(m.rss / 1048576), heapMB: Math.round(m.heapUsed / 1048576), extMB: Math.round((m.external || 0) / 1048576),
         limitMB: (typeof MEM_LIM !== 'undefined' ? MEM_LIM.lim : 0), limitAssumed: (typeof MEM_LIM !== 'undefined' ? !!MEM_LIM.assumed : true), useMB: (typeof MEM_LIM !== 'undefined' ? MEM_LIM.use : 0),
+        recycleMB: (process.env.MEMRECYCLE === '0' ? 0 : Math.min(Math.round((MEM_LIM.lim || 1024) * 0.65), Number(process.env.MEMRECYCLE_MAX || 480))),
         peakMB: (typeof MEMW_PEAK !== 'undefined' ? MEMW_PEAK : 0), purges: (typeof MEM_PURGES !== 'undefined' ? MEM_PURGES : 0), lastLvl: (typeof MEM_LVL !== 'undefined' ? MEM_LVL : 0), gc: !!global.gc,
         c: { MM_WC: sz(MM_WC), MM_WC_INFLIGHT: sz(MM_WC_INFLIGHT), VSP_MEMO: sz(VSP_MEMO), OTT_MEMO: sz(OTT_MEMO), AZ_MEMO: sz(AZ_MEMO), AZ_CARD: sz(AZ_CARD), SRC_STASH: sz(SRC_STASH), PTUN: sz(PTUN), POOL: POOL.length, VIDY_OK: sz(VIDY_OK), PXS: sz(PXS), reqLog: sz(reqLog), SPOOL: sz(SPOOL) } });
     }
