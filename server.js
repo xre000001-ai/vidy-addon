@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.28.8';
+const VERSION = '1.28.9';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -2900,7 +2900,8 @@ const MLS_BASE = 'https://mlsbd.co';
 const mlsOn = cfg => (process.env.MLSD !== '0') && !(cfg && cfg.mls === 0);
 const MLS_C = new Map();
 const MLS_HOSTDBG = [];
-const MLS_LAST = new Map();                  // host → {st,len,via,ts} — প্রোডে-ডায়াগনস্টিক (diag-লাইনে যায়)                  // DBG: savelinks-পেজের হোস্ট-তালিকা (সর্বোচ্চ ২০)
+const MLS_LAST = new Map();
+const MLS_CURL_DEAD = new Map();              // host → ts; এখান থেকে curl ব্যর্থ ⇒ ১০মিন রিডার-ফার্স্ট (প্রোডে-মাপা)                  // host → {st,len,via,ts} — প্রোডে-ডায়াগনস্টিক (diag-লাইনে যায়)                  // DBG: savelinks-পেজের হোস্ট-তালিকা (সর্বোচ্চ ২০)
 const mlsEnt = s => String(s || '').replace(/&amp;/g, '&').replace(/&#0?38;/g, '&').replace(/&quot;/g, '"')
   .replace(/&#0?39;/g, "'").replace(/&#8217;/g, "'").replace(/&#8211;/g, '-').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
   .replace(/&#\d+;/g, ' ');
@@ -3021,18 +3022,20 @@ async function mlsGet(u, opt) {
   const cfHost = /(^|\.)(mlsbd\.co|savelinks\.me|gdflix\.[a-z]+)$/i.test(mlsHost(u));
   const left = () => ms - (Date.now() - T0);
   if (cfHost) {
-    // ★ v1.28.5g: মাপা — এই হোস্টগুলোর curl-উত্তর পর্যায়ক্রমে 302/0-byte হয় (প্রতি ~৩য়ে ১টি),
-    //   আর undici-র fetch **সবসময়** ৪০৩ (TLS-fingerprint)। তাই: curl ×৩, তারপর পুল।
-    for (let i = 0; i < 3 && left() > 1200; i++) {
+    // ★ v1.28.9: প্রোড-হোস্ট থেকে curl **কখনোই** কাজ করে না (মাপা) ⇒ একই হোস্টে একবার ব্যর্থ হলে
+    //   ১০ মিনিট রিডার-ফার্স্ট (প্রতি হপে ~২সে বাঁচে, নইলে সার্চ+২ হপ শেষ হতে হতো ৭সে+)।
+    const dead = (Date.now() - (MLS_CURL_DEAD.get(mlsHost(u)) || 0)) < 600000;
+    for (let i = 0; i < (dead ? 0 : 3) && left() > 1200; i++) {
       const cu = await mlsCurl(u, { ms: Math.min(4500, left()), json: !!opt.json, referer: opt.referer });
       if (cu && cu.st >= 200 && cu.st < 400 && String(cu.body || '').length > 200) { mlsRec(u, cu.st, String(cu.body).length, 'curl' + (i + 1)); return { st: cu.st, body: cu.body, url: u, ct: cu.ct }; }
       mlsRec(u, (cu && cu.st) || 0, String((cu && cu.body) || '').length, 'curl' + (i + 1) + '·bad');
+      MLS_CURL_DEAD.set(mlsHost(u), Date.now());
       if (DBG) console.error('[mlsd] curl#' + (i + 1) + ' st=' + (cu && cu.st) + ' len=' + String((cu && cu.body) || '').length + ' ' + String(u).slice(0, 60));
       if (left() < 900) break;
       await new Promise(r => setTimeout(r, 200 + 220 * i));
     }
     if (process.env.MLSREADER !== '0') {
-      const rb = await mlsReader(u, Math.max(2600, Math.min(6000, left() || 3000)));
+      const rb = await mlsReader(u, Math.max(2600, Math.min(4200, left() || 3000)));
       if (rb && (opt.json ? mlsOkJson(rb) : mlsOkHtml(rb))) { mlsRec(u, 200, rb.length, 'reader'); return { st: 200, body: rb, url: u, reader: 1 }; }
       mlsRec(u, 0, String(rb || '').length, 'reader·bad');
     }
