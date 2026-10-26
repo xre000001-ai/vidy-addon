@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.28.14';
+const VERSION = '1.28.15';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -3484,17 +3484,23 @@ async function mlsTask(nameP, infoP, type, s, e) {
     //   অপেক্ষা করত ⇒ বাজেট শেষে resolved=0 হয়ে কার্ড হারাত। মাপা: Kalki 2 কার্ড → 0 হয়েছিল)
     const ttlOf = p => String(p.title || '');
     const jobs = [], seenSav = new Set();
+    // ★ v1.28.15: পোস্টে প্রতি-কোয়ালিটির আলাদা sav-পাতা (480/720/1080 + Watch-Online-ডুপ)।
+    //   সবগুলো টানলে বাজেট ফুরায় (মাপা: ৭ পাতা ⇒ ১০.১সে ⇒ কার্ড ০)। তাই **উচ্চ-কোয়ালিটি আগে**,
+    //   সর্বোচ্চ ৩টি পাতা; প্রতিটির ভেতর থেকে gdflix ১ + multicloud ১ ⇒ ≤৬ Range-প্রমাণিত কার্ড।
+    const savList = [];
+    for (const p of cands) for (const it of mlsSavIds(p.html)) if (!savList.some(x => x.id === it.id)) savList.push(Object.assign({ p: p }, it));
+    savList.sort((a, b) => (b.q || 0) - (a.q || 0));
     for (const p of cands) {
-      for (const it of mlsSavIds(p.html).slice(0, 2)) {
+      for (const it of savList.filter(x => x.p === p).slice(0, 3)) {
         if (seenSav.has(it.id)) continue;
         seenSav.add(it.id);
         const q0 = it.q || mlsQ(p.title) || 0;
         const chain = mlsSav(it.id, 4500).then(x => {
           if (MLS_HOSTDBG.length < 20) MLS_HOSTDBG.push(x.hosts);
           const inner = [];
-          for (const u of x.mcl.slice(0, 2))     // ★ watch-online আগে (১ হপ, প্রোডে-খোলা — মাপা ২০৬)
+          for (const u of x.mcl.slice(0, 1))     // ★ watch-online (১ হপ, প্রোডে-খোলা — মাপা ২০৬)
             inner.push(mlsWatch(u, Math.max(3000, CAP - (Date.now() - T0) - 400)).then(r => ({ kind: 'watch', r: r, title: ttlOf(p), q: q0 })).catch(() => null));
-          for (const u of x.gd.slice(0, 2))
+          for (const u of x.gd.slice(0, 1))
             inner.push(mlsGd(u, Math.max(2600, CAP - (Date.now() - T0) - 400)).then(r => ({ kind: 'gd', r: r, title: ttlOf(p), q: q0 })).catch(() => null));
           return Promise.all(inner);
         }).catch(() => []);
