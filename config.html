@@ -482,7 +482,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
   var SUBS=[[1,'On'],[0,'No subs']];
 
   /* ─────────── state (server-contract keys) ─────────── */
-  var st={v:1,q:[],sub:1,srv:SRVS.map(function(x){return x[0];}),nx:1,nxq:[],nxl:[],rt:1,rtl:[],rtq:[],tw:1,twq:[],twl:[],mm:1,mmr:0,mmq:[],mml:[],m4u:1,m4ur:0,m4uq:[],m4ul:[],sky:1,skyr:0,hm:1,hmr:0,skyq:[],hmq:[],skyl:[],hml:[],hd:1,hdr:0,hdq:[],hdl:[],vsp:1,vspq:[],vspl:[],ott:1,ottq:[],ottl:[],az:1,azq:[],azl:[],mlb:1,mlbr:0,rtsrv:[]}; /* rtsrv: খালি=MQ+Pixeldrain-দুটোই (সার্ভার-চুক্তি: খালি=সব) */
+  var st={v:1,q:[],sub:1,srv:SRVS.map(function(x){return x[0];}),nx:1,nxq:[],nxl:[],rt:1,rtl:[],rtq:[],tw:1,twq:[],twl:[],mm:1,mmr:0,mmq:[],mml:[],m4u:1,m4ur:0,m4uq:[],m4ul:[],sky:1,skyr:0,hm:1,hmr:0,skyq:[],hmq:[],skyl:[],hml:[],hd:1,hdr:0,hdq:[],hdl:[],vsp:1,vspq:[],vspl:[],ott:1,ottq:[],ottl:[],az:1,azq:[],azl:[],mlb:1,mlbr:0,mls:1,mlsr:0,rtsrv:[]}; /* rtsrv: খালি=MQ+Pixeldrain-দুটোই (সার্ভার-চুক্তি: খালি=সব) */
 
   /* source definitions: [key, tile, tileBg, tileFg, name, badge, badgeCls, blurb, hasTune] */
   var SRC=[
@@ -498,7 +498,8 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     ['vsp','VS','linear-gradient(135deg,#1b2337,#121826)','#a9b8e8','Vidsrc','HLS · Eng','', 'Own relay pool · wide catalog',1],
     ['ott','AT','linear-gradient(135deg,#102a26,#0b1d1a)','#7fe0cc','AsianTV','HLS · K/C/J/Thai','', 'Dramas & movies · embedded subs',1],
     ['az','AZ','linear-gradient(135deg,#221a33,#171122)','#c9b8ff','AniZone','HLS · Anime','new','Anime series & movies · multi-language subs',1],
-    ['mlb','MLB','linear-gradient(135deg,#0e1d2b,#0a1520)','#8fd6ff','MovieLinkBD','MKV · FSL/HubCloud','','Bilingual DDL · all Range-proven mirrors · every seekable server',1]
+    ['mlb','MLB','linear-gradient(135deg,#0e1d2b,#0a1520)','#8fd6ff','MovieLinkBD','MKV · FSL/HubCloud','','Bilingual DDL · all Range-proven mirrors · every seekable server',1],
+    ['mls','MLS','linear-gradient(135deg,#2b1220,#1a0b13)','#ff9fb8','MLSBD','MKV · gdflix/Watch','new','mlsbd.co → savelinks → gdflix + Watch-Online · Range-206 proof only',1]
   ];
 
   /* ─────────── utils ─────────── */
@@ -557,6 +558,8 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
       if(o.ottl)st.ottl=strL(o.ottl,LK);
       if(o.mlb===1)st.mlb=1; else if(o.mlb===0)st.mlb=0;
       if([0,480,720,1080,2160].indexOf(o.mlbr)>=0)st.mlbr=o.mlbr;
+      if(o.mls===1)st.mls=1; else if(o.mls===0)st.mls=0;
+      if([0,480,720,1080,2160].indexOf(o.mlsr)>=0)st.mlsr=o.mlsr;
       if(o.az===0)st.az=0;
       if(o.azq)st.azq=numL(o.azq,[2160,1080,720,480,360]);
       if(o.azl)st.azl=strL(o.azl,LK);
@@ -640,6 +643,9 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     // ★ v1.27.16: MovieLinkBD এখন **অন্য সোর্সের মতোই ডিফল্ট চালু** — বন্ধ করলেই কেবল mlb:0 পাঠাই
     if(st.mlb===0)c.mlb=0;
     else if(st.mlbr)c.mlbr=st.mlbr;
+    // ★ v1.28.5: MLSBD — আলাদা সোর্স (MovieLinkBD নয়)
+    if(st.mls===0)c.mls=0;
+    else if(st.mlsr)c.mlsr=st.mlsr;
     var u=base()+(Object.keys(c).length?'/cfg/'+b64u(c):'')+'/manifest.json';
     $('url').value=u;
     $('inst').href='stremio://'+u.replace(/^https?:\/\//,'');
@@ -908,6 +914,9 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     /* MovieLinkBD — v1.27.16: নিজস্ব রেজোলিউশন-ক্যাপ (server: cfg.mlbr) */
     o=tuneCard('tune-mlb','mlb','MovieLinkBD','Bilingual DDL · every Range-proven server as its own card');h.appendChild(o.card);
     singleInto(o.zone,'Resolution cap','mlbr',CAPS,rebuild);
+    /* MLSBD — আলাদা সোর্স: gdflix + Watch-Online (Range-206 প্রমাণিত) */
+    o=tuneCard('tune-mls','mls','MLSBD','mlsbd.co → savelinks → gdflix ▼ + Watch-Online · only Range-206-proven files');h.appendChild(o.card);
+    singleInto(o.zone,'Resolution cap','mlsr',CAPS,rebuild);
   })();
   /* ─────────── preview — আসল কার্ড-ছাঁচেই (v1.27.16) ─────────── */
   function pvCard(id, on, q, opts){ /* opts={title,ep,src,audio,srv,note} */
@@ -974,7 +983,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
   }
   function summary(){
     var s=$('summ');s.innerHTML='';
-    var QK={v:'q',nx:'nxq',rt:'rtq',tw:'twq',mm:'mmq',m4u:'m4uq',sky:'skyq',hm:'hmq',hd:'hdq',mlb:'mlbr',vsp:'vspq',ott:'ottq',az:'azq'};   // ★ v1.28.0: mlbq/mlbl অস্তিত্বহীন কী ছিল
+    var QK={v:'q',nx:'nxq',rt:'rtq',tw:'twq',mm:'mmq',m4u:'m4uq',sky:'skyq',hm:'hmq',hd:'hdq',mlb:'mlbr',mls:'mlsr',vsp:'vspq',ott:'ottq',az:'azq'};   // ★ v1.28.0: mlbq/mlbl অস্তিত্বহীন কী ছিল
     var LKK={nx:'nxl',rt:'rtl',tw:'twl',mm:'mml',m4u:'m4ul',sky:'skyl',hm:'hml',hd:'hdl',vsp:'vspl',ott:'ottl',az:'azl'};
     SRC.forEach(function(x){
       if(st[x[0]]!==1)return;
@@ -1008,7 +1017,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     // ★ v1.17.48: হাতে-লেখা সোর্স-তালিকা বাদ (hm বাদ-পড়ে ছিল ⇒ Reset-এ HindMovie বন্ধ-ই থেকে যেত) —
     //   এখন `SRC` থেকেই সব সোর্স অন, আর আলাদা করে শুধু রেজো/অডিও-ডিফল্ট।
     SRC.forEach(function(x){st[x[0]]=1;});
-    st.mmr=0;st.m4ur=0;st.skyr=0;st.hmr=0;st.mlbr=0;
+    st.mmr=0;st.m4ur=0;st.skyr=0;st.hmr=0;st.mlbr=0;st.mlsr=0;
     syncAll(true);rebuild();toast('Reset');
   };
   function syncAll(collapse){ /* v1.15.81: collapse=সত্য → প্রসারিত-কার্ড-গুটানো (কেবল Reset) */
