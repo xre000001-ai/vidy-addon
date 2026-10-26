@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.28.6';
+const VERSION = '1.28.7';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -2946,6 +2946,40 @@ function mlsCurl(u, opt) {
 }
 
 // CF-চ্যালেঞ্জ-সচেতন GET (ডাইরেক্ট, তারপর পুল-সুরঙ্গ) — কখনো throw নয়
+// ★ v1.28.7: ভ্যালিডেটেড পুল-ফেচ — pxsGet **প্রথম যে-বডি আসে** সেটাই দেয়, তাই CF-ব্লক-পেজ
+//   (~৪০০ বাইট) "সফল" হয়ে সার্চ-ফল খালি দেখাত (প্রোডে-মাপা: net=pool/200/413)। এখানে একাধিক
+//   নোড সমান্তরালে চেষ্টা করে এবং **বডি-যাচাই পাস করলেই** গ্রহণ করা হয়।
+function mlsOkJson(t) {
+  const x = String(t || '').trim();
+  if (!x) return false;
+  if (/^\s*[\{\[]/.test(x)) { try { const j = JSON.parse(x); return Array.isArray(j) ? j.length > 0 : !!j; } catch (e) { return false; } }
+  return false;
+}
+function mlsOkHtml(t) {
+  const x = String(t || '');
+  return x.length > 4000 && !/Just a moment|Enable JavaScript and cookies|_cf_chl_opt|cf-error-details/i.test(x.slice(0, 4000));
+}
+function mlsPoolFetch(u, ms, accept) {
+  const key = 'mls:' + pxsKeyOf(u), n = Number(process.env.MLSPX || 8);
+  const own = spoolPick(srcKeyFor(key), n);
+  const cands = [...new Set(own.concat(pxsPick(key, n)))].slice(0, Math.max(n, 8));
+  if (!cands.length) return Promise.resolve('');
+  return new Promise(resolve => {
+    let done = false, fails = 0;
+    const to = setTimeout(() => { if (!done) { done = true; resolve(''); } }, Math.max(2500, ms));
+    const miss = () => { if (++fails >= cands.length && !done) { done = true; clearTimeout(to); resolve(''); } };
+    for (const px of cands) {
+      const t0 = Date.now();
+      proxiedGet(px, u, Math.max(2500, ms), undefined).then(body => {
+        const b = String(body || '');
+        if (done) { return; }
+        if (!accept(b)) { pxsRec(key, px, false, Date.now() - t0); miss(); return; }
+        done = true; clearTimeout(to); pxsRec(key, px, true, Date.now() - t0); resolve(b);
+      }).catch(() => { pxsRec(key, px, false, Date.now() - t0); miss(); });
+    }
+  });
+}
+
 function mlsRec(u, st, len, via) {
   try { MLS_LAST.set(mlsHost(u), { st: st, len: len, via: via, ts: Date.now() }); if (MLS_LAST.size > 30) MLS_LAST.clear(); } catch (e) { }
 }
@@ -2979,8 +3013,8 @@ async function mlsGet(u, opt) {
       await new Promise(r => setTimeout(r, 200 + 220 * i));
     }
     try {
-      const b = await pxsGet(u, { key: 'mls:' + pxsKeyOf(u), n: 5, tmo: Math.max(2500, Math.min(5200, left() || 2600)) });
-      if (b && String(b).length > 200) { mlsRec(u, 200, String(b).length, 'pool'); return { st: 200, body: String(b), url: u, px: 1 }; }
+      const b = await mlsPoolFetch(u, Math.max(3000, Math.min(5600, left() || 3000)), opt.json ? mlsOkJson : mlsOkHtml);
+      if (b) { mlsRec(u, 200, String(b).length, 'pool'); return { st: 200, body: String(b), url: u, px: 1 }; }
       mlsRec(u, 0, 0, 'pool·empty');
     } catch (e) { mlsRec(u, 0, 0, 'pool·err'); }
     return { st: 0, body: '', url: u };
@@ -3001,8 +3035,8 @@ async function mlsGet(u, opt) {
     if (cu && cu.st >= 200 && cu.st < 400 && String(cu.body || '').length > 200) return { st: cu.st, body: cu.body, url: u, ct: cu.ct };
   }
   try {
-    const b = await pxsGet(u, { key: 'mls:' + pxsKeyOf(u), n: 3, tmo: Math.max(2500, Math.min(5200, ms)) });
-    if (b && String(b).length > 200) return { st: 200, body: String(b), url: u, px: 1 };
+    const b = await mlsPoolFetch(u, Math.max(3000, Math.min(5600, ms)), opt.json ? mlsOkJson : mlsOkHtml);
+    if (b) return { st: 200, body: String(b), url: u, px: 1 };
   } catch (e) { }
   return { st: 0, body: '', url: u };
 }
