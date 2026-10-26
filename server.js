@@ -1877,10 +1877,15 @@ function memLimitMB() {
         if (v && v !== 'max') { const n = Math.round(Number(v) / 1048576); if (n > 64 && n < 65536) { lim = n; break; } }
       } catch (e3) { }
     }
-    const cap = Math.round((lim || 0) * 0.7);
-    const want = e || cap || 700;
-    return { lim, cap, use: Math.max(160, e ? e : (cap || 700)) };
-  } catch (e) { return { lim: 0, cap: 0, use: 700 }; }
+    // ★ v1.28.3-M8: Beamup/Dokku-তে cgroup-ফাইল পড়া যায় না ⇒ `lim=0` হয়ে যেত, আর রিসাইকেল-সীমা
+    //   ৬৬৫MB-এ ঠেকত (৫১২MB বাক্সে তার আগেই OOM)। এখন অজানা হলে **ASSV=512MB ধরে নিই**
+    //   (MEMLIMIT_MB দিয়ে সত্যিকারের মান বসানো যায়) — ভুলের দিকটা যেন নিরাপদ দিকে থাকে।
+    const assumed = !lim;
+    if (!lim) lim = Number(process.env.MEMLIMIT_MB || 512);
+    const cap = Math.round(lim * 0.7);
+    const want = e || cap;
+    return { lim, cap, use: Math.max(160, e ? e : cap), assumed };
+  } catch (e) { return { lim: 512, cap: 358, use: 358, assumed: true }; }
 }
 const MEM_LIM = memLimitMB();
 let MEMW_PEAK = 0, MEMW_LAST = 0, MEM_LVL = 0, MEM_PURGES = 0;
@@ -11276,7 +11281,7 @@ const server = http.createServer((req, res) => {
       const m = process.memoryUsage(); const sz = o => { try { return o instanceof Map ? o.size : (Array.isArray(o) ? o.length : -1); } catch (e) { return -1; } };
       // ★ v1.28.3-M4: সীমা + purge-পরিসংখ্যান (কতবার, কোন স্তরে) — প্রোডে "মেমরি ফুল" কেন, একনজরে
       return sendJson(res, 200, { up: Math.round(process.uptime()), rssMB: Math.round(m.rss / 1048576), heapMB: Math.round(m.heapUsed / 1048576), extMB: Math.round((m.external || 0) / 1048576),
-        limitMB: (typeof MEM_LIM !== 'undefined' ? MEM_LIM.lim : 0), useMB: (typeof MEM_LIM !== 'undefined' ? MEM_LIM.use : 0),
+        limitMB: (typeof MEM_LIM !== 'undefined' ? MEM_LIM.lim : 0), limitAssumed: (typeof MEM_LIM !== 'undefined' ? !!MEM_LIM.assumed : true), useMB: (typeof MEM_LIM !== 'undefined' ? MEM_LIM.use : 0),
         peakMB: (typeof MEMW_PEAK !== 'undefined' ? MEMW_PEAK : 0), purges: (typeof MEM_PURGES !== 'undefined' ? MEM_PURGES : 0), lastLvl: (typeof MEM_LVL !== 'undefined' ? MEM_LVL : 0), gc: !!global.gc,
         c: { MM_WC: sz(MM_WC), MM_WC_INFLIGHT: sz(MM_WC_INFLIGHT), VSP_MEMO: sz(VSP_MEMO), OTT_MEMO: sz(OTT_MEMO), AZ_MEMO: sz(AZ_MEMO), AZ_CARD: sz(AZ_CARD), SRC_STASH: sz(SRC_STASH), PTUN: sz(PTUN), POOL: POOL.length, VIDY_OK: sz(VIDY_OK), PXS: sz(PXS), reqLog: sz(reqLog), SPOOL: sz(SPOOL) } });
     }
