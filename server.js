@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.28.5';
+const VERSION = '1.28.6';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -2899,7 +2899,8 @@ async function withNx(cardsP, nxP, cfg, t0) {
 const MLS_BASE = 'https://mlsbd.co';
 const mlsOn = cfg => (process.env.MLSD !== '0') && !(cfg && cfg.mls === 0);
 const MLS_C = new Map();
-const MLS_HOSTDBG = [];                  // DBG: savelinks-পেজের হোস্ট-তালিকা (সর্বোচ্চ ২০)
+const MLS_HOSTDBG = [];
+const MLS_LAST = new Map();                  // host → {st,len,via,ts} — প্রোডে-ডায়াগনস্টিক (diag-লাইনে যায়)                  // DBG: savelinks-পেজের হোস্ট-তালিকা (সর্বোচ্চ ২০)
 const mlsEnt = s => String(s || '').replace(/&amp;/g, '&').replace(/&#0?38;/g, '&').replace(/&quot;/g, '"')
   .replace(/&#0?39;/g, "'").replace(/&#8217;/g, "'").replace(/&#8211;/g, '-').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
   .replace(/&#\d+;/g, ' ');
@@ -2945,6 +2946,10 @@ function mlsCurl(u, opt) {
 }
 
 // CF-চ্যালেঞ্জ-সচেতন GET (ডাইরেক্ট, তারপর পুল-সুরঙ্গ) — কখনো throw নয়
+function mlsRec(u, st, len, via) {
+  try { MLS_LAST.set(mlsHost(u), { st: st, len: len, via: via, ts: Date.now() }); if (MLS_LAST.size > 30) MLS_LAST.clear(); } catch (e) { }
+}
+
 async function mlsGet(u, opt) {
   opt = opt || {};
   const ms = Math.max(1500, opt.ms || 6000), T0 = Date.now();
@@ -2967,15 +2972,17 @@ async function mlsGet(u, opt) {
     //   আর undici-র fetch **সবসময়** ৪০৩ (TLS-fingerprint)। তাই: curl ×৩, তারপর পুল।
     for (let i = 0; i < 3 && left() > 1200; i++) {
       const cu = await mlsCurl(u, { ms: Math.min(4500, left()), json: !!opt.json, referer: opt.referer });
-      if (cu && cu.st >= 200 && cu.st < 400 && String(cu.body || '').length > 200) return { st: cu.st, body: cu.body, url: u, ct: cu.ct };
+      if (cu && cu.st >= 200 && cu.st < 400 && String(cu.body || '').length > 200) { mlsRec(u, cu.st, String(cu.body).length, 'curl' + (i + 1)); return { st: cu.st, body: cu.body, url: u, ct: cu.ct }; }
+      mlsRec(u, (cu && cu.st) || 0, String((cu && cu.body) || '').length, 'curl' + (i + 1) + '·bad');
       if (DBG) console.error('[mlsd] curl#' + (i + 1) + ' st=' + (cu && cu.st) + ' len=' + String((cu && cu.body) || '').length + ' ' + String(u).slice(0, 60));
       if (left() < 900) break;
       await new Promise(r => setTimeout(r, 200 + 220 * i));
     }
     try {
-      const b = await pxsGet(u, { key: 'mls:' + pxsKeyOf(u), n: 3, tmo: Math.max(2500, Math.min(5200, left() || 2600)) });
-      if (b && String(b).length > 200) return { st: 200, body: String(b), url: u, px: 1 };
-    } catch (e) { }
+      const b = await pxsGet(u, { key: 'mls:' + pxsKeyOf(u), n: 5, tmo: Math.max(2500, Math.min(5200, left() || 2600)) });
+      if (b && String(b).length > 200) { mlsRec(u, 200, String(b).length, 'pool'); return { st: 200, body: String(b), url: u, px: 1 }; }
+      mlsRec(u, 0, 0, 'pool·empty');
+    } catch (e) { mlsRec(u, 0, 0, 'pool·err'); }
     return { st: 0, body: '', url: u };
   }
   for (let at = 0; at < 2; at++) {
@@ -3259,7 +3266,8 @@ async function mlsTask(nameP, infoP, type, s, e) {
         if (DBG) console.error('[mlsd] search-fallback ids=' + hitIds.length + ' content=' + more.length + ' @' + (Date.now() - T0) + 'ms');
       }
     }
-    diag('mlsd', 'posts=' + posts.length + ' match=' + cands.length + ' @' + (Date.now() - T0) + 'ms');
+    diag('mlsd', 'posts=' + posts.length + ' match=' + cands.length + ' @' + (Date.now() - T0) + 'ms'
+      + (posts.length ? '' : ' net=' + JSON.stringify([...MLS_LAST.entries()].slice(-3).map(([h, v]) => h + ':' + v.via + '/' + v.st + '/' + v.len))));
     if (DBG) console.error('[mlsd] posts=' + posts.length + ' match=' + cands.length + ' @' + (Date.now() - T0) + 'ms titles=' + posts.slice(0,3).map(p=>String(p.title).slice(0,40)).join(' | '));
     if (!cands.length) { if (DBG) console.error('[mlsd] no-match "' + name + '" year=' + year + ' posts=' + posts.length); return []; }
 
