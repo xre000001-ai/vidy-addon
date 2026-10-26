@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.28.3';
+const VERSION = '1.28.4';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -3121,6 +3121,27 @@ async function twrFetch(base, tag, title, type, s, e, t3) {
     let dubM = {};
     if (tag === 'raretoons' && keep && raws.length && String(cat0.live || cat0.show || '').trim()) {
       try { dubM = await rtDubMap(String(cat0.live || cat0.show).trim(), s || 1, e || 1, 2400); } catch { dubM = {}; }
+    }
+    // ★ v1.28.4: রেজলভার এখন **রেন্ডার-রেডি** কার্ড দেয় (প্রতি-ভ্যারিয়েন্ট,
+    //   Range-২০৬-প্রমাণিত, সাইজ/কোয়ালিটি/ভাষা সহ) ⇒ মেইন-অ্যাডন আর
+    //   নিজে কার্ড বানায় না, rtDubMap ডাকে না — শুধু পাস-থ্রু (চাপ কমে)।
+    const ready = keep ? raws.filter(x => x && x.card === 1 && x.title && /^https?:/.test(String(x.url || ''))) : [];
+    if (ready.length) {
+      const arr2 = ready.map(x => {
+        const q = String(x.quality || '').replace(/p$/, '');
+        const txt = String(x.title);
+        return {
+          name: '\u25eb ' + (q || 'Auto') + 'p \u25eb',
+          title: txt, description: txt,
+          quality: q || 'Auto', _hq: parseInt(q, 10) || 0,
+          _lang: String(x.lang || ''),
+          url: String(x.url),
+          behaviorHints: { notWebReady: false, isBingeable: true, filename: String(x.filename || ((tag === 'toonworld' ? 'toonworld' : 'raretoons') + '.mkv')) },
+          bingeGroup: String(x.bingeGroup || ((tag === 'toonworld' ? 'tw|' : 'rt|') + String(title).toLowerCase() + '::|' + (String(x.lang || '') || 'Hindi')))
+        };
+      });
+      if (DBG) console.error('[twr] ' + tag + ' ' + String(title).slice(0, 30) + ' S' + (s || 1) + 'E' + (e || 1) + ' -> ' + arr2.length + ' ready-cards @' + (Date.now() - t3) + 'ms');
+      return arr2;
     }
     const arr = (keep ? raws : []).map(x => {
       const hq = parseInt(String(x.quality || ''), 10) || 0; // রেজলভারের-আসল-উচ্চতা — twq-ফিল্টার-এর-জন্য
