@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.28.13';
+const VERSION = '1.28.14';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -12022,7 +12022,10 @@ const server = http.createServer((req, res) => {
       const u = u2.searchParams.get('u') || '';
       const kind = u2.searchParams.get('kind') || 'watch';
       if (!u) return sendJson(res, 200, { err: 'need ?u=' });
-      const job = kind === 'gd' ? mlsGd(u, 9000) : kind === 'search' ? mlsPosts([u], 7000).then(a => ({ posts: a.length, titles: a.slice(0, 3).map(x => x.title.slice(0, 60)) })) : mlsWatch(u, 9000);
+      const job = kind === 'gd' ? mlsGd(u, 9000)
+        : kind === 'search' ? mlsPosts([u], 7000).then(a => ({ posts: a.length, titles: a.slice(0, 3).map(x => x.title.slice(0, 60)) }))
+        : kind === 'task' ? mlsTask(Promise.resolve(u), Promise.resolve(null), u2.searchParams.get('t') === 'series' ? 'series' : 'movie', Number(u2.searchParams.get('s') || 0), Number(u2.searchParams.get('e') || 0))
+        : mlsWatch(u, 9000);
       return Promise.resolve(job).then(r => sendJson(res, 200, { ok: 1, kind: kind, r: r })).catch(e => sendJson(res, 200, { ok: 0, err: String(e && e.message) }));
     }
     if (p === '/_lastsrc') return sendJson(res, 200, LAST_SRC || {});
