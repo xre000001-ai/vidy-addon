@@ -11320,10 +11320,12 @@ const server = http.createServer((req, res) => {
       } catch (e) { }
       return sendJson(res, 200, out);
     }
-    if (p === '/_mempurge') {   // ★ v1.28.3-M5: হাতে-ট্রিগার (শুধু লোকাল/VDBG) — মাপার জন্য
+    if (p === '/_mempurge') {   // ★ v1.28.3-M7: প্রোডে **বন্ধ** — Beamup-প্রক্সির পেছনে remoteAddress=127.0.0.1
+      //   হওয়ায় "লোকাল-গার্ড" ফাঁকি খেত (মাপা: প্রোডে ২০০ ফিরছিল) ⇒ যে কেউ ক্যাশ-থ্র্যাশ করতে পারত।
+      //   এখন কেবল MEMPURGE=1 দিলে (বা সরাসরি লোকাল-শেল থেকে DBG সহ) কাজ করে।
       const ip = String((req.headers['x-forwarded-for'] || req.socket.remoteAddress || '')).split(',')[0].trim();
       const local = /^(127\.|::1$|::ffff:127\.)/.test(ip);
-      if (!local && !DBG) return sendJson(res, 403, { error: 'local-only' });
+      if (process.env.MEMPURGE !== '1' && !(local && DBG)) return sendJson(res, 403, { error: 'disabled (MEMPURGE=1 দিলে চালু)' });
       const lvl = Math.max(0, Math.min(2, Number(new URL(req.url, 'http://x').searchParams.get('lvl') || 2)));
       const before = Math.round(process.memoryUsage().rss / 1048576);
       let n = 0; try { n = (typeof memPurgeAll === 'function') ? memPurgeAll(lvl) : 0; } catch (e) { }
