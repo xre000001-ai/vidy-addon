@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.28.15';
+const VERSION = '1.28.16';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -3392,6 +3392,11 @@ async function mlsWatch(link, ms, px) {
   const t = Math.max(3000, Math.min(7000, ms || 6000));
   const v = await mlsGet(link, { ms: Math.min(t, 5000), referer: 'https://savelinks.me/', proxy: px });
   let body = String(v.body || '');
+  if (body.length < 800) {          // ★ v1.28.16: মাপা — মাঝে মাঝে fetch ৩০২-স্টাব (১৭ বাইট) ফেরে;
+    const cu = await mlsCurl(link, { ms: Math.min(4000, t), referer: 'https://savelinks.me/' });   // curl -L পুরো পেজ আনে
+    if (cu && cu.st >= 200 && cu.st < 400 && String(cu.body || '').length > body.length) body = String(cu.body);
+  }
+  if (DBG) console.error('[mlsw] ' + link.slice(-18) + ' st=' + v.st + ' len=' + body.length);
   if (!body) return null;
   const base = v.url || link;
   const dec = u => mlsEnt(u);
@@ -3409,9 +3414,11 @@ async function mlsWatch(link, ms, px) {
     const src = (/const\s+streamSrc\s*=\s*["']([^"']+)["']/.exec(String(pp.body || '')) || [])[1];
     if (src) push(src + (/[?&]/.test(src) ? '&' : '?') + 'action=watch', 'multicloud');
   }
+  if (DBG) console.error('[mlsw] cands=' + cands.map(c => c.tag).join(','));
   for (const c of cands.slice(0, 2)) {
     const pr = await mlsProve(c.u, Math.max(2200, Math.min(4500, t - (Date.now() - T0))));
-    if (pr && pr.ok) return { direct: c.u, size: pr.size || 0, ct: pr.ct || '', srv: c.tag };
+    if (DBG) console.error('[mlsw] probe ' + c.tag + ' st=' + (pr && pr.st) + ' ct=' + (pr && pr.ct) + ' ok=' + !!(pr && pr.ok));
+    if (pr && pr.ok) return { ok: true, direct: c.u, size: pr.size || 0, ct: pr.ct || '', srv: c.tag };   // ok:true = Range-প্রমাণিত
   }
   return null;
 }
