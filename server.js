@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.28.7';
+const VERSION = '1.28.8';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -2949,6 +2949,25 @@ function mlsCurl(u, opt) {
 // ★ v1.28.7: ভ্যালিডেটেড পুল-ফেচ — pxsGet **প্রথম যে-বডি আসে** সেটাই দেয়, তাই CF-ব্লক-পেজ
 //   (~৪০০ বাইট) "সফল" হয়ে সার্চ-ফল খালি দেখাত (প্রোডে-মাপা: net=pool/200/413)। এখানে একাধিক
 //   নোড সমান্তরালে চেষ্টা করে এবং **বডি-যাচাই পাস করলেই** গ্রহণ করা হয়।
+// ★ v1.28.8: রিডার-ফলব্যাক — মাপা (প্রোড): beamup-হোস্ট থেকে mlsbd.co **কোনো** পথেই আসে না
+//   (curl-ডাইরেক্ট ব্যর্থ, পুল-নোডগুলো CF-ব্লক-স্টাব দেয়)। কিন্তু `https://r.jina.ai/<url>`
+//   সার্ভার-সাইড থেকে ২০০ + আসল বডি দেয় (মাপা: ১.৮সে, wp-json JSON হুবহু, শুধু হেডার-প্রিফিক্স)।
+//   তাই CF-হোস্টে শেষ-উপায় হিসেবে রিডার — বডি-যাচাই পাস করলেই গ্রহণ।
+async function mlsReader(u, ms) {
+  const t = Math.max(2500, Math.min(6500, ms || 5000));
+  try {
+    const r = await fetch('https://r.jina.ai/' + u, {
+      headers: { 'User-Agent': UA, 'Accept': 'text/plain' },
+      signal: AbortSignal.timeout(t)
+    });
+    if (r.status !== 200) return '';
+    let b = await r.text();
+    const i = b.indexOf('Markdown Content:');
+    if (i >= 0) b = b.slice(i + 'Markdown Content:'.length).trim();
+    return b;
+  } catch (e) { return ''; }
+}
+
 function mlsOkJson(t) {
   const x = String(t || '').trim();
   if (!x) return false;
@@ -3011,6 +3030,11 @@ async function mlsGet(u, opt) {
       if (DBG) console.error('[mlsd] curl#' + (i + 1) + ' st=' + (cu && cu.st) + ' len=' + String((cu && cu.body) || '').length + ' ' + String(u).slice(0, 60));
       if (left() < 900) break;
       await new Promise(r => setTimeout(r, 200 + 220 * i));
+    }
+    if (process.env.MLSREADER !== '0') {
+      const rb = await mlsReader(u, Math.max(2600, Math.min(6000, left() || 3000)));
+      if (rb && (opt.json ? mlsOkJson(rb) : mlsOkHtml(rb))) { mlsRec(u, 200, rb.length, 'reader'); return { st: 200, body: rb, url: u, reader: 1 }; }
+      mlsRec(u, 0, String(rb || '').length, 'reader·bad');
     }
     try {
       const b = await mlsPoolFetch(u, Math.max(3000, Math.min(5600, left() || 3000)), opt.json ? mlsOkJson : mlsOkHtml);
