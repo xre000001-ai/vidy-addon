@@ -11,7 +11,100 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.28.2';
+const VERSION = '1.28.3';
+
+// ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
+// ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
+//   **প্রতি-কলে কী জমছে** গুনতে হয়। এখানে setTimeout/setInterval মোড়ক করি: কতগুলো এখনো জীবিত
+//   (clear হয়নি / ফায়ার হয়নি) তা `/_leak`-এ দেখা যায়। প্রোডে বন্ধ (শুধু LEAK=1-এ চালু, খরচ শূন্য)।
+const LT = { iv: new Set(), to: new Set(), on: process.env.LEAK === '1' };
+
+// ================= v1.28.3-S1: আউটবাউন্ড-সকেট হিসাব (SOCKS=1) =================
+// ★ v1.28.3-S3 (মাপা: বিনা-ট্রাফিকেও ৯০সে-এ **৭,৬৭৩** সকেট তৈরি ⇒ RSS দিনে +২৫০MB):
+//   এখন সকেট-হিসাব **সবসময়** চালু, আর **গ্লোবাল সকেট-গেট**: জীবিত আউটবাউন্ড-সকেট SOCKMAX(৯৬)
+//   ছাড়ালে নতুন কানেকশন ২৫ms-পরে আবার চেষ্টা করে (সর্বোচ্চ ৩সে অপেক্ষা, তারপর ছেড়ে দিই —
+//   deadlock নয়)। ফোরগ্রাউন্ড (ইউজার-অনুরোধ চলাকালে) গেট **বাইপাস** করে ⇒ প্লেব্যাক ধীর হবে না।
+const SK = { on: process.env.SOCKS === '1', live: new Map(), liveN: 0, made: 0, madeBy: new Map(),
+  waited: 0, queued: 0, dropped: 0, fg: 0 };
+const SOCKMAX = Number(process.env.SOCKMAX || 160);
+function isLocalOnly(req) { const ip = String((req.headers['x-forwarded-for'] || req.socket.remoteAddress || '')).split(',')[0].trim(); return /^(127\.|::1$|::ffff:127\.)/.test(ip) || DBG; }
+{
+  // ★ v1.28.3-S6 (গুরুত্বপূর্ণ): আগের সংস্করণ ছাদে পৌঁছালে ব্যাকগ্রাউন্ড-কানেকশন **ফেলে দিত** —
+  //   তাতে স্ক্যানার ভালো-প্রক্সিকেও "মৃত" ভেবে ফেলত (পুল-বিষক্রিয়া, মাপা: bench ৯-এ আটকে)।
+  //   এখন **সারি**: ছাদে পৌঁছালে কানেকশন ২০ms-পরে আবার চেষ্টা করে, স্লট খালি হলেই যায়
+  //   (সর্বোচ্চ ৬সে অপেক্ষা; তারপর ETIMEDOUT — যা আসল-ধীর-প্রক্সির মতোই, স্ক্যানার ঠিকভাবে হ্যান্ডল করে)।
+  //   এছাড়া **ট্রেনিং-অবস্থায় বাড়তি ছাদ** (bench < PXBENCH-low ⇒ ২×) — কোল্ড-স্টার্ট ধীর হবে না।
+  const netm = require('net');
+  const origProto = netm.Socket.prototype.connect;
+  const capNow = () => {
+    let b = -1; try { b = Number(global.__benchN); } catch (e) { }   // ★ S9: রিয়েল bench-সংখ্যা (নাহলে -1 = অজানা)
+    const train = Number(process.env.SOCKTRAIN || 192);
+    if (!(b >= 0)) return SOCKMAX;                                   // অজানা ⇒ কড়া ছাদ-ই নিরাপদ
+    return (b < Number(process.env.SOCKLOW || 80)) ? Math.max(SOCKMAX, train) : SOCKMAX;
+  };
+  const count = (host, sock) => {
+    try {
+      SK.made++; SK.liveN++; SK.madeBy.set(host, (SK.madeBy.get(host) || 0) + 1);
+      SK.live.set(host, (SK.live.get(host) || 0) + 1);
+      sock.once('close', () => {
+        SK.liveN = Math.max(0, SK.liveN - 1);
+        const n = (SK.live.get(host) || 1) - 1; if (n <= 0) SK.live.delete(host); else SK.live.set(host, n);
+      });
+    } catch (e) { }
+  };
+  const QMAX = Number(process.env.SOCKQ || 400);
+  netm.Socket.prototype.connect = function () {
+    let host = '?';
+    try {
+      const a0 = arguments[0];
+      if (typeof a0 === 'object' && a0) host = String(a0.host || (a0.path ? 'unix:' + a0.path : '?'));
+      else if (typeof arguments[0] === 'number' && typeof arguments[1] === 'string') host = arguments[1];
+      else if (typeof arguments[0] === 'string') host = arguments[0];
+    } catch (e) { }
+    const self = this, args = arguments;
+    const tryNow = (waitedMs) => {
+      const cap = capNow();
+      if (SK.fg > 0 || SK.liveN < cap || waitedMs > Number(process.env.SOCKWAIT || 6000)) {
+        if (SK.fg > 0 || SK.liveN < cap) { try { count(host, self); } catch (e) { } }
+        else {                                    // ★ S8: ভুল-কোড দিয়ে destroy করলে (listener না থাকলে) uncaught-crash ⇒ নিরাপদে কেটে দিই
+          SK.dropped++;
+          try { self.once('error', () => { }); self.destroy(); } catch (e) { }
+          return;
+        }
+        return origProto.apply(self, args);
+      }
+      SK.queued++;
+      setTimeout(() => tryNow(waitedMs + 20), 20).unref();
+      return undefined;
+    };
+    // সারি-সীমা: অগাধ জমলে সোজা timeout (মেমরি বাঁচাতে)
+    if (SK.fg <= 0 && SK.liveN >= capNow() && SK.queued > QMAX) {
+      SK.dropped++;
+      process.nextTick(() => { try { self.once('error', () => { }); self.destroy(); } catch (e) { } });
+      return self;
+    }
+    return tryNow(0) === undefined ? self : self;
+  };
+}
+if (LT.on) {
+  const _si = global.setInterval, _ci = global.clearInterval, _st = global.setTimeout, _ct = global.clearTimeout;
+  global.setInterval = function (fn, ms) {
+    const a = Array.prototype.slice.call(arguments, 2);
+    const t = _si.apply(null, [fn, ms].concat(a)); LT.iv.add(t); return t;
+  };
+  global.clearInterval = function (t) { try { LT.iv.delete(t); } catch (e) { } return _ci(t); };
+  global.setTimeout = function (fn, ms) {
+    const a = Array.prototype.slice.call(arguments, 2);
+    const t = _st.apply(null, [function () { LT.to.delete(t); return typeof fn === 'function' ? fn.apply(this, arguments) : undefined; }, ms].concat(a));
+    LT.to.add(t); return t;
+  };
+  global.clearTimeout = function (t) { try { LT.to.delete(t); } catch (e) { } return _ct(t); };
+  // মৃত (ফায়ার-হওয়া / unref-করা) টাইমার নিয়মিত ঝাড়া
+  _si(function () {
+    for (const t of LT.to) { if (t && (t._destroyed === true || t._idleTimeout === -1)) LT.to.delete(t); }
+    for (const t of LT.iv) { if (t && t._destroyed === true) LT.iv.delete(t); }
+  }, 30000).unref();
+}
 const V1NOTE_47 = 'v1.17.47 (ইউজার: "stream cut kore fast na — 6-8s laguk, sob stream asuk") — হারভেস্ট-কাট বাতিল: আগে ৪.৬সে-এ ৬-কার্ড-হলেই কাট, ৪.৯সে হার্ড-ক্যাপ ⇒ দেরিতে-আসা সোর্সের কার্ড ফেলত। এখন **সব লাইভ-সোর্স সেটেল হলেই ফেরা**, নইলে ৭.৮সে ক্যাপ (Beamup ১২সে-সীমার ভিতরে)। সাথে: nx ৫.১→৭.২সে (MB আর কাটা পড়ে না), mm/m4u ৭.০সে সব-সাইট, hm-রেস ৩.২→৬.৬সে (কোল্ড-চেইনও একই রেসপন্সে), m4u-তে ৩ pd-id + ২ জীবিত মিরর (আগে ১ম-সফলেই-থামা), sky-তে ৩ pd-id/hub, PD_MAX env-নব। মাপা (১৬ রিকোয়েস্ট, লোকাল): avg 5.52s · সর্বোচ্চ 6.66s (আগে 3.75s-কাট-সংস্করণে ৮২৪ কার্ড), HindMovie ৮/১৬ (আগে ৩/১৬), MB ১৬/১৬, mm ১৬/১৬, m4u ১৪/১৬, sky ১২/১৬, কার্ড ৮৩৯ ⇒ **কার্ড কমেনি, বেড়েছে**।';
 
 const V1NOTE_48 = 'v1.17.48 (ইউজার: "M4u thik koro, Hindi movie add koro, configuration page ta o thik koro") — ★ কনফিগ-পেজ-মেরামত: SRC-তালিকা থেকেই সুইচ-বাইন্ড (bf সরানোর পর bindSwitch-এ null.classList-এ পুরো IIFE থেমে যেত ⇒ tune-কার্ড/সেভ/প্রিভিউ কিছুই রেন্ডার হতো না) + bindSwitch-এ null-গার্ড; HindMovie প্যানেল + tune-hm কার্ড যোগ। ★ Movies4u: একাধিক সার্চ-হিট-চেষ্টা (per_page 12), আর্টিকেল-বাদ-দিয়ে-পুনঃসার্চ, modpro-শাখা এখন আসলেই চলে (post খালি থাকলে lastPost দিয়ে) — মৃত-মিরর Range-প্রমাণ ছাড়া কার্ড-নয়। ★ প্রতি-সারি-deadline: এক-সারির-ঢিলামিতে সব-কার্ড বাতিল হতো (3 Idiots ৮.৬সে→৪.৭সে)। ★ HindMovie: 404/410-এ প্রক্সি-পুল-বন্ধ (Silence ১২.২সে→৬.১সে, কার্ড-আসে)। বেঞ্চ: avg ৪.৭৪সে (আগে ৫.৫২), max ৭.০২, m4u ১৪/১৬, HM ৮/১৬, Sky ১৪/১৬।';const V1NOTE_46 = 'v1.17.46 (HindMovie নতুন সোর্স): live search (REST → HTML ফলব্যাক, বছর-মুক্ত কুয়েরি) → পোস্ট (IMDb-id গার্ড) → mvlink (মুভি) / mvlink /web/<id> (সিজন×কোয়ালিটি) → hshare → hcloud b64 → workers.dev direct MKV (২০৬, সিক-যোগ্য)। ক্যাশ ৬ঘণ্টা (search/post/mvlink/final); ডিরেক্ট আগে, 403/429/5xx-তে পুল-রেস। ব্যাচ .zip কখনো কার্ড নয়। hmRace ৩.২s ⇒ কোল্ড-চেইন রেসপন্স আটকায় না, পেছনে ক্যাশ ভরে। মাপা (১৬ রিকোয়েস্ট): avg 3.75s, MB 15/16, mm 16/16, m4u 14/16, sky 13/16, hm 3/16 (হলিউড-ক্লাসিক বেঞ্চে; সিরিজে BB/GoT S1E1 = ৩ কার্ড)।';
@@ -177,6 +270,7 @@ async function pxCheckerWave() {
     }
     if (cut) { try { fs.promises.writeFile(POOL_FILE, JSON.stringify(POOL)).catch(() => {}); } catch (e) {} setTimeout(enrichPool, 1500).unref(); }
     const benchN = POOL.filter(c => PX_SITE.has(c.px)).length;
+    try { global.__benchN = benchN; } catch (e) { }
     // ★★ v1.26.9 (ইউজার: "node, benched proxy eigula onek baraw"): বেঞ্চ-লক্ষ্য ৪৮ → PXBMIN(২৪০)।
     //   স্ক্যানের গতি (PXSCAN সমান্তরালতা) অপরিবর্তিত — শুধু **কত নোড জমা রাখা হবে** তার ছাদ বেড়েছে।
     if (benchN < Number(process.env.PXBMIN || 240)) { setTimeout(enrichPool, 2000).unref(); if (PXCHK % 10 === 1) console.log('[pxbench-keeper] bench=' + benchN + ' < ' + Number(process.env.PXBMIN || 240) + ' → এনরিচ-ফসল-তাৎক্ষণিক'); }
@@ -1735,13 +1829,31 @@ vidyVLoad();
   if (process.env.VDAEMON === '0') return; // v1.25.1 (user: 'always active scanning, CPU only 3%'): ON by default
   let cp = null;
   try { cp = require('child_process'); } catch (e) { return; }
+  const PIDF = require('path').join(__dirname, '.pool_daemon.pid');
+  // ★ v1.28.3-L6 (ইউজার: "kalke 30-39 chilo, aste aste barlo"): পুরোনো ইন্সট্যান্সের **অনাথ ডেমন**
+  //   রিস্টার্টের পরেও বেঁচে থাকত (SIGKILL-এ child রিপারেন্ট হয়) ⇒ প্রতিদিন জমে। এখন:
+  //   (১) বুটে পুরোনো `.pool_daemon.pid`-এর প্রসেস জীবিত থাকলে তাকে মেরে দিই, (২) নিজের pid লিখি,
+  //   (৩) exit/SIGTERM/SIGINT-এ নিজের ডেমন মেরে ফাইলের pid মুছি — একটাই ডেমন, সবসময়।
+  const _killStale = () => {
+    try {
+      const t = Number(String(require('fs').readFileSync(PIDF, 'utf8')).trim());
+      if (t > 1 && t !== process.pid) { try { process.kill(t, 'SIGKILL'); if (DBG) console.error('[daemon] পুরোনো অনাথ pid=' + t + ' মারা হলো'); } catch (e) { } }
+    } catch (e) { }
+  };
+  _killStale();
+  let _child = null;
+  const _killOwn = () => { try { if (_child && _child.pid) _child.kill('SIGKILL'); } catch (e) { } try { require('fs').unlinkSync(PIDF); } catch (e) { } };
+  process.on('exit', _killOwn);
+  for (const sg of ['SIGTERM', 'SIGINT', 'SIGHUP']) { try { process.on(sg, () => { _killOwn(); process.exit(0); }); } catch (e) { } }
   const spawnD = () => {
     try {
       const ch = cp.spawn(process.execPath, [require('path').join(__dirname, 'pool_daemon.js')], {
         cwd: __dirname, stdio: 'ignore', detached: false,
         env: Object.assign({}, process.env, { DW: process.env.DW || '32', DN: process.env.DN || '4800', DMS: process.env.DMS || '90000' })
       });
-      ch.on('exit', c => { if (DBG) console.error('[daemon] exited ' + c + ' — 60সে পর আবার'); setTimeout(spawnD, 60000); });
+      _child = ch;
+      try { require('fs').writeFileSync(PIDF, String(ch.pid)); } catch (e) { }
+      ch.on('exit', c => { if (_child === ch) _child = null; if (DBG) console.error('[daemon] exited ' + c + ' — 60সে পর আবার'); setTimeout(spawnD, 60000); });
       ch.on('error', () => { });
       if (DBG) console.error('[daemon] চালু pid=' + ch.pid);
     } catch (e) { if (DBG) console.error('[daemon] spawn-ব্যর্থ ' + e.message); }
@@ -1749,15 +1861,88 @@ vidyVLoad();
   setTimeout(spawnD, 8000);
 })();
 /* ★ v1.28.1: **মেমোরি-ওয়াট্চডোগ** — ব্যাটারি-চালাকালে কার্নেল OOM-kill হয়েছিল (896MB) ⇒ প্রতি 20সে-য়ে RSS/heap আর বড় ক্যাশের আকার লগগ্র করিলুালাম — লিক-স্থান প্রমাণে ধরা পড়েই। */
-let MEMW_PEAK = 0;
+// ★ v1.28.3-M1 (ইউজার: "addon er memory almost full, eta thik koro"):
+//   পুরোনো ওয়াচডগের দুটো মূর্ত দোষ — (১) `global.gc` কখনোই ডিফাইন হয় না (কোথাও `--expose-gc` নেই)
+//   ⇒ "gc" শাখা **কখনো চলে নি**; (২) MEMCAP ডিফল্ট ৭০০MB — ৫১২MB কনটেইনারে ৭০০-এ পৌঁছানোর আগেই OOM।
+//   এখন: (ক) কনটেইনার-সীমা নিজে পড়ি (process.constrainedMemory + cgroup v2/v1),
+//        (খ) threshold = min(MEMCAP, ৭০% সীমা), (গ) **সত্যিকারের purge** — gc না থাকলেও বড় ক্যাশ খালি হয়।
+function memLimitMB() {
+  try {
+    const e = Number(process.env.MEMCAP || 0);
+    let lim = 0;
+    try { if (typeof process.constrainedMemory === 'function') lim = Math.round(process.constrainedMemory() / 1048576); } catch (e2) { }
+    if (!lim) for (const f of ['/sys/fs/cgroup/memory.max', '/sys/fs/cgroup/memory/memory.limit_in_bytes']) {
+      try {
+        const v = require('fs').readFileSync(f, 'utf8').trim();
+        if (v && v !== 'max') { const n = Math.round(Number(v) / 1048576); if (n > 64 && n < 65536) { lim = n; break; } }
+      } catch (e3) { }
+    }
+    const cap = Math.round((lim || 0) * 0.7);
+    const want = e || cap || 700;
+    return { lim, cap, use: Math.max(160, e ? e : (cap || 700)) };
+  } catch (e) { return { lim: 0, cap: 0, use: 700 }; }
+}
+const MEM_LIM = memLimitMB();
+let MEMW_PEAK = 0, MEMW_LAST = 0, MEM_LVL = 0, MEM_PURGES = 0;
 if (process.env.MEMW !== '0') setInterval(() => {
   try {
-    const m = process.memoryUsage(), sz = o => { try { return o instanceof Map ? o.size : (Array.isArray(o) ? o.length : 0); } catch (e) { return 0; } };
-    const rss = Math.round(m.rss / 1048576); MEMW_PEAK = Math.max(MEMW_PEAK, rss);
-    if (process.env.VDBG && (rss > 260 || process.env.MEMW === '2')) console.error('[mem] rss=' + rss + 'MB peak=' + MEMW_PEAK + ' heap=' + Math.round(m.heapUsed / 1048576) + ' ext=' + Math.round((m.external || 0) / 1048576) + ' MM_WC=' + sz(MM_WC) + ' AZ_MEMO=' + sz(AZ_MEMO) + ' OTT=' + sz(OTT_MEMO) + ' VSP=' + sz(VSP_MEMO) + ' PTUN=' + sz(PTUN) + ' VIDY_OK=' + sz(VIDY_OK) + ' POOL=' + POOL.length);
-    if (rss > Number(process.env.MEMCAP || 700) && global.gc) global.gc();
+    const m = process.memoryUsage();
+    const sz = o => { try { return o instanceof Map || o instanceof Set ? o.size : (Array.isArray(o) ? o.length : 0); } catch (e) { return 0; } };
+    const rss = Math.round(m.rss / 1048576);
+    MEMW_PEAK = Math.max(MEMW_PEAK, rss); MEMW_LAST = rss;
+    const hi = MEM_LIM.use, mid = Math.round(hi * 0.8);
+    if (rss > mid) {
+      const lvl = rss > hi ? 2 : 1;
+      let n = 0;
+      try { n = (typeof memPurgeAll === 'function') ? memPurgeAll(lvl) : 0; } catch (e2) { }
+      if (global.gc) { try { global.gc(); } catch (e3) { } }
+      MEM_LVL = lvl; MEM_PURGES++;
+      if (process.env.VDBG || process.env.MEMW === '2') console.error('[mem] rss=' + rss + 'MB > ' + mid + 'MB (limit=' + (MEM_LIM.lim || '?') + 'use=' + hi + ') ⇒ purge L' + lvl + ' cleared=' + n + ' gc=' + (!!global.gc));
+    }
+    if (process.env.VDBG && (rss > 260 || process.env.MEMW === '2')) console.error('[mem] rss=' + rss + 'MB peak=' + MEMW_PEAK + ' heap=' + Math.round(m.heapUsed / 1048576) + ' ext=' + Math.round((m.external || 0) / 1048576) + ' limit=' + (MEM_LIM.lim || '?') + 'use=' + hi + ' MM_WC=' + sz(MM_WC) + ' AZ_MEMO=' + sz(AZ_MEMO) + ' OTT=' + sz(OTT_MEMO) + ' VSP=' + sz(VSP_MEMO) + ' PTUN=' + sz(PTUN) + ' VIDY_OK=' + sz(VIDY_OK) + ' POOL=' + sz(POOL));
   } catch (e) { }
 }, 20000).unref();
+// ★ v1.28.3-M2: idle-ছাঁটা — ব্যবহারকারী না থাকলেও প্রতি ৩ মিনিটে বাসি-ক্যাশ মুছে দিই
+if (process.env.MEMW !== '0') setInterval(() => { try { if (typeof memPurgeAll === 'function') memPurgeAll(0); } catch (e) { } }, Number(process.env.MEMPIDLE || 180000)).unref();
+// ================= v1.28.3-R1: নিরাপদ **নিজে-রিসাইকেল** (ধীর-লিকের স্থায়ী ওষুধ) =================
+// মাপা (২৫-১০-২০২৬): ক্যাশ মাত্র ১.৯MB, heap ৫০MB — কিন্তু RSS ৩৪০MB, আর **বিনা ট্রাফিকেও**
+//   Socket হ্যান্ডেল ২৫সে-এ +৪০ (ব্যাকগ্রাউন্ড প্রক্সি-স্ক্যান/টানেল)। অর্থাৎ লিক JS-হিপে নয়,
+//   সকেট/বাফারে — কোড-লেভেলে পুরো বন্ধ না করা পর্যন্ত RSS ধীরে চড়বেই (ইউজার: ৩০-৩৯% → ৯০%)।
+// তাই ছাদ: RSS কনটেইনারের **৬০%** ছাড়ালে (এবং ১৫সে ধরে কোনো অনুরোধ না এলে) নিজে বন্ধ হয়ে যাই —
+//   প্ল্যাটফর্ম সঙ্গে সঙ্গে রিস্টার্ট করে ⇒ মেমরি কখনো ৯০% ছুঁবে না, আর সব পুল/স্কোর JSON-এ
+//   সেভ করা থাকে (vidy_px_verified / vidy_server_scores …) ⇒ গরম-স্টার্টে ক্ষতি কম।
+// নীতি: (ক) কখনো মাঝ-অনুরোধে মরি না (idle-গেট), (খ) MEMRECYCLE=0 দিলে বন্ধ, (গ) লগে কারণ লেখা।
+let ACT_LAST = Date.now();                       // শেষ অনুরোধ-শেষের সময়
+// ★ v1.28.3-S7 (revision-এ ধরা পড়া বাগ): এই ফাইলে **express নেই** — রুট চলে `http.createServer`-এ
+//   ⇒ আগের `app.use(...)` কখনো বসেনি (try/catch-এ চুপचाप মরে যেত) ⇒ `SK.fg` সবসময় ০ ⇒
+//   ফোরগ্রাউন্ড-বাইপাস মৃত ⇒ ইউজার-স্ট্রিমও গেটে ৬সে পর্যন্ত আটকাতে পারত। এখন **আসল server-এ** হুক:
+setImmediate(() => {
+  try {
+    server.prependListener('request', (req, res) => {          // prepend ⇒ হ্যান্ডলারের আগেই চলে
+      ACT_LAST = Date.now();
+      try { SK.fg = (SK.fg || 0) + 1; } catch (e) { }
+      let done = false;
+      const off = () => { if (done) return; done = true; ACT_LAST = Date.now(); try { SK.fg = Math.max(0, (SK.fg || 1) - 1); } catch (e) { } };
+      res.on('finish', off); res.on('close', off);
+    });
+    if (process.env.VDBG) console.error('[sock] fg-hook বসানো হলো (prependListener)');
+  } catch (e) { if (process.env.VDBG) console.error('[sock] fg-hook ব্যর্থ: ' + e.message); }
+});
+let MEM_RECYCLE_N = 0;
+if (process.env.MEMRECYCLE !== '0') setInterval(() => {   // ★ v1.28.3-R3: ইউজার-নির্দেশ — **ডিফল্টে চালু** (MEMRECYCLE=0 দিলে বন্ধ)
+  try {
+    const rss = Math.round(process.memoryUsage().rss / 1048576);
+    const thr = Number(process.env.MEMRECYCLE_MB || 0) || Math.round((MEM_LIM.lim || 1024) * 0.65);
+    const idleMs = Date.now() - ACT_LAST;
+    // ★ R4: বুট-লুপ-গার্ড — শুরুর ৫ মিনিটে কখনোই মরি না (নাহলে রিস্টার্ট-লুপে আডন অচল হয়ে যেত)
+    const upMs = Math.round(process.uptime() * 1000);
+    if (upMs > Number(process.env.MEMRECYCLE_MINUP || 300000) && rss > thr && idleMs > Number(process.env.MEMRECYCLE_IDLE || 15000)) {
+      MEM_RECYCLE_N++;
+      console.error('[recycle] rss=' + rss + 'MB > ' + thr + 'MB (limit=' + (MEM_LIM.lim || '?') + ', idle ' + Math.round(idleMs / 1000) + 's, up ' + Math.round(upMs / 60000) + 'm) ⇒ নিজে রিস্টার্ট (প্ল্যাটফর্ম পুনরায় চালাবে)');
+      try { process.exit(0); } catch (e) { }
+    }
+  } catch (e) { }
+}, 30000).unref();
 let vidySweepTimer = null;
 function vidySweepNext(ms) { if (vidySweepTimer) clearTimeout(vidySweepTimer); vidySweepTimer = setTimeout(() => vidySweep(Number(process.env.VPXW || 240)), ms); if (vidySweepTimer.unref) vidySweepTimer.unref(); }   // ★ v1.26.9: প্রতি-চক্রে ৬০ → ২৪০ প্রার্থী
 setTimeout(() => vidySweep(Number(process.env.VPXW || 720)), 2500);
@@ -10595,26 +10780,78 @@ function vhRewrite(body, target, origin) {
     return /\.m3u8(\?|$)/i.test(abs) ? vhRelay(abs, origin) : abs; // ভ্যারিয়েন্ট-প্লেলিস্টও রিলে; সেগমেন্ট/init সরাসরি
   }).join('\n');
 }
+// ★ v1.28.3-l: প্লেলিস্ট-আনা (gzip-সহ) — v1.28.2-এ ১৯৩KB প্লেইন ঠান্ডায় ৪.৯৯সে নিত; gzip-এ wire ~৫KB
+//   (ইউজার: "net speed onek kom") ⇒ ধীর লাইনে সবচেয়ে বড় হাত।
+const VH_PRE = new Map();                       // প্রি-ওয়ার্ম-ইন-ফ্লাইট: url → promise (ক্লিক এলে একই promise-এ যোগ দেয়)
+async function vhGetPlaylist(target) {
+  const hdr = { 'User-Agent': UA, 'Referer': VIDY_REFERER, 'Accept': '*/*', 'Accept-Encoding': 'gzip' };
+  try {
+    const r = await fetch(target, { headers: hdr, redirect: 'follow', signal: AbortSignal.timeout(9000) });
+    if (r.status === 200) {
+      const enc = String(r.headers.get('content-encoding') || '').toLowerCase();
+      const buf = Buffer.from(await r.arrayBuffer());          // ★ একবারই পড়ি (body-used বাগ ঠেকাতে)
+      let txt = buf.toString('utf8');
+      const magic = buf.length > 2 && buf[0] === 0x1f && buf[1] === 0x8b;   // gzip-ম্যাজিক = এখনো কম্প্রেসড
+      if (magic || txt.trim().charAt(0) !== '#') {
+        if (magic || enc.indexOf('gzip') >= 0) { try { txt = require('zlib').gunzipSync(buf).toString('utf8'); } catch (e) { } }
+        else if (enc.indexOf('br') >= 0) { try { txt = require('zlib').brotliDecompressSync(buf).toString('utf8'); } catch (e) { } }
+        else if (enc.indexOf('deflate') >= 0) { try { txt = require('zlib').inflateSync(buf).toString('utf8'); } catch (e) { } }
+      }
+      // ★ v1.28.3-n: **প্লেলিস্ট-যাচাই** — ২৯৮ বাইটের ৪০৩-HTML বা ভুল-বডি আর কখনো প্লেলিস্ট বলে চলে যাবে না
+      if (txt && txt.indexOf('#EXTM3U') >= 0) return txt;
+    }
+  } catch (e) { }
+  try {                                                                        // পুল-ফলব্যাক (ডেটাক-IP-এ ৪০৩ হলে)
+    const x = await racePool(target, 3, 6500);
+    const b2 = String((x && x.body) || '');
+    if (b2.indexOf('#EXTM3U') >= 0) return b2;
+  } catch (e) { }
+  return '';
+}
+// ★ v1.28.3-m: **কার্ড-বানানোর সময়ই প্লেলিস্ট প্রি-ওয়ার্ম** — প্রথম ক্লিকের ঠান্ডা-অপেক্ষা মুছে যায়
+//   (মাপা: ঠান্ডা /vh/ ৪.৯৯সে → প্রি-ওয়ার্ম থাকলে ৭ms)। শুধু প্রথম VHPW(৩) কার্ড, ব্যাকগ্রাউন্ডে;
+//   ব্যর্থ হলে চুপচাপ বাদ (ক্লিক করলে স্বাভাবিক পথেই আসবে)।
+function vhPrewarm(rawUrls, origin) {
+  // ★ v1.28.3-L3: রিলে বন্ধ থাকলে প্রি-ওয়ার্ম **বৃথা** — কার্ড সরাসরি CDN-এ যায়, আমাদের VH_C কেউ ছোঁয় না
+  //   ⇒ শুধু মেমরি (+১৯৩KB × N) নষ্ট। তাই রিলে চালু থাকলেই প্রি-ওয়ার্ম।
+  if (process.env.VHRELAY !== '1' || process.env.VHPW === '0' || !origin) return;
+  const n = Number(process.env.VHPW || 3);
+  let i = 0;
+  for (const u of (rawUrls || [])) {
+    if (i >= n) break;
+    if (!/\.m3u8(\?|$)/i.test(String(u))) continue;
+    if (VH_C.has(u) && Date.now() - VH_C.get(u).ts < VH_TTL) continue;
+    if (VH_PRE.has(u)) continue;
+    i++;
+    const pr = Promise.resolve(vhGetPlaylist(u)).then(body => {
+      if (!body) return;
+      try {
+        const out = vhRewrite(body, u, origin);
+        if (VH_C.size > 800) VH_C.clear();
+        VH_C.set(u, { ts: Date.now(), v: out });
+        if (process.env.VDBG) console.log('[vhpw] ok ' + String(u).slice(0, 58) + ' ' + body.length + 'B');
+      } catch (e) { }
+    }).catch(() => { }).then(() => VH_PRE.delete(u));
+    VH_PRE.set(u, pr);
+  }
+}
 async function vhServe(req, res, b64) {
   let target = ''; try { target = Buffer.from(b64, 'base64url').toString('utf8'); } catch (e) { }
   if (!/^https?:\/\//.test(target)) { res.writeHead(400); return res.end('bad'); }
   const origin = originOf(req);
   const ck = target;
   const hit = VH_C.get(ck);
-  if (hit && Date.now() - hit.ts < VH_TTL) { res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl', 'access-control-allow-origin': '*', 'cache-control': 'no-store' }); return res.end(vuStampPlaylist(hit.v, origin)); }   // ★ v1.27.8: ক্যাশ-হিটেও নতুন `vu`
-  const hdr = { 'User-Agent': UA, 'Referer': VIDY_REFERER, 'Accept': '*/*' };
-  let body = '';
-  try {
-    const r = await fetch(target, { headers: hdr, redirect: 'follow', signal: AbortSignal.timeout(7000) });
-    if (r.status === 200) body = await r.text();
-  } catch (e) { }
-  if (!body) { // পুল-ফলব্যাক (কিছু হাব ডেটাক-IP-এ ৪০৩ দেয়)
-    try { const x = await racePool(target, 3, 6500); body = String((x && x.body) || ''); } catch (e) { }
-  }
+  if (hit && Date.now() - hit.ts < VH_TTL) { res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl', 'access-control-allow-origin': '*', 'cache-control': 'no-store' }); return res.end(vuStampPlaylist(hit.v, origin)); }
+  const t0 = Date.now();
+  const pre = VH_PRE.get(ck);                      // ★ প্রি-ওয়ার্ম চলছে? তার সঙ্গে যোগ দিই (নতুন করে টানি না)
+  if (pre) { try { await pre; } catch (e) { } const h2 = VH_C.get(ck);
+    if (h2 && Date.now() - h2.ts < VH_TTL) { res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl', 'access-control-allow-origin': '*', 'cache-control': 'no-store' }); return res.end(vuStampPlaylist(h2.v, origin)); } }
+  const body = await vhGetPlaylist(target);
   if (!body) { res.writeHead(502, { 'content-type': 'text/plain', 'access-control-allow-origin': '*' }); return res.end('upstream-fail'); }
   const out = vhRewrite(body, target, origin);
   if (VH_C.size > 800) VH_C.clear();
   VH_C.set(ck, { ts: Date.now(), v: out });     // ★ ক্যাশে **কাঁচা** (স্ট্যাম্প-ছাড়া) থাকে
+  if (process.env.VDBG) console.log('[vh] cold ' + (Date.now() - t0) + 'ms ' + body.length + 'B');
   res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl', 'access-control-allow-origin': '*', 'cache-control': 'no-store' });
   return res.end(vuStampPlaylist(out, origin));
 }
@@ -10637,7 +10874,9 @@ function vhFixCards(cards, origin) { // vidy-HLS কার্ডের url → /
 //   আর কেউ ব্যবহার করতে পারে না, আর দুই ইউজার কখনো একই লিংক দেখে না।
 //   চাইল্ড-প্লেলিস্ট/সেগমেন্টের অফিসিয়াল কী আগের মতোই থাকে (ওগুলো ক্যাশ-নিরপেক্ষ, স্টেটলেস)।
 const GW_ON = process.env.GW !== '0';
-const GW_TTL = Number(process.env.GWTTL || 6 * 3600e3), GW_MAX = Number(process.env.GWMAX || 60000);
+// ★ v1.28.3-M6: GW টোকেন-ম্যাপ ছিল সবচেয়ে বড় একক ক্যাশ (৬০,০০০ এন্ট্রি × টোকেন+পাথ ≈ ১৫–৩০MB)।
+//   ২০,০০০-এ নামানো হলো — ৬ঘণ্টা TTL-এও বাস্তবে কখনো ২০k ছুঁয়েছে কি না সন্দেহ; মেমরির ছাদ নামল।
+const GW_TTL = Number(process.env.GWTTL || 6 * 3600e3), GW_MAX = Number(process.env.GWMAX || 20000);
 const GW = new Map();
 const GW_PRE = ['/mm/', '/mma/', '/mmr/', '/bfz/', '/vsp/', '/vh/', '/m4u/', '/m4h/', '/m4i/', '/fod/', '/rel/'];
 function gwMint(internal) {
@@ -10855,6 +11094,8 @@ function sendStreams(res, skey, plog, ms, cards, ua, cfg) {
   //   কার্ড এখন হুবহু CDN-এর m3u8 (আগের মতো) — Referer/UA `headers` + `behaviorHints.proxyHeaders`-এ থাকে
   //   (decorate() নিজেই বসায়), প্লেয়ার নিজের IP-তে টানে। আমাদের beamup আর কোনো ভিডিও-বাইট/ম্যানিফেস্ট বহন করে না।
   //   জরুরি হলে `VHRELAY=1` দিয়ে পুরোনো রিলে ফেরানো যাবে।
+  // ★ v1.28.3-m: vidy-প্লেলিস্ট প্রি-ওয়ার্ম (কার্ড-বানানোর সময়ই, **কাঁচা URL** দিয়ে — vhFixCards-এর আগে)
+  try { if (res && res.req) vhPrewarm((cards || []).filter(c => vhIsVidy(c && c.url, c)).map(c => String(c.url)), originOf(res.req)); } catch (e) { }
   if (process.env.VHRELAY === '1') { try { if (res && res.req) vhFixCards(cards, originOf(res.req)); } catch (e) { } }
   const n = (cards || []).length; // v1.15.8: কোনো-stash-নেই — প্রতি-উত্তর-তাজা
   logReq(plog, ms, n, null, ua);
@@ -11033,8 +11274,61 @@ const server = http.createServer((req, res) => {
     if (p === '/_health') { const _vf = [...VIDY_OK.values()].filter(v => v.ts && Date.now() - v.ts < Number(process.env.PXFRESH || 240000)).length; return sendJson(res, 200, { ok: 1, version: VERSION, up: Math.round(process.uptime()), deploy: 'v' + VERSION, pool: POOL.length, pxbench: POOL.filter(c => PX_SITE.has(c.px)).length, pxbf: PX_BF.size, memo: memo.size, gw: (typeof GW !== 'undefined' ? GW.size : -1), nx: NEXBASE ? 1 : 0, nxpool: NXBENCH, nxwaves: NXWAVES, nxsize: NXSIZE, tw: TWBASE ? 1 : 0, rt: RTBASE ? 1 : 0, vsp: VSP_POOL.length, vy: VIDY_OK.size, vyfresh: _vf }); } // ★ v1.21.9: vy=verified vidy নোড, vyfresh=৪মিন-তাজা // v1.15.71: vsp=Vidsrc-পুল-আকার // v1.15.18: pxbench=সাইট-প্রমাণিত-বেঞ্চ (v1.15.8: nxpool=MB-বেঞ্চ)
     if (p === '/_mem') { /* ★ v1.28.1: মেমোরি-ডিয়াগনস্টিক — OOM-ক্ষতির কারন খুঁজতে (প্রমাণ: ব্যাটারি-চালাকালে node 896MB-তে kernel-OOM-kill) */
       const m = process.memoryUsage(); const sz = o => { try { return o instanceof Map ? o.size : (Array.isArray(o) ? o.length : -1); } catch (e) { return -1; } };
+      // ★ v1.28.3-M4: সীমা + purge-পরিসংখ্যান (কতবার, কোন স্তরে) — প্রোডে "মেমরি ফুল" কেন, একনজরে
       return sendJson(res, 200, { up: Math.round(process.uptime()), rssMB: Math.round(m.rss / 1048576), heapMB: Math.round(m.heapUsed / 1048576), extMB: Math.round((m.external || 0) / 1048576),
+        limitMB: (typeof MEM_LIM !== 'undefined' ? MEM_LIM.lim : 0), useMB: (typeof MEM_LIM !== 'undefined' ? MEM_LIM.use : 0),
+        peakMB: (typeof MEMW_PEAK !== 'undefined' ? MEMW_PEAK : 0), purges: (typeof MEM_PURGES !== 'undefined' ? MEM_PURGES : 0), lastLvl: (typeof MEM_LVL !== 'undefined' ? MEM_LVL : 0), gc: !!global.gc,
         c: { MM_WC: sz(MM_WC), MM_WC_INFLIGHT: sz(MM_WC_INFLIGHT), VSP_MEMO: sz(VSP_MEMO), OTT_MEMO: sz(OTT_MEMO), AZ_MEMO: sz(AZ_MEMO), AZ_CARD: sz(AZ_CARD), SRC_STASH: sz(SRC_STASH), PTUN: sz(PTUN), POOL: POOL.length, VIDY_OK: sz(VIDY_OK), PXS: sz(PXS), reqLog: sz(reqLog), SPOOL: sz(SPOOL) } });
+    }
+    if (p === '/_leak') {   // ★ v1.28.3-L2: ধীর-লিক-ডায়াগনস্টিক (LEAK=1 হলে সংখ্যা সত্যি, নইলে -1)
+      const m = process.memoryUsage();
+      const sz = o => { try { return o instanceof Map || o instanceof Set ? o.size : (Array.isArray(o) ? o.length : -1); } catch (e) { return -1; } };
+      let hs = -1, rq = -1; try { hs = process._getActiveHandles().length; rq = process._getActiveRequests().length; } catch (e) { }
+      return sendJson(res, 200, {
+        rssMB: Math.round(m.rss / 1048576), heapMB: Math.round(m.heapUsed / 1048576), extMB: Math.round((m.external || 0) / 1048576),
+        timers: { intervals: (LT.on ? LT.iv.size : -1), timeouts: (LT.on ? LT.to.size : -1), on: LT.on },
+        handles: hs, requests: rq,
+        kb: { MM_WC: _cacheKB(MM_WC), VH_C: _cacheKB(VH_C), OL_CACHE: _cacheKB(OL_CACHE), memo: _cacheKB(memo),
+              SUBS: _cacheKB(SUBS_CACHE), ALT: _cacheKB(ALTCACHE), RT_HUB: _cacheKB(RT_HUB_TEXT), VSP: _cacheKB(VSP_MEMO) },
+        budgetsMB: CACHE_BUDGET_MB,
+        c: {
+          MM_WC: sz(MM_WC), MM_WC_INF: sz(MM_WC_INFLIGHT), VH_C: sz(VH_C), GW: sz(GW), VH_PRE: (typeof VH_PRE !== 'undefined' ? sz(VH_PRE) : -1),
+          memo: sz(memo), OL_CACHE: sz(OL_CACHE), SUBS: sz(SUBS_CACHE), ALT: sz(ALTCACHE), RT_FID: sz(RT_FID_CACHE),
+          RT_HUB: sz(RT_HUB_TEXT), EP_META: sz(EP_META), NXCACHE: sz(NXCACHE), VSJ: sz(VSJ), PXS: sz(PXS), SEED: sz(SEED_PX),
+          SNBAN: sz(SNBAN), PXAFF: sz(PXAFF), VPX_USED: sz(VPX_USED), VSRV_H: sz(VSRV_H), PTUN: sz(PTUN), MMR_W: sz(MMR_WARMED),
+          POOL: sz(POOL), VIDY_OK: sz(VIDY_OK), VSP: sz(VSP_MEMO), OTT: sz(OTT_MEMO), AZ: sz(AZ_MEMO), AZ_CARD: sz(AZ_CARD), reqLog: sz(reqLog)
+        }
+      });
+    }
+    if (p === '/_socks') {   // v1.28.3-S2: সকেট-হিসাব (SOCKS=1 হলে)
+      const ip = String((req.headers['x-forwarded-for'] || req.socket.remoteAddress || '')).split(',')[0].trim();
+      if (!/^(127\.|::1$|::ffff:127\.)/.test(ip) && !DBG) return sendJson(res, 403, { error: 'local-only' });
+      const top = [...SK.live.entries()].sort((a, b) => b[1] - a[1]).slice(0, 20);
+      const made = [...SK.madeBy.entries()].sort((a, b) => b[1] - a[1]).slice(0, 20);
+      return sendJson(res, 200, { on: true, sockmax: SOCKMAX, madeTotal: SK.made, liveTotal: SK.liveN,
+        gated: { dropped: SK.dropped, queued: SK.queued, capNow: 0, fgNow: SK.fg }, liveTop: top, madeTop: made });
+    }
+    if (p === '/_handles') {   // ★ v1.28.3-L9: হ্যান্ডেল-ধরন গুনে দেখি কোনটা জমছে (Socket/TLSWrap/Timeout…)
+      const ip = String((req.headers['x-forwarded-for'] || req.socket.remoteAddress || '')).split(',')[0].trim();
+      if (!/^(127\.|::1$|::ffff:127\.)/.test(ip) && !DBG) return sendJson(res, 403, { error: 'local-only' });
+      const out = {};
+      try {
+        for (const h of process._getActiveHandles()) {
+          const t = (h && h.constructor && h.constructor.name) || typeof h;
+          out[t] = (out[t] || 0) + 1;
+        }
+      } catch (e) { }
+      return sendJson(res, 200, out);
+    }
+    if (p === '/_mempurge') {   // ★ v1.28.3-M5: হাতে-ট্রিগার (শুধু লোকাল/VDBG) — মাপার জন্য
+      const ip = String((req.headers['x-forwarded-for'] || req.socket.remoteAddress || '')).split(',')[0].trim();
+      const local = /^(127\.|::1$|::ffff:127\.)/.test(ip);
+      if (!local && !DBG) return sendJson(res, 403, { error: 'local-only' });
+      const lvl = Math.max(0, Math.min(2, Number(new URL(req.url, 'http://x').searchParams.get('lvl') || 2)));
+      const before = Math.round(process.memoryUsage().rss / 1048576);
+      let n = 0; try { n = (typeof memPurgeAll === 'function') ? memPurgeAll(lvl) : 0; } catch (e) { }
+      if (global.gc) { try { global.gc(); } catch (e) { } }
+      return sendJson(res, 200, { lvl, cleared: n, rssBeforeMB: before, rssAfterMB: Math.round(process.memoryUsage().rss / 1048576) });
     }
     if (p === '/_lastsrc') return sendJson(res, 200, LAST_SRC || {});
     if (p === '/_pools') { // ★ v1.22.0: প্রতি-সোর্স প্রক্সি-পুলের অবস্থা
@@ -11912,4 +12206,115 @@ if (process.argv[2] === 'selftest') {
     process.exit(ok ? 0 : 1);
   } catch (e) { console.log('selftest ✗', e.message); process.exit(1); }
 }
+// ================= v1.28.3-M3: মেমোরি-purge রেজিস্ট্রি =================
+// ইউজার: "addon er memory almost full, eta thik koro"। প্রতিটি ক্যাশের নিজের ক্যাপ থাকলেও
+// **সবগুলো একসাথে** ভরা থাকলে RSS ছাদের দিকে চড়ে। memPurgeAll(lvl):
+//   lvl 0 = শুধু বাসি-এন্ট্রি (৩০মিন+) — প্রতি ৩ মিনিটে (idle)
+//   lvl 1 = ৫মিনিট-বাসি-ছাঁটা + সবচেয়ে ভারী ক্যাশ অর্ধেক
+//   lvl 2 = ভিডিও-ক্যাশ পুরো ফাঁকা (পুল/স্কোর-টেবিল **বাদ** — ওগুলো ফাঁকা করলে আবার ধীর হয়ে যায়)
+function _prune(map, maxAgeMs) {
+  let n = 0;
+  try {
+    if (!map || typeof map.forEach !== 'function') return 0;
+    const now = Date.now();
+    for (const [k, v] of map) {
+      const ts = v && (v.ts || v.t || 0);
+      if (!ts || now - ts > maxAgeMs) { map.delete(k); n++; }
+    }
+  } catch (e) { }
+  return n;
+}
+function _shrink(map, keepFrac) {
+  let n = 0;
+  try {
+    if (!map || !map.size) return 0;
+    const drop = Math.floor(map.size * (1 - keepFrac));
+    for (let i = 0; i < drop; i++) { map.delete(map.keys().next().value); n++; }
+  } catch (e) { }
+  return n;
+}
+// ★ v1.28.3-L4: **বাইট-ক্যাপ** — এন্ট্রি-ক্যাপ ঠিক আছে কিন্তু এন্ট্রি-আকার সমান নয়
+//   (প্লেলিস্ট-স্ট্রিং ১৯৩KB, সাব-অ্যারে ২KB)। তাই প্রতিটি স্ট্রিং-ক্যাশের আলাদা বাজেট
+//   (MB-তে) ধরে পুরোনো এন্ট্রি ছাঁটি — নইলে ৩০০ এন্ট্রি = ১৫০MB-ও হতে পারে।
+const CACHE_BUDGET_MB = {                       // (পরিবেশ-ভেরিয়েবল দিয়ে বদলানো যায়)
+  MM_WC: Number(process.env.B_MMWC || 56), VH_C: Number(process.env.B_VHC || 32),
+  OL_CACHE: Number(process.env.B_OL || 20), ALTCACHE: Number(process.env.B_ALT || 10),
+  SUBS_CACHE: Number(process.env.B_SUBS || 10), memo: Number(process.env.B_MEMO || 28),
+  RT_HUB_TEXT: Number(process.env.B_RTHUB || 8), EP_META: Number(process.env.B_EPM || 6),
+  NXCACHE: Number(process.env.B_NXC || 8), VSJ: Number(process.env.B_VSJ || 6),
+  VSP_MEMO: Number(process.env.B_VSP || 8), OTT_MEMO: Number(process.env.B_OTT || 8),
+  AZ_MEMO: Number(process.env.B_AZ || 8), AZ_CARD: Number(process.env.B_AZC || 6), PXS: Number(process.env.B_PXS || 12)
+};
+function _approxKB(v) {                          // স্ট্রিং ⇒ দৈর্ঘ্য; বাকি ⇒ ছোট নমুনা-ভিত্তিক অনুমান
+  try {
+    if (typeof v === 'string') return Math.round(v.length / 1024);
+    if (v && typeof v === 'object') {
+      const j = JSON.stringify(v);
+      return Math.round((j ? j.length : 0) / 1024);
+    }
+    return 1;
+  } catch (e) { return 4; }
+}
+function _cacheKB(map, sampleN) {
+  let kb = 0;
+  try {
+    if (!map || typeof map.forEach !== 'function' || !map.size) return 0;
+    const n = sampleN || 40;
+    let cnt = 0, sum = 0;
+    for (const [, e] of map) { sum += _approxKB(e && e.v !== undefined ? e.v : e); if (++cnt >= n) break; }
+    const avg = sum / Math.max(1, cnt);
+    return Math.round(avg * map.size);          // অনুমান (নমুনা × আকার)
+  } catch (e) { return 0; }
+}
+function capByBytes(map, budgetMB) {
+  let n = 0;
+  try {
+    if (!map || !map.size || !budgetMB) return 0;
+    const kb = _cacheKB(map, 40);
+    if (kb <= budgetMB * 1024) return 0;
+    const per = kb / map.size;
+    const keep = Math.max(1, Math.floor((budgetMB * 1024) / Math.max(1, per)));
+    const drop = map.size - keep;
+    for (let i = 0; i < drop; i++) { map.delete(map.keys().next().value); n++; }
+  } catch (e) { }
+  return n;
+}
+function memPurgeAll(lvl) {
+  const L0 = 30 * 60 * 1000, L1 = 5 * 60 * 1000;
+  let n = 0;
+  const step = (f) => { try { n += (f() || 0); } catch (e) { } };
+  const clear = (m) => { let s = 0; try { s = m.size; m.clear(); } catch (e) { } return s; };
+  // ---- স্তর ০: বাসি-এন্ট্রি সব জায়গায় ----
+  step(() => _prune(VH_C, L0)); step(() => _prune(GW, L0)); step(() => _prune(MM_WC, L0));
+  step(() => _prune(VSP_MEMO, L0)); step(() => _prune(OTT_MEMO, L0)); step(() => _prune(AZ_MEMO, L0));
+  step(() => _prune(AZ_CARD, L0)); step(() => _prune(OL_CACHE, L0)); step(() => _prune(SUBS_CACHE, L0));
+  step(() => _prune(ALTCACHE, L0)); step(() => _prune(RT_FID_CACHE, L0)); step(() => _prune(RT_HUB_TEXT, L0));
+  step(() => _prune(RT_DUB_MAP, L0)); step(() => _prune(EP_META, L0)); step(() => _prune(NXCACHE, L0));
+  step(() => _prune(VSJ, L0)); step(() => _prune(PXS, L0)); step(() => _prune(SEED_PX, L0));
+  step(() => _prune(memo, L0)); step(() => _prune(SNBAN, L0));
+  step(() => { const now = Date.now(); let k = 0; for (const [px, t] of VPX_USED) { if (!t || now - (t.ts || 0) > 120000) { VPX_USED.delete(px); k++; } } return k; });
+  // ★ v1.28.3-L4: বাইট-ক্যাপ — প্রতি ৩ মিনিটে (স্তর ০) সব স্ট্রিং-ক্যাশ বাজেটে নামানো হয়
+  const BM = {
+    MM_WC: MM_WC, VH_C: VH_C, OL_CACHE: OL_CACHE, ALTCACHE: ALTCACHE, SUBS_CACHE: SUBS_CACHE,
+    memo: memo, RT_HUB_TEXT: RT_HUB_TEXT, EP_META: EP_META, NXCACHE: NXCACHE, VSJ: VSJ,
+    VSP_MEMO: VSP_MEMO, OTT_MEMO: OTT_MEMO, AZ_MEMO: AZ_MEMO, AZ_CARD: AZ_CARD, PXS: PXS
+  };
+  for (const k in BM) { const bud = CACHE_BUDGET_MB[k]; if (bud) step(() => capByBytes(BM[k], bud)); }
+  if (lvl <= 0) return n;
+  // ---- স্তর ১ ----
+  step(() => _prune(VH_C, L1)); step(() => _prune(MM_WC, L1)); step(() => _prune(OL_CACHE, L1));
+  step(() => _prune(ALTCACHE, L1)); step(() => _prune(SUBS_CACHE, L1)); step(() => _prune(memo, L1));
+  if (lvl >= 2) {   // ---- স্তর ২: ভিডিও-ক্যাশ পুরো ফাঁকা ----
+    step(() => clear(MM_WC)); step(() => clear(MM_WC_INFLIGHT)); step(() => clear(VH_C));
+    step(() => clear(VSP_MEMO)); step(() => clear(OTT_MEMO)); step(() => clear(AZ_MEMO));
+    step(() => clear(AZ_CARD)); step(() => clear(OL_CACHE)); step(() => clear(SUBS_CACHE));
+    step(() => clear(ALTCACHE)); step(() => clear(RT_FID_CACHE)); step(() => clear(RT_HUB_TEXT));
+    step(() => clear(NXCACHE)); step(() => clear(MMR_WARMED)); step(() => clear(memo));
+  } else {
+    step(() => _shrink(MM_WC, 0.5)); step(() => _shrink(VH_C, 0.5)); step(() => _shrink(OL_CACHE, 0.5));
+    step(() => _shrink(ALTCACHE, 0.5)); step(() => _shrink(memo, 0.6)); step(() => _shrink(SUBS_CACHE, 0.5));
+  }
+  return n;
+}
+try { global.__memPurgeAll = memPurgeAll; } catch (e) { }
 module.exports = { vidyDecrypt, getSources, findTmdb, mlbdStreams, mlbdTask, mlbdOn, mlbdMirror, _internal: { keystream, mix, fnv1a } };

@@ -1,5 +1,22 @@
 // pool_daemon.js — সারাক্ষণ-সক্রিয় HTTP-প্রক্সি পুল প্রশিক্ষক (ইউজার: "Node 20 ta, always active, 5 min e 3000 proxy scan, http only")
 // প্রতি চক্র: ৩০০০ নতুন HTTP-প্রক্সি (Proxyscrape v4 + HTTP তালিকা) → CONNECT-যাচাই → vidy সেশন-যাচাই → verified-ফাইলে জমা।
+// ★ v1.28.3-L7: সিঙ্গেলটন-গার্ড — একই সাথে দুই ডেমন চললে দুটোই স্ক্যান করে (দ্বিগুণ CPU/RAM)।
+//   pid-ফাইল জীবিত pid ধরে থাকলে বেরিয়ে যাই; নিজের pid লিখে রাখি (সার্ভার এটা ব্যবহার করে)।
+(function singleton() {
+  const path2 = require('path'), fs2 = require('fs');
+  const f = path2.join(__dirname, '.pool_daemon.pid');
+  try {
+    const t = Number(String(fs2.readFileSync(f, 'utf8')).trim());
+    if (t > 1 && t !== process.pid) { try { process.kill(t, 0); console.error('[daemon] আরেকটি ডেমন জীবিত (pid=' + t + ') ⇒ বেরিয়ে যাচ্ছি'); process.exit(0); } catch (e) { } }
+  } catch (e) { }
+  try { fs2.writeFileSync(f, String(process.pid)); } catch (e) { }
+  process.on('exit', () => { try { if (Number(String(fs2.readFileSync(f, 'utf8')).trim()) === process.pid) fs2.unlinkSync(f); } catch (e) { } });
+})();
+// ★ v1.28.3-L8: নিজের মেমরি-সীমা — ডেমন ফুলে উঠলে নিজেই বেরিয়ে যায় (সার্ভার ৬০সে-তে নতুন চালাবে)
+const DAEMON_CAP_MB = Number(process.env.DCAP || 160);
+setInterval(() => {
+  try { const rss = Math.round(process.memoryUsage().rss / 1048576); if (rss > DAEMON_CAP_MB) { console.error('[daemon] rss=' + rss + 'MB > ' + DAEMON_CAP_MB + ' ⇒ নিজে বন্ধ'); process.exit(0); } } catch (e) { }
+}, 30000).unref();
 const net = require('net'), tls = require('tls'), fs = require('fs'), path = require('path'), https = require('https');
 const API = 'https://api.wecollege.net';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
