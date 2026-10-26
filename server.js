@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.28.9';
+const VERSION = '1.28.11';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -2901,7 +2901,8 @@ const mlsOn = cfg => (process.env.MLSD !== '0') && !(cfg && cfg.mls === 0);
 const MLS_C = new Map();
 const MLS_HOSTDBG = [];
 const MLS_LAST = new Map();
-const MLS_CURL_DEAD = new Map();              // host → ts; এখান থেকে curl ব্যর্থ ⇒ ১০মিন রিডার-ফার্স্ট (প্রোডে-মাপা)                  // host → {st,len,via,ts} — প্রোডে-ডায়াগনস্টিক (diag-লাইনে যায়)                  // DBG: savelinks-পেজের হোস্ট-তালিকা (সর্বোচ্চ ২০)
+const MLS_CURL_DEAD = new Map();
+const MLS_GOOD = new Map();                    // host → 'curl' | 'px:<ip>'  (যে-পথ কাজ করেছে সেটাই আগে)              // host → ts; এখান থেকে curl ব্যর্থ ⇒ ১০মিন রিডার-ফার্স্ট (প্রোডে-মাপা)                  // host → {st,len,via,ts} — প্রোডে-ডায়াগনস্টিক (diag-লাইনে যায়)                  // DBG: savelinks-পেজের হোস্ট-তালিকা (সর্বোচ্চ ২০)
 const mlsEnt = s => String(s || '').replace(/&amp;/g, '&').replace(/&#0?38;/g, '&').replace(/&quot;/g, '"')
   .replace(/&#0?39;/g, "'").replace(/&#8217;/g, "'").replace(/&#8211;/g, '-').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
   .replace(/&#\d+;/g, ' ');
@@ -2914,6 +2915,28 @@ const mlsHost = u => { try { return new URL(u).host.replace(/^www\./, '').toLowe
 // ★ মাপা (২৬-১০-২০২৬): mlsbd.co-র Cloudflare **TLS-fingerprint** দেখে সিদ্ধান্ত নেয় —
 //   Node-এর undici fetch একই হেডারেও ৪০৩ (challenge) খায়, অথচ curl একই IP-তে ২০০ দেয়।
 //   তাই চ্যালেঞ্জে পড়লে curl-সাবপ্রসেস (execFile, shell নয়) দিয়ে একই অনুরোধ।
+// ★ v1.28.10: **ফ্রি-প্রক্সি** দিয়ে CF-হোস্ট (workspace-এর তালিকাগুলো স্ক্যান করে পাওয়া)।
+//   মাপা (২৬-১০-২০২৬): mlsbd.co — এই নোডগুলোতে ২০০ আসল JSON; gdflix — আলাদা তালিকা লাগে।
+function mlsPxLoad(f) {
+  try {
+    const d = JSON.parse(require('fs').readFileSync(require('path').join(__dirname, f), 'utf8'));
+    const arr = Array.isArray(d) ? d : (d.good || []);
+    return arr.filter(x => /^\d+\.\d+\.\d+\.\d+:\d+$/.test(String(x)));
+  } catch (e) { return []; }
+}
+const MLS_PXA = (process.env.MLSPXA ? process.env.MLSPXA.split(',').filter(Boolean) : mlsPxLoad('mls_px.json'));
+const MLS_PXG = (process.env.MLSPXG ? process.env.MLSPXG.split(',').filter(Boolean) : mlsPxLoad('mls_gd_px.json'));
+let mlsPxTurn = 0;
+function mlsPxFor(host) {
+  const list = /gdflix|ddflix|gdlink/i.test(host) ? (MLS_PXG.length ? MLS_PXG : MLS_PXA) : MLS_PXA;
+  if (!list.length) return [];
+  const n = Math.min(list.length, 3);
+  const out = [];
+  for (let i = 0; i < n; i++) out.push(list[(mlsPxTurn + i) % list.length]);
+  mlsPxTurn = (mlsPxTurn + 1) % list.length;
+  return out;
+}
+
 let MLS_CURL_OK = null;
 // ★ v1.28.5d: execFileSync → **async execFile**। sync-curl পুরো ইভেন্ট-লুপ আটকে দিত
 //   (vidy-প্রক্সি/অন্য সোর্সও থেমে যেত — ইউজার-শর্ত "vidy balo cholbe" ভাঙার ঝুঁকি)।
@@ -2923,13 +2946,18 @@ function mlsCurl(u, opt) {
   if (MLS_CURL_OK === null) { try { cp.execFileSync('curl', ['--version'], { stdio: 'ignore' }); MLS_CURL_OK = true; } catch (e) { MLS_CURL_OK = false; } }
   if (!MLS_CURL_OK) return Promise.resolve(null);
   const tmp = '/tmp/mls_' + process.pid + '_' + Math.random().toString(36).slice(2, 8) + '.out';
-  const a = ['-g', '-s', '-m', String(Math.max(2, Math.round((opt.ms || 6000) / 1000))), '-L',
+  const a = ['-g', '-s', '-k', '-m', String(Math.max(2, Math.round((opt.ms || 6000) / 1000))), '-L',
     '-A', UA, '-e', opt.referer || (MLS_BASE + '/'),
     '-H', 'Accept: ' + (opt.json ? 'application/json, text/plain, */*' : 'text/html,application/xhtml+xml,*/*;q=0.8'),
     '-H', 'Accept-Language: en-US,en;q=0.9',
     '-H', 'sec-ch-ua: "Chromium";v="147", "Not.A/Brand";v="8"',
     '-H', 'sec-ch-ua-mobile: ?0', '-H', 'sec-ch-ua-platform: "Windows"',
-    '-o', tmp, '-w', '%{http_code}|%{content_type}', u];
+    '-o', tmp, '-w', '%{http_code}|%{content_type}'];
+  if (opt.proxy) a.push('--proxy', 'http://' + opt.proxy, '--proxy-insecure');
+  if (opt.post) { for (const f of opt.post) a.push('-F', f); a.push('-H', 'x-token: ' + (opt.host || mlsHost(u)), '-H', 'Accept: application/json'); }
+  if (opt.xhr) a.push('-H', 'X-Requested-With: XMLHttpRequest');
+  if (opt.ct) a.push('-H', 'content-type: ' + opt.ct);
+  a.push(u);
   return new Promise(resolve => {
     let done = false;
     const fin = v => { if (done) return; done = true; try { require('fs').unlink(tmp, () => { }); } catch (e) { } resolve(v); };
@@ -3024,16 +3052,36 @@ async function mlsGet(u, opt) {
   if (cfHost) {
     // ★ v1.28.9: প্রোড-হোস্ট থেকে curl **কখনোই** কাজ করে না (মাপা) ⇒ একই হোস্টে একবার ব্যর্থ হলে
     //   ১০ মিনিট রিডার-ফার্স্ট (প্রতি হপে ~২সে বাঁচে, নইলে সার্চ+২ হপ শেষ হতে হতো ৭সে+)।
-    const dead = (Date.now() - (MLS_CURL_DEAD.get(mlsHost(u)) || 0)) < 600000;
-    for (let i = 0; i < (dead ? 0 : 3) && left() > 1200; i++) {
-      const cu = await mlsCurl(u, { ms: Math.min(4500, left()), json: !!opt.json, referer: opt.referer });
-      if (cu && cu.st >= 200 && cu.st < 400 && String(cu.body || '').length > 200) { mlsRec(u, cu.st, String(cu.body).length, 'curl' + (i + 1)); return { st: cu.st, body: cu.body, url: u, ct: cu.ct }; }
-      mlsRec(u, (cu && cu.st) || 0, String((cu && cu.body) || '').length, 'curl' + (i + 1) + '·bad');
-      MLS_CURL_DEAD.set(mlsHost(u), Date.now());
-      if (DBG) console.error('[mlsd] curl#' + (i + 1) + ' st=' + (cu && cu.st) + ' len=' + String((cu && cu.body) || '').length + ' ' + String(u).slice(0, 60));
-      if (left() < 900) break;
-      await new Promise(r => setTimeout(r, 200 + 220 * i));
-    }
+    const host0 = mlsHost(u);
+    const dead = (Date.now() - (MLS_CURL_DEAD.get(host0) || 0)) < 600000;
+    const good = MLS_GOOD.get(host0) || '';
+    const pxs = opt.proxy ? (Array.isArray(opt.proxy) ? opt.proxy : [opt.proxy]) : mlsPxFor(host0);
+    // ★ v1.28.11: ক্রম = যেটা আগে কাজ করেছে › ডাইরেক্ট-curl (ডেড না হলে) › ফ্রি-প্রক্সি › রিডার › পুল
+    //   (আগে প্রক্সি-প্রথম ছিল ⇒ লোকালে যেখানে curl ০.৩সে-তে ২০০ দেয়, সেখানে ২-৫সে নষ্ট হত)
+    const tryPx = async () => {
+      for (const fp of pxs) {
+        if (left() < 1500) return null;
+        const cp2 = await mlsCurl(u, { ms: Math.min(5000, left()), json: !!opt.json, referer: opt.referer, proxy: fp });
+        const okb = cp2 && cp2.st >= 200 && cp2.st < 400 && (opt.json ? mlsOkJson(cp2.body) : mlsOkHtml(cp2.body));
+        if (okb) { mlsRec(u, cp2.st, String(cp2.body).length, 'px:' + fp.split(':')[0]); MLS_GOOD.set(host0, 'px:' + fp); return { st: cp2.st, body: cp2.body, url: u, ct: cp2.ct, px: fp }; }
+      }
+      return null;
+    };
+    const tryCurl = async (n) => {
+      for (let i = 0; i < n && left() > 1200; i++) {
+        const cu = await mlsCurl(u, { ms: Math.min(4500, left()), json: !!opt.json, referer: opt.referer });
+        if (cu && cu.st >= 200 && cu.st < 400 && (opt.json ? mlsOkJson(cu.body) : mlsOkHtml(cu.body))) {
+          mlsRec(u, cu.st, String(cu.body).length, 'curl' + (i + 1)); MLS_GOOD.set(host0, 'curl');
+          return { st: cu.st, body: cu.body, url: u, ct: cu.ct };
+        }
+      }
+      return null;
+    };
+    let got = null;
+    if (good.indexOf('px:') === 0) got = await tryPx() || (dead ? null : await tryCurl(2));
+    else got = (dead ? null : await tryCurl(3)) || await tryPx();
+    if (got) return got;
+    if (!got) { MLS_CURL_DEAD.set(host0, Date.now()); if (DBG) console.error('[mlsd] direct+px ব্যর্থ ' + String(u).slice(0, 60)); }
     if (process.env.MLSREADER !== '0') {
       const rb = await mlsReader(u, Math.max(2600, Math.min(4200, left() || 3000)));
       if (rb && (opt.json ? mlsOkJson(rb) : mlsOkHtml(rb))) { mlsRec(u, 200, rb.length, 'reader'); return { st: 200, body: rb, url: u, reader: 1 }; }
@@ -3058,6 +3106,12 @@ async function mlsGet(u, opt) {
       if (DBG) console.error('[mlsd] net ' + ((e && e.message) || e) + ' ' + String(u).slice(0, 60));
     }
     if (Date.now() - T0 > ms - 600) break;
+    if (opt.proxy) {
+      for (const fp of (Array.isArray(opt.proxy) ? opt.proxy : [opt.proxy])) {
+        const cp3 = await mlsCurl(u, { ms: Math.min(4500, ms - (Date.now() - T0)), json: !!opt.json, referer: opt.referer, proxy: fp });
+        if (cp3 && cp3.st >= 200 && cp3.st < 400) return { st: cp3.st, body: cp3.body, url: u, ct: cp3.ct, px: fp };
+      }
+    }
     const cu = await mlsCurl(u, { ms: Math.min(4500, ms - (Date.now() - T0)), json: !!opt.json, referer: opt.referer });
     if (cu && cu.st >= 200 && cu.st < 400 && String(cu.body || '').length > 200) return { st: cu.st, body: cu.body, url: u, ct: cu.ct };
   }
@@ -3194,12 +3248,57 @@ async function mlsSav(id, ms) {
     // ★ v1.28.5h: `gdlink.dev/file/<id>` → ৩০১ → `new7.gdflix.io/file/<id>` (মাপা ২০০, validate.multiup2 লিংক-সহ)
     //   ⇒ একই gdflix-রেজলভার চলে; পুরোনো পোস্টের কভারেজ অনেক বাড়ে (`hubcloud.*`-এ কিছু নেই — বাদ)।
     gd: hs.filter(u => /gdflix|ddflix|gdlink/i.test(mlsHost(u))),
-    mcl: hs.filter(u => /multicloudlinks/i.test(mlsHost(u))),
+    mcl: hs.filter(u => /multicloudlinks|multidownload|fsldownload/i.test(mlsHost(u))),
     hosts: [...new Set(hs.map(mlsHost).filter(h => h && !/savelinks|mlsbd|google|gstatic|facebook|twitter|whatsapp|t\.me/i.test(h)))]
   };
 }
 
 // gdflix রেজলভ (cookies-মুক্ত রুট: inline-r2 / worker-direct / worker-inline) + Range-প্রমাণ
+// ★ v1.28.10: gdflix-এর **আসল** চেইন (২৬-১০-২০২৬ মাপা):
+//   `/file/<id>` (generate-cloud বাটন) → POST action=cloud+key ⇒ {"url":"/cloud/T/<id>?token=…"}
+//   → ওই URL `?xhr=1` পোলে {"done":true,"redirect":"/cloud/T/T2/<id>"} → শেষ পেজে `cloud-dl.<x>.workers.dev/…`
+//   ⇒ সরাসরি ২০৬। (পুরোনো পথ `/cloud/<id>/<id>` → CGICLOUD-র ৩০১ → খালি; তাই POST বাধ্যতামূলক।)
+async function mlsGdPost(fileUrl, ms, px) {
+  const T0 = Date.now();
+  const t = Math.max(2600, Math.min(7000, ms || 6000));
+  const f = await mlsGet(fileUrl, { ms: Math.min(t, 4500), proxy: px });
+  const body = f.body || '';
+  const key = (/"key",\s*"([a-f0-9]{20,})"/.exec(body) || [])[1] || (/name="key"\s+value="([a-f0-9]+)"/.exec(body) || [])[1];
+  const node = (new RegExp('https:\\/\\/' + (mlsHost(f.url || fileUrl) || 'new7\\.gdflix\\.io').replace(/\./g, '\\.') + '\\/cloud\\/\\d+\\/[A-Za-z0-9]+')).exec(body);
+  const cloudPath = (node && node[0]) || (new RegExp('(https:\\/\\/[^"\']+\\/cloud\\/\\d+\\/[A-Za-z0-9]+)').exec(body) || [])[1]
+    || (fileUrl.replace(/\/file\//, '/cloud/') + '').replace(/^(https:\/\/[^\/]+)\/cloud\/([A-Za-z0-9]+)$/, '$1/cloud/x/$2');
+  if (!key || !cloudPath) return { ok: false, direct: '', route: 'post-nokey', size: 0 };
+  let base = cloudPath;
+  try { base = new URL(cloudPath, fileUrl).href; } catch (e) { }
+  const post = await mlsCurl(base, { ms: Math.min(4500, t - (Date.now() - T0)), proxy: px, post: ['action=cloud', 'key=' + key, 'action_token='] });
+  let j = null;
+  try { j = JSON.parse(post && post.body || ''); } catch (e) { j = null; }
+  if (!j || !j.url) return { ok: false, direct: '', route: 'post-fail', size: 0 };
+  let tokUrl = '';
+  try { tokUrl = new URL(String(j.url).replace(/\\\//g, '/'), base).href; } catch (e) { tokUrl = ''; }
+  if (!tokUrl) return { ok: false, direct: '', route: 'post-nourl', size: 0 };
+  // পোল (সর্বোচ্চ ৪ বার, ক্রমবর্ধমান বিরতি) — redirect না পাওয়া পর্যন্ত
+  let redir = '';
+  for (let i = 0; i < 4 && !redir; i++) {
+    const pr = await mlsCurl(tokUrl + (tokUrl.indexOf('?') >= 0 ? '&' : '?') + 'xhr=1', { ms: Math.min(4000, Math.max(2000, t - (Date.now() - T0))), proxy: px, xhr: true });
+    let pj = null;
+    try { pj = JSON.parse(pr && pr.body || ''); } catch (e) { pj = null; }
+    if (pj && pj.redirect) redir = String(pj.redirect);
+    else await new Promise(r => setTimeout(r, 1200 * (i + 1)));
+  }
+  if (!redir) return { ok: false, direct: '', route: 'post-nopoll', size: 0 };
+  let finUrl = '';
+  try { finUrl = new URL(redir.replace(/\\\//g, '/'), base).href; } catch (e) { finUrl = ''; }
+  const fin = finUrl ? await mlsGet(finUrl, { ms: Math.max(2600, t - (Date.now() - T0)), proxy: px }) : { body: '' };
+  const grab = (re) => (re.exec(String(fin.body || '')) || [])[0] || '';
+  const direct = grab(/https:\/\/cloud-dl\.[a-z0-9]+\.workers\.dev\/[^\s"'<>\\]+/i)
+    || grab(/https:\/\/pub-[a-z0-9]+\.r2\.dev\/[^\s"'<>\\]+/i)
+    || grab(/https:\/\/instant\.[a-z0-9.]+\/[^\s"'<>\\]+/i);
+  if (!direct) return { ok: false, direct: '', route: 'post-nolink', size: 0 };
+  const pr2 = await mlsProve(direct, Math.max(2000, Math.min(4500, t - (Date.now() - T0))));
+  return { ok: !!(pr2 && pr2.ok), direct: direct, route: pr2 && pr2.ok ? 'post-cloud' : 'post-unproven', size: (pr2 && pr2.size) || 0, ct: (pr2 && pr2.ct) || '' };
+}
+
 // ★ v1.28.5i: MLS-এ **কঠোর** Range-প্রমাণ — পুল-ফলব্যাক বর্জিত।
 //   কারণ মাপা: `validate.multiup2.workers.dev/<hash>` ⇒ ৩০২ ⇒ `goflix.sbs/en/mirror/<hash>` (HTML পেজ),
 //   আর hdProbe-এর পুল-পথ ওই HTML-কেই "সবুজ" বানিয়ে ভুয়ো কার্ড দিচ্ছিল (ইউজার-শর্ত লঙ্ঘন)।
@@ -3218,9 +3317,9 @@ async function mlsProve(u, ms) {
   } catch (e) { return { ok: false, ct: '', cr: '', st: 0, size: 0 }; }
 }
 
-async function mlsGd(link, ms) {
+async function mlsGd(link, ms, px) {
   const out = { link: link, route: 'none' };
-  const g = await mlsGet(link, { ms: Math.min(ms, 5500) });
+  const g = await mlsGet(link, { ms: Math.min(ms, 5500), proxy: px });
   if (!g.body) return out;
   // ★ মাপা: gdflix-পেজে ডাইরেক্ট-লিংক **href-এ থাকে না** — JS/অ্যাট্রিবিউটের ভেতরে
   //   (`pub-<hash>.r2.dev/<id>?token=<ts>` — ২০৬ + Content-Range প্রমাণিত, ৫১৬MB)।
@@ -3247,7 +3346,11 @@ async function mlsGd(link, ms) {
     //   তাই এখানে সরাসরি গ্রহণ করি না — শুধু রুট-নাম রাখি, প্রমাণ mlsProve-এ ধরা পড়বে।
     if (v) { direct = v; out.route = 'validate-worker'; }
   }
-  if (!direct) return out;
+  if (!direct) {                                   // ★ POST-পথ (v1.28.10)
+    const pf = await mlsGdPost(g.url || link, ms, px).catch(() => null);
+    if (pf && pf.direct) return Object.assign(out, pf, { link: link });
+    return Object.assign(out, { route: (pf && pf.route) || 'none' });
+  }
   out.direct = direct;
   const pr = await mlsProve(direct, Math.max(1800, Math.min(ms, 4500)));
   if (pr && pr.ok) { out.ok = true; out.ct = pr.ct || ''; out.size = pr.size || 0; }
@@ -3255,18 +3358,38 @@ async function mlsGd(link, ms) {
   return out;
 }
 
-// Watch-Online চেইন: mcl view → player.php → streamSrc → Range-প্রমাণ
-async function mlsWatch(link, ms) {
-  const v = await mlsGet(link, { ms: Math.min(ms, 5000) });
-  if (!v.body) return null;
-  const pl = mlsHrefs(v.body, v.url || link).find(u => /player\.php/i.test(u));
-  if (!pl) return null;
-  const pp = await mlsGet(pl, { ms: Math.min(ms, 5000), referer: link });
-  const src = (/const\s+streamSrc\s*=\s*["']([^"']+)["']/.exec(pp.body) || [])[1];
-  if (!src) return null;
-  const pr = await mlsProve(src, Math.max(1800, Math.min(ms, 4500)));
-  if (!pr || !pr.ok) return null;
-  return { direct: src, size: pr.size || 0, ct: pr.ct || '' };
+// Watch-Online চেইন (v1.28.10, মাপা ২৬-১০-২০২৬): `new3.multicloudlinks.com/view/<id>`
+//   → ৩০২ → `/view/<hash>?c=<id>&exp=…` পেজে **সরাসরি** `dr1.multidownload.lol/d/<id>?exp&token&eid`
+//   → ওই URL-এ `&action=watch` দিলে **২০৬ + video/matroska + Content-Range** (প্রমাণিত: ৭৬৪MB)।
+//   (প্লেইন URL ৩০২ করে `&action=download`-এ ⇒ প্লেয়ারে চলে না।) তাই action=watch বাধ্যতামূলক।
+//   ব্যাকআপ: `player.php/?v=<id>` → `const streamSrc = …`, `fsldownload.com/d/…`, `new.multicloudlinks.com/dl/<id>`
+async function mlsWatch(link, ms, px) {
+  const T0 = Date.now();
+  const t = Math.max(3000, Math.min(7000, ms || 6000));
+  const v = await mlsGet(link, { ms: Math.min(t, 5000), referer: 'https://savelinks.me/', proxy: px });
+  let body = String(v.body || '');
+  if (!body) return null;
+  const base = v.url || link;
+  const dec = u => mlsEnt(u);
+  const cands = [];
+  const push = (u, tag) => { u = dec(String(u || '').trim()); if (u && cands.every(c => c.u !== u)) cands.push({ u: u, tag: tag }); };
+  const dr1 = /https:\/\/dr1\.multidownload\.lol\/d\/[^\s"'<>\\]+/i.exec(body);
+  if (dr1) push(dr1[0] + (/[?&]/.test(dr1[0]) ? '&' : '?') + 'action=watch', 'multicloud');
+  const fsl = /https:\/\/fsldownload\.com\/d\/[A-Za-z0-9._-]+/i.exec(body);
+  if (fsl) push(fsl[0], 'FSL');
+  const dl = /https:\/\/new\.multicloudlinks\.com\/dl\/[A-Za-z0-9]+/i.exec(body);
+  if (dl) push(dl[0], 'multicloud');
+  const pl = mlsHrefs(body, base).find(u => /player\.php/i.test(u));
+  if (!cands.length && pl) {
+    const pp = await mlsGet(pl, { ms: Math.min(4500, Math.max(2500, t - (Date.now() - T0))), referer: link, proxy: px });
+    const src = (/const\s+streamSrc\s*=\s*["']([^"']+)["']/.exec(String(pp.body || '')) || [])[1];
+    if (src) push(src + (/[?&]/.test(src) ? '&' : '?') + 'action=watch', 'multicloud');
+  }
+  for (const c of cands.slice(0, 2)) {
+    const pr = await mlsProve(c.u, Math.max(2200, Math.min(4500, t - (Date.now() - T0))));
+    if (pr && pr.ok) return { direct: c.u, size: pr.size || 0, ct: pr.ct || '', srv: c.tag };
+  }
+  return null;
 }
 
 // অডিও-লেবেল: [Hindi-English] → Dual · [Hindi-Tamil-Telugu-Jap] → Multi (ইউজার-নিয়ম)
@@ -3345,10 +3468,10 @@ async function mlsTask(nameP, infoP, type, s, e) {
         const chain = mlsSav(it.id, 3800).then(x => {
           if (MLS_HOSTDBG.length < 20) MLS_HOSTDBG.push(x.hosts);
           const inner = [];
+          for (const u of x.mcl.slice(0, 2))     // ★ watch-online আগে (১ হপ, প্রোডে-খোলা — মাপা ২০৬)
+            inner.push(mlsWatch(u, Math.max(3000, CAP - (Date.now() - T0) - 400)).then(r => ({ kind: 'watch', r: r, title: ttlOf(p), q: q0 })).catch(() => null));
           for (const u of x.gd.slice(0, 2))
             inner.push(mlsGd(u, Math.max(2600, CAP - (Date.now() - T0) - 400)).then(r => ({ kind: 'gd', r: r, title: ttlOf(p), q: q0 })).catch(() => null));
-          for (const u of x.mcl.slice(0, 1))
-            inner.push(mlsWatch(u, Math.max(2600, CAP - (Date.now() - T0) - 400)).then(r => ({ kind: 'watch', r: r, title: ttlOf(p), q: q0 })).catch(() => null));
           return Promise.all(inner);
         }).catch(() => []);
         jobs.push(chain);
@@ -3376,7 +3499,7 @@ async function mlsTask(nameP, infoP, type, s, e) {
       const qq = it.q || mlsQ(it.title) || mlsQ(u) || 0;
       const size = mlsMB(it.r.size || 0);
       const audio = mlsAudio(it.title);
-      const srv = it.kind === 'watch' ? 'Watch' : (/r2\.dev/.test(u) ? 'gdflix' : 'gdflix·worker');
+      const srv = it.kind === 'watch' ? ((it.r && it.r.srv) || 'multicloud') : (/r2\.dev/.test(u) ? 'gdflix' : 'gdflix·worker');
       const lines = '⊞ MLSBD ◧ ' + srv + (audio ? ' ⌗ ' + audio : '') + (size ? ' · ' + size : '');
       const txt = '⧉ ' + ttl + (year ? ' | ' + year + ' |' : ' |') + '\n'
         + (type === 'series' ? '⬡ S' + SE + 'E' + EP : '⬡ Movie') + (size ? ' · ' + size : '') + '\n' + lines;
@@ -11868,6 +11991,14 @@ const server = http.createServer((req, res) => {
       let n = 0; try { n = (typeof memPurgeAll === 'function') ? memPurgeAll(lvl) : 0; } catch (e) { }
       if (global.gc) { try { global.gc(); } catch (e) { } }
       return sendJson(res, 200, { lvl, cleared: n, rssBeforeMB: before, rssAfterMB: Math.round(process.memoryUsage().rss / 1048576) });
+    }
+    if (p === '/_mlswatch') {   // ★ v1.28.10 ডায়াগনস্টিক: MLSBD watch/gdflix রুট এক লাইনে প্রমাণ করা
+      const u2 = new URL(req.url, 'http://x');
+      const u = u2.searchParams.get('u') || '';
+      const kind = u2.searchParams.get('kind') || 'watch';
+      if (!u) return sendJson(res, 200, { err: 'need ?u=' });
+      const job = kind === 'gd' ? mlsGd(u, 9000) : kind === 'search' ? mlsPosts([u], 7000).then(a => ({ posts: a.length, titles: a.slice(0, 3).map(x => x.title.slice(0, 60)) })) : mlsWatch(u, 9000);
+      return Promise.resolve(job).then(r => sendJson(res, 200, { ok: 1, kind: kind, r: r })).catch(e => sendJson(res, 200, { ok: 0, err: String(e && e.message) }));
     }
     if (p === '/_lastsrc') return sendJson(res, 200, LAST_SRC || {});
     if (p === '/_pools') { // ★ v1.22.0: প্রতি-সোর্স প্রক্সি-পুলের অবস্থা
