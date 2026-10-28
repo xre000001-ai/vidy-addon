@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.28.33';
+const VERSION = '1.28.34';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -3693,8 +3693,12 @@ async function mlsTask(nameP, infoP, type, s, e) {
     const savList = [];
     for (const p of cands) for (const it of mlsSavIds(p.html)) if (!savList.some(x => x.id === it.id)) savList.push(Object.assign({ p: p }, it));
     savList.sort((a, b) => (b.q || 0) - (a.q || 0));
+    // ★ v1.28.34: আগে **প্রতি ক্যান্ডিডেটে ২টি** sav ⇒ এক টাইটেলে ৪টি sav-পেজ (**৪টি curl+প্রক্সি**) ⇒
+    //   savelinks-এর CF রেট-লিমিটে ২টি ৪-৫সে নিত ⇒ CAP-এর আগে রুট শেষ হতো না (মাপা: sav=4 @8367ms ⇒ cards=0)।
+    //   এখন **সর্বোচ্চ-কোয়ালিটির ২টি** sav (মোট ২টি) — অর্ধেক লোড, বাজেটে ঢোকে।
+    const savTop = savList.slice(0, 2);
     for (const p of cands) {
-      for (const it of savList.filter(x => x.p === p).slice(0, 2)) {
+      for (const it of savTop.filter(x => x.p === p)) {
         if (seenSav.has(it.id)) continue;
         seenSav.add(it.id);
         const q0 = it.q || mlsQ(p.title) || 0;
