@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.28.30';
+const VERSION = '1.28.31';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -3392,49 +3392,103 @@ async function mlsProve(u, ms) {
   } catch (e) { return { ok: false, ct: '', cr: '', st: 0, size: 0 }; }
 }
 
-async function mlsGd(link, ms, px) {
-  const out = { link: link, route: 'none' };
-  const g = await mlsGet(link, { ms: Math.min(ms, 5500), proxy: px });
-  if (!g.body) return out;
-  // ★ মাপা: gdflix-পেজে ডাইরেক্ট-লিংক **href-এ থাকে না** — JS/অ্যাট্রিবিউটের ভেতরে
-  //   (`pub-<hash>.r2.dev/<id>?token=<ts>` — ২০৬ + Content-Range প্রমাণিত, ৫১৬MB)।
-  //   তাই raw-text স্ক্যান (href-স্ক্যানে ০ আসছিল)।
-  const grab = (txt, re) => (re.exec(String(txt || '')) || [])[0] || '';
-  const hs = mlsHrefs(g.body, g.url || link);
-  const RAW_R2 = /https:\/\/pub-[a-z0-9]+\.r2\.dev\/[^\s"'<>\\]+/i;
-  const RAW_WK = /https:\/\/cloud-dl\.[a-z0-9]+\.workers\.dev\/[^\s"'<>\\]+/i;
-  const RAW_VL = /https:\/\/validate\.[a-z0-9]+\.workers\.dev\/[^\s"'<>\\]+/i;
-  let direct = grab(g.body, RAW_R2) || grab(g.body, RAW_WK);
-  if (direct) out.route = /r2\.dev/.test(direct) ? 'inline-r2' : 'worker-direct';
-  if (!direct) {
-    const cloud = hs.find(u => /\/cloud\/\d+\//i.test(u)) || hs.find(u => /\/cflare\/\d+\//i.test(u));
-    if (cloud) {
-      const cp = await mlsGet(cloud, { ms: Math.min(ms, 4500), referer: link });
-      const w = grab(cp.body, RAW_WK) || grab(cp.body, RAW_R2) || grab(cp.body, RAW_VL);
-      if (w) { direct = w; out.route = 'cloud-inline'; }
-      else out.route = /append\(\s*["']key["']/.test(cp.body) ? 'need-post(cookie)' : 'no-key';
+// ★ v1.28.31 (প্রোডে-মাপা ২৮-১০-২০২৬, হাতে-যাচাই করা পুরো চেইন):
+//   sav → `gdflix.com/file/<id>` → ৩০১ → ddflix.xyz → gdflix.dev → **new7.gdflix.io/file/<id>** (২০০)
+//   `/file/`-এ POST ⇒ "Session Not Found Please Login!" (মৃত পথ) — কিন্তু **`/cloud/<ts>/<id>`** পেজে
+//   POST `action=cloud`+`key` ⇒ `{"url":"/cloud/<n2>/<id>?token=…"}` ⇒ ওই URL `?xhr=1` পোলে
+//   `{"done":true,"redirect":"/cloud/<n>/<n2>/<id>"}` ⇒ শেষ পেজে
+//   `https://cloud-dl.<hash>.workers.dev/<…>.mkv` ⇒ **২০৬ + Content-Range (৫১২MB)** প্রমাণিত।
+//   ⚠ QUEUED পর্বটি **~৩৫-৪০সে** (৮ পোল) ⇒ একটি রিকোয়েস্টে শেষ হয় না। তাই: ছোট বাজেটে চেষ্টা,
+//   না হলে **ব্যাকগ্রাউন্ড পোলার** শেষ করে ক্যাশে রাখে — পরের টাইটেল-খোলায় gdflix কার্ড হাজির।
+const MLS_GD = new Map();       // gdflix-id → {ts, ok, direct, size, ct, route}
+const MLS_GBG = new Set();      // ব্যাকগ্রাউন্ড-পোল চলছে এমন id
+function mlsGdId(u) { const m = /\/file\/([A-Za-z0-9]+)/.exec(String(u || '')); return m ? m[1] : String(u || ''); }
+
+async function mlsGdPoll(tokUrl, cloud, ms) {
+  const T0 = Date.now();
+  let n = 0;
+  while (Date.now() - T0 < ms && n < 6) {
+    n++;
+    const pr = await mlsCurl(tokUrl + (tokUrl.indexOf('?') >= 0 ? '&' : '?') + 'xhr=1', { ms: Math.min(2600, Math.max(900, ms - (Date.now() - T0))), xhr: true, referer: cloud });
+    let pj = null;
+    try { pj = JSON.parse((pr && pr.body) || ''); } catch (e) { pj = null; }
+    if (pj && pj.done && pj.redirect) {
+      let fin = '';
+      try { fin = new URL(String(pj.redirect).replace(/\\\//g, '/'), cloud).href; } catch (e) { fin = ''; }
+      if (!fin) return { ok: false, route: 'redirect-bad' };
+      const fp = await mlsGet(fin, { ms: Math.min(3200, 3600) });
+      const grab = re => (re.exec(String(fp.body || '')) || [])[0] || '';
+      const direct = grab(/https:\/\/cloud-dl\.[a-z0-9]+\.workers\.dev\/[^\s"'<>\\]+/i)
+        || grab(/https:\/\/pub-[a-z0-9]+\.r2\.dev\/[^\s"'<>\\]+/i)
+        || grab(/https:\/\/instant\.[a-z0-9.]+\/[^\s"'<>\\]+/i);
+      if (!direct) return { ok: false, route: 'nodirect', done: true };
+      const pv = await mlsProve(direct, 2600);
+      return pv && pv.ok ? { ok: true, direct: direct, size: pv.size || 0, ct: pv.ct || '', route: 'cloud' } : { ok: false, route: 'unproven', done: true };
     }
+    if (pj && pj.done && !pj.redirect) return { ok: false, route: 'done-noredirect', done: true };
+    await new Promise(r => setTimeout(r, 1000));
   }
-  if (!direct) {
-    const v = grab(g.body, RAW_VL);
-    // মাপা: validate.<x>.workers.dev ⇒ ৩০২ ⇒ goflix.sbs/en/mirror (HTML) ⇒ মিডিয়া নয়।
-    //   তাই এখানে সরাসরি গ্রহণ করি না — শুধু রুট-নাম রাখি, প্রমাণ mlsProve-এ ধরা পড়বে।
-    if (v) { direct = v; out.route = 'validate-worker'; }
+  return { ok: false, route: 'queued', tokUrl: tokUrl, cloud: cloud };
+}
+
+function mlsGdBg(fileUrl, id) {
+  if (MLS_GBG.has(id) || MLS_GBG.size > 24) return;
+  MLS_GBG.add(id);
+  const tick = async (round) => {
+    try {
+      const st = MLS_GD.get(id);
+      if (st && st.ok) { MLS_GBG.delete(id); return; }
+      const r = await mlsGdOnce(fileUrl, 9000, round > 0 && st && st.tokUrl ? { tok: st.tokUrl, cloud: st.cloud } : null);
+      if (r && (r.ok || r.done)) { MLS_GD.set(id, Object.assign({ ts: Date.now() }, r)); MLS_GBG.delete(id); if (DBG) console.error('[mlsd] gd-bg ' + id + ' ' + (r.ok ? 'OK' : r.route)); return; }
+      if (r && r.route === 'queued') MLS_GD.set(id, { ts: Date.now(), tokUrl: r.tokUrl, cloud: r.cloud });
+      if (round >= 14) { MLS_GBG.delete(id); MLS_GD.set(id, { ts: Date.now(), ok: false, route: 'bg-timeout', done: true }); return; }
+      setTimeout(() => tick(round + 1), 4000);
+    } catch (e) { MLS_GBG.delete(id); }
+  };
+  setTimeout(() => tick(0), 2500);
+}
+
+async function mlsGdOnce(fileUrl, ms, resume) {
+  const T0 = Date.now();
+  if (resume && resume.tok && resume.cloud) return await mlsGdPoll(resume.tok, resume.cloud, Math.max(1200, ms));
+  const g = await mlsGet(fileUrl, { ms: Math.min(ms, 3600) });
+  const body = g.body || '';
+  if (!body) return { ok: false, route: 'nofile' };
+  let origin = 'https://new7.gdflix.io';
+  try { origin = new URL(g.url || fileUrl).origin; } catch (e) { }
+  const grab = (txt, re) => (re.exec(String(txt || '')) || [])[0] || '';
+  let direct = grab(body, /https:\/\/cloud-dl\.[a-z0-9]+\.workers\.dev\/[^\s"'<>\\]+/i)
+    || grab(body, /https:\/\/pub-[a-z0-9]+\.r2\.dev\/[^\s"'<>\\]+/i);
+  if (direct) {                                    // ইনলাইন-লিংক থাকলে সরাসরি
+    const pv = await mlsProve(direct, 2400);
+    return pv && pv.ok ? { ok: true, direct: direct, size: pv.size || 0, ct: pv.ct || '', route: 'inline' } : { ok: false, route: 'inline-unproven', done: true };
   }
-  // ★ v1.28.30 (মাপা ২৮-১০-২০২৬): gdflix এখন **লগইন-গেটেড** — `action=original` ⇒
-  //   {"error":true,"message":"Session Not Found Please Login!"}, `action=direct` ⇒ "Direct Download not
-  //   Enabled!", `action=cloud` ⇒ "Invalid Request" (কুকি-জারসহও একই)। তাই POST+পোল-চেইন ডিফল্টে **বন্ধ**
-  //   (প্রতি টাইটেলে ৩-৪সে নষ্ট হতো, কিছুই ফেরাত না); শুধু MLSDGPOST=1 দিলে চেষ্টা করবে।
-  if (!direct && process.env.MLSGDPOST === '1') {  // ★ POST-পথ (v1.28.10)
-    const pf = await mlsGdPost(g.url || link, ms, px).catch(() => null);
-    if (pf && pf.direct) return Object.assign(out, pf, { link: link });
-    return Object.assign(out, { route: (pf && pf.route) || 'none' });
-  }
-  out.direct = direct;
-  const pr = await mlsProve(direct, Math.max(1800, Math.min(ms, 4500)));
-  if (pr && pr.ok) { out.ok = true; out.ct = pr.ct || ''; out.size = pr.size || 0; }
-  else out.route = (out.route || 'x') + '·unproven';
-  return out;
+  const id = mlsGdId(fileUrl);
+  const cloud = grab(body, /https?:\/\/[^"'\s<>]+\/cloud\/\d+\/[A-Za-z0-9]+/) || (origin + '/cloud/' + String(Date.now()).slice(0, 10) + '/' + id);
+  const cp = await mlsGet(cloud, { ms: Math.max(1800, Math.min(2600, ms - (Date.now() - T0))) });
+  const key = (/formData\.append\("key",\s*"([a-f0-9]{20,})"\)/.exec(cp.body || '') || [])[1]
+    || (/name="key"\s+value="([a-f0-9]+)"/.exec(cp.body || '') || [])[1];
+  if (!key) return { ok: false, route: 'nokey' };
+  const post = await mlsCurl(cloud, { ms: 2800, post: ['action=cloud', 'key=' + key, 'action_token='], host: mlsHost(cp.url || cloud), referer: cloud });
+  let j = null;
+  try { j = JSON.parse((post && post.body) || ''); } catch (e) { j = null; }
+  if (!j || !j.url) return { ok: false, route: 'post-fail' };
+  let tok = '';
+  try { tok = new URL(String(j.url).replace(/\\\//g, '/'), cloud).href; } catch (e) { tok = ''; }
+  if (!tok) return { ok: false, route: 'post-nourl' };
+  return await mlsGdPoll(tok, cloud, Math.max(1200, Math.min(2200, ms - (Date.now() - T0))));
+}
+
+async function mlsGd(link, ms, px) {
+  const id = mlsGdId(link);
+  const C = MLS_GD.get(id);
+  if (C && C.ok && Date.now() - C.ts < 1800000) return { ok: true, direct: C.direct, size: C.size || 0, ct: C.ct || '', route: 'cache', link: link };
+  if (C && C.done && !C.ok && Date.now() - C.ts < 900000) return { ok: false, route: 'known-dead', link: link };
+  const r = await mlsGdOnce(link, Math.min(ms || 4000, 5200), (C && C.tokUrl) ? { tok: C.tokUrl, cloud: C.cloud } : null);
+  if (r && (r.ok || r.done)) { MLS_GD.set(id, Object.assign({ ts: Date.now() }, r)); return Object.assign({ link: link }, r); }
+  if (r && r.route === 'queued') MLS_GD.set(id, { ts: Date.now(), tokUrl: r.tokUrl, cloud: r.cloud });
+  mlsGdBg(link, id);                                 // বাকিটা ব্যাকগ্রাউন্ডে
+  return { ok: false, route: (r && r.route) || 'pending', link: link };
 }
 
 // Watch-Online চেইন (v1.28.10, মাপা ২৬-১০-২০২৬): `new3.multicloudlinks.com/view/<id>`
@@ -3558,7 +3612,7 @@ async function mlsTask(nameP, infoP, type, s, e) {
     RCK = ck;
     const hit = MLS_C.get(ck);
     const hitC = MLS_RC.get(ck);                       // ★ v1.28.30: পুরো-ফল ক্যাশ (১০ মিনিট)
-    if (hitC && Date.now() - hitC.ts < 600000) { if (DBG) console.error('[mlsd] cache-hit n=' + hitC.cards.length); return hitC.cards.slice(); }
+    if (hitC && Date.now() - hitC.ts < 150000) { if (DBG) console.error('[mlsd] cache-hit n=' + hitC.cards.length); return hitC.cards.slice(); }
     const SE0 = Number(s || 1), EP0 = Number(e || 1);
     const okPost0 = (t) => names.some(n => mlsTitleOk(n, t, year, type === 'series')) && (type === 'series' ? mlsEpOk(t, SE0, EP0) : true);
     let posts = (hit && Date.now() - hit.ts < 20 * 60e3) ? hit.posts : null;   // শুধু পোস্ট-আইডি ক্যাশ (লিংক নয়)
@@ -3663,7 +3717,7 @@ async function mlsTask(nameP, infoP, type, s, e) {
   let timedOut = false;
   const hard = new Promise(r => setTimeout(() => { timedOut = true; try { r(finalize()); } catch (e) { r([]); } }, CAP));
   const r = await Promise.race([work.catch(e => { if (DBG) console.error('[mlsd] err ' + (e && e.message)); return []; }), hard]);
-  if (r && r.length && RCK) { try { MLS_RC.set(RCK, { ts: Date.now(), cards: r.slice() }); if (MLS_RC.size > 200) MLS_RC.clear(); } catch (e) { } }
+  if (r && r.length && RCK) { try { MLS_RC.set(RCK, { ts: Date.now(), cards: r.slice() }); if (MLS_RC.size > 200) MLS_RC.clear(); } catch (e) { } }  // TTL ২.৫ মিনিট — bg-gdflix শেষ হলে নতুন কার্ড শিগগিরই দেখা যাবে
   if (timedOut) diag('mlsd', 'partial-cards=' + (r || []).length + ' (CAP ' + CAP + 'ms)');
   return r || [];
 }
