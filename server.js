@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.28.35';
+const VERSION = '1.28.36';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -3445,7 +3445,15 @@ function mlsGdBg(fileUrl, id) {
       const st = MLS_GD.get(id);
       if (st && st.ok) { MLS_GBG.delete(id); return; }
       const r = await mlsGdOnce(fileUrl, 9000, round > 0 && st && st.tokUrl ? { tok: st.tokUrl, cloud: st.cloud } : null);
-      if (r && (r.ok || r.done)) { MLS_GD.set(id, Object.assign({ ts: Date.now() }, r)); MLS_GBG.delete(id); if (DBG) console.error('[mlsd] gd-bg ' + id + ' ' + (r.ok ? 'OK' : r.route)); return; }
+      if (r && (r.ok || r.done)) {
+        MLS_GD.set(id, Object.assign({ ts: Date.now() }, r)); MLS_GBG.delete(id);
+        if (DBG) console.error('[mlsd] gd-bg ' + id + ' ' + (r.ok ? 'OK' : r.route));
+        if (r.ok) {                                    // ★ v1.28.36: bg-সফল gdflix কার্ড ক্যাশে ঢোকাও
+          const ctx = MLS_GD_CTX.get(id);
+          if (ctx) { const c = mlsMakeCard({ kind: 'gd', r: r, title: ctx.title || '', q: ctx.q || 0 }, ctx.INFO, ctx.NAME, ctx.type, ctx.s, ctx.e); mlsAppendCard(ctx.ck, c); MLS_GD_CTX.delete(id); }
+        }
+        return;
+      }
       if (r && r.route === 'queued') MLS_GD.set(id, { ts: Date.now(), tokUrl: r.tokUrl, cloud: r.cloud });
       if (round >= 14) { MLS_GBG.delete(id); MLS_GD.set(id, { ts: Date.now(), ok: false, route: 'bg-timeout', done: true }); return; }
       setTimeout(() => tick(round + 1), 4000);
@@ -3589,6 +3597,18 @@ function mlsMakeCard(it, INFO, NAME, type, s, e) {
 
 // ব্যাকগ্রাউন্ড-এনরিচ: রিকোয়েস্ট শেষে বাকি sav-পাতাগুলো ধীরে-ধীরে রেজলভ করে ক্যাশ-তালিকায় যোগ করে
 // ⇒ প্রথম খোলায় ১-২টি কার্ড, পরের খোলায় ৪-৬টি (ইউজার-শর্ত: প্রতি ফাইলে আলাদা কার্ড, এক সার্ভার-ওয়ান-কার্ড)।
+const MLS_GD_CTX = new Map();   // gdflix-id → {ck,INFO,NAME,type,s,e,title,q} — bg শেষ হলে কার্ড ক্যাশে যোগ হবে
+function mlsAppendCard(ck, card) {
+  if (!ck || !card) return;
+  try {
+    const e0 = MLS_RC.get(ck);
+    const list = (e0 && e0.cards ? e0.cards : []).slice();
+    if (list.some(c => c.url === card.url)) return;
+    list.push(card);
+    MLS_RC.set(ck, { ts: Date.now(), cards: list });
+    if (DBG) console.error('[mlsd] cache+ ' + String(ck).slice(0, 26) + ' n=' + list.length);
+  } catch (e) { }
+}
 const MLS_ENR = new Set();
 function mlsEnrich(ck, savMore, INFO, NAME, type, s, e) {
   if (!ck || MLS_ENR.has(ck) || !savMore || !savMore.length || MLS_ENR.size > 40) return;
@@ -3604,7 +3624,10 @@ function mlsEnrich(ck, savMore, INFO, NAME, type, s, e) {
         if (!x) continue;
         const jobs = [];
         for (const u of (x.mcl || []).slice(0, 1)) jobs.push(mlsWatch(u, 9000).then(r => ({ kind: 'watch', r: r })).catch(() => null));
-        for (const u of (x.gd || []).slice(0, 1)) jobs.push(mlsGd(u, 9000).then(r => ({ kind: 'gd', r: r })).catch(() => null));
+        for (const u of (x.gd || []).slice(0, 1)) jobs.push(mlsGd(u, 9000).then(r => {
+          if (r && !r.ok) MLS_GD_CTX.set(mlsGdId(u), { ck: ck, INFO: INFO, NAME: NAME, type: type, s: s, e: e, title: it.p ? it.p.title : '', q: it.q || 0 });
+          return { kind: 'gd', r: r };
+        }).catch(() => null));
         const got = (await Promise.all(jobs)).filter(Boolean);
         for (const g of got) {
           if (!g.r || !g.r.ok) continue;
@@ -3684,8 +3707,10 @@ async function mlsTask(nameP, infoP, type, s, e) {
     const ck = type + '|' + mlsNorm(names.join('~')) + '|' + (year || '') + '|' + (s || '') + '|' + (e || '');
     RCK = ck;
     const hit = MLS_C.get(ck);
-    const hitC = MLS_RC.get(ck);                       // ★ v1.28.30: পুরো-ফল ক্যাশ (১০ মিনিট)
-    if (hitC && Date.now() - hitC.ts < 360000) { if (DBG) console.error('[mlsd] cache-hit n=' + hitC.cards.length); return hitC.cards.slice(); }
+    const hitC = MLS_RC.get(ck);                       // ★ v1.28.30: পুরো-ফল ক্যাশ
+    // ★ v1.28.36: **খালি** এন্ট্রি ৩০সে পর বাদ — enrich/bg-gd ওই সময়ে কার্ড যোগ করতে পারে, আর
+    //   ৬ মিনিট ধরে "০" দেখানো ভুল (মাপা: Police/Wild Robot ক্যাশে-০ হয়ে আটকে ছিল)।
+    if (hitC && (Date.now() - hitC.ts < (hitC.cards.length ? 360000 : 30000))) { if (DBG) console.error('[mlsd] cache-hit n=' + hitC.cards.length); return hitC.cards.slice(); }
     const SE0 = Number(s || 1), EP0 = Number(e || 1);
     const okPost0 = (t) => names.some(n => mlsTitleOk(n, t, year, type === 'series')) && (type === 'series' ? mlsEpOk(t, SE0, EP0) : true);
     let posts = (hit && Date.now() - hit.ts < 20 * 60e3) ? hit.posts : null;   // শুধু পোস্ট-আইডি ক্যাশ (লিংক নয়)
@@ -3773,7 +3798,10 @@ async function mlsTask(nameP, infoP, type, s, e) {
           //   চালু হতো না ⇒ সব কার্ড multicloud-এ সীমিত)। আংশিক-কার্ড থাকায় দেরিতে শেষ হলেও ক্ষতি নেই।
           if (CAP - (Date.now() - T0) > 2400)
             for (const u of x.gd.slice(0, 1))
-              inner.push(mlsGd(u, Math.max(2600, CAP - (Date.now() - T0) - 400)).then(r => { done(r); return { kind: 'gd', r: r, title: ttlOf(p), q: q0 }; }).catch(() => null));
+              inner.push(mlsGd(u, Math.max(2600, CAP - (Date.now() - T0) - 400)).then(r => {
+                if (r && !r.ok) MLS_GD_CTX.set(mlsGdId(u), { ck: RCK, INFO: INFO, NAME: NAME, type: type, s: s, e: e, title: ttlOf(p), q: q0 });
+                done(r); return { kind: 'gd', r: r, title: ttlOf(p), q: q0 };
+              }).catch(() => null));
           return Promise.all(inner);
         }).catch(() => []);
         jobs.push(chain);
