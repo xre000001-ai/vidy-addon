@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.28.16';
+const VERSION = '1.28.17';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -2902,7 +2902,8 @@ const MLS_C = new Map();
 const MLS_HOSTDBG = [];
 const MLS_LAST = new Map();
 const MLS_CURL_DEAD = new Map();
-const MLS_GOOD = new Map();                    // host → 'curl' | 'px:<ip>'  (যে-পথ কাজ করেছে সেটাই আগে)              // host → ts; এখান থেকে curl ব্যর্থ ⇒ ১০মিন রিডার-ফার্স্ট (প্রোডে-মাপা)                  // host → {st,len,via,ts} — প্রোডে-ডায়াগনস্টিক (diag-লাইনে যায়)                  // DBG: savelinks-পেজের হোস্ট-তালিকা (সর্বোচ্চ ২০)
+const MLS_GOOD = new Map();
+const MLS_GOOD_TS = new Map();                    // host → 'curl' | 'px:<ip>'  (যে-পথ কাজ করেছে সেটাই আগে)              // host → ts; এখান থেকে curl ব্যর্থ ⇒ ১০মিন রিডার-ফার্স্ট (প্রোডে-মাপা)                  // host → {st,len,via,ts} — প্রোডে-ডায়াগনস্টিক (diag-লাইনে যায়)                  // DBG: savelinks-পেজের হোস্ট-তালিকা (সর্বোচ্চ ২০)
 const mlsEnt = s => String(s || '').replace(/&amp;/g, '&').replace(/&#0?38;/g, '&').replace(/&quot;/g, '"')
   .replace(/&#0?39;/g, "'").replace(/&#8217;/g, "'").replace(/&#8211;/g, '-').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
   .replace(/&#\d+;/g, ' ');
@@ -3060,6 +3061,22 @@ async function mlsGet(u, opt) {
     // ★ v1.28.12: **সমান্তরাল রেস** — আগে প্রক্সিগুলো এক-এক করে (প্রতিটি ≤৫সে) ⇒ sav-হপ ১৪সে নিত
     //   (প্রোড-মাপা) ⇒ বাজেট(৯.২সে) শেষে কার্ড হারাত। এখন curl ×২ + প্রক্সি-দল + রিডার একসাথে,
     //   **প্রথম বৈধ বডি** জেতে; বাকিগুলো abort।
+    // ★ v1.28.17: যে-পথ এইমাত্র কাজ করেছে, শুধু সেটাই আগে (২.৫সে ক্যাপ) — পুরো রেস খুললে
+    //   প্রতি হপে ২-৫সে লাগে আর ১০.২সে deadline-এ কার্ড হারায় (মাপা: ৭টি টাইটেলে cards=0 @12-14সে)
+    if (good && (Date.now() - (MLS_GOOD_TS.get(host0) || 0)) < 180000) {
+      let fast = '';
+      if (good === 'curl') {
+        const cu = await mlsCurl(u, { ms: Math.min(2800, left()), json: !!opt.json, referer: opt.referer });
+        if (cu && cu.st >= 200 && cu.st < 400 && valid(cu.body)) fast = cu.body;
+      } else if (good.indexOf('px:') === 0) {
+        const cu = await mlsCurl(u, { ms: Math.min(2800, left()), json: !!opt.json, referer: opt.referer, proxy: good.slice(3) });
+        if (cu && cu.st >= 200 && cu.st < 400 && valid(cu.body)) fast = cu.body;
+      } else if (good === 'reader') {
+        const rb = await mlsReader(u, Math.min(2800, Math.max(2200, left())));
+        if (valid(rb)) fast = rb;
+      }
+      if (fast) { mlsRec(u, 200, fast.length, good.split(':')[0] + '·fast'); MLS_GOOD_TS.set(host0, Date.now()); return { st: 200, body: fast, url: u }; }
+    }
     const race = [];
     const addRace = (tag, fn) => race.push(new Promise(res => fn().then(b => res(b ? { tag: tag, body: b } : null)).catch(() => res(null))));
     if (!dead && good.indexOf('px:') !== 0) {
@@ -3099,6 +3116,8 @@ async function mlsGet(u, opt) {
         mlsRec(u, 200, w.body.length, tag.split(':')[0]);
         if (tag === 'curl') MLS_GOOD.set(host0, 'curl');
         else if (tag.indexOf('px:') === 0) MLS_GOOD.set(host0, tag);
+        else if (tag === 'reader') MLS_GOOD.set(host0, 'reader');
+        MLS_GOOD_TS.set(host0, Date.now());
         if (DBG) console.error('[mlsd] ' + host0 + ' ✓ ' + tag + ' ' + w.body.length + 'b @' + (Date.now() - T0) + 'ms');
         return { st: 200, body: w.body, url: u, via: tag };
       }
@@ -3507,8 +3526,9 @@ async function mlsTask(nameP, infoP, type, s, e) {
           const inner = [];
           for (const u of x.mcl.slice(0, 1))     // ★ watch-online (১ হপ, প্রোডে-খোলা — মাপা ২০৬)
             inner.push(mlsWatch(u, Math.max(3000, CAP - (Date.now() - T0) - 400)).then(r => ({ kind: 'watch', r: r, title: ttlOf(p), q: q0 })).catch(() => null));
-          for (const u of x.gd.slice(0, 1))
-            inner.push(mlsGd(u, Math.max(2600, CAP - (Date.now() - T0) - 400)).then(r => ({ kind: 'gd', r: r, title: ttlOf(p), q: q0 })).catch(() => null));
+          if (Date.now() - T0 < CAP * 0.55)      // ★ gdflix ২-৩ হপ লাগে ⇒ সময় থাকলে তবেই (নইলে বাজেট শেষে সব হারায়)
+            for (const u of x.gd.slice(0, 1))
+              inner.push(mlsGd(u, Math.max(2600, CAP - (Date.now() - T0) - 400)).then(r => ({ kind: 'gd', r: r, title: ttlOf(p), q: q0 })).catch(() => null));
           return Promise.all(inner);
         }).catch(() => []);
         jobs.push(chain);
@@ -3516,7 +3536,7 @@ async function mlsTask(nameP, infoP, type, s, e) {
     }
     const flat = (await Promise.all(jobs)).reduce((a, b) => a.concat(b), []);
     const rj = flat.filter(Boolean);
-    diag('mlsd', 'sav=' + seenSav.size + ' route-jobs=' + rj.length + ' @' + (Date.now() - T0) + 'ms');
+    diag('mlsd', 'sav=' + seenSav.size + ' route-jobs=' + rj.length + ' @' + (Date.now() - T0) + 'ms' + (DBG ? '' : ' paths=' + JSON.stringify([...MLS_GOOD.entries()].map(([h, v]) => h + '=' + v))));
     if (DBG) console.error('[mlsd] hosts=' + JSON.stringify(MLS_HOSTDBG.splice(0, 6).map(h => h.slice(0, 40))));
     if (DBG) console.error('[mlsd] sav=' + seenSav.size + ' route-jobs=' + rj.length + ' @' + (Date.now() - T0) + 'ms');
     if (!rj.length) return [];
