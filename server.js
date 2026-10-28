@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.28.26';
+const VERSION = '1.28.27';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -3493,7 +3493,10 @@ const mlsMB = b => (b > 0 ? (b >= 1073741824 ? (b / 1073741824).toFixed(2) + 'GB
 
 async function mlsTask(nameP, infoP, type, s, e) {
   const T0 = Date.now();
-  const CAP = Number(process.env.MLSCAP || 10500);
+  // ★ v1.28.27: **CAP ১০.৫সে মানে কার্ড হারানো** — /stream-এর বাইরের `withDeadline` ১০.২সে, তাই
+  //   ১০.৫সে-তে তৈরি কার্ড আর উত্তরে ঢোকে না (মাপা: `cards=2 @7462ms` থাকা সত্ত্বেও ক্লায়েন্টে ০)।
+  //   এখন ৮.২সে — deadline-এর ২সে আগে, আংশিক-কার্ড নিয়ে ফেরে।
+  const CAP = Number(process.env.MLSCAP || 8200);
   let INFO = null, NAME = '';                   // addCard-এর জন্য বাইরের স্কোপ (v1.28.18-fix)
   const CARD_BUF = [];                          // প্রমাণিত কার্ড (আসার ক্রমে) — deadline-এ হারায় না
   const SEEN_F = new Set();
