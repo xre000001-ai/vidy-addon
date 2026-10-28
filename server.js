@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.28.44';
+const VERSION = '1.28.45';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -3140,7 +3140,11 @@ async function mlsGetRaw(u, opt) {
       });
     }
     const pxGood = good.indexOf('px:') === 0 ? [good.slice(3)].concat(pxs.filter(x => x !== good.slice(3))) : pxs;
-    for (const fp of pxGood.slice(0, isMlsHost ? 3 : 2)) {   // ★ v1.28.18: ৪ → ২ (প্রসেস-চাপ ও দেরি কমাতে)
+    // ★ v1.28.45: savelinks/gdflix-এও **১টি BD নোড** রাখি — beamup-প্রোডের IP-তে CF থ্রটল হলে
+    //   বাংলাদেশি ASN থেকে আলাদা কোটায় যাওয়ার সুযোগ (v1.28.38-এর BD-তালিকা, mlsbd.co-তে যাচাই করা)।
+    const pxRaceList = pxGood.slice(0, isMlsHost ? 3 : 2);
+    if (!isMlsHost && MLS_PXBD.length) pxRaceList.push(MLS_PXBD[(mlsBdTurn++) % MLS_PXBD.length]);
+    for (const fp of pxRaceList) {   // ★ v1.28.18: ৪ → ২ (প্রসেস-চাপ ও দেরি কমাতে)
       addRace('px:' + fp, async () => {
         if (left() < 1200) return '';
         const cp2 = await mlsCurl(u, { ms: Math.min(4500, left()), json: !!opt.json, referer: opt.referer, proxy: fp });
