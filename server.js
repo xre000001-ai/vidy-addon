@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.28.25';
+const VERSION = '1.28.26';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -3084,6 +3084,19 @@ async function mlsGet(u, opt) {
         if (valid(rb)) fast = rb;
       }
       if (fast) { mlsRec(u, 200, fast.length, good.split(':')[0] + '·fast'); MLS_GOOD_TS.set(host0, Date.now()); return { st: 200, body: fast, url: u }; }
+    }
+    // ★ v1.28.26: **প্রসেস-চাপই আসল শত্রু** (মাপা: -P 3 ম্যাস-টেস্টে একই টাইটেল কখনো ৪ কার্ড, কখনো ০)।
+    //   non-mls হোস্টে curl-ই ১.০–২.২সে-তে ২০০ দেয় ⇒ আগে **এক curl** (একই প্রসেস), ব্যর্থ হলে তবেই ২ প্রক্সি।
+    //   আগে প্রতি হপে ২ curl + ৩ প্রক্সি + রিডার = ৬ প্রসেস × ৪ sav-চেইন × ৩ টাইটেল ≈ ৭২ curl ⇒ সব ধীর।
+    if (!isMlsHost && good.indexOf('px:') !== 0) {
+      const t1 = Date.now();
+      const cu = await mlsCurl(u, { ms: Math.min(3200, left()), json: !!opt.json, referer: opt.referer });
+      if (cu && cu.st >= 200 && cu.st < 400 && valid(cu.body)) {
+        mlsRec(u, 200, cu.body.length, 'curl');
+        MLS_GOOD.set(host0, 'curl'); MLS_GOOD_TS.set(host0, Date.now());
+        return { st: 200, body: cu.body, url: u, via: 'curl' };
+      }
+      if (DBG) console.error('[mlsd] ' + host0 + ' curl-ব্যর্থ ' + ((cu && cu.st) || 0) + ' @' + (Date.now() - t1) + 'ms');
     }
     const race = [];
     const addRace = (tag, fn) => race.push(new Promise(res => fn().then(b => res(b ? { tag: tag, body: b } : null)).catch(() => res(null))));
