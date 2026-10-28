@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.28.23';
+const VERSION = '1.28.24';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -3061,13 +3061,11 @@ async function mlsGet(u, opt) {
     // ★ v1.28.20: **হোস্ট-ভিত্তিক কৌশল** (মাপা ২৮-১০-২০২৬, প্রোড):
     //   • mlsbd.co  — curl ব্লকড, প্রক্সি অনির্ভরযোগ্য, **রিডার ২-৪সে-তে নির্ভরযোগ্য** ⇒ রিডার-প্রথম
     //   • savelinks / gdflix / multicloud — **প্রক্সি ১-৩সে-তে কাজ করে** ⇒ প্রক্সি-প্রথম
-    const wantReaderFirst = /(^|\.)mlsbd\.co$/i.test(host0);
-    // ★ v1.28.23: রিডার-ক্যাপ ৩.২সে **খুব কম** ছিল — mlsbd.co-র jina-ফেচ মাপা ৩.৪–৫.২সে ⇒ প্রতি বার
-    //   টাইমআউট, আর রেস থেকেও রিডার বাদ থাকত ⇒ posts=0 (প্রোড: st=0 len=0 @9000ms)। এখন ৫.৬সে + রেসে থাকল।
-    if (wantReaderFirst && process.env.MLSREADER !== '0') {
-      const rb = await mlsReader(u, Math.min(5600, Math.max(2600, left())));
-      if (valid(rb)) { mlsRec(u, 200, rb.length, 'reader'); MLS_GOOD.set(host0, 'reader'); MLS_GOOD_TS.set(host0, Date.now()); return { st: 200, body: rb, url: u }; }
-    }
+    const isMlsHost = /(^|\.)mlsbd\.co$/i.test(host0);
+    // ★ v1.28.24 (প্রোডে-মাপা, এক-পথ-এক-লাইন): mlsbd.co ⇒ curl **৪০৩** (CF), প্রক্সি **১.৫সে ২০০**,
+    //   রিডার **২.৮সে ২০০** · savelinks/gdflix/multicloud ⇒ curl **১.৫সে / ০.৮সে / ০.২সে ২০০**, কিন্তু
+    //   রিডার **আবর্জনা** দেয় (৫৭৯ বাইট অসম্পর্কিত সারাংশ ⇒ mlsOkHtml-এ বাদ, শুধু সময় নষ্ট)।
+    //   তাই: mlsbd.co = প্রক্সি+রিডার (curl বাদ) · বাকিরা = curl-প্রথম, রিডার **একেবারেই নয়**।
     // ★ v1.28.12: **সমান্তরাল রেস** — আগে প্রক্সিগুলো এক-এক করে (প্রতিটি ≤৫সে) ⇒ sav-হপ ১৪সে নিত
     //   (প্রোড-মাপা) ⇒ বাজেট(৯.২সে) শেষে কার্ড হারাত। এখন curl ×২ + প্রক্সি-দল + রিডার একসাথে,
     //   **প্রথম বৈধ বডি** জেতে; বাকিগুলো abort।
@@ -3081,7 +3079,7 @@ async function mlsGet(u, opt) {
       } else if (good.indexOf('px:') === 0) {
         const cu = await mlsCurl(u, { ms: Math.min(2800, left()), json: !!opt.json, referer: opt.referer, proxy: good.slice(3) });
         if (cu && cu.st >= 200 && cu.st < 400 && valid(cu.body)) fast = cu.body;
-      } else if (good === 'reader') {
+      } else if (good === 'reader' && isMlsHost) {
         const rb = await mlsReader(u, Math.min(2800, Math.max(2200, left())));
         if (valid(rb)) fast = rb;
       }
@@ -3089,7 +3087,7 @@ async function mlsGet(u, opt) {
     }
     const race = [];
     const addRace = (tag, fn) => race.push(new Promise(res => fn().then(b => res(b ? { tag: tag, body: b } : null)).catch(() => res(null))));
-    if (!dead && good.indexOf('px:') !== 0) {
+    if (!isMlsHost && good.indexOf('px:') !== 0) {
       addRace('curl', async () => {
         for (let i = 0; i < 2 && left() > 1200; i++) {
           const cu = await mlsCurl(u, { ms: Math.min(4000, left()), json: !!opt.json, referer: opt.referer });
@@ -3099,14 +3097,14 @@ async function mlsGet(u, opt) {
       });
     }
     const pxGood = good.indexOf('px:') === 0 ? [good.slice(3)].concat(pxs.filter(x => x !== good.slice(3))) : pxs;
-    for (const fp of pxGood.slice(0, 2)) {   // ★ v1.28.18: ৪ → ২ (প্রসেস-চাপ ও দেরি কমাতে)
+    for (const fp of pxGood.slice(0, isMlsHost ? 3 : 2)) {   // ★ v1.28.18: ৪ → ২ (প্রসেস-চাপ ও দেরি কমাতে)
       addRace('px:' + fp, async () => {
         if (left() < 1200) return '';
         const cp2 = await mlsCurl(u, { ms: Math.min(4500, left()), json: !!opt.json, referer: opt.referer, proxy: fp });
         return (cp2 && cp2.st >= 200 && cp2.st < 400 && valid(cp2.body)) ? cp2.body : '';
       });
     }
-    if (process.env.MLSREADER !== '0') addRace('reader', async () => {
+    if (process.env.MLSREADER !== '0' && isMlsHost) addRace('reader', async () => {
       const rb = await mlsReader(u, Math.max(3000, Math.min(5600, left() || 4500)));
       return valid(rb) ? rb : '';
     });
