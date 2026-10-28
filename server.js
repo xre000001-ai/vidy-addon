@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.28.19';
+const VERSION = '1.28.20';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -3058,6 +3058,14 @@ async function mlsGet(u, opt) {
     const good = MLS_GOOD.get(host0) || '';
     const pxs = opt.proxy ? (Array.isArray(opt.proxy) ? opt.proxy : [opt.proxy]) : mlsPxFor(host0);
     const valid = t => (opt.json ? mlsOkJson(t) : mlsOkHtml(t));
+    // ★ v1.28.20: **হোস্ট-ভিত্তিক কৌশল** (মাপা ২৮-১০-২০২৬, প্রোড):
+    //   • mlsbd.co  — curl ব্লকড, প্রক্সি অনির্ভরযোগ্য, **রিডার ২-৪সে-তে নির্ভরযোগ্য** ⇒ রিডার-প্রথম
+    //   • savelinks / gdflix / multicloud — **প্রক্সি ১-৩সে-তে কাজ করে** ⇒ প্রক্সি-প্রথম
+    const wantReaderFirst = /(^|\.)mlsbd\.co$/i.test(host0);
+    if (wantReaderFirst && good !== 'reader' && process.env.MLSREADER !== '0') {
+      const rb = await mlsReader(u, Math.min(3200, Math.max(2400, left())));
+      if (valid(rb)) { mlsRec(u, 200, rb.length, 'reader'); MLS_GOOD.set(host0, 'reader'); MLS_GOOD_TS.set(host0, Date.now()); return { st: 200, body: rb, url: u }; }
+    }
     // ★ v1.28.12: **সমান্তরাল রেস** — আগে প্রক্সিগুলো এক-এক করে (প্রতিটি ≤৫সে) ⇒ sav-হপ ১৪সে নিত
     //   (প্রোড-মাপা) ⇒ বাজেট(৯.২সে) শেষে কার্ড হারাত। এখন curl ×২ + প্রক্সি-দল + রিডার একসাথে,
     //   **প্রথম বৈধ বডি** জেতে; বাকিগুলো abort।
@@ -3096,7 +3104,7 @@ async function mlsGet(u, opt) {
         return (cp2 && cp2.st >= 200 && cp2.st < 400 && valid(cp2.body)) ? cp2.body : '';
       });
     }
-    if (process.env.MLSREADER !== '0') addRace('reader', async () => {
+    if (process.env.MLSREADER !== '0' && !wantReaderFirst) addRace('reader', async () => {
       const rb = await mlsReader(u, Math.max(2600, Math.min(4500, left() || 3000)));
       return valid(rb) ? rb : '';
     });
@@ -3469,7 +3477,7 @@ const mlsMB = b => (b > 0 ? (b >= 1073741824 ? (b / 1073741824).toFixed(2) + 'GB
 
 async function mlsTask(nameP, infoP, type, s, e) {
   const T0 = Date.now();
-  const CAP = Number(process.env.MLSCAP || 9900);
+  const CAP = Number(process.env.MLSCAP || 9000);
   let INFO = null, NAME = '';                   // addCard-এর জন্য বাইরের স্কোপ (v1.28.18-fix)
   const CARD_BUF = [];                          // প্রমাণিত কার্ড (আসার ক্রমে) — deadline-এ হারায় না
   const SEEN_F = new Set();
