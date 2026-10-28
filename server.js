@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.28.38';
+const VERSION = '1.28.39';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -3211,12 +3211,12 @@ async function mlsGet(u, opt) {
 // ★ v1.28.5f: মাপা — `/wp/v2/posts?search=`-এর র‍্যাঙ্কিং এলোমেলো (The Last of Us ⇒ অপ্রাসঙ্গিক ১০টি),
 //   অথচ `/wp/v2/search` ঠিক পোস্টটাই আগে দেয়। তাই: আগে সস্তা posts-কল, ম্যাচ শূন্য হলে র‍্যাংকড-সার্চ
 //   ⇒ শুধু **ম্যাচ-করা** পোস্টগুলোর content আলাদা কলে (বেশি খরচ নয়)।
-async function mlsSearchIds(names, ms) {
+async function mlsSearchIds(names, ms, px) {
   // ★ v1.28.19: নাম-প্রার্থীগুলো **সমান্তরাল** — আগে একটার পর একটা (৪.২সে করে) ⇒ সার্চই ৪-৭সে নিত
   const qs = [...new Set(names.map(x => String(x || '').trim()).filter(Boolean))].slice(0, 2);
   if (!qs.length) return [];
   const one = q => mlsGet(MLS_BASE + '/wp-json/wp/v2/search?search=' + encodeURIComponent(q) + '&per_page=20&_fields=id,title,url,subtype',
-    { ms: Math.max(1800, ms), json: true })
+    { ms: Math.max(1800, ms), json: true, proxy: px })
     .then(r => {
       let arr = []; try { arr = JSON.parse(r.body); } catch (e) { arr = []; }
       return (Array.isArray(arr) ? arr : [])
@@ -3233,10 +3233,10 @@ async function mlsSearchIds(names, ms) {
     });
   });
 }
-async function mlsContent(list, ms) {
+async function mlsContent(list, ms, px) {
   const T0 = Date.now();
   const jobs = list.slice(0, 2).map(x => mlsGet(MLS_BASE + '/wp-json/wp/v2/posts/' + x.id + '?_fields=content,title,link',
-    { ms: Math.max(2600, Math.min(4500, ms - (Date.now() - T0))), json: true })
+    { ms: Math.max(2600, Math.min(4500, ms - (Date.now() - T0))), json: true, proxy: px })
     .then(r => {
       let d = null;
       try { d = JSON.parse(r.body); } catch (e) { d = null; }
@@ -3247,7 +3247,7 @@ async function mlsContent(list, ms) {
 }
 
 // WP REST: টাইটেল-পোস্ট (এক কলে content-ও আসে)
-async function mlsPosts(names, ms) {
+async function mlsPosts(names, ms, px) {
   const list = Array.isArray(names) ? names : [names];
   const norm = s => String(s || '').replace(/[!?:'\u2018\u2019\u2019\u2019.]/g, ' ').replace(/\s+/g, ' ').trim();
   const tries = [];
@@ -3257,7 +3257,7 @@ async function mlsPosts(names, ms) {
   }
   tries.length = Math.min(tries.length, 3);
   if (!tries.length) return [];
-  const one = q => mlsGet(MLS_BASE + '/wp-json/wp/v2/posts?search=' + encodeURIComponent(q) + '&per_page=10&_fields=id,title,content,date,link', { ms: Math.max(1800, ms), json: true })
+  const one = q => mlsGet(MLS_BASE + '/wp-json/wp/v2/posts?search=' + encodeURIComponent(q) + '&per_page=10&_fields=id,title,content,date,link', { ms: Math.max(1800, ms), json: true, proxy: px })
     .then(r => {
       let arr = []; try { arr = JSON.parse(r.body); } catch (e) { arr = []; }
       return (Array.isArray(arr) ? arr : []).map(p => ({ id: p.id, title: mlsEnt((p.title && p.title.rendered) || ''), html: mlsEnt((p.content && p.content.rendered) || ''), link: p.link || '', date: p.date || '' }));
@@ -3785,6 +3785,15 @@ async function mlsTask(nameP, infoP, type, s, e) {
         cands = posts.filter(okPost).slice(0, 2);
         if (DBG) console.error('[mlsd] search-fallback ids=' + hitIds.length + ' content=' + more.length + ' @' + (Date.now() - T0) + 'ms');
       }
+    }
+    // ★ v1.28.39: সার্চ সম্পূর্ণ ফাঁকা এলে (CF-থ্রটল/প্রক্সি-ব্লক) **BD-প্রক্সি দিয়ে একবার রিট্রাই** —
+    //   বাংলাদেশি নোড আলাদা ASN/IP-রেঞ্জ, ওখান থেকে mlsbd.co সাধারণত খোলা থাকে (মাপা: socks5 ৩–৬সে, ২০০)।
+    if (!cands.length && !posts.length && MLS_PXBD.length && (CAP - (Date.now() - T0)) > 4200) {
+      const bd0 = MLS_PXBD[mlsTask._bdTurn = ((mlsTask._bdTurn || 0) + 1) % MLS_PXBD.length];
+      if (DBG) console.error('[mlsd] BD-retry via ' + bd0 + ' @' + (Date.now() - T0) + 'ms');
+      const alt = await mlsPosts(names, Math.min(4200, CAP - (Date.now() - T0) - 1500), bd0).catch(() => []);
+      if (alt.length) { posts = alt; cands = posts.filter(okPost).slice(0, 2); diag('mlsd', 'bd-retry posts=' + posts.length + ' match=' + cands.length + ' @' + (Date.now() - T0) + 'ms via=' + bd0); }
+      else diag('mlsd', 'bd-retry empty @' + (Date.now() - T0) + 'ms via=' + bd0);
     }
     diag('mlsd', 'posts=' + posts.length + ' match=' + cands.length + ' @' + (Date.now() - T0) + 'ms'
       + (posts.length ? '' : ' net=' + JSON.stringify([...MLS_LAST.entries()].slice(-3).map(([h, v]) => h + ':' + v.via + '/' + v.st + '/' + v.len))));
