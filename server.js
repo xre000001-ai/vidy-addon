@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.28.31';
+const VERSION = '1.28.33';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -2954,7 +2954,7 @@ function mlsCurl(u, opt) {
     '-H', 'Accept-Language: en-US,en;q=0.9',
     '-H', 'sec-ch-ua: "Chromium";v="147", "Not.A/Brand";v="8"',
     '-H', 'sec-ch-ua-mobile: ?0', '-H', 'sec-ch-ua-platform: "Windows"',
-    '-o', tmp, '-w', '%{http_code}|%{content_type}'];
+    '-o', tmp, '-w', '%{http_code}|%{content_type}|%{url_effective}'];
   if (opt.proxy) a.push('--proxy', 'http://' + opt.proxy, '--proxy-insecure');
   if (opt.post) { for (const f of opt.post) a.push('-F', f); a.push('-H', 'x-token: ' + (opt.host || mlsHost(u)), '-H', 'Accept: application/json'); }
   if (opt.xhr) a.push('-H', 'X-Requested-With: XMLHttpRequest');
@@ -2970,7 +2970,7 @@ function mlsCurl(u, opt) {
         try { body = require('fs').readFileSync(tmp, 'utf8'); } catch (e) { }
         const meta = String(stdout || '').trim();
         const st = parseInt(meta.split('|')[0], 10) || 0;
-        fin({ st: st, body: body, ct: (meta.split('|')[1] || '') });
+        fin({ st: st, body: body, ct: (meta.split('|')[1] || ''), eu: (meta.split('|')[2] || '') });
       });
     } catch (e) { fin(null); }
   });
@@ -3385,7 +3385,12 @@ async function mlsProve(u, ms) {
     const cr = String(r.headers.get('content-range') || '');
     const cl = +(r.headers.get('content-length') || 0);
     try { r.body && r.body.cancel && r.body.cancel(); } catch (e) { }
-    const media = /^video\//i.test(ct) || (/octet-stream/i.test(ct) && !!cr) || (/\/(mkv|mp4|m4v|avi|webm)$/i.test((r.url || '').split('?')[0]));
+    // ★ v1.28.33: gdflix-এর cloud-dl worker ফাইলটিকে `application/x-zip` লেবেলে দেয় (আসলেই .mkv,
+    //   ২০৬ + Content-Range, ৭১২MB — মাপা)। শুধু `video/*`-তে আটকে থাকলে **প্রমাণিত লিংকও বাদ** পড়ত।
+    const media = /^video\//i.test(ct)
+      || (/(octet-stream|x-zip|zip|binary)/i.test(ct) && !!cr)
+      || (/\/(mkv|mp4|m4v|avi|webm)$/i.test((r.url || '').split('?')[0]))
+      || (/\.(mkv|mp4|m4v|avi|webm)/i.test(r.url || '') && !!cr);
     const ok = (r.status === 206 || r.status === 200) && !/text\/html/i.test(ct) && media && (!!cr || cl > 1000000);
     const mc = /bytes\s+\d+-\d+\/(\d+)/i.exec(cr);
     return { ok: ok, ct: ct, cr: cr, st: r.status, size: mc ? +mc[1] : (ok && cl > 1000000 ? cl : 0) };
@@ -3423,6 +3428,7 @@ async function mlsGdPoll(tokUrl, cloud, ms) {
         || grab(/https:\/\/instant\.[a-z0-9.]+\/[^\s"'<>\\]+/i);
       if (!direct) return { ok: false, route: 'nodirect', done: true };
       const pv = await mlsProve(direct, 2600);
+      if (DBG) console.error('[mlsd] gd-fin direct=' + String(direct).slice(0, 90) + ' pv=' + JSON.stringify(pv).slice(0, 120));
       return pv && pv.ok ? { ok: true, direct: direct, size: pv.size || 0, ct: pv.ct || '', route: 'cloud' } : { ok: false, route: 'unproven', done: true };
     }
     if (pj && pj.done && !pj.redirect) return { ok: false, route: 'done-noredirect', done: true };
@@ -3464,7 +3470,13 @@ async function mlsGdOnce(fileUrl, ms, resume) {
     return pv && pv.ok ? { ok: true, direct: direct, size: pv.size || 0, ct: pv.ct || '', route: 'inline' } : { ok: false, route: 'inline-unproven', done: true };
   }
   const id = mlsGdId(fileUrl);
-  const cloud = grab(body, /https?:\/\/[^"'\s<>]+\/cloud\/\d+\/[A-Za-z0-9]+/) || (origin + '/cloud/' + String(Date.now()).slice(0, 10) + '/' + id);
+  // ★ v1.28.32: `/file/`-পেজ gdflix.com → … → **new7.gdflix.io**-তে রিডাইরেক্ট হয়; পোস্ট **শেষ-হোস্টেই**
+  //   করতে হবে (gdflix.com/cloud/…-এ POST করলে ৩০১ ⇒ curl GET-এ নামিয়ে দেয় ⇒ HTML ⇒ post-fail, প্রমাণিত)।
+  const hostM = /https:\/\/((?:new\d+\.)?(?:ddff?lix|gdflix)\.[a-z.]+)\//i.exec(body);
+  if (hostM) origin = 'https://' + hostM[1];
+  else if (/^https:\/\/gdflix\.com/i.test(origin)) origin = 'https://new7.gdflix.io';
+  let cloud = grab(body, /https?:\/\/[^"'\s<>]+\/cloud\/\d+\/[A-Za-z0-9]+/);
+  cloud = cloud ? cloud.replace(/^https?:\/\/[^\/]+/i, origin) : (origin + '/cloud/' + String(Date.now()).slice(0, 10) + '/' + id);
   const cp = await mlsGet(cloud, { ms: Math.max(1800, Math.min(2600, ms - (Date.now() - T0))) });
   const key = (/formData\.append\("key",\s*"([a-f0-9]{20,})"\)/.exec(cp.body || '') || [])[1]
     || (/name="key"\s+value="([a-f0-9]+)"/.exec(cp.body || '') || [])[1];
@@ -3472,6 +3484,7 @@ async function mlsGdOnce(fileUrl, ms, resume) {
   const post = await mlsCurl(cloud, { ms: 2800, post: ['action=cloud', 'key=' + key, 'action_token='], host: mlsHost(cp.url || cloud), referer: cloud });
   let j = null;
   try { j = JSON.parse((post && post.body) || ''); } catch (e) { j = null; }
+  if (DBG) console.error('[mlsd] gd-post cloud=' + String(cloud).slice(0, 80) + ' key=' + String(key).slice(0, 10) + ' st=' + ((post && post.st) || 0) + ' body=' + String((post && post.body) || '').replace(/\s+/g, ' ').slice(0, 120));
   if (!j || !j.url) return { ok: false, route: 'post-fail' };
   let tok = '';
   try { tok = new URL(String(j.url).replace(/\\\//g, '/'), cloud).href; } catch (e) { tok = ''; }
