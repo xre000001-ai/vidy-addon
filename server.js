@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.28.17';
+const VERSION = '1.28.18';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -3089,7 +3089,7 @@ async function mlsGet(u, opt) {
       });
     }
     const pxGood = good.indexOf('px:') === 0 ? [good.slice(3)].concat(pxs.filter(x => x !== good.slice(3))) : pxs;
-    for (const fp of pxGood.slice(0, 4)) {
+    for (const fp of pxGood.slice(0, 2)) {   // ★ v1.28.18: ৪ → ২ (প্রসেস-চাপ ও দেরি কমাতে)
       addRace('px:' + fp, async () => {
         if (left() < 1200) return '';
         const cp2 = await mlsCurl(u, { ms: Math.min(4500, left()), json: !!opt.json, referer: opt.referer, proxy: fp });
@@ -3462,7 +3462,42 @@ const mlsMB = b => (b > 0 ? (b >= 1073741824 ? (b / 1073741824).toFixed(2) + 'GB
 
 async function mlsTask(nameP, infoP, type, s, e) {
   const T0 = Date.now();
-  const CAP = Number(process.env.MLSCAP || 9600);
+  const CAP = Number(process.env.MLSCAP || 9900);
+  let INFO = null, NAME = '';                   // addCard-এর জন্য বাইরের স্কোপ (v1.28.18-fix)
+  const CARD_BUF = [];                          // প্রমাণিত কার্ড (আসার ক্রমে) — deadline-এ হারায় না
+  const SEEN_F = new Set();
+  const finalize = () => {
+    const out = CARD_BUF.slice().sort((a, b) => (b._hq || 0) - (a._hq || 0));
+    if (out.length && DBG) console.error('[mlsd] finalize n=' + out.length);
+    return out.slice(0, Number(process.env.MLSN || 8));
+  };
+  const addCard = (it) => {
+    try {
+      const u = it && it.r && it.r.direct;
+      if (!u) return;
+      let base = '';
+      try { base = decodeURIComponent(new URL(u).pathname.split('/').filter(Boolean).pop() || ''); } catch (e) { base = u; }
+      const uk = base ? ('f:' + base.replace(/[?#].*$/, '')) : ('u:' + u);
+      if (SEEN_F.has(u) || SEEN_F.has(uk)) return;
+      SEEN_F.add(u); SEEN_F.add(uk);
+      const qq = it.q || mlsQ(it.title) || 0;
+      const size = mlsMB(it.r.size || 0);
+      const audio = mlsAudio(it.title);
+      const srv = it.kind === 'watch' ? ((it.r && it.r.srv) || 'multicloud') : (/r2\.dev/.test(u) ? 'gdflix' : 'gdflix·worker');
+      const I = INFO || {};
+      const YR = (I.year || I.releaseInfo) ? (parseInt(String(I.year || I.releaseInfo), 10) || 0) : 0;
+      const TTL = String(I.name || NAME || '').trim();
+      const lines = '⊞ MLSBD ◧ ' + srv + (audio ? ' ⌗ ' + audio : '') + (size ? ' · ' + size : '');
+      const txt = '⧉ ' + TTL + (YR ? ' | ' + YR + ' |' : ' |') + '\n'
+        + (type === 'series' ? '⬡ S' + Number(s || 1) + 'E' + Number(e || 1) : '⬡ Movie') + (size ? ' · ' + size : '') + '\n' + lines;
+      CARD_BUF.push({
+        name: '⫥ ' + (qq || 'Auto') + ' ⫥', title: txt, description: txt, quality: String(qq || ''),
+        url: u, _srv: srv, _hq: qq,
+        behaviorHints: { notWebReady: false, isBingeable: true, proxyHeaders: { request: { 'User-Agent': UA } }, filename: 'mlsbd-' + (qq || 'auto') + '.mkv' },
+        bingeGroup: 'mls|' + mlsNorm(TTL) + '::' + (type === 'series' ? 'S' + Number(s || 1) + 'E' + Number(e || 1) : 'm')
+      });
+    } catch (e2) { if (DBG) console.error('[mlsd] addCard-err ' + ((e2 && e2.message) || e2)); }
+  };
   const work = (async () => {
     const info = infoP ? await Promise.race([infoP.catch(() => null), new Promise(r => setTimeout(() => r(null), 900))]) : null;
     const year = (info && (info.year || info.releaseInfo)) ? (parseInt(String(info.year || info.releaseInfo), 10) || 0) : 0;
@@ -3478,12 +3513,30 @@ async function mlsTask(nameP, infoP, type, s, e) {
     const names = [...new Set([nmInfo, nmPx].filter(v => !junkNm(v)))];
     if (!names.length) { if (DBG) console.error('[mlsd] no-name info=' + nmInfo + ' px=' + nmPx); return []; }
     const name = names[0];
+    INFO = info || null; NAME = name;
     if (DBG) console.error('[mlsd] name="' + names.join(' / ').slice(0, 70) + '" year=' + (info && (info.year || info.releaseInfo)) + ' type=' + type);
     const ck = type + '|' + mlsNorm(names.join('~')) + '|' + (year || '') + '|' + (s || '') + '|' + (e || '');
     const hit = MLS_C.get(ck);
+    const SE0 = Number(s || 1), EP0 = Number(e || 1);
+    const okPost0 = (t) => names.some(n => mlsTitleOk(n, t, year, type === 'series')) && (type === 'series' ? mlsEpOk(t, SE0, EP0) : true);
     let posts = (hit && Date.now() - hit.ts < 20 * 60e3) ? hit.posts : null;   // শুধু পোস্ট-আইডি ক্যাশ (লিংক নয়)
     if (!posts) {
-      posts = await mlsPosts(names, Math.min(6000, CAP - 1200));
+      // ★ v1.28.18: **ছোট-হপ আগে** — মাপা: `posts?search=`-এর বডি ৩৩৬KB (৪.২সে), অথচ
+      //   `/wp/v2/search` (শিরোনাম-only) কয়েক KB। তাই আগে শিরোনাম-সার্চে ম্যাচ করা আইডি,
+      //   তারপর শুধু ম্যাচ-করা পোস্টের content (১-২টি কল) ⇒ বড় লাভ, deadline-এ কম চাপ।
+      const T1 = Date.now();
+      let fast = [];
+      try {
+        const ids = await mlsSearchIds(names, Math.min(4200, CAP - 2600));
+        const hits = ids.filter(x => okPost0(x.title));
+        if (hits.length) fast = await mlsContent(hits, Math.min(4200, CAP - (Date.now() - T0) - 1200));
+        if (DBG) console.error('[mlsd] tiny-search ids=' + ids.length + ' hits=' + hits.length + ' content=' + fast.length + ' @' + (Date.now() - T1) + 'ms');
+      } catch (e) { fast = []; }
+      if (fast.length) posts = fast;
+      else {
+        posts = await mlsPosts(names, Math.min(6000, CAP - (Date.now() - T0) - 1500));
+        if (DBG) console.error('[mlsd] big-search posts=' + posts.length + ' @' + (Date.now() - T0) + 'ms');
+      }
       MLS_C.set(ck, { ts: Date.now(), posts: posts });
       if (MLS_C.size > 300) MLS_C.clear();
     }
@@ -3509,6 +3562,7 @@ async function mlsTask(nameP, infoP, type, s, e) {
     // ★ v1.28.5c: পাইপলাইন — sav পেজ আসামাত্রই তার gd-রেজলভ শুরু (আগে সব sav শেষ হওয়া পর্যন্ত
     //   অপেক্ষা করত ⇒ বাজেট শেষে resolved=0 হয়ে কার্ড হারাত। মাপা: Kalki 2 কার্ড → 0 হয়েছিল)
     const ttlOf = p => String(p.title || '');
+    const kindOf = r => (r && r.srv) ? 'watch' : 'gd';
     const jobs = [], seenSav = new Set();
     // ★ v1.28.15: পোস্টে প্রতি-কোয়ালিটির আলাদা sav-পাতা (480/720/1080 + Watch-Online-ডুপ)।
     //   সবগুলো টানলে বাজেট ফুরায় (মাপা: ৭ পাতা ⇒ ১০.১সে ⇒ কার্ড ০)। তাই **উচ্চ-কোয়ালিটি আগে**,
@@ -3517,64 +3571,41 @@ async function mlsTask(nameP, infoP, type, s, e) {
     for (const p of cands) for (const it of mlsSavIds(p.html)) if (!savList.some(x => x.id === it.id)) savList.push(Object.assign({ p: p }, it));
     savList.sort((a, b) => (b.q || 0) - (a.q || 0));
     for (const p of cands) {
-      for (const it of savList.filter(x => x.p === p).slice(0, 3)) {
+      for (const it of savList.filter(x => x.p === p).slice(0, 2)) {
         if (seenSav.has(it.id)) continue;
         seenSav.add(it.id);
         const q0 = it.q || mlsQ(p.title) || 0;
         const chain = mlsSav(it.id, 4500).then(x => {
           if (MLS_HOSTDBG.length < 20) MLS_HOSTDBG.push(x.hosts);
           const inner = [];
+          const done = (r) => { if (r && r.ok === true && r.direct) addCard({ kind: kindOf(r), r: r, title: ttlOf(p), q: q0 }); return r; };
           for (const u of x.mcl.slice(0, 1))     // ★ watch-online (১ হপ, প্রোডে-খোলা — মাপা ২০৬)
-            inner.push(mlsWatch(u, Math.max(3000, CAP - (Date.now() - T0) - 400)).then(r => ({ kind: 'watch', r: r, title: ttlOf(p), q: q0 })).catch(() => null));
-          if (Date.now() - T0 < CAP * 0.55)      // ★ gdflix ২-৩ হপ লাগে ⇒ সময় থাকলে তবেই (নইলে বাজেট শেষে সব হারায়)
+            inner.push(mlsWatch(u, Math.max(3000, CAP - (Date.now() - T0) - 400)).then(r => { done(r); return { kind: 'watch', r: r, title: ttlOf(p), q: q0 }; }).catch(() => null));
+          if (Date.now() - T0 < CAP * 0.45)      // ★ gdflix ২-৩ হপ লাগে ⇒ সময় থাকলে তবেই (নইলে বাজেট শেষে সব হারায়)
             for (const u of x.gd.slice(0, 1))
-              inner.push(mlsGd(u, Math.max(2600, CAP - (Date.now() - T0) - 400)).then(r => ({ kind: 'gd', r: r, title: ttlOf(p), q: q0 })).catch(() => null));
+              inner.push(mlsGd(u, Math.max(2600, CAP - (Date.now() - T0) - 400)).then(r => { done(r); return { kind: 'gd', r: r, title: ttlOf(p), q: q0 }; }).catch(() => null));
           return Promise.all(inner);
         }).catch(() => []);
         jobs.push(chain);
       }
     }
+    // ★ v1.28.18: প্রতি রুট-জব সফল হওয়ামাত্রই কার্ড-বাফারে — deadline/CAP-এ যা তৈরি হয়েছে তা-ই ফেরে
+    //   (মাপা: resolved ১০.৫-১২.৯সে-তে শেষ হলে hard-টাইমার [] ফেরাত ⇒ কার্ড ০)
+    // ★ v1.28.18: **আংশিক-ফল** — প্রতিটি রুট যাচাই হওয়ামাত্রই কার্ড তৈরি হয় (CARD_BUF),
+    //   তাই CAP/deadline-এ যেটুকু প্রমাণিত হয়েছে সেটুকু ফেরে। মাপা: resolved ১০.৫–১২.৯সে-তে শেষ
+    //   হলে আগে hard-টাইমার [] ফেরাত ⇒ ৭টি টাইটেলে শূন্য কার্ড।
+    if (!jobs.length) return finalize();
     const flat = (await Promise.all(jobs)).reduce((a, b) => a.concat(b), []);
     const rj = flat.filter(Boolean);
-    diag('mlsd', 'sav=' + seenSav.size + ' route-jobs=' + rj.length + ' @' + (Date.now() - T0) + 'ms' + (DBG ? '' : ' paths=' + JSON.stringify([...MLS_GOOD.entries()].map(([h, v]) => h + '=' + v))));
-    if (DBG) console.error('[mlsd] hosts=' + JSON.stringify(MLS_HOSTDBG.splice(0, 6).map(h => h.slice(0, 40))));
-    if (DBG) console.error('[mlsd] sav=' + seenSav.size + ' route-jobs=' + rj.length + ' @' + (Date.now() - T0) + 'ms');
-    if (!rj.length) return [];
-    const resolved = rj.filter(x => x.r && x.r.ok === true && x.r.direct);   // ★ ok===true বাধ্যতামূলক (unproven বাদ)
-    if (DBG) console.error('[mlsd] resolved=' + resolved.length + ' @' + (Date.now() - T0) + 'ms ' + JSON.stringify(rj.length) + ' routes=' + JSON.stringify(resolved.map(x=>x.r.route||'watch')));
-
-    const ttl = String(info && info.name || name).trim();
-    const out = [], seen = new Set();
-    for (const it of resolved) {
-      const u = it.r.direct;
-      if (!u) continue;
-      let base = '';
-      try { base = decodeURIComponent(new URL(u).pathname.split('/').filter(Boolean).pop() || ''); } catch (e) { base = u; }
-      const uk = base ? ('f:' + base.replace(/[?#].*$/, '')) : ('u:' + u);   // একই ফাইল = একটাই কার্ড
-      if (seen.has(u) || (base && seen.has(uk))) continue;
-      seen.add(u); seen.add(uk);
-      const qq = it.q || mlsQ(it.title) || mlsQ(u) || 0;
-      const size = mlsMB(it.r.size || 0);
-      const audio = mlsAudio(it.title);
-      const srv = it.kind === 'watch' ? ((it.r && it.r.srv) || 'multicloud') : (/r2\.dev/.test(u) ? 'gdflix' : 'gdflix·worker');
-      const lines = '⊞ MLSBD ◧ ' + srv + (audio ? ' ⌗ ' + audio : '') + (size ? ' · ' + size : '');
-      const txt = '⧉ ' + ttl + (year ? ' | ' + year + ' |' : ' |') + '\n'
-        + (type === 'series' ? '⬡ S' + SE + 'E' + EP : '⬡ Movie') + (size ? ' · ' + size : '') + '\n' + lines;
-      out.push({
-        name: '⫥ ' + (qq || 'Auto') + ' ⫥', title: txt, description: txt, quality: String(qq || ''),
-        url: u, _srv: srv, _hq: qq,
-        behaviorHints: { notWebReady: false, isBingeable: true, proxyHeaders: { request: { 'User-Agent': UA } }, filename: 'mlsbd-' + (qq || 'auto') + '.mkv' },
-        bingeGroup: 'mls|' + mlsNorm(ttl) + '::' + (type === 'series' ? 'S' + SE + 'E' + EP : 'm')
-      });
-    }
-    // প্রতি ফাইলের সব সার্ভার — উচ্চ-কোয়ালিটি আগে
-    out.sort((a, b) => (b._hq || 0) - (a._hq || 0));
-    diag('mlsd', 'cards=' + out.length + ' routes=' + JSON.stringify(resolved.map(x => (x.r && x.r.route) || (x.r && x.r.srv) || '?').slice(0, 4)) + ' @' + (Date.now() - T0) + 'ms');
-    if (DBG) console.error('[mlsd] cards=' + out.length + ' @' + (Date.now() - T0) + 'ms');
-    return out.slice(0, Number(process.env.MLSN || 6));
+    diag('mlsd', 'sav=' + seenSav.size + ' route-jobs=' + rj.length + ' @' + (Date.now() - T0) + 'ms'
+      + (DBG ? '' : ' paths=' + JSON.stringify([...MLS_GOOD.entries()].map(([h, v]) => h + '=' + v))));
+    diag('mlsd', 'cards=' + CARD_BUF.length + ' routes=' + JSON.stringify(CARD_BUF.map(x => x.srv).slice(0, 5)) + ' @' + (Date.now() - T0) + 'ms');
+    return finalize();
   })();
-  const hard = new Promise(r => setTimeout(() => r([]), CAP));
+  let timedOut = false;
+  const hard = new Promise(r => setTimeout(() => { timedOut = true; try { r(finalize()); } catch (e) { r([]); } }, CAP));
   const r = await Promise.race([work.catch(e => { if (DBG) console.error('[mlsd] err ' + (e && e.message)); return []; }), hard]);
+  if (timedOut) diag('mlsd', 'partial-cards=' + (r || []).length + ' (CAP ' + CAP + 'ms)');
   return r || [];
 }
 
