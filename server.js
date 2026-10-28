@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.28.39';
+const VERSION = '1.28.40';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -3057,7 +3057,7 @@ function mlsRec(u, st, len, via) {
   try { MLS_LAST.set(mlsHost(u), { st: st, len: len, via: via, ts: Date.now() }); if (MLS_LAST.size > 30) MLS_LAST.clear(); } catch (e) { }
 }
 
-async function mlsGet(u, opt) {
+async function mlsGetRaw(u, opt) {
   opt = opt || {};
   const ms = Math.max(1500, opt.ms || 6000), T0 = Date.now();
   // ★ মাপা: mlsbd.co-র CF গেট **শুধু** সাধারণ UA-তে ৪০৩ দেয়; পূর্ণ Chrome-fingerprint
@@ -3206,6 +3206,22 @@ async function mlsGet(u, opt) {
     if (b) return { st: 200, body: String(b), url: u, px: 1 };
   } catch (e) { }
   return { st: 0, body: '', url: u };
+}
+
+// ★ v1.28.40: **নিজেরাই নিজেদের থ্রটল করছিলাম** — ৩টি টাইটেল সমান্তরালে খুললে প্রতি টাইটেলে ২টি সার্চ
+//   (tiny+big) + content ⇒ একসাথে ৬-৯টি রিকোয়েস্ট mlsbd.co-তে ⇒ CF ধীর করে দিত (মাপা: একক ২.১সে → ভিড়ে ৪.৮সে)।
+//   তাই: mlsbd.co-তে সর্বোচ্চ ৪টি রিকোয়েস্ট একসাথে, বাকিরা ৬০ms ফাঁকে অপেক্ষা করে।
+let MLS_INFL = 0;
+const MLS_MAX_INFL = Number(process.env.MLSINFL || 4);
+async function mlsGet(u, opt) {
+  if (!/(^|\.)mlsbd\.co$/i.test(mlsHost(u))) return mlsGetRaw(u, opt);
+  const t0 = Date.now();
+  while (MLS_INFL >= MLS_MAX_INFL) {
+    if (Date.now() - t0 > 4000) break;             // ৪সে-র বেশি অপেক্ষা নয় (deadline রক্ষা)
+    await new Promise(r => setTimeout(r, 60));
+  }
+  MLS_INFL++;
+  try { return await mlsGetRaw(u, opt); } finally { MLS_INFL--; }
 }
 
 // ★ v1.28.5f: মাপা — `/wp/v2/posts?search=`-এর র‍্যাঙ্কিং এলোমেলো (The Last of Us ⇒ অপ্রাসঙ্গিক ১০টি),
@@ -3753,9 +3769,12 @@ async function mlsTask(nameP, infoP, type, s, e) {
         if (DBG) console.error('[mlsd] tiny-content n=' + c.length + ' @' + (Date.now() - T1) + 'ms');
         return c;
       }).catch(() => []);
-      const tBig = mlsPosts(names, Math.min(6800, CAP - (Date.now() - T0) - 900))
-        .then(a => { if (DBG) console.error('[mlsd] big-search posts=' + a.length + ' @' + (Date.now() - T0) + 'ms'); return a; })
-        .catch(() => []);
+      // ★ v1.28.40: big-search এখন **৯০০ms দেরিতে** শুরু — tiny দ্রুত ফল দিলে দ্বিতীয় কলটাই হবে না
+      //   (আগে সবসময় দুটোই যেত ⇒ mlsbd.co-তে রিকোয়েস্ট দ্বিগুণ ⇒ CF-থ্রটল)।
+      const tBig = new Promise(res => setTimeout(res, 900)).then(() =>
+        mlsPosts(names, Math.min(6800, CAP - (Date.now() - T0) - 900))
+          .then(a => { if (DBG) console.error('[mlsd] big-search posts=' + a.length + ' @' + (Date.now() - T0) + 'ms'); return a; })
+          .catch(() => []));
       posts = await new Promise(res => {
         const out = [];
         let n = 0, done = false;
