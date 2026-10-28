@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.28.28';
+const VERSION = '1.28.29';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -12142,6 +12142,20 @@ const server = http.createServer((req, res) => {
         let r;
         if (only === 'reader') { const b = await mlsReader(u, ms); r = { st: b ? 200 : 0, body: b, via: 'reader' }; }
         else if (only === 'curl') { const c = await mlsCurl(u, { ms: ms, json: /json/i.test(u2.searchParams.get('j') || u) }); r = c ? { st: c.st, body: c.body, via: 'curl' } : { st: 0, body: '' }; }
+        else if (only === 'all') {
+          const isJ = /json/i.test(u2.searchParams.get('j') || u);
+          const vd = t => (isJ ? mlsOkJson(t) : mlsOkHtml(t));
+          const pxs2 = mlsPxFor(mlsHost(u)).slice(0, 3);
+          const jobs = [
+            ['curl', () => mlsCurl(u, { ms: ms, json: isJ }).then(c => c && c.body)],
+            ['reader', () => mlsReader(u, ms)],
+          ].concat(pxs2.map(px => ['px:' + px, () => mlsCurl(u, { ms: ms, json: isJ, proxy: px }).then(c => c && c.body)]));
+          const out = await Promise.all(jobs.map(([tag, fn]) => {
+            const t = Date.now();
+            return Promise.resolve(fn()).then(b => ({ tag: tag, ms: Date.now() - t, len: (b || '').length, ok: vd(b || '') })).catch(e => ({ tag: tag, ms: Date.now() - t, err: String(e && e.message) }));
+          }));
+          return { env: { reader: process.env.MLSREADER || '(unset)' }, good: [...MLS_GOOD.entries()], paths: out };
+        }
         else if (only === 'px') { const px = (mlsPxFor(mlsHost(u))[0] || ''); const c = px ? await mlsCurl(u, { ms: ms, json: /json/i.test(u2.searchParams.get('j') || u), proxy: px }) : null; r = c ? { st: c.st, body: c.body, via: 'px:' + px } : { st: 0, body: '', via: 'px:none' }; }
         else r = await mlsGet(u, { ms: ms, json: /json/i.test(u2.searchParams.get('j') || u) });
         return { st: r.st || 0, len: (r.body || '').length, via: r.via || only, ms: Date.now() - t, head: String(r.body || '').replace(/\s+/g, ' ').slice(0, 110) };
