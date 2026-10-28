@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.28.37';
+const VERSION = '1.28.38';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -2923,19 +2923,35 @@ function mlsPxLoad(f) {
   try {
     const d = JSON.parse(require('fs').readFileSync(require('path').join(__dirname, f), 'utf8'));
     const arr = Array.isArray(d) ? d : (d.good || []);
-    return arr.filter(x => /^\d+\.\d+\.\d+\.\d+:\d+$/.test(String(x)));
+    // ★ v1.28.38: BD-প্রক্সি তালিকায় socks5://… থাকে ⇒ scheme-সহ গ্রহণ করি (আগে ফিল্টারে বাদ পড়ত)
+    return arr.filter(x => /^(?:(?:socks4|socks5|http):\/\/)?\d+\.\d+\.\d+\.\d+:\d+$/.test(String(x)));
   } catch (e) { return []; }
 }
 const MLS_PXA = (process.env.MLSPXA ? process.env.MLSPXA.split(',').filter(Boolean) : mlsPxLoad('mls_px.json'));
+// ★ v1.28.38 (ইউজার-নির্দেশ: "bd location er proxy naw"): **বাংলাদেশি প্রক্সি-পুল** — proxyscrape/geonode/
+//   proxifly-এর country=BD তালিকা স্ক্র্যাপ করে mlsbd.co-তে যাচাই করা (ip-api-তে countryCode=BD)।
+//   ৪টি ২/৩ বার সফল (৩.০–৬.১সে) — ধীর, কিন্তু **আলাদা IP-রেঞ্জ** ⇒ CF-রেট-লিমিটে সুবিধা।
+const MLS_PXBD = (() => {
+  try {
+    const d = JSON.parse(require('fs').readFileSync(require('path').join(__dirname, 'mls_px_bd.json'), 'utf8'));
+    return (d.good || []).concat(d.backup || []);
+  } catch (e) { return []; }
+})();
+let mlsBdTurn = 0;
 const MLS_PXG = (process.env.MLSPXG ? process.env.MLSPXG.split(',').filter(Boolean) : mlsPxLoad('mls_gd_px.json'));
 let mlsPxTurn = 0;
 function mlsPxFor(host) {
+  const isMls = /(^|\.)mlsbd\.co$/i.test(host);
   const list = /gdflix|ddflix|gdlink/i.test(host) ? (MLS_PXG.length ? MLS_PXG : MLS_PXA) : MLS_PXA;
   if (!list.length) return [];
-  const n = Math.min(list.length, 3);
   const out = [];
+  // ★ v1.28.38: mlsbd.co-তে প্রতি বার **১টি BD নোড** (ঘুরিয়ে) + ২টি দ্রুত নোড — BD আলাদা ASN/IP-রেঞ্জ,
+  //   তাই CF রেট-লিমিট বা ব্লকে বিকল্প থাকে; দ্রুত নোডগুলো আগে থাকায় গতি কমে না (রেসে প্রথম-সফল জেতে)।
+  const fastN = isMls && MLS_PXBD.length ? 2 : 3;
+  const n = Math.min(list.length, fastN);
   for (let i = 0; i < n; i++) out.push(list[(mlsPxTurn + i) % list.length]);
   mlsPxTurn = (mlsPxTurn + 1) % list.length;
+  if (isMls && MLS_PXBD.length) { out.push(MLS_PXBD[mlsBdTurn % MLS_PXBD.length]); mlsBdTurn++; }
   return out;
 }
 
@@ -2955,7 +2971,14 @@ function mlsCurl(u, opt) {
     '-H', 'sec-ch-ua: "Chromium";v="147", "Not.A/Brand";v="8"',
     '-H', 'sec-ch-ua-mobile: ?0', '-H', 'sec-ch-ua-platform: "Windows"',
     '-o', tmp, '-w', '%{http_code}|%{content_type}|%{url_effective}'];
-  if (opt.proxy) a.push('--proxy', 'http://' + opt.proxy, '--proxy-insecure');
+  if (opt.proxy) {
+    // ★ v1.28.38: `socks5://ip:port` ⇒ curl-এ `socks5h://` (DNS-ও প্রক্সি-পাশে; mlsbd.co CF-এ এটাই দরকার)
+    const px0 = String(opt.proxy);
+    const pxArg = /^socks5:\/\//i.test(px0) ? px0.replace(/^socks5:/i, 'socks5h:')
+      : /^socks4:\/\//i.test(px0) ? px0.replace(/^socks4:/i, 'socks4a:')
+      : /^\w+:\/\//.test(px0) ? px0 : ('http://' + px0);
+    a.push('--proxy', pxArg, '--proxy-insecure');
+  }
   if (opt.post) { for (const f of opt.post) a.push('-F', f); a.push('-H', 'x-token: ' + (opt.host || mlsHost(u)), '-H', 'Accept: application/json'); }
   if (opt.xhr) a.push('-H', 'X-Requested-With: XMLHttpRequest');
   if (opt.ct) a.push('-H', 'content-type: ' + opt.ct);

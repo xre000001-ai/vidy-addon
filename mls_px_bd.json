@@ -1,0 +1,20 @@
+{
+  "ts": 1793189000000,
+  "note": "Bangladesh (BD) free proxies, scraped from proxyscrape v4 (country=bd), geonode (country=BD) and proxifly countries/BD; each verified against mlsbd.co /wp/v2/search + /posts content, and geo-confirmed via ip-api countryCode=BD",
+  "good": [
+    "socks5://202.44.106.141:1080",
+    "socks5://118.179.151.158:9090",
+    "socks5://203.76.123.6:1080",
+    "socks5://118.179.136.122:9090"
+  ],
+  "backup": [
+    "socks5://202.4.115.232:9090",
+    "socks5://118.179.205.159:9090",
+    "http://103.229.85.221:8080",
+    "socks5://27.131.14.9:1088",
+    "socks5://202.91.41.102:1080",
+    "socks5://61.247.178.146:1080",
+    "http://160.202.146.48:8080",
+    "http://202.40.180.145:38423"
+  ]
+}
