@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.28.36';
+const VERSION = '1.28.37';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -3192,7 +3192,7 @@ async function mlsSearchIds(names, ms) {
   // ★ v1.28.19: নাম-প্রার্থীগুলো **সমান্তরাল** — আগে একটার পর একটা (৪.২সে করে) ⇒ সার্চই ৪-৭সে নিত
   const qs = [...new Set(names.map(x => String(x || '').trim()).filter(Boolean))].slice(0, 2);
   if (!qs.length) return [];
-  const one = q => mlsGet(MLS_BASE + '/wp-json/wp/v2/search?search=' + encodeURIComponent(q) + '&per_page=12&_fields=id,title,url,subtype',
+  const one = q => mlsGet(MLS_BASE + '/wp-json/wp/v2/search?search=' + encodeURIComponent(q) + '&per_page=20&_fields=id,title,url,subtype',
     { ms: Math.max(1800, ms), json: true })
     .then(r => {
       let arr = []; try { arr = JSON.parse(r.body); } catch (e) { arr = []; }
@@ -3745,8 +3745,10 @@ async function mlsTask(nameP, infoP, type, s, e) {
         };
         tSmall.then(one); tBig.then(one);
       });
-      MLS_C.set(ck, { ts: Date.now(), posts: posts });
-      if (MLS_C.size > 300) MLS_C.clear();
+      // ★ v1.28.37: **ম্যাচহীন ফল ক্যাশ করবেন না** — একবার সাইট অপ্রত্যাশিত ফল দিলে ২০ মিনিট ধরে
+      //   ওই টাইটেল "০" দেখাত (মাপা: Inception/Shawshank প্রোডে posts=1 match=0, লোকালে ঠিকঠাক ২ ম্যাচ)।
+      const anyMatch = posts.some(p => names.some(n => mlsTitleOk(n, p.title, year, type === 'series')) && (type === 'series' ? mlsEpOk(p.title, Number(s || 1), Number(e || 1)) : true));
+      if (anyMatch) { MLS_C.set(ck, { ts: Date.now(), posts: posts }); if (MLS_C.size > 300) MLS_C.clear(); }
     }
     const SE = Number(s || 1), EP = Number(e || 1);
     const okPost = p => names.some(n => mlsTitleOk(n, p.title, year, type === 'series')) && (type === 'series' ? mlsEpOk(p.title, SE, EP) : true);
