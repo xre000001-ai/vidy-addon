@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.28.43';
+const VERSION = '1.28.44';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -2949,7 +2949,9 @@ function mlsPxFor(host) {
   //   তাই CF রেট-লিমিট বা ব্লকে বিকল্প থাকে; দ্রুত নোডগুলো আগে থাকায় গতি কমে না (রেসে প্রথম-সফল জেতে)।
   // ★ v1.28.41: mlsbd.co-তে **১টি দ্রুত + ১টি BD** (২ curl) — আগে ৩টি ছিল, ভিড়ে ৯ curl হয়ে
   //   নিজেদেরই ধীর করত (মাপা: একক সার্চ ২.১সে → ৩ টাইটেলে ৪.৮–৬.৫সে)। BD নোড আলাদা ASN/IP-রেঞ্জ।
-  const n = Math.min(list.length, isMls && MLS_PXBD.length ? 1 : 3);
+  // ★ v1.28.44 (মাপা: Jawan-এ প্রথম নোড টাইমআউট হলে POOL-এর একমাত্র curl-ই হারিয়ে ০ কার্ড) ⇒
+  //   mlsbd.co-তে **২টি দ্রুত নোড (ঘুরিয়ে) + ১ BD** ⇒ রেসে ৩টি প্রক্সি; একটার ব্যর্থতা আর সাবস্ক্রাইব করে না।
+  const n = Math.min(list.length, isMls && MLS_PXBD.length ? 2 : 3);
   for (let i = 0; i < n; i++) out.push(list[(mlsPxTurn + i) % list.length]);
   mlsPxTurn = (mlsPxTurn + 1) % list.length;
   if (isMls && MLS_PXBD.length) { out.push(MLS_PXBD[mlsBdTurn % MLS_PXBD.length]); mlsBdTurn++; }
@@ -3138,7 +3140,7 @@ async function mlsGetRaw(u, opt) {
       });
     }
     const pxGood = good.indexOf('px:') === 0 ? [good.slice(3)].concat(pxs.filter(x => x !== good.slice(3))) : pxs;
-    for (const fp of pxGood.slice(0, isMlsHost ? 2 : 2)) {   // ★ v1.28.18: ৪ → ২ (প্রসেস-চাপ ও দেরি কমাতে)
+    for (const fp of pxGood.slice(0, isMlsHost ? 3 : 2)) {   // ★ v1.28.18: ৪ → ২ (প্রসেস-চাপ ও দেরি কমাতে)
       addRace('px:' + fp, async () => {
         if (left() < 1200) return '';
         const cp2 = await mlsCurl(u, { ms: Math.min(4500, left()), json: !!opt.json, referer: opt.referer, proxy: fp });
