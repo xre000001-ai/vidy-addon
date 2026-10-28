@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.28.22';
+const VERSION = '1.28.23';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -3062,8 +3062,10 @@ async function mlsGet(u, opt) {
     //   • mlsbd.co  — curl ব্লকড, প্রক্সি অনির্ভরযোগ্য, **রিডার ২-৪সে-তে নির্ভরযোগ্য** ⇒ রিডার-প্রথম
     //   • savelinks / gdflix / multicloud — **প্রক্সি ১-৩সে-তে কাজ করে** ⇒ প্রক্সি-প্রথম
     const wantReaderFirst = /(^|\.)mlsbd\.co$/i.test(host0);
-    if (wantReaderFirst && good !== 'reader' && process.env.MLSREADER !== '0') {
-      const rb = await mlsReader(u, Math.min(3200, Math.max(2400, left())));
+    // ★ v1.28.23: রিডার-ক্যাপ ৩.২সে **খুব কম** ছিল — mlsbd.co-র jina-ফেচ মাপা ৩.৪–৫.২সে ⇒ প্রতি বার
+    //   টাইমআউট, আর রেস থেকেও রিডার বাদ থাকত ⇒ posts=0 (প্রোড: st=0 len=0 @9000ms)। এখন ৫.৬সে + রেসে থাকল।
+    if (wantReaderFirst && process.env.MLSREADER !== '0') {
+      const rb = await mlsReader(u, Math.min(5600, Math.max(2600, left())));
       if (valid(rb)) { mlsRec(u, 200, rb.length, 'reader'); MLS_GOOD.set(host0, 'reader'); MLS_GOOD_TS.set(host0, Date.now()); return { st: 200, body: rb, url: u }; }
     }
     // ★ v1.28.12: **সমান্তরাল রেস** — আগে প্রক্সিগুলো এক-এক করে (প্রতিটি ≤৫সে) ⇒ sav-হপ ১৪সে নিত
@@ -3104,15 +3106,15 @@ async function mlsGet(u, opt) {
         return (cp2 && cp2.st >= 200 && cp2.st < 400 && valid(cp2.body)) ? cp2.body : '';
       });
     }
-    if (process.env.MLSREADER !== '0' && !wantReaderFirst) addRace('reader', async () => {
-      const rb = await mlsReader(u, Math.max(2600, Math.min(4500, left() || 3000)));
+    if (process.env.MLSREADER !== '0') addRace('reader', async () => {
+      const rb = await mlsReader(u, Math.max(3000, Math.min(5600, left() || 4500)));
       return valid(rb) ? rb : '';
     });
     let got = null;
     if (race.length) {
       const w = await new Promise(res => {
         let n = 0, done = false;
-        const to = setTimeout(() => { if (!done) { done = true; res(null); } }, Math.max(2500, Math.min(6500, left() || 4000)));
+        const to = setTimeout(() => { if (!done) { done = true; res(null); } }, Math.max(3500, Math.min(6500, left() || 4500)));
         for (const pr of race) pr.then(r => {
           if (done) return;
           if (r) { done = true; clearTimeout(to); res(r); return; }
@@ -12118,8 +12120,14 @@ const server = http.createServer((req, res) => {
       const kind = u2.searchParams.get('kind') || 'watch';
       if (!u) return sendJson(res, 200, { err: 'need ?u=' });
       const job = kind === 'ping' ? (async () => {
-        const t = Date.now(), r = await mlsGet(u, { ms: Number(u2.searchParams.get('ms') || 9000), json: /json/i.test(u2.searchParams.get('j') || u) });
-        return { st: r.st || 0, len: (r.body || '').length, via: r.via || '', ms: Date.now() - t, head: String(r.body || '').replace(/\s+/g, ' ').slice(0, 90), good: [...MLS_GOOD.entries()] };
+        const t = Date.now(), ms = Number(u2.searchParams.get('ms') || 9000);
+        const only = String(u2.searchParams.get('via') || '');
+        let r;
+        if (only === 'reader') { const b = await mlsReader(u, ms); r = { st: b ? 200 : 0, body: b, via: 'reader' }; }
+        else if (only === 'curl') { const c = await mlsCurl(u, { ms: ms, json: /json/i.test(u2.searchParams.get('j') || u) }); r = c ? { st: c.st, body: c.body, via: 'curl' } : { st: 0, body: '' }; }
+        else if (only === 'px') { const px = (mlsPxFor(mlsHost(u))[0] || ''); const c = px ? await mlsCurl(u, { ms: ms, json: /json/i.test(u2.searchParams.get('j') || u), proxy: px }) : null; r = c ? { st: c.st, body: c.body, via: 'px:' + px } : { st: 0, body: '', via: 'px:none' }; }
+        else r = await mlsGet(u, { ms: ms, json: /json/i.test(u2.searchParams.get('j') || u) });
+        return { st: r.st || 0, len: (r.body || '').length, via: r.via || only, ms: Date.now() - t, head: String(r.body || '').replace(/\s+/g, ' ').slice(0, 110) };
       })()
         : kind === 'gd' ? mlsGd(u, 9000)
         : kind === 'search' ? mlsPosts([u], 7000).then(a => ({ posts: a.length, titles: a.slice(0, 3).map(x => x.title.slice(0, 60)) }))
