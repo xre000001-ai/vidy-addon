@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.28.29';
+const VERSION = '1.28.30';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -2899,6 +2899,7 @@ async function withNx(cardsP, nxP, cfg, t0) {
 const MLS_BASE = 'https://mlsbd.co';
 const mlsOn = cfg => (process.env.MLSD !== '0') && !(cfg && cfg.mls === 0);
 const MLS_C = new Map();
+const MLS_RC = new Map();   // v1.28.30: টাইটেল-ভিত্তিক পুরো-কার্ড ক্যাশ
 const MLS_HOSTDBG = [];
 const MLS_LAST = new Map();
 const MLS_CURL_DEAD = new Map();
@@ -3420,7 +3421,11 @@ async function mlsGd(link, ms, px) {
     //   তাই এখানে সরাসরি গ্রহণ করি না — শুধু রুট-নাম রাখি, প্রমাণ mlsProve-এ ধরা পড়বে।
     if (v) { direct = v; out.route = 'validate-worker'; }
   }
-  if (!direct) {                                   // ★ POST-পথ (v1.28.10)
+  // ★ v1.28.30 (মাপা ২৮-১০-২০২৬): gdflix এখন **লগইন-গেটেড** — `action=original` ⇒
+  //   {"error":true,"message":"Session Not Found Please Login!"}, `action=direct` ⇒ "Direct Download not
+  //   Enabled!", `action=cloud` ⇒ "Invalid Request" (কুকি-জারসহও একই)। তাই POST+পোল-চেইন ডিফল্টে **বন্ধ**
+  //   (প্রতি টাইটেলে ৩-৪সে নষ্ট হতো, কিছুই ফেরাত না); শুধু MLSDGPOST=1 দিলে চেষ্টা করবে।
+  if (!direct && process.env.MLSGDPOST === '1') {  // ★ POST-পথ (v1.28.10)
     const pf = await mlsGdPost(g.url || link, ms, px).catch(() => null);
     if (pf && pf.direct) return Object.assign(out, pf, { link: link });
     return Object.assign(out, { route: (pf && pf.route) || 'none' });
@@ -3497,7 +3502,7 @@ async function mlsTask(nameP, infoP, type, s, e) {
   //   ১০.৫সে-তে তৈরি কার্ড আর উত্তরে ঢোকে না (মাপা: `cards=2 @7462ms` থাকা সত্ত্বেও ক্লায়েন্টে ০)।
   //   এখন ৮.২সে — deadline-এর ২সে আগে, আংশিক-কার্ড নিয়ে ফেরে।
   const CAP = Number(process.env.MLSCAP || 8200);
-  let INFO = null, NAME = '';                   // addCard-এর জন্য বাইরের স্কোপ (v1.28.18-fix)
+  let INFO = null, NAME = '', RCK = '';         // addCard-এর জন্য বাইরের স্কোপ (v1.28.18-fix) + ক্যাশ-কি
   const CARD_BUF = [];                          // প্রমাণিত কার্ড (আসার ক্রমে) — deadline-এ হারায় না
   const SEEN_F = new Set();
   const finalize = () => {
@@ -3550,7 +3555,10 @@ async function mlsTask(nameP, infoP, type, s, e) {
     INFO = info || null; NAME = name;
     if (DBG) console.error('[mlsd] name="' + names.join(' / ').slice(0, 70) + '" year=' + (info && (info.year || info.releaseInfo)) + ' type=' + type);
     const ck = type + '|' + mlsNorm(names.join('~')) + '|' + (year || '') + '|' + (s || '') + '|' + (e || '');
+    RCK = ck;
     const hit = MLS_C.get(ck);
+    const hitC = MLS_RC.get(ck);                       // ★ v1.28.30: পুরো-ফল ক্যাশ (১০ মিনিট)
+    if (hitC && Date.now() - hitC.ts < 600000) { if (DBG) console.error('[mlsd] cache-hit n=' + hitC.cards.length); return hitC.cards.slice(); }
     const SE0 = Number(s || 1), EP0 = Number(e || 1);
     const okPost0 = (t) => names.some(n => mlsTitleOk(n, t, year, type === 'series')) && (type === 'series' ? mlsEpOk(t, SE0, EP0) : true);
     let posts = (hit && Date.now() - hit.ts < 20 * 60e3) ? hit.posts : null;   // শুধু পোস্ট-আইডি ক্যাশ (লিংক নয়)
@@ -3631,7 +3639,7 @@ async function mlsTask(nameP, infoP, type, s, e) {
             inner.push(mlsWatch(u, Math.max(3000, CAP - (Date.now() - T0) - 400)).then(r => { done(r); return { kind: 'watch', r: r, title: ttlOf(p), q: q0 }; }).catch(() => null));
           // ★ v1.28.22: গেট এখন **বাকি-সময়** দেখে (আগে T0<CAP*0.45 ⇒ সার্চ ৪-৫সে নিলে gdflix কখনোই
           //   চালু হতো না ⇒ সব কার্ড multicloud-এ সীমিত)। আংশিক-কার্ড থাকায় দেরিতে শেষ হলেও ক্ষতি নেই।
-          if (CAP - (Date.now() - T0) > 3600)
+          if (CAP - (Date.now() - T0) > 2400)
             for (const u of x.gd.slice(0, 1))
               inner.push(mlsGd(u, Math.max(2600, CAP - (Date.now() - T0) - 400)).then(r => { done(r); return { kind: 'gd', r: r, title: ttlOf(p), q: q0 }; }).catch(() => null));
           return Promise.all(inner);
@@ -3655,6 +3663,7 @@ async function mlsTask(nameP, infoP, type, s, e) {
   let timedOut = false;
   const hard = new Promise(r => setTimeout(() => { timedOut = true; try { r(finalize()); } catch (e) { r([]); } }, CAP));
   const r = await Promise.race([work.catch(e => { if (DBG) console.error('[mlsd] err ' + (e && e.message)); return []; }), hard]);
+  if (r && r.length && RCK) { try { MLS_RC.set(RCK, { ts: Date.now(), cards: r.slice() }); if (MLS_RC.size > 200) MLS_RC.clear(); } catch (e) { } }
   if (timedOut) diag('mlsd', 'partial-cards=' + (r || []).length + ' (CAP ' + CAP + 'ms)');
   return r || [];
 }
