@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.28.18';
+const VERSION = '1.28.19';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -3164,20 +3164,26 @@ async function mlsGet(u, opt) {
 //   অথচ `/wp/v2/search` ঠিক পোস্টটাই আগে দেয়। তাই: আগে সস্তা posts-কল, ম্যাচ শূন্য হলে র‍্যাংকড-সার্চ
 //   ⇒ শুধু **ম্যাচ-করা** পোস্টগুলোর content আলাদা কলে (বেশি খরচ নয়)।
 async function mlsSearchIds(names, ms) {
-  const T0 = Date.now();
-  for (const q of names.slice(0, 2)) {
-    const left = ms - (Date.now() - T0);
-    if (left < 1800) break;
-    const u = MLS_BASE + '/wp-json/wp/v2/search?search=' + encodeURIComponent(q) + '&per_page=12&_fields=id,title,url,subtype';
-    const r = await mlsGet(u, { ms: Math.min(left, 4200), json: true });
-    let arr = [];
-    try { arr = JSON.parse(r.body); } catch (e) { arr = []; }
-    const out = (Array.isArray(arr) ? arr : [])
-      .filter(x => x && x.id && (x.subtype || 'post') === 'post')
-      .map(x => ({ id: x.id, title: mlsEnt(typeof x.title === 'object' ? (x.title.rendered || '') : x.title), url: x.url || '' }));
-    if (out.length) return out;
-  }
-  return [];
+  // ★ v1.28.19: নাম-প্রার্থীগুলো **সমান্তরাল** — আগে একটার পর একটা (৪.২সে করে) ⇒ সার্চই ৪-৭সে নিত
+  const qs = [...new Set(names.map(x => String(x || '').trim()).filter(Boolean))].slice(0, 2);
+  if (!qs.length) return [];
+  const one = q => mlsGet(MLS_BASE + '/wp-json/wp/v2/search?search=' + encodeURIComponent(q) + '&per_page=12&_fields=id,title,url,subtype',
+    { ms: Math.max(1800, ms), json: true })
+    .then(r => {
+      let arr = []; try { arr = JSON.parse(r.body); } catch (e) { arr = []; }
+      return (Array.isArray(arr) ? arr : [])
+        .filter(x => x && x.id && (x.subtype || 'post') === 'post')
+        .map(x => ({ id: x.id, title: mlsEnt(typeof x.title === 'object' ? (x.title.rendered || '') : x.title), url: x.url || '' }));
+    }).catch(() => []);
+  return await new Promise(res => {
+    let n = 0, done = false;
+    const to = setTimeout(() => { if (!done) { done = true; res([]); } }, Math.max(2000, ms));
+    for (const q of qs) one(q).then(out => {
+      if (done) return;
+      if (out.length) { done = true; clearTimeout(to); res(out); return; }
+      if (++n >= qs.length) { done = true; clearTimeout(to); res([]); }
+    });
+  });
 }
 async function mlsContent(list, ms) {
   const T0 = Date.now();
@@ -3202,20 +3208,21 @@ async function mlsPosts(names, ms) {
     for (const q of [norm(n0), norm(core)]) if (q && tries.indexOf(q) < 0) tries.push(q);
   }
   tries.length = Math.min(tries.length, 3);
-  const T0 = Date.now();
-  for (const q of tries) {
-    const left = ms - (Date.now() - T0);
-    if (left < 1500) break;
-    const u = MLS_BASE + '/wp-json/wp/v2/posts?search=' + encodeURIComponent(q)
-      + '&per_page=10&_fields=id,title,content,date,link';
-    const r = await mlsGet(u, { ms: left, json: true });
-    let arr = [];
-    try { arr = JSON.parse(r.body); } catch (e) { arr = []; }
-    if (Array.isArray(arr) && arr.length) {
-      return arr.map(p => ({ id: p.id, title: mlsEnt((p.title && p.title.rendered) || ''), html: mlsEnt((p.content && p.content.rendered) || ''), link: p.link || '', date: p.date || '' }));
-    }
-  }
-  return [];
+  if (!tries.length) return [];
+  const one = q => mlsGet(MLS_BASE + '/wp-json/wp/v2/posts?search=' + encodeURIComponent(q) + '&per_page=10&_fields=id,title,content,date,link', { ms: Math.max(1800, ms), json: true })
+    .then(r => {
+      let arr = []; try { arr = JSON.parse(r.body); } catch (e) { arr = []; }
+      return (Array.isArray(arr) ? arr : []).map(p => ({ id: p.id, title: mlsEnt((p.title && p.title.rendered) || ''), html: mlsEnt((p.content && p.content.rendered) || ''), link: p.link || '', date: p.date || '' }));
+    }).catch(() => []);
+  return await new Promise(res => {                       // ★ v1.28.19: সমান্তরাল
+    let n = 0, done = false;
+    const to = setTimeout(() => { if (!done) { done = true; res([]); } }, Math.max(2000, ms));
+    for (const q of tries) one(q).then(out => {
+      if (done) return;
+      if (out.length) { done = true; clearTimeout(to); res(out); return; }
+      if (++n >= tries.length) { done = true; clearTimeout(to); res([]); }
+    });
+  });
 }
 
 // কড়া টাইটেল-মিল: নাম-টোকেন ≥৮৫% + বছর (পোস্টে বছর থাকলে অবশ্যই মিলবে)
@@ -12088,6 +12095,7 @@ const server = http.createServer((req, res) => {
       if (!u) return sendJson(res, 200, { err: 'need ?u=' });
       const job = kind === 'gd' ? mlsGd(u, 9000)
         : kind === 'search' ? mlsPosts([u], 7000).then(a => ({ posts: a.length, titles: a.slice(0, 3).map(x => x.title.slice(0, 60)) }))
+        : kind === 'sav' ? mlsSav(u, 6000)
         : kind === 'task' ? mlsTask(Promise.resolve(u), Promise.resolve(null), u2.searchParams.get('t') === 'series' ? 'series' : 'movie', Number(u2.searchParams.get('s') || 0), Number(u2.searchParams.get('e') || 0))
         : mlsWatch(u, 9000);
       return Promise.resolve(job).then(r => sendJson(res, 200, { ok: 1, kind: kind, r: r })).catch(e => sendJson(res, 200, { ok: 0, err: String(e && e.message) }));
