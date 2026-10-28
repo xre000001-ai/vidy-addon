@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.28.42';
+const VERSION = '1.28.43';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -3212,18 +3212,9 @@ async function mlsGetRaw(u, opt) {
 // ★ v1.28.40: **নিজেরাই নিজেদের থ্রটল করছিলাম** — ৩টি টাইটেল সমান্তরালে খুললে প্রতি টাইটেলে ২টি সার্চ
 //   (tiny+big) + content ⇒ একসাথে ৬-৯টি রিকোয়েস্ট mlsbd.co-তে ⇒ CF ধীর করে দিত (মাপা: একক ২.১সে → ভিড়ে ৪.৮সে)।
 //   তাই: mlsbd.co-তে সর্বোচ্চ ৪টি রিকোয়েস্ট একসাথে, বাকিরা ৬০ms ফাঁকে অপেক্ষা করে।
-let MLS_INFL = 0;
-const MLS_MAX_INFL = Number(process.env.MLSINFL || 6);
-async function mlsGet(u, opt) {
-  if (!/(^|\.)mlsbd\.co$/i.test(mlsHost(u))) return mlsGetRaw(u, opt);
-  const t0 = Date.now();
-  while (MLS_INFL >= MLS_MAX_INFL) {
-    if (Date.now() - t0 > 2500) break;             // ২.৫সে-র বেশি অপেক্ষা নয় (deadline রক্ষা)
-    await new Promise(r => setTimeout(r, 60));
-  }
-  MLS_INFL++;
-  try { return await mlsGetRaw(u, opt); } finally { MLS_INFL--; }
-}
+// ★ v1.28.43: ইন-ফ্লাইট লিমিটার **ফিরিয়ে নেওয়া হলো** — মাপা: ভিড়ে সার্চ আরও ধীর হয়েছিল
+//   (৮.২সে ক্যাপেই ৩টি টাইটেল ০ কার্ড)। mlsbd.co-তে প্রতি হপে এখন ২ curl (১ দ্রুত + ১ BD) + রিডার।
+const mlsGet = mlsGetRaw;
 
 // ★ v1.28.5f: মাপা — `/wp/v2/posts?search=`-এর র‍্যাঙ্কিং এলোমেলো (The Last of Us ⇒ অপ্রাসঙ্গিক ১০টি),
 //   অথচ `/wp/v2/search` ঠিক পোস্টটাই আগে দেয়। তাই: আগে সস্তা posts-কল, ম্যাচ শূন্য হলে র‍্যাংকড-সার্চ
@@ -3692,7 +3683,7 @@ async function mlsTask(nameP, infoP, type, s, e) {
   //   ১০.৫সে-তে তৈরি কার্ড আর উত্তরে ঢোকে না (মাপা: `cards=2 @7462ms` থাকা সত্ত্বেও ক্লায়েন্টে ০)।
   //   এখন ৮.২সে — deadline-এর ২সে আগে, আংশিক-কার্ড নিয়ে ফেরে।
   // ★ v1.28.42: ৮.২ → ৮.৮সে (বাইরের deadline ১০.২সে; sav+watch-এর জন্য ৬০০ms বেশি জায়গা)
-  const CAP = Number(process.env.MLSCAP || 8800);
+  const CAP = Number(process.env.MLSCAP || 8200);
   let INFO = null, NAME = '', RCK = '', ENR_MORE = null;         // addCard-এর জন্য বাইরের স্কোপ (v1.28.18-fix) + ক্যাশ-কি
   const CARD_BUF = [];                          // প্রমাণিত কার্ড (আসার ক্রমে) — deadline-এ হারায় না
   const SEEN_F = new Set();
@@ -3771,12 +3762,9 @@ async function mlsTask(nameP, infoP, type, s, e) {
         if (DBG) console.error('[mlsd] tiny-content n=' + c.length + ' @' + (Date.now() - T1) + 'ms');
         return c;
       }).catch(() => []);
-      // ★ v1.28.40: big-search এখন **৯০০ms দেরিতে** শুরু — tiny দ্রুত ফল দিলে দ্বিতীয় কলটাই হবে না
-      //   (আগে সবসময় দুটোই যেত ⇒ mlsbd.co-তে রিকোয়েস্ট দ্বিগুণ ⇒ CF-থ্রটল)।
-      const tBig = new Promise(res => setTimeout(res, 900)).then(() =>
-        mlsPosts(names, Math.min(6800, CAP - (Date.now() - T0) - 900))
-          .then(a => { if (DBG) console.error('[mlsd] big-search posts=' + a.length + ' @' + (Date.now() - T0) + 'ms'); return a; })
-          .catch(() => []));
+      const tBig = mlsPosts(names, Math.min(6800, CAP - (Date.now() - T0) - 900))
+        .then(a => { if (DBG) console.error('[mlsd] big-search posts=' + a.length + ' @' + (Date.now() - T0) + 'ms'); return a; })
+        .catch(() => []);
       posts = await new Promise(res => {
         const out = [];
         let n = 0, done = false;
