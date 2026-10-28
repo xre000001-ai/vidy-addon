@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.28.21';
+const VERSION = '1.28.22';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -3477,7 +3477,7 @@ const mlsMB = b => (b > 0 ? (b >= 1073741824 ? (b / 1073741824).toFixed(2) + 'GB
 
 async function mlsTask(nameP, infoP, type, s, e) {
   const T0 = Date.now();
-  const CAP = Number(process.env.MLSCAP || 9000);
+  const CAP = Number(process.env.MLSCAP || 10500);
   let INFO = null, NAME = '';                   // addCard-এর জন্য বাইরের স্কোপ (v1.28.18-fix)
   const CARD_BUF = [];                          // প্রমাণিত কার্ড (আসার ক্রমে) — deadline-এ হারায় না
   const SEEN_F = new Set();
@@ -3540,18 +3540,32 @@ async function mlsTask(nameP, infoP, type, s, e) {
       //   `/wp/v2/search` (শিরোনাম-only) কয়েক KB। তাই আগে শিরোনাম-সার্চে ম্যাচ করা আইডি,
       //   তারপর শুধু ম্যাচ-করা পোস্টের content (১-২টি কল) ⇒ বড় লাভ, deadline-এ কম চাপ।
       const T1 = Date.now();
-      let fast = [];
-      try {
-        const ids = await mlsSearchIds(names, Math.min(4200, CAP - 2600));
+      // ★ v1.28.22: **দুই সার্চ একসাথে** — আগে tiny-search (২-৪সে) ব্যর্থ হলে তারপর big-search (আরও
+      //   ৪-৭সে) ⇒ সার্চ-ফেজই ৬-১১সে খেত, sav/gdflix-এর বাজেট থাকত না (প্রোড: posts=0 match=0 @14839ms)।
+      //   এখন দুটোই সমান্তরাল, **প্রথম ম্যাচ-করা ফল** জেতে।
+      const tSmall = mlsSearchIds(names, Math.min(5200, CAP - 3000)).then(async ids => {
         const hits = ids.filter(x => okPost0(x.title));
-        if (hits.length) fast = await mlsContent(hits, Math.min(4200, CAP - (Date.now() - T0) - 1200));
-        if (DBG) console.error('[mlsd] tiny-search ids=' + ids.length + ' hits=' + hits.length + ' content=' + fast.length + ' @' + (Date.now() - T1) + 'ms');
-      } catch (e) { fast = []; }
-      if (fast.length) posts = fast;
-      else {
-        posts = await mlsPosts(names, Math.min(6000, CAP - (Date.now() - T0) - 1500));
-        if (DBG) console.error('[mlsd] big-search posts=' + posts.length + ' @' + (Date.now() - T0) + 'ms');
-      }
+        if (DBG) console.error('[mlsd] tiny-search ids=' + ids.length + ' hits=' + hits.length + ' @' + (Date.now() - T1) + 'ms');
+        if (!hits.length) return [];
+        const c = await mlsContent(hits, Math.min(5200, CAP - (Date.now() - T0) - 1200));
+        if (DBG) console.error('[mlsd] tiny-content n=' + c.length + ' @' + (Date.now() - T1) + 'ms');
+        return c;
+      }).catch(() => []);
+      const tBig = mlsPosts(names, Math.min(6800, CAP - (Date.now() - T0) - 900))
+        .then(a => { if (DBG) console.error('[mlsd] big-search posts=' + a.length + ' @' + (Date.now() - T0) + 'ms'); return a; })
+        .catch(() => []);
+      posts = await new Promise(res => {
+        const out = [];
+        let n = 0, done = false;
+        const to = setTimeout(() => { if (!done) { done = true; res(out.slice()); } }, Math.max(3000, Math.min(7600, CAP - (Date.now() - T0) - 700)));
+        const one = a => {
+          if (done) return;
+          if (a && a.length) { done = true; clearTimeout(to); res(a); return; }
+          out.push(a);
+          if (++n >= 2) { done = true; clearTimeout(to); res([].concat(...out)); }
+        };
+        tSmall.then(one); tBig.then(one);
+      });
       MLS_C.set(ck, { ts: Date.now(), posts: posts });
       if (MLS_C.size > 300) MLS_C.clear();
     }
@@ -3596,7 +3610,9 @@ async function mlsTask(nameP, infoP, type, s, e) {
           const done = (r) => { if (r && r.ok === true && r.direct) addCard({ kind: kindOf(r), r: r, title: ttlOf(p), q: q0 }); return r; };
           for (const u of x.mcl.slice(0, 1))     // ★ watch-online (১ হপ, প্রোডে-খোলা — মাপা ২০৬)
             inner.push(mlsWatch(u, Math.max(3000, CAP - (Date.now() - T0) - 400)).then(r => { done(r); return { kind: 'watch', r: r, title: ttlOf(p), q: q0 }; }).catch(() => null));
-          if (Date.now() - T0 < CAP * 0.45)      // ★ gdflix ২-৩ হপ লাগে ⇒ সময় থাকলে তবেই (নইলে বাজেট শেষে সব হারায়)
+          // ★ v1.28.22: গেট এখন **বাকি-সময়** দেখে (আগে T0<CAP*0.45 ⇒ সার্চ ৪-৫সে নিলে gdflix কখনোই
+          //   চালু হতো না ⇒ সব কার্ড multicloud-এ সীমিত)। আংশিক-কার্ড থাকায় দেরিতে শেষ হলেও ক্ষতি নেই।
+          if (CAP - (Date.now() - T0) > 3600)
             for (const u of x.gd.slice(0, 1))
               inner.push(mlsGd(u, Math.max(2600, CAP - (Date.now() - T0) - 400)).then(r => { done(r); return { kind: 'gd', r: r, title: ttlOf(p), q: q0 }; }).catch(() => null));
           return Promise.all(inner);
@@ -12101,7 +12117,11 @@ const server = http.createServer((req, res) => {
       const u = u2.searchParams.get('u') || '';
       const kind = u2.searchParams.get('kind') || 'watch';
       if (!u) return sendJson(res, 200, { err: 'need ?u=' });
-      const job = kind === 'gd' ? mlsGd(u, 9000)
+      const job = kind === 'ping' ? (async () => {
+        const t = Date.now(), r = await mlsGet(u, { ms: Number(u2.searchParams.get('ms') || 9000), json: /json/i.test(u2.searchParams.get('j') || u) });
+        return { st: r.st || 0, len: (r.body || '').length, via: r.via || '', ms: Date.now() - t, head: String(r.body || '').replace(/\s+/g, ' ').slice(0, 90), good: [...MLS_GOOD.entries()] };
+      })()
+        : kind === 'gd' ? mlsGd(u, 9000)
         : kind === 'search' ? mlsPosts([u], 7000).then(a => ({ posts: a.length, titles: a.slice(0, 3).map(x => x.title.slice(0, 60)) }))
         : kind === 'sav' ? mlsSav(u, 6000)
         : kind === 'task' ? mlsTask(Promise.resolve(u), Promise.resolve(null), u2.searchParams.get('t') === 'series' ? 'series' : 'movie', Number(u2.searchParams.get('s') || 0), Number(u2.searchParams.get('e') || 0))
