@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.29.0';
+const VERSION = '1.29.1';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -2973,6 +2973,14 @@ const MLS_PXG = (process.env.MLSPXG ? process.env.MLSPXG.split(',').filter(Boole
 let mlsPxTurn = 0;
 function mlsPxFor(host) {
   const isMls = /(^|\.)mlsbd\.co$/i.test(host);
+  // ★ v1.29.1: mlsbd.co-তে **শিক্ষিত পুল** (এইমাত্র ২০০-দেওয়া নোড) — দ্রুততম ২টি + ১টি BD।
+  if (isMls) {
+    const out = mlsPxBest(2, false);
+    const bd = mlsPxBest(1, true)[0] || (MLS_PXBD.length ? MLS_PXBD[mlsBdTurn % MLS_PXBD.length] : '');
+    mlsBdTurn++;
+    if (bd && out.indexOf(bd) < 0) out.push(bd);
+    if (out.length) return out;
+  }
   const list = /gdflix|ddflix|gdlink/i.test(host) ? (MLS_PXG.length ? MLS_PXG : MLS_PXA) : MLS_PXA;
   if (!list.length) return [];
   const out = [];
@@ -2988,6 +2996,89 @@ function mlsPxFor(host) {
   if (isMls && MLS_PXBD.length) { out.push(MLS_PXBD[mlsBdTurn % MLS_PXBD.length]); mlsBdTurn++; }
   return out;
 }
+
+// ★ v1.29.1 (২৯-১০-২০২৬ — প্রোডে "সিরিজে ০ স্ট্রিম, অনেক স্ট্রিম পাচ্ছি না"-র মূল কারণ):
+//   প্রোডে mlsbd.co যাওয়ার curl-পথ ছিল শুধু `mls_px.json`-এর ৬টি হাতে-লেখা নোড; সবগুলো মৃত
+//   (`px:136.226.10.220:9480` ৯সে-তে নোডআউট, ডায়াগে `mlsbd.co:pool·empty`) ⇒ WP-সার্চ ০ পোস্ট
+//   ⇒ মুভি ও সিরিজ **দুই-ই ০ কার্ড**। ওয়ার্কস্পেস-স্ক্যান (৬০০০ প্রার্থী, ২০০ থ্রেড মাপা):
+//   **২১টি নোড mlsbd.co WP-API-তে ২/২ বার ২০০** (১.৩–৪.৬সে; ip-api-তে HK/KR/SG/DE/US…)।
+//   ফ্রি-প্রক্সি দিনে-দিন মরে ⇒ **স্থির তালিকা কখনোই টিকবে না**, তাই spool-এর মতোই **নিজে-শিক্ষা**:
+//   সিড + ঘোরানো প্রার্থী (pxbig/pxhttp/BD) curl দিয়ে mlsbd-WP-API-তে যাচাই ⇒ পাস-করা নোড পুলে,
+//   ২-ব্যর্থে বাদ, শিক্ষা `mls_px_learned.json`-এ সেভ (রিস্টার্টেও থাকে)। BD-নোড আলাদা চিহ্নিত
+//   (ইউজার-শর্ত "bd location er proxy") — রেসে সবসময় ১টি BD + দ্রুততম ২টি শিক্ষিত নোড যায়।
+const MLS_PX_OK = new Map();
+try {
+  const d = JSON.parse(require('fs').readFileSync(require('path').join(__dirname, 'mls_px_learned.json'), 'utf8'));
+  for (const n of (Array.isArray(d) ? d : (d.good || []))) {
+    const px = typeof n === 'string' ? n : (n && n.px); if (!px) continue;
+    MLS_PX_OK.set(px, { ms: (n && n.ms) || 3000, ts: Date.now() - 120000, ok: 1, fail: 0 });
+  }
+} catch (e) { }
+const MLS_PX_BD_SET = new Set(MLS_PXBD.map(String));
+let mlsPxSaveAt = 0;
+function mlsPxSave(force) {
+  if (!force && Date.now() - mlsPxSaveAt < 60000) return; mlsPxSaveAt = Date.now();
+  try {
+    const arr = [...MLS_PX_OK.entries()].filter(([, e]) => e.ok > 0)
+      .map(([px, e]) => ({ px: px, ms: e.ms || 3000, bd: MLS_PX_BD_SET.has(px) ? 1 : 0 }))
+      .sort((a, b) => a.ms - b.ms).slice(0, 200);
+    require('fs').writeFileSync(require('path').join(__dirname, 'mls_px_learned.json'), JSON.stringify({ ts: Date.now(), good: arr }));
+  } catch (e) { }
+}
+function mlsPxRec(px, ok, ms) {
+  if (!px) return; const e = MLS_PX_OK.get(px) || { ok: 0, fail: 0, ms: 9000 };
+  if (ok) { e.ok = (e.ok || 0) + 1; e.fail = 0; e.ms = Math.round(e.ms ? (e.ms * 2 + ms) / 3 : ms); e.ts = Date.now(); MLS_PX_OK.set(px, e); mlsPxSave(); }
+  else { e.fail = (e.fail || 0) + 1; if (e.fail >= 2 && !(e.ok > 1)) { MLS_PX_OK.delete(px); mlsPxSave(true); } else MLS_PX_OK.set(px, e); }
+}
+const mlsPxFresh = e => !!e && e.ok > 0 && (Date.now() - (e.ts || 0)) < 25 * 60 * 1000;
+function mlsPxBest(n, bdOnly) {
+  return [...MLS_PX_OK.entries()].filter(([px, e]) => mlsPxFresh(e) && (!bdOnly || MLS_PX_BD_SET.has(px)))
+    .sort((a, b) => (a[1].ms || 9999) - (b[1].ms || 9999)).slice(0, n).map(x => x[0]);
+}
+const MLS_PX_CANDS = (() => {
+  const out = [], seen = new Set();
+  const push = x => { const s = String(x || '').trim(); if (/^(?:(?:socks4|socks5|http):\/\/)?\d+\.\d+\.\d+\.\d+:\d+$/.test(s) && !seen.has(s)) { seen.add(s); out.push(s); } };
+  MLS_PXA.forEach(push); MLS_PXBD.forEach(push); MLS_PXG.forEach(push);
+  for (const f of ['pxbig.json', 'pxhttp.json', 'px.json', 'proxies.json']) {
+    try { const a = JSON.parse(require('fs').readFileSync(require('path').join(__dirname, f), 'utf8')); (Array.isArray(a) ? a : []).forEach(push); } catch (e) { }
+  }
+  // ★ মেমরি-সীমা (ইউজার-শর্ত \"memory 15%\"): ১ লক্ষ প্রার্থী ধরে রাখলে ~১০MB স্থায়ী হয় —
+  //   স্ক্যানার ঘুরিয়ে চলে, তাই ২০,০০০ই যথেষ্ট (সিডগুলো তালিকার শুরুতে, কখনো বাদ পড়ে না)।
+  return out.slice(0, Number(process.env.MLSPXCAP || 20000));
+})();
+const MLS_PX_SOCKS = /:(?:1080|1088|9050|4145|10808|9813|8569|22222|40001|11200)$/;
+const mlsPxSchemes = px => /^(?:socks4|socks5|http):\/\//.test(px) ? [px] : (MLS_PX_SOCKS.test(px) ? ['http://' + px, 'socks5h://' + px] : ['http://' + px]);
+let mlsPxCursor = 0, mlsPxBusy = false;
+async function mlsPxCheck(px) {
+  const u = MLS_BASE + '/wp-json/wp/v2/search?search=moana&per_page=2&_fields=id,title';
+  for (const sc of mlsPxSchemes(px)) {
+    const t0 = Date.now();
+    const c = await mlsCurl(u, { ms: Number(process.env.MLSPXMS || 6000), json: true, proxy: sc });
+    if (c && c.st >= 200 && c.st < 400 && mlsOkJsonStrict(c.body)) {
+      mlsPxRec(/^http:\/\//.test(sc) ? px : sc, true, Date.now() - t0); return true;
+    }
+  }
+  mlsPxRec(px, false, 0); return false;
+}
+async function mlsPxTrain() {
+  if (mlsPxBusy || process.env.MLSPXTRAIN === '0') return; mlsPxBusy = true;
+  try {
+    if (process.uptime() < 12) return;
+    if (Date.now() - LAST_STREAM_AT < 1500) return;                                  // সার্ভিং চললে ব্যাকগ্রাউন্ড-চাপ নয়
+    if (mlsPxBest(99, false).length >= Number(process.env.MLSPXTGT || 14)) return;    // যথেষ্ট শিক্ষিত নোড আছে
+    const N = Number(process.env.MLSPXSCAN || 24);
+    const batch = [];
+    for (let i = 0; i < N && MLS_PX_CANDS.length; i++) {
+      const px = MLS_PX_CANDS[(mlsPxCursor + i) % MLS_PX_CANDS.length];
+      if (!MLS_PX_OK.has(px)) batch.push(px);
+    }
+    mlsPxCursor = MLS_PX_CANDS.length ? (mlsPxCursor + N) % MLS_PX_CANDS.length : 0;
+    if (!batch.length) return;
+    const res = await Promise.all(batch.slice(0, Number(process.env.MLSPXBATCH || 10)).map(mlsPxCheck));
+    if (DBG) console.error('[mlspx] tried=' + batch.length + ' ok=' + res.filter(Boolean).length + ' have=' + mlsPxBest(99, false).length + '/' + MLS_PX_CANDS.length);
+  } catch (e) { } finally { mlsPxBusy = false; }
+}
+setTimeout(() => { mlsPxTrain(); setInterval(() => { mlsPxTrain(); }, Number(process.env.MLSPXNI || 45000)).unref?.(); }, 15000).unref?.();
 
 let MLS_CURL_OK = null;
 // ★ v1.28.5d: execFileSync → **async execFile**। sync-curl পুরো ইভেন্ট-লুপ আটকে দিত
@@ -3056,6 +3147,13 @@ async function mlsReader(u, ms) {
   } catch (e) { return ''; }
 }
 
+// ★ v1.29.1 (মাপা: রিডার মাঝে-মাঝে ১৮৪৪ বাইটের CF-এরর **অবজেক্ট** ফেরে, আগের mlsOkJson সেটাকে
+//   "বৈধ JSON" ধরত ⇒ posts=0 অথচ সব পথ "সফল" দেখাত)। WP-API-র জন্য কড়া: অ্যারে-হলে অখালি,
+//   অবজেক্ট-হলে সত্যিই পোস্ট-ফিল্ড (id/title/content/slug) থাকতে হবে।
+function mlsOkJsonStrict(t) {
+  const x = String(t || '').trim(); if (!x || !/^[\[{]/.test(x)) return false;
+  try { const j = JSON.parse(x); return Array.isArray(j) ? j.length > 0 : !!(j && (j.id || j.title || j.content || j.slug)); } catch (e) { return false; }
+}
 function mlsOkJson(t) {
   const x = String(t || '').trim();
   if (!x) return false;
@@ -3115,7 +3213,8 @@ async function mlsGetRaw(u, opt) {
     const dead = (Date.now() - (MLS_CURL_DEAD.get(host0) || 0)) < 600000;
     const good = MLS_GOOD.get(host0) || '';
     const pxs = opt.proxy ? (Array.isArray(opt.proxy) ? opt.proxy : [opt.proxy]) : mlsPxFor(host0);
-    const valid = t => (opt.json ? mlsOkJson(t) : mlsOkHtml(t));
+    const wpJson = /wp-json/i.test(u);
+    const valid = t => (opt.json ? (wpJson ? mlsOkJsonStrict(t) : mlsOkJson(t)) : mlsOkHtml(t));
     // ★ v1.28.20: **হোস্ট-ভিত্তিক কৌশল** (মাপা ২৮-১০-২০২৬, প্রোড):
     //   • mlsbd.co  — curl ব্লকড, প্রক্সি অনির্ভরযোগ্য, **রিডার ২-৪সে-তে নির্ভরযোগ্য** ⇒ রিডার-প্রথম
     //   • savelinks / gdflix / multicloud — **প্রক্সি ১-৩সে-তে কাজ করে** ⇒ প্রক্সি-প্রথম
@@ -3201,7 +3300,10 @@ async function mlsGetRaw(u, opt) {
         const tag = w.tag || 'x';
         mlsRec(u, 200, w.body.length, tag.split(':')[0]);
         if (tag === 'curl') MLS_GOOD.set(host0, 'curl');
-        else if (tag.indexOf('px:') === 0) MLS_GOOD.set(host0, tag);
+        else if (tag.indexOf('px:') === 0) {
+          MLS_GOOD.set(host0, tag);
+          if (isMlsHost) { try { mlsPxRec(tag.slice(3), true, Date.now() - T0); } catch (e) { } }   // v1.29.1: জেতা নোড = শিক্ষা
+        }
         else if (tag === 'reader') MLS_GOOD.set(host0, 'reader');
         MLS_GOOD_TS.set(host0, Date.now());
         if (DBG) console.error('[mlsd] ' + host0 + ' ✓ ' + tag + ' ' + w.body.length + 'b @' + (Date.now() - T0) + 'ms');
@@ -3847,14 +3949,17 @@ async function mlsTask(nameP, infoP, type, s, e) {
     }
     const SE = Number(s || 1), EP = Number(e || 1);
     const okPost = p => names.some(n => mlsTitleOk(n, p.title, year, type === 'series')) && (type === 'series' ? mlsEpOk(p.title, SE, EP) : true);
-    let cands = posts.filter(okPost).slice(0, 2);
+        // ★ v1.29.1 (ইউজার: "onek stream pacchi na"): আগে মিলে-যাওয়া **২টি** পোস্টই যথেষ্ট ধরা হতো —
+    //   এক পোস্টে শুধু 1080/480 আর অন্যটায় 2160/720 থাকলে দুটোই হারাত। এখন ৩টি পোস্টের sav-লিংক
+    //   একসাথে (রেজলভ-চেইন কিন্তু এখনো savTop=৩ ⇒ সময় বাড়ে না, শুধু কোয়ালিটি-বিকল্প বাড়ে)।
+    let cands = posts.filter(okPost).slice(0, 3);
     if (!cands.length) {                                   // র‍্যাংকড-সার্চ ফলব্যাক
       const ids = await mlsSearchIds(names, Math.min(4600, CAP - (Date.now() - T0) - 4200));
       const hitIds = ids.filter(x => okPost({ title: x.title }));
       if (hitIds.length) {
         const more = await mlsContent(hitIds, Math.min(5000, CAP - (Date.now() - T0) - 2600));
         if (more.length) posts = posts.concat(more);
-        cands = posts.filter(okPost).slice(0, 2);
+        cands = posts.filter(okPost).slice(0, 3);
         if (DBG) console.error('[mlsd] search-fallback ids=' + hitIds.length + ' content=' + more.length + ' @' + (Date.now() - T0) + 'ms');
       }
     }
@@ -3900,15 +4005,20 @@ async function mlsTask(nameP, infoP, type, s, e) {
     //   1080/720 কখনোই ফোরগ্রাউন্ডে আসত না, ইউজার শুধু এক কোয়ালিটি দেখত। এখন **আলাদা কোয়ালিটি** বেছে নিই
     //   (2160 → 1080 → 720 …), প্রথম ২টি ফোরগ্রাউন্ডে, বাকিগুলো ব্যাকগ্রাউন্ড-এনরিচে।
     const seenQ = new Set();
+    // ★ v1.29.1 (ইউজার: "onek stream pacchi na … low quality 480p,720p"): আগে **২টি** কোয়ালিটি
+    //   ফোরগ্রাউন্ডে যেত ⇒ প্রথম রেসপন্সে ২ কার্ড, আর সাইটের ক্রম না-মানা হলে ২টিই নিচু-কোয়ালিটি হতে পারত।
+    //   এখন কোয়ালিটি-নামানো ক্রমে সাজিয়ে **৩টি আলাদা কোয়ালিটি** (2160 → 1080 → 720 → 480) ফোরগ্রাউন্ডে,
+    //   বাকিগুলো ব্যাকগ্রাউন্ড-এ enrich (রিফ্রেশে যোগ হয়)। ৩টি আলাদা sav = ৩টি আলাদা রেজলভ-চেইন।
+    savList.sort((a, b) => (b.q || 0) - (a.q || 0));
     const savPick = [];
     for (const it of savList) {
       const k = it.q || 0;
-      if (seenQ.has(k) && savPick.length < 3) continue;
+      if (seenQ.has(k) && savPick.length < 4) continue;
       seenQ.add(k);
       savPick.push(it);
-      if (savPick.length >= 4) break;
+      if (savPick.length >= 5) break;
     }
-    const savTop = savPick.slice(0, 2);
+    const savTop = savPick.slice(0, 3);
     if (DBG) console.error('[mlsd] savOrder=' + savList.map(x => (x.q || 0) + ':' + x.id).join(',') + ' → top=' + savTop.map(x => x.q || 0).join(','));
     // ★ v1.29.0: ফোরগ্রাউন্ডে না-নেওয়া কোয়ালিটিগুলো (720/480) ব্যাকগ্রাউন্ডে — রেসপন্সের পরে যোগ হয়
     ENR_MORE = savList.filter(x => savTop.indexOf(x) < 0).slice(0, 4);

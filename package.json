@@ -1,6 +1,6 @@
 {
   "name": "vidy-addon",
-  "version": "1.28.34",
+  "version": "1.29.1",
   "main": "server.js",
   "scripts": {
     "start": "node --expose-gc --max-old-space-size=256 server.js",
