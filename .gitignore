@@ -4,3 +4,6 @@ node_modules/
 # স্থানীয় ব্যাকআপ/স্ক্র্যাচ — git-এ নয়
 server.js.*.bak
 pxbig.json
+
+# v1.29.0: রানটাইম ক্যাশ (কার্ড/gdflix-ফল) — স্ন্যাপশটে দরকার নেই
+mls_cache.json
