@@ -4191,8 +4191,12 @@ async function dtTask(nameP, infoP, type, s, e) {
     const hit = DT_C.get(ck);
     if (hit && Date.now() - hit.ts < 30 * 60 * 1000) { if (DBG) console.error('[dt] cache-hit n=' + hit.cards.length); return hit.cards.slice(); }
     // (১) সার্চ — পুরো নাম + সংক্ষিপ্ত কোর, সমান্তরাল
-    const core = name.replace(/\b(?:the|a|an)\b/gi, ' ').replace(/\s+/g, ' ').trim();
-    const qs = [...new Set([name, core, name.split(/\s+/).slice(0, 2).join(' ')])].filter(q => q && q.length >= 2).slice(0, 2);
+    // ★ v1.30.0-fix (মাপা: tt9426210-এ TMDB-নাম "The Making of Weathering with You" ⇒ শুধু প্রথম নাম
+    //   সার্চ করে ০ কার্ড, অথচ দ্বিতীয় নামটি নিখুঁত মিল) ⇒ **সব নামের** কোর-ভ্যারিয়েন্ট একসাথে সার্চ,
+    //   আর আইটেম-ফিল্টারেও যেকোনো একটি নাম মিললেই গ্রহণ।
+    const coreOf = v => String(v || '').replace(/\b(?:the|a|an)\b/gi, ' ').replace(/\s+/g, ' ').trim();
+    const qs = [...new Set([].concat.apply([], names.map(n => [n, coreOf(n), n.split(/\s+/).slice(0, 2).join(' ')])))]
+      .filter(q => q && q.length >= 2).slice(0, 3);
     const lists = await Promise.all(qs.map(q => dtJson('/anime/search?q=' + encodeURIComponent(q), Math.min(5000, CAP - (Date.now() - T0) - 4000))));
     let items = [];
     for (const arr of lists) if (Array.isArray(arr)) items = items.concat(arr);
@@ -4201,14 +4205,15 @@ async function dtTask(nameP, infoP, type, s, e) {
     const wantType = type === 'series' ? 'tv' : 'movie';
     // ★ v1.30.0: **নিখুঁত-নাম আগে** (মাপা: "Naruto" সার্চে Naruto Shippuden শীর্ষে পড়ে ⇒ ভুল সিজন) —
     //   নিখুঁত মিল=০, শুরু-মিল=১, শুধু-টোকেন-মিল=২; সমান হলে টাইপ-মিল (tv/movie) জেতে।
-    const nn = mlsNorm(name);
+    const nns = names.map(mlsNorm);
     const rank = x => {
       const c = mlsNorm(x.anime_name);
-      const t = c === nn ? 0 : (c.indexOf(nn) === 0 ? 1 : 2);
+      let t = 3;
+      for (const nn of nns) { const v = c === nn ? 0 : (c.indexOf(nn) === 0 ? 1 : 2); if (v < t) t = v; }
       return t * 10 + (x.type === wantType ? 0 : 1);
     };
     items.sort((a, b) => rank(a) - rank(b));
-    items = items.filter(x => dtTitleOk(name, x.anime_name, year)).slice(0, 3);
+    items = items.filter(x => names.some(n => dtTitleOk(n, x.anime_name, year))).slice(0, 3);
     if (!items.length) {
       // posts-সার্চ ফলব্যাক (মুভি/সিজন-পোস্ট) — slug → season/episode
       const ps = await dtJson('/posts/search?q=' + encodeURIComponent(name) + '&limit=5');
@@ -4219,7 +4224,7 @@ async function dtTask(nameP, infoP, type, s, e) {
         if (sl && sl.length && post.anime_slug) items = [{ slug: post.anime_slug, anime_name: name, type: 'tv' }];
         else if (post && post.post_slug && post.anime_name) items = [{ slug: (post.anime_slug || pt[0].slug), anime_name: post.anime_name, type: 'movie' }];
       }
-      if (!items.length) { if (DBG) console.error('[dt] no-match "' + name + '" q=' + qs.join('|')); return []; }
+      if (!items.length) { diag('dt', 'no-match "' + name + '" q=' + qs.join('|')); return []; }
     }
     // (২) ডিটেইল + watch_servers
     let det = null, used = null;
@@ -4247,7 +4252,7 @@ async function dtTask(nameP, infoP, type, s, e) {
         }
       }
     }
-    if (!det) { if (DBG) console.error('[dt] no-detail "' + name + '" @' + (Date.now() - T0) + 'ms'); return []; }
+    if (!det) { diag('dt', 'no-detail "' + name + '" slug=' + (items[0] && items[0].slug) + ' @' + (Date.now() - T0) + 'ms'); return []; }
     const svs = (det.watch_servers || []).slice(0, 3);
     const links = det.links || [];
     const titleTxt = [name, det.episode_name || '', (det.anime_name || used.anime_name) || ''].join(' ').slice(0, 120);
