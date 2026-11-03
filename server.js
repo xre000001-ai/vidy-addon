@@ -4145,17 +4145,39 @@ async function dtEmbedHls(embedUrl, ms, T0, CAP) {
 }
 // ★ v1.30.0: প্রমাণ = **হেডার-ছাড়া** ২০০ (Stremio/কোনো প্লেয়ারই হয়তো রেফারার পাঠাবে না) — রেফারার
 //   দিয়ে পাস-করা URL পরে ৪০৩ খেয়েছিল (মাপা)। তাই প্রোব প্রথমে রেফারার-ছাড়া, ব্যর্থ হলে তবেই রেফারার-সহ।
+// ★ v1.30.0: **তিন-ধাপ প্রমাণ** — master ২০০ হলেই কার্ড নয়। মাপা: One Piece-এর morencius-পথে
+//   master ২০০, অথচ তার ভ্যারিয়েন্টের সেগমেন্ট-হোস্ট (redirector.cdnsync.cloud) **৫২২** ⇒ প্লে হতো না।
+//   তাই: master → ভ্যারিয়েন্ট-প্লেলিস্ট → **প্রথম সেগমেন্ট** (Range ২কেবি) — তিনটিই পাস হলে তবেই কার্ড।
 async function dtProbeHls(u, referer, ms) {
+  const tmo = Math.max(2500, ms || 5000);
+  const get = (x, extra) => fetch(x, {
+    headers: Object.assign({ 'User-Agent': DT_UA, 'Accept': '*/*' }, extra || {}),
+    signal: AbortSignal.timeout(tmo)
+  });
   try {
-    const r = await fetch(u, {
-      headers: { 'User-Agent': DT_UA, 'Accept': '*/*' },
-      signal: AbortSignal.timeout(Math.max(2000, ms || 4500))
-    });
+    const r = await get(u);
     if (!r.ok) return null;
-    const t = await r.text();
+    let t = await r.text();
     if (!/^#EXTM3U/.test(t.trim())) return null;
-    const hs = [...t.matchAll(/RESOLUTION=(\d+)x(\d+)/g)].map(m => Number(m[2])).filter(Boolean);
-    return { h: hs.length ? Math.max.apply(null, hs) : 0, len: t.length };
+    let base = u, hs = [...t.matchAll(/RESOLUTION=(\d+)x(\d+)/g)].map(m => Number(m[2])).filter(Boolean);
+    let segs = t.split('\n').map(x => x.trim()).filter(x => x && x.charAt(0) !== '#');
+    if (segs.length && /\.m3u8(\?|$)/i.test(segs[0])) {           // ভ্যারিয়েন্ট-প্লেলিস্ট
+      const vu = new URL(segs[0], base).href;
+      const r2 = await get(vu);
+      if (!r2.ok) return null;
+      t = await r2.text();
+      if (!/^#EXTM3U/.test(t.trim())) return null;
+      base = vu;
+      segs = t.split('\n').map(x => x.trim()).filter(x => x && x.charAt(0) !== '#');
+    }
+    if (!segs.length) return null;
+    const su = new URL(segs[0], base).href;
+    const r3 = await get(su, { Range: 'bytes=0-2047' });
+    if (!(r3.status === 200 || r3.status === 206)) return null;
+    const ct = String(r3.headers.get('content-type') || '').toLowerCase();
+    if (/text\/html/.test(ct)) return null;                        // CF-এরর-পাতা = প্রমাণ নয়
+    try { await r3.arrayBuffer(); } catch (e) { }
+    return { h: hs.length ? Math.max.apply(null, hs) : 0, len: t.length, seg: su.slice(-28) };
   } catch (e) { return null; }
 }
 function dtAudio(text) {
@@ -4176,7 +4198,7 @@ const dtSizeH = (q0, links) => {   // HLS-উচ্চতা থেকে সব
   for (const x of arr) { const d2 = Math.abs((x.q || q0) - (q0 || x.q)); if (d2 < bd) { bd = d2; best = x; } }
   return { q: best.q || q0, size: best.s };   // v1.30.0-fix: property name (best.s)
 };
-async function dtTask(nameP, infoP, type, s, e) {
+async function dtTask(nameP, infoP, type, s, e, origin) {
   const T0 = Date.now();
   const CAP = Number(process.env.DTCAP || 9200);
   let INFO = null, NAME = '';
@@ -4290,7 +4312,8 @@ async function dtTask(nameP, infoP, type, s, e) {
             + (type === 'series' && SE > 0 ? '⬡ S' + SE + 'E' + EP : '⬡ Movie') + (size ? ' · ' + size : '') + '\n' + lines;
           cards.push({
             name: '⫥ ' + (qq || 'Auto') + ' ⫥', title: txt, description: txt,
-            quality: String(qq || ''), url: full, _srv: 'deadtoons',
+            // ★ IP-বাঁধা টোকেন ⇒ সবসময় আমাদের রিলে-পাথ (প্লেলিস্ট+সেগমেন্ট দুটোই)
+            quality: String(qq || ''), url: dhRelay(full, origin || ''), _srv: 'deadtoons', _direct: full,
             behaviorHints: { notWebReady: false, isBingeable: true, filename: 'deadtoons-' + (qq || 'auto') + '.m3u8' },
             bingeGroup: 'dt|' + mlsNorm(TTL) + '::' + (type === 'series' && SE > 0 ? 'S' + SE + 'E' + EP : 'm')
           });
@@ -12197,6 +12220,71 @@ function sresPut(k, body, partial) {
     while (STREAM_RES_CACHE.size > STREAM_RES_MAX) STREAM_RES_CACHE.delete(STREAM_RES_CACHE.keys().next().value);
   }
 }
+// ================= v1.30.0: Deadtoons HLS রিলে (/dh/) =================
+// ★ মাপা (২৯-১০-২০২৬, প্রোড): morencius/acek-CDN-এর `master.m3u8`-এ টোকেন **IP-বাঁধা** —
+//   যে IP মিন্ট করেছে সেখানেই ২০০, অন্য IP/প্রক্সিতে ৪০৩ (একই URL, একই UA)। Stremio-প্লেয়ার
+//   ব্যবহারকারীর নিজের IP দিয়ে টানে ⇒ সাইটের URL সরাসরি দিলে **সবসময় ৪০৩**।
+//   তাই: প্লেলিস্ট ও সেগমেন্ট দুটোই আমাদের রিলে দিয়ে যায় (`/dh/<b64url(টার্গেট)>/p.m3u8|s`) —
+//   সার্ভারই (বৈধ IP) আপস্ট্রিম টানে, প্লেলিস্টের সব URI আবার রিলে-পাথে লিখে দিই।
+//   (vidy-র /vh/ শুধু ম্যানিফেস্ট রিলে করে কারণ ওখানে সেগমেন্ট IP-বাঁধা নয়; এখানে নয়।)
+const DH_PC = new Map();                     // প্লেলিস্ট-ক্যাশ (৪ মিনিট)
+const dhB = u => Buffer.from(String(u)).toString('base64url');
+const dhIsPl = u => /\.m3u8(\?|$)/i.test(String(u));
+function dhRelay(u, origin) { return origin + '/dh/' + dhB(u) + '/' + (dhIsPl(u) ? 'p.m3u8' : 's'); }
+function dhRewrite(body, target, origin) {
+  return String(body || '').split('\n').map(line => {
+    const raw = line.trim();
+    if (!raw) return line;
+    if (raw.charAt(0) === '#') {
+      return line.replace(/URI="([^"]+)"/g, (m0, u1) => {
+        let abs = u1; try { abs = new URL(u1, target).toString(); } catch (e) { }
+        return 'URI="' + dhRelay(abs, origin) + '"';
+      });
+    }
+    let abs = raw; try { abs = new URL(raw, target).toString(); } catch (e) { }
+    return dhRelay(abs, origin);
+  }).join('\n');
+}
+async function dhServe(req, res, b64) {
+  let tgt = '';
+  try { tgt = Buffer.from(b64, 'base64url').toString('utf8'); } catch (e) { }
+  if (!/^https?:\/\//i.test(tgt)) { try { res.writeHead(400, { 'content-type': 'text/plain' }); } catch (e) { } return res.end('bad'); }
+  const origin = originOf(req);
+  const pl = dhIsPl(tgt);
+  try {
+    if (pl) {
+      const c = DH_PC.get(tgt);
+      if (c && Date.now() - c.ts < 240000) {
+        try { res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl', 'access-control-allow-origin': '*', 'cache-control': 'no-store', 'x-dh': 'HIT' }); } catch (e) { }
+        return res.end(c.txt);
+      }
+      const r = await fetch(tgt, { headers: { 'User-Agent': UA, 'Referer': 'https://morencius.com/', 'Accept': '*/*' }, redirect: 'follow', signal: AbortSignal.timeout(12000) });
+      if (r.status !== 200) { try { res.writeHead(502, { 'content-type': 'text/plain' }); } catch (e) { } return res.end('up ' + r.status); }
+      const txt = dhRewrite(await r.text(), tgt, origin);
+      if (DH_PC.size > 400) DH_PC.clear();
+      DH_PC.set(tgt, { ts: Date.now(), txt: txt });
+      try { res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl', 'access-control-allow-origin': '*', 'cache-control': 'no-store', 'x-dh': 'MISS' }); } catch (e) { }
+      return res.end(txt);
+    }
+    const hdr = { 'User-Agent': UA, 'Referer': 'https://morencius.com/', 'Accept': '*/*' };
+    if (req.headers.range) hdr.Range = String(req.headers.range);
+    const r = await fetch(tgt, { headers: hdr, redirect: 'follow', signal: AbortSignal.timeout(30000) });
+    const hh = {
+      'content-type': r.headers.get('content-type') || 'video/mp2t',
+      'access-control-allow-origin': '*', 'accept-ranges': 'bytes',
+      'cache-control': 'public, max-age=3600', 'x-accel-buffering': 'no'
+    };
+    for (const k of ['content-length', 'content-range']) { const v = r.headers.get(k); if (v) hh[k] = v; }
+    try { res.writeHead(r.status, hh); } catch (e) { }
+    if (!r.body) return res.end();
+    const { Readable } = require('stream');
+    Readable.fromWeb(r.body).on('error', () => { try { res.end(); } catch (e) { } }).pipe(res);
+    return;
+  } catch (e) {
+    try { res.writeHead(504, { 'content-type': 'text/plain' }); res.end('err'); } catch (e2) { }
+  }
+}
+
 // ================= v1.17.50: Vidy-p্লেলিস্ট-রিলে (/vh/) =================
 // ★ মাপা (২৩-১০-২০২৬): vidy-হাবের m3u8 **শুধু Referer: https://www.vidy.st/ থাকলেই ২০০** —
 //   রেফারার ছাড়া ৪০৩ (openresty)। Stremio/ExoPlayer অনেক সময় proxyHeaders প্রেরণ করে না ⇒
@@ -12812,7 +12900,7 @@ const server = http.createServer((req, res) => {
         : kind === 'gd' ? mlsGd(u, 9000)
         : kind === 'search' ? mlsPosts([u], 7000).then(a => ({ posts: a.length, titles: a.slice(0, 3).map(x => x.title.slice(0, 60)) }))
         : kind === 'sav' ? mlsSav(u, 6000)
-        : kind === 'dt' ? dtTask(Promise.resolve(u), Promise.resolve(null), u2.searchParams.get('t') === 'series' ? 'series' : 'movie', Number(u2.searchParams.get('s') || 0), Number(u2.searchParams.get('e') || 0))
+        : kind === 'dt' ? dtTask(Promise.resolve(u), Promise.resolve(null), u2.searchParams.get('t') === 'series' ? 'series' : 'movie', Number(u2.searchParams.get('s') || 0), Number(u2.searchParams.get('e') || 0), originOf(req))
         : kind === 'task' ? mlsTask(Promise.resolve(u), Promise.resolve(null), u2.searchParams.get('t') === 'series' ? 'series' : 'movie', Number(u2.searchParams.get('s') || 0), Number(u2.searchParams.get('e') || 0))
         : mlsWatch(u, 9000);
       return Promise.resolve(job).then(r => sendJson(res, 200, { ok: 1, kind: kind, r: r })).catch(e => sendJson(res, 200, { ok: 0, err: String(e && e.message) }));
@@ -13051,6 +13139,8 @@ const server = http.createServer((req, res) => {
     // ★ v1.17.50: vidy-প্লেলিস্ট-রিলে — /vh/<b64url(প্লেলিস্ট)>/p.m3u8 (রেফারার-লক-ভাঙা; সেগমেন্ট সরাসরি CDN)
     const vhR = p.match(/^\/vh\/([A-Za-z0-9_=-]{8,2400})\/p\.m3u8$/);
     if (vhR) return vhServe(req, res, vhR[1]);
+    const dhR = p.match(/^\/dh\/([A-Za-z0-9_=-]{8,3000})\/(?:p\.m3u8|s)$/);   // v1.30.0: Deadtoons রিলে
+    if (dhR) return dhServe(req, res, dhR[1]);
     // v1.15.90+97+99: **অডিও ও ভিডিও প্লেলিস্ট ইনলাইনার** — /mma/<b64url(প্লেলিস্ট)>/a.m3u8
     const mmAR = p.match(/^\/mma\/([A-Za-z0-9_=-]{8,2400})\/a\.m3u8$/);
     if (mmAR) return (async () => {
@@ -13376,7 +13466,7 @@ const server = http.createServer((req, res) => {
       const lookP = Promise.all([typeof tp !== 'undefined' ? tp : null, typeof nmP !== 'undefined' ? nmP : null, typeof infoP !== 'undefined' ? infoP : null].filter(Boolean)).catch(() => []); // v1.26.2
       const mlbP = mlbdOn(cfg) ? mlbdTask(tp, infoP, 'movie', 0, 0, (cfg && cfg.mlbr) || 0) : null;
       const mlsP = mlsOn(cfg) ? mlsTask(tp, infoP, 'movie', 0, 0) : null;
-      const dtP = dtOn(cfg) ? dtTask(tp, infoP, 'movie', 0, 0) : null;   // v1.30.0: Deadtoons/AniDisk
+      const dtP = dtOn(cfg) ? dtTask(tp, infoP, 'movie', 0, 0, originOf(req)) : null;   // v1.30.0: Deadtoons/AniDisk
       return withDeadline(withSources(vOn ? getSources(Number(m[1]), 'movie', null, null, '', cfg, tp) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: hmP, key: 'hm' }, { p: hdP, key: 'hd' }, { p: mlbP, key: 'mlb' }, { p: mlsP, key: 'mls' }, { p: dtP, key: 'dt' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0, p, lookP), 12000 /* v1.28.46: 10.2s → 12s — MLSBD-র ঠান্ডা-পথ (সার্চ+sav+watch/gd) ১০সে ছাড়ায়; NXHARD ১২সের সমান, তবু উত্তর হারায় না (মাপা: battery-তে কোনো রিগ্রেশন নয়) */, p).then(
 cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'movie', s: 0, e: 0 }).then(u => sendStreams(res, req.url, p, Date.now() - t0, u, RVA, cfg)); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
@@ -13404,7 +13494,7 @@ cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'movie', s: 0, e: 0 }
       const lookP = Promise.all([typeof tp !== 'undefined' ? tp : null, typeof nmP !== 'undefined' ? nmP : null, typeof infoP !== 'undefined' ? infoP : null].filter(Boolean)).catch(() => []); // v1.26.2
       const mlbP = mlbdOn(cfg) ? mlbdTask(tp, infoP, 'series', Number(m[2] || 1), Number(m[3] || 1), (cfg && cfg.mlbr) || 0) : null;
       const mlsP = mlsOn(cfg) ? mlsTask(tp, infoP, 'series', Number(m[2] || 1), Number(m[3] || 1)) : null;
-      const dtP = dtOn(cfg) ? dtTask(tp, infoP, 'series', Number(m[2] || 1), Number(m[3] || 1)) : null;   // v1.30.0
+      const dtP = dtOn(cfg) ? dtTask(tp, infoP, 'series', Number(m[2] || 1), Number(m[3] || 1), originOf(req)) : null;   // v1.30.0
       return withDeadline(withSources(vOn ? getSources(Number(m[1]), 'tv', Number(m[2] || 1), Number(m[3] || 1), '', cfg, tp) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: hmP, key: 'hm' }, { p: hdP, key: 'hd' }, { p: mlbP, key: 'mlb' }, { p: mlsP, key: 'mls' }, { p: dtP, key: 'dt' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0, p, lookP), 12000 /* v1.23.0 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
 cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'series', s: Number(m[2] || 1), e: Number(m[3] || 1) }).then(u => sendStreams(res, req.url, p, Date.now() - t0, u, RVA, cfg)); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
@@ -13431,7 +13521,7 @@ cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'series', s: Number(m
       const lookP = Promise.all([typeof tp !== 'undefined' ? tp : null, typeof nmP !== 'undefined' ? nmP : null, typeof infoP !== 'undefined' ? infoP : null].filter(Boolean)).catch(() => []); // v1.26.2
       const mlbP = mlbdOn(cfg) ? mlbdTask(nmP, infoP, 'movie', 0, 0, (cfg && cfg.mlbr) || 0) : null;
       const mlsP = mlsOn(cfg) ? mlsTask(nmP, infoP, 'movie', 0, 0) : null;
-      const dtP = dtOn(cfg) ? dtTask(nmP, infoP, 'movie', 0, 0) : null;   // v1.30.0
+      const dtP = dtOn(cfg) ? dtTask(nmP, infoP, 'movie', 0, 0, originOf(req)) : null;   // v1.30.0
       return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'movie', null, null, info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: hmP, key: 'hm' }, { p: hdP, key: 'hd' }, { p: mlbP, key: 'mlb' }, { p: mlsP, key: 'mls' }, { p: dtP, key: 'dt' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0, p, lookP), 12000 /* v1.23.0 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
 cards => { if (DBG) console.error('[rt] cards-ready @' + (Date.now() - t0) + 'ms n=' + (cards || []).length); Promise.all([infoP, nmP]).then(([info, nm]) => { if (DBG) console.error('[rt] info/nm ready @' + (Date.now() - t0) + 'ms'); return unifyCards(cards, { tmdbId: info && info.id, title: (info && info.name) || nm, type: 'movie', s: 0, e: 0, year: info && info.year }); }).then(u => { if (DBG) console.error('[rt] sending @' + (Date.now() - t0) + 'ms'); sendStreams(res, req.url, p, Date.now() - t0, u, RVA, cfg); }); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
@@ -13459,7 +13549,7 @@ cards => { if (DBG) console.error('[rt] cards-ready @' + (Date.now() - t0) + 'ms
       const lookP = Promise.all([typeof tp !== 'undefined' ? tp : null, typeof nmP !== 'undefined' ? nmP : null, typeof infoP !== 'undefined' ? infoP : null].filter(Boolean)).catch(() => []); // v1.26.2
       const mlbP = mlbdOn(cfg) ? mlbdTask(nmP, infoP, 'series', Number(m[2]), Number(m[3]), (cfg && cfg.mlbr) || 0) : null;
       const mlsP = mlsOn(cfg) ? mlsTask(nmP, infoP, 'series', Number(m[2]), Number(m[3])) : null;
-      const dtP = dtOn(cfg) ? dtTask(nmP, infoP, 'series', Number(m[2]), Number(m[3])) : null;   // v1.30.0
+      const dtP = dtOn(cfg) ? dtTask(nmP, infoP, 'series', Number(m[2]), Number(m[3]), originOf(req)) : null;   // v1.30.0
       return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'tv', Number(m[2]), Number(m[3]), info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: hmP, key: 'hm' }, { p: hdP, key: 'hd' }, { p: mlbP, key: 'mlb' }, { p: mlsP, key: 'mls' }, { p: dtP, key: 'dt' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0, p, lookP), 12000 /* v1.23.0 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
 cards => { Promise.all([infoP, nmP]).then(([info, nm]) => unifyCards(cards, { tmdbId: info && info.id, title: (info && info.name) || nm, type: 'series', s: Number(m[2]), e: Number(m[3]), year: info && info.year })).then(u => sendStreams(res, req.url, p, Date.now() - t0, u, RVA, cfg)); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
@@ -13487,7 +13577,7 @@ cards => { Promise.all([infoP, nmP]).then(([info, nm]) => unifyCards(cards, { tm
       const lookP = Promise.all([typeof tp !== 'undefined' ? tp : null, typeof nmP !== 'undefined' ? nmP : null, typeof infoP !== 'undefined' ? infoP : null].filter(Boolean)).catch(() => []); // v1.26.2
       const mlbP = mlbdOn(cfg) ? mlbdTask(nmP, infoP, 'series', 1, 1, (cfg && cfg.mlbr) || 0) : null;
       const mlsP = mlsOn(cfg) ? mlsTask(nmP, infoP, 'series', 1, 1) : null;
-      const dtP = dtOn(cfg) ? dtTask(nmP, infoP, 'series', 1, 1) : null;   // v1.30.0
+      const dtP = dtOn(cfg) ? dtTask(nmP, infoP, 'series', 1, 1, originOf(req)) : null;   // v1.30.0
       return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'tv', 1, 1, info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: hmP, key: 'hm' }, { p: hdP, key: 'hd' }, { p: mlbP, key: 'mlb' }, { p: mlsP, key: 'mls' }, { p: dtP, key: 'dt' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0, p, lookP), 12000 /* v1.15.26 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
 cards => { Promise.all([infoP, nmP]).then(([info, nm]) => unifyCards(cards, { tmdbId: info && info.id, title: (info && info.name) || nm, type: 'series', s: 1, e: 1, year: info && info.year })).then(u => sendStreams(res, req.url, p + ' [no-s:e]', Date.now() - t0, u, RVA, cfg)); },
         e => { logReq(p + ' [no-s:e]', Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
