@@ -4150,8 +4150,9 @@ async function dtEmbedHls(embedUrl, ms, T0, CAP) {
 //   তাই: master → ভ্যারিয়েন্ট-প্লেলিস্ট → **প্রথম সেগমেন্ট** (Range ২কেবি) — তিনটিই পাস হলে তবেই কার্ড।
 async function dtProbeHls(u, referer, ms) {
   const tmo = Math.max(2500, ms || 5000);
+  // ★ v1.30.0: প্রোব = রিলে-এর হুবহু কপি (একই UA+Referer), নইলে প্রমাণ আর বাস্তব-প্লে আলাদা হয়।
   const get = (x, extra) => fetch(x, {
-    headers: Object.assign({ 'User-Agent': DT_UA, 'Accept': '*/*' }, extra || {}),
+    headers: Object.assign({ 'User-Agent': DT_UA, 'Accept': '*/*', 'Referer': 'https://morencius.com/' }, extra || {}),
     signal: AbortSignal.timeout(tmo)
   });
   try {
@@ -4172,7 +4173,9 @@ async function dtProbeHls(u, referer, ms) {
     }
     if (!segs.length) return null;
     const su = new URL(segs[0], base).href;
-    const r3 = await get(su, { Range: 'bytes=0-2047' });
+    let r3 = await get(su, { Range: 'bytes=0-2047' });
+    // ★ ৫xx = CDN-নোডের ক্ষণিক ত্রুটি (মাপা: cdnsync-এ ৫২২) ⇒ একবার রিট্রাই, তবেই সৎ-শূন্য
+    if (r3.status >= 500) { await new Promise(r => setTimeout(r, 450)); r3 = await get(su, { Range: 'bytes=0-2047' }); }
     if (!(r3.status === 200 || r3.status === 206)) return null;
     const ct = String(r3.headers.get('content-type') || '').toLowerCase();
     if (/text\/html/.test(ct)) return null;                        // CF-এরর-পাতা = প্রমাণ নয়
