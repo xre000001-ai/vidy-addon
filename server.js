@@ -4133,17 +4133,22 @@ async function dtEmbedHls(embedUrl, ms, T0, CAP) {
     let h = await r.text();
     if (/eval\(function\(p,a,c,k,e/.test(h)) h += '\n' + dtUnpackJs(h);
     const out = [];
-    for (const re of [/"hls4"\s*:\s*"([^"]+)"/, /"hls2"\s*:\s*"([^"]+)"/, /"hls3"\s*:\s*"([^"]+)"/, /file\s*:\s*["']([^"']+\.m3u8[^"']*)["']/]) {
+    // ★ v1.30.0-fix২ (মাপা: `hls4` = morencius-সেশন-বাঁধা রিলে — কয়েক মিনিট পরে/অন্য ক্লায়েন্টে **403**;
+    //   `hls2` = acek-cdn-এর আসল master.m3u8, **রেফারার ছাড়াই ২০০**) ⇒ ক্রম বদল: hls2 আগে, তারপর
+    //   প্লেলিস্ট-লিটারাল, hls4 সবার শেষে (ওটা প্রমাণ না-হলে কার্ড হবে না)।
+    for (const re of [/"hls2"\s*:\s*"([^"]+)"/, /file\s*:\s*["']([^"']+\.m3u8[^"']*)["']/, /"hls4"\s*:\s*"([^"]+)"/, /"hls3"\s*:\s*"([^"]+)"/]) {
       const m = h.match(re);
       if (m && out.indexOf(m[1]) < 0) out.push(m[1]);
     }
     return out;
   } catch (e) { return []; }
 }
+// ★ v1.30.0: প্রমাণ = **হেডার-ছাড়া** ২০০ (Stremio/কোনো প্লেয়ারই হয়তো রেফারার পাঠাবে না) — রেফারার
+//   দিয়ে পাস-করা URL পরে ৪০৩ খেয়েছিল (মাপা)। তাই প্রোব প্রথমে রেফারার-ছাড়া, ব্যর্থ হলে তবেই রেফারার-সহ।
 async function dtProbeHls(u, referer, ms) {
   try {
     const r = await fetch(u, {
-      headers: { 'User-Agent': DT_UA, 'Accept': '*/*', 'Referer': referer || DT_REF },
+      headers: { 'User-Agent': DT_UA, 'Accept': '*/*' },
       signal: AbortSignal.timeout(Math.max(2000, ms || 4500))
     });
     if (!r.ok) return null;
