@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.32.0';
+const VERSION = '1.32.1';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -1914,7 +1914,7 @@ const V8_HEAP_MB = (() => { try { return Math.round(require('v8').getHeapStatist
 if (process.env.MEMW !== '0') setInterval(() => {
   try {
     const hu = Math.round(process.memoryUsage().heapUsed / 1048576);
-    const thr = Number(process.env.HEAPTHR || Math.round(V8_HEAP_MB * 0.55));
+    const thr = Number(process.env.HEAPTHR || Math.round(V8_HEAP_MB * 0.45));   // v1.32.1: ৫৫→৪৫% (ফাস্ট-ফায়ার-স্পাইক)
     if (hu > thr) {
       const n = (typeof memPurgeAll === 'function') ? memPurgeAll(hu > thr * 1.35 ? 2 : 1) : 0;
       if (global.gc) { try { global.gc(); } catch (e) { } }
@@ -1922,7 +1922,7 @@ if (process.env.MEMW !== '0') setInterval(() => {
       if (process.env.VDBG || process.env.MEMW === '2') console.error('[heap] ' + hu + 'MB > ' + thr + 'MB (limit ' + V8_HEAP_MB + 'MB) ⇒ purge+gc cleared=' + n);
     }
   } catch (e) { }
-}, 5000).unref();
+}, 2000).unref();
 // ★ v1.28.3-M2: idle-ছাঁটা — ব্যবহারকারী না থাকলেও প্রতি ৩ মিনিটে বাসি-ক্যাশ মুছে দিই
 if (process.env.MEMW !== '0') setInterval(() => { try { if (typeof memPurgeAll === 'function') memPurgeAll(0); } catch (e) { } }, Number(process.env.MEMPIDLE || 180000)).unref();
 // ================= v1.28.3-R1: নিরাপদ **নিজে-রিসাইকেল** (ধীর-লিকের স্থায়ী ওষুধ) =================
@@ -8999,8 +8999,315 @@ function m4pWrap(u, origin) { // কার্ড-ইউআরএল → আম�
   } catch { return u; }
 }
 
+// ===================== v1.32.1: Movies4u — সাইট পুরো নতুন গঠনে (পুরোনো lookup.php API মৃত) =====================
+// ★★ মাপা (৬-১১-২০২৬): `new1..new4.movies4u.garden/lookup.php` এখন **302 → google.com/search?q=movies4u.bot**,
+//   আর movies4u.bot → 301 → movies4u.eco (নকল "রিভিউ" পাতা)। অর্থাৎ পুরোনো JSON-সার্চ-পথ চিরতরে শেষ ⇒
+//   m4u সোর্স প্রতি রিকোয়েস্টে ০ কার্ড (প্রোড `/_srcstats`: calls=24 cards=0 avgMs=3199)।
+//   নতুন জীবিত সাইট: **movies4u.one** (DataLife-Engine) — সার্চ = POST `do=search&subaction=search&story=<q>`
+//   (GET `?s=` উপেক্ষা করে, তাই আগের কোড কখনোই হিট পেত না)। চেইন (মাপা, curl-এ):
+//     post → `nexdrive.help/genxfm<id>/` (বা nexdrive.vip) → `fast-dl.one/dl/<code>` →
+//     `dl.php?code=…&secret=…` (Chrome-UA + Referer লাগে, নইলে CF challenge 403) →
+//     **302 ⇒ https://video-downloads.googleusercontent.com/…** (আসল ফাইল, `content-type: video/mkv`)
+//   লাইভ-প্রমাণ = **HEAD** (200 + video/* + content-length) — Range এই হোস্টে নেই, তাই ২০৬-নয়, HEAD-প্রমাণ।
+//   সিরিজ-পোস্টগুলো একই ছাঁচে: `Season 1 … ALL Episodes` বা `720p (1-4)` ব্যাচ ⇒ সিজন-প্যাক কার্ড।
+//   vgmlinks.* পথে **Cloudflare Turnstile** — সেটি সৎভাবে বাদ (কার্ড নয়)।
+const M4U_UA4 = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+const M4U_HBASES = ['https://movies4u.one', 'https://movies4u.living', 'https://movies4u.icu', 'https://movies4u.baby', 'https://movies4u.bot'];
+let M4U_HLIVE = process.env.M4UHB || '', M4U_HPAT = 0;
+const M4U_SRC = new Map();   // search-q → {ts, posts}
+const M4U_PGC = new Map();   // post-url → {ts, ents}
+const M4U_FLY = new Map();   // nexdrive-url → {ts, url, ct, cl}
+// ★★ মাপা (৬-১১-২০২৬): এই তিনটি হোস্ট (movies4u.one / nexdrive.* / fast-dl.one) Cloudflare-এ আছে আর
+//   **undici-fetch টিএলএস-ফিঙ্গারপ্রিন্টে চ্যালেঞ্জ/কানেকশন-ড্রপ খায়** (লগে st=0), অথচ একই আইপি থেকে
+//   curl ২০০ দেয় — এটাই কোডবেসের পুরোনো মাপা-সত্য (mlsbd.co-র নোট, v1.28.x)। তাই m4u-চেইনের সব হপ
+//   **curl-সাবপ্রসেস** দিয়ে (execFile, shell নয়; async — ইভেন্ট-লুপ আটকায় না)।
+const M4U_CURL = { ok: null };
+function m4uCurlOK() { if (M4U_CURL.ok === null) { try { require('child_process').execFileSync('curl', ['--version'], { stdio: 'ignore' }); M4U_CURL.ok = true; } catch (e) { M4U_CURL.ok = false; } } return M4U_CURL.ok; }
+// ★ গ্লোবাল-সেমাফোর: ফাস্ট-ফায়ার (একাধিক টাইটেল একসাথে) চাপে curl-প্রসেস ও বাফার একসাথে না জমুক
+const M4U_SEM = { n: 0, q: [], max: Number(process.env.M4UCONC || 6) };
+function m4uSemAcq() {
+  if (M4U_SEM.n < M4U_SEM.max) { M4U_SEM.n++; return Promise.resolve(); }
+  return new Promise(r => M4U_SEM.q.push(r));
+}
+function m4uSemRel() { M4U_SEM.n--; const nx = M4U_SEM.q.shift(); if (nx) { M4U_SEM.n++; nx(); } }
+function m4uCurl(u, opt) {
+  opt = opt || {};
+  return m4uSemAcq().then(() => new Promise(resolve => {
+    const _fin = v => { m4uSemRel(); resolve(v); };
+    m4uCurl0(u, opt).then(_fin, () => _fin(null));
+  }));
+}
+function m4uCurl0(u, opt) {
+  opt = opt || {};
+  const cp = require('child_process'), fs = require('fs');
+  if (!m4uCurlOK()) return Promise.resolve(null);
+  const tag = '/tmp/m4u_' + process.pid + '_' + Math.random().toString(36).slice(2, 8);
+  const out = tag + '.o', hdr = tag + '.h';
+  const a = ['-g', '-s', '-k', '--compressed', '-m', String(Math.max(2, Math.round((opt.ms || 6000) / 1000))),
+    '-A', M4U_UA4, '-e', opt.ref || u,
+    '-H', 'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    '-H', 'Accept-Language: en-US,en;q=0.9'];
+  a.push('--max-filesize', String(opt.maxBody || 1500000));   // ★ মাপা-দুর্ঘটনা: একটি ভুল-লিংক (raw .mkv) পুরো ফাইল /tmp-তে নামিয়ে ডিস্ক-ভরাট + সার্ভার-ক্র্যাশ করিয়েছিল
+  if (!opt.noredir) a.push('-L', '--max-redirs', '4');
+  if (opt.head) a.push('-I');
+  if (opt.data) { a.push('--data', opt.data, '-H', 'Content-Type: application/x-www-form-urlencoded'); }
+  a.push('-D', hdr, '-o', out, '-w', '%{http_code}|%{content_type}|%{size_download}|%{url_effective}');
+  a.push(u);
+  return new Promise(resolve => {
+    let done = false;
+    const fin = v => { if (done) return; done = true; try { fs.unlink(out, () => { }); fs.unlink(hdr, () => { }); } catch (e) { } resolve(v); };
+    try {
+      cp.execFile('curl', a, { maxBuffer: 8 * 1024 * 1024, timeout: Math.max(3000, (opt.ms || 6000) + 900) }, (err, stdout) => {
+        let body = ''; try { body = fs.readFileSync(out, 'utf8'); } catch (e) { }
+        let h = ''; try { h = fs.readFileSync(hdr, 'utf8'); } catch (e) { }
+        const meta = String(stdout || '').trim().split('|');
+        fin({ st: parseInt(meta[0], 10) || 0, ct: meta[1] || '', size: Number(meta[2] || 0) || 0, eu: meta[3] || u, body: body, hdr: h, err: err ? 'curl' : '' });
+      });
+    } catch (e) { fin(null); }
+  });
+}
+async function m4uHReq(u, o) {
+  o = o || {};
+  const r = await m4uCurl(u, { ms: o.tmo, ref: o.ref, data: o.body, head: o.method === 'HEAD', noredirect: o.manual });
+  if (!r) return { st: 0, body: '', url: u, loc: '', ct: '', cl: 0, err: 'nocurl' };
+  const h = String(r.hdr || '');
+  const loc = (h.match(/^location:\s*(\S+)/mi) || [])[1] || '';
+  const cl = Number((h.match(/^content-length:\s*(\d+)/mi) || [])[1] || r.size || 0);
+  return { st: r.st, body: r.body, url: r.eu || u, loc: loc, ct: r.ct || '', cl: cl };
+}
+function m4uHHits(html) {   // পোস্ট-লিংক: /<id>-<slug>.html
+  const seen = new Set(), out = [];
+  try {
+    for (const m of String(html).matchAll(/href="(https?:\/\/[^"/]+\/(\d{3,6}-[^"/]+?)\.html)"/g)) {
+      if (seen.has(m[2])) continue; seen.add(m[2]);
+      out.push({ url: m[1], slug: m[2] });
+    }
+  } catch (e) { }
+  return out;
+}
+async function m4uHB() {   // জীবিত বেস (১৫ মিনিট ক্যাশ) — POST-সার্চেই যাচাই
+  if (M4U_HLIVE && Date.now() - M4U_HPAT < 15 * 60e3) return M4U_HLIVE;
+  for (const b of (M4U_HLIVE ? [M4U_HLIVE] : []).concat(M4U_HBASES)) {
+    const r = await m4uHReq(b + '/', { method: 'POST', body: 'do=search&subaction=search&story=the', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, tmo: 5000 });
+    if (r.st === 200 && m4uHHits(r.body).length) { if (M4U_HLIVE && b !== M4U_HLIVE && DBG) console.error('[m4u2] base → ' + b); M4U_HLIVE = b; M4U_HPAT = Date.now(); return b; }
+  }
+  if (DBG) console.error('[m4u2] কোনো জীবিত বেস নেই');
+  return M4U_HLIVE || '';
+}
+async function m4uHSearch(q) {
+  const hit = M4U_SRC.get(q); if (hit && Date.now() - hit.ts < 30 * 60e3) return hit.posts;
+  const b = await m4uHB(); if (!b) return [];
+  const r = await m4uHReq(b + '/', { method: 'POST', body: 'do=search&subaction=search&story=' + encodeURIComponent(q), headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, ref: b + '/', tmo: 6000 });
+  const posts = m4uHHits(r.body);
+  if (posts.length) { if (M4U_SRC.size > 60) M4U_SRC.clear(); M4U_SRC.set(q, { ts: Date.now(), posts: posts }); }
+  if (DBG) console.error('[m4u2] search "' + q + '" n=' + posts.length + ' st=' + r.st + ' base=' + b + (r.err ? ' err=' + r.err : ''));
+  return posts;
+}
+// ★ পরিমাপ (৬-১১-২০২৬): সাইটের DLE-সার্চ পুরোনো ক্লাসিক খুঁজে পায় না — "Interstellar"/"Inception"/
+//   "The Dark Knight" সার্চে সাম্প্রতিক পোস্টগুলোই ফেরে, অথচ **sitemap.xml-এ ওগুলো আছে** (১৩,৫০০ পোস্ট)।
+//   তাই ফলব্যাক-ইনডেক্স: একবার sitemap নামিয়ে (৬ঘণ্টা ক্যাশ) স্লাগ-ম্যাচিং — সার্চ-ব্যর্থ টাইটেলও মেলে।
+const M4U_IDX = { ts: 0, list: null };
+async function m4uHIndex() {
+  if (M4U_IDX.list && Date.now() - M4U_IDX.ts < 6 * 3600e3) return M4U_IDX.list;
+  const b = M4U_HLIVE || 'https://movies4u.one';
+  const r = await m4uCurl(b + '/sitemap.xml', { ms: 12000, ref: b + '/', maxBody: 9000000 });
+  if (!r || r.st !== 200 || !r.body || r.body.length < 1000) return M4U_IDX.list || [];
+  const out = [];
+  for (const m of r.body.matchAll(/<loc>\s*https?:\/\/[^/<]+\/(\d{3,6}-[^<\/]+?)\.html\s*<\/loc>/gi)) out.push(m[1]);
+  if (!out.length) return M4U_IDX.list || [];
+  M4U_IDX.list = out; M4U_IDX.ts = Date.now();
+  if (DBG) console.error('[m4u2] heap@index ' + Math.round(process.memoryUsage().heapUsed / 1048576) + 'MB');
+  if (DBG) console.error('[m4u2] index n=' + out.length);
+  return out;
+}
+async function m4uHIndexPick(T, Y, season) {
+  const list = await m4uHIndex();
+  if (!list || !list.length) return [];
+  const posts = list.map(sl => ({ url: (M4U_HLIVE || 'https://movies4u.one') + '/' + sl + '.html', slug: sl }));
+  return m4uHPickAll(posts, T, Y, season).slice(0, 3);
+}
+function m4uHToks(s) { return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().split(' ').filter(x => x.length > 1); }
+function m4uHPickAll(posts, T, Y, season) {   // স্কোর-ক্রমে সব প্রার্থী (প্রথম-পোস্ট-মৃত হলে পরেরটা)
+  // ★ মাপা (৬-১১-২০২৬): DLE-সার্চ শিথিল (OR-ধাঁচের) — "the dark knight"-এ Detective Knight,
+  //   "house of gucci"-তে Bridge of Spies ফেরে। তাই **সব টাইটেল-টোকেন থাকতেই হবে**, নইলে বাতিল;
+  //   তারপর বছর (+২৫/-২০) ও সিজন (+১০) দিয়ে সাজানো।
+  const tn = m4uHToks(T), scored = [];
+  for (const p of posts) {
+    const sn = m4uHToks(p.slug.replace(/^\d+-/, ''));
+    const text = ' ' + sn.join(' ') + ' ';
+    let miss = 0;
+    for (const t of tn) { if (text.indexOf(t) < 0) miss++; }
+    if (miss) continue;                       // টাইটেল-মিল ছাড়া প্রার্থী নয়
+    let sc = 60;
+    const yrs = (text.match(/\b(19\d{2}|20\d{2})\b/g) || []).map(Number);
+    if (Y && yrs.length) {
+      if (yrs.indexOf(Y) >= 0) sc += 25;
+      else if (yrs.indexOf(Y - 1) >= 0 || yrs.indexOf(Y + 1) >= 0) sc += 12;
+      else sc -= 20;                          // ভুল-বছরের রিমেক/সিকোয়েল
+    }
+    if (season) {
+      if (new RegExp('season[- ]?0*' + season + '\\b').test(text)) sc += 10;
+      else if (/season|complete|all[- ]episodes/.test(text)) sc -= 6;
+    }
+    if (/\bcam\b|predvd|hdcam/.test(text)) sc -= 10;
+    scored.push({ p: p, sc: sc });
+  }
+  scored.sort((a, b) => b.sc - a.sc);
+  const out = scored.map(x => x.p);
+  if (DBG) console.error('[m4u2] pick "' + String(T).slice(0, 24) + '" → ' + (out[0] ? out[0].slug.slice(0, 46) : 'none') + ' n=' + out.length);
+  return out;
+}
+function m4uHPick(posts, T, Y, season) { return m4uHPickAll(posts, T, Y, season)[0] || null; }
+function m4uHParse(html) {   // পোস্ট-পেজ → ডাউনলোড-এন্ট্রি (কোয়ালিটি/সাইজ/এপিসোড)
+  const i = String(html).search(/Download Links/i);
+  const seg = String(html).slice(i > 0 ? i : 0, (i > 0 ? i : 0) + 90000);
+  const heads = [];
+  for (const m of seg.matchAll(/<h3[^>]*>([\s\S]*?)<\/h3>/g)) {
+    const t = m[1].replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
+    if (t) heads.push({ i: m.index, t: t });
+  }
+  const out = [];
+  for (const m of seg.matchAll(/<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g)) {
+    const href = m[1], at = m.index;
+    if (!/^https?:\/\//.test(href) || /telegram|movies4u\.[a-z]+$/i.test(href)) continue;
+    const txt = m[2].replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
+    let ctx = '', qctx = '';
+    for (const h of heads) { if (h.i < at) { ctx = h.t; if (/\b(?:2160|1440|1080|720|480|360)p\b/i.test(h.t)) qctx = h.t; } else break; }
+    if (!/download|\[/i.test(txt) && !/nexdrive|fast-dl|vgmlinks/i.test(href)) continue;
+    // ★ কেবল ডাউনলোড-হাব হোস্ট (নইলে raw .mkv/পোস্ট-লিংক ধরে শত-MB ডাউনলোড শুরু হয় — মাপা দুর্ঘটনা)
+    const host = (href.match(/^https?:\/\/([^/]+)/) || [])[1] || '';
+    if (!/^(?:[a-z0-9\-]+\.)*(?:nexdrive|fast-dl|vgmlinks)\./i.test(host)) continue;
+    const q = (txt.match(/\b(2160|1440|1080|720|480|360)p\b/i) || qctx.match(/\b(2160|1440|1080|720|480|360)p\b/i) || ctx.match(/\b(2160|1440|1080|720|480|360)p\b/i) || [])[1] || '';
+    const szm = (txt.match(/\[([\d.]+)\s*(GB|MB)\]/i) || ctx.match(/\[([\d.]+)\s*(GB|MB)\]/i) || []);
+    const epm = ctx.match(/(?:episode|ep)\s*0*(\d{1,4})/i);
+    const rng = (ctx + ' ' + txt).match(/\((\d{1,3})\s*[-–]\s*(\d{1,3})\)/);
+    out.push({
+      href: href, host: (href.match(/^https?:\/\/([^/]+)/) || [])[1] || '', q: q,
+      size: szm[1] ? (szm[1] + ' ' + String(szm[2]).toUpperCase()) : '',
+      ep: epm ? Number(epm[1]) : 0, epA: rng ? Number(rng[1]) : 0, epB: rng ? Number(rng[2]) : 0,
+      pack: /all[\s\-]*episodes|complete|season/i.test(ctx + ' ' + txt)
+    });
+  }
+  return out;
+}
+async function m4uHFast(nexUrl) {   // nexdrive → fast-dl → 302 (Google direct) + HEAD-প্রমাণ
+  const hit = M4U_FLY.get(nexUrl); if (hit && Date.now() - hit.ts < 5 * 60e3) return hit;
+  const q0 = Date.now(); const stp = {}; let _q = q0;
+  const mark = k => { stp[k] = Date.now() - _q; _q = Date.now(); };
+  let pg = await m4uHReq(nexUrl, { tmo: 5000 }); mark('nd');
+  if (!pg.st && process.env.M4URETRY !== '0') pg = await m4uHReq(nexUrl, { tmo: 4500 });   // নেট-ঝাঁকুনিতে একবার পুনঃচেষ্টা
+  const code = String(pg.body).match(/https?:\/\/([a-z0-9.\-]*fast-dl\.[a-z]+)\/dl\/([a-z0-9]+)/i);
+  if (!code || !code[2]) {
+    const ts = /turnstile|verify that you are human/i.test(pg.body);
+    if (DBG) console.error('[m4u2] fastdl-miss ' + String(nexUrl).slice(0, 46) + ' st=' + pg.st + (pg.err ? ' err=' + pg.err : '') + (ts ? ' (Turnstile)' : ''));
+    return { ts: Date.now(), url: '', why: ts ? 'turnstile' : 'no-fastdl' };
+  }
+  const host = 'https://' + code[1], c = code[2];
+  // ★★ মাপা (৬-১১-২০২৬): `dl.php?code=<code>` **secret ছাড়াই** ৩০২ দেয় ⇒ মাঝের `/dl/<code>` পেজ-হপ
+  //    পুরো বাদ (প্রতি-এন্ট্রিতে ~০.৪সে + curl-প্রসেস-চাপ কমে)। ব্যর্থ হলে তবেই পেজ থেকে secret।
+  let p2 = { body: '' };
+  let r3 = await m4uHReq(host + '/dl/dl.php?code=' + c, { ref: host + '/dl/' + c, manual: true, tmo: 5500 }); mark('dl');
+  if (!/^https?:/.test(r3.loc || '')) {
+    p2 = await m4uHReq(host + '/dl/' + c, { ref: host + '/', tmo: 4500 }); mark('fd');
+    const sec = (String(p2.body).match(/dl\.php\?code=[^"']+/) || [])[0];
+    if (!sec) { if (DBG) console.error('[m4u2] no-secret ' + c + ' st=' + p2.st); return { ts: Date.now(), url: '', why: 'no-secret' }; }
+    r3 = await m4uHReq(host + '/dl/' + sec.replace(/&amp;/g, '&'), { ref: host + '/dl/' + c, manual: true, tmo: 6000 }); mark('dl2');
+  }
+  let loc = r3.loc || '';
+  if (!/^https?:/.test(loc)) { if (DBG) console.error('[m4u2] no-302 ' + c + ' st=' + r3.st); return { ts: Date.now(), url: '', why: 'no-302' }; }
+  const hd = await m4uHReq(loc, { method: 'HEAD', ref: host + '/', tmo: 5000 }); mark('head');
+  const rec = { ts: Date.now(), url: loc, ct: hd.ct, cl: hd.cl || r3.cl, st: hd.st };
+  if (!(hd.st === 200 || hd.st === 206) || !hd.cl || /text\/html/i.test(hd.ct)) {
+    if (DBG) console.error('[m4u2] head-fail ' + c + ' st=' + hd.st + ' ct=' + hd.ct + ' cl=' + hd.cl);
+    return { ts: Date.now(), url: '', why: 'head-fail' };
+  }
+  if (M4U_FLY.size > 100) M4U_FLY.clear();
+  M4U_FLY.set(nexUrl, rec);
+  if (DBG) console.error('[m4u2] ok ' + c + ' ' + (rec.cl / 1073741824).toFixed(2) + 'GB ' + rec.ct + ' ' + JSON.stringify(stp) + ' tot=' + (Date.now() - q0) + 'ms');
+  return rec;
+}
+async function m4uRevive(tmdbId, title, type, s, e, origin, maxh) {
+  const T0 = Date.now();
+  const T = String(title || '').trim() || (await nameForTmdb(tmdbId, type === 'series' ? 'tv' : 'movie').catch(() => ''));
+  if (!T) return [];
+  const isS = type === 'series';
+  const Y = await skyYear(tmdbId, isS).catch(() => 0);
+  const q = isS ? (T + ' season ' + (s || 1)) : T;
+  const posts = await m4uHSearch(q);
+  if (DBG) console.error('[m4u2] heap@search ' + Math.round(process.memoryUsage().heapUsed / 1048576) + 'MB');
+  if (!posts.length) { if (DBG) console.error('[m4u2] no-posts "' + T + '"'); return []; }
+  let cands = m4uHPickAll(posts, T, Y, isS ? (s || 1) : 0).slice(0, 3);
+  if (!cands.length) {   // সার্চ-ব্যর্থ ⇒ sitemap-ইনডেক্স-ফলব্যাক (পুরোনো ক্লাসিকের একমাত্র পথ)
+    cands = await m4uHIndexPick(T, Y, isS ? (s || 1) : 0).catch(() => []);
+    if (DBG) console.error('[m4u2] index-fallback n=' + cands.length);
+  }
+  if (!cands.length) return [];
+  const budget = Number(process.env.M4UBUD || 4200);
+  // ★ মাপা: দুই-পোস্ট ক্রমিক-চেষ্টায় দ্বিতীয়টি ৫.৪সে-তে শেষ হয়ে ক্যাপে কাটা পড়ত; আর Promise.all
+  //   ধীর-পোস্টের জন্যও অপেক্ষা করত। এখন **first-win**: যে-পোস্ট আগে কার্ড দেয়, উত্তর সঙ্গে সঙ্গে ফেরে।
+  let cardsAll = await new Promise(resolve => {
+    let done = false;
+    const fin = v => { if (!done) { done = true; resolve(v || []); } };
+    const left = Math.max(1200, budget - (Date.now() - T0));
+    const guard = setTimeout(() => fin([]), left); if (guard.unref) guard.unref();
+    cands.slice(0, 2).forEach((h, i) => {
+      m4uPostCards(h, T, Y, isS, s, e, maxh, T0, i ? 3 : 4).then(c => { if (c && c.length) fin(c); }).catch(() => { });
+    });
+  });
+  if (DBG) console.error('[m4u2] cards=' + cardsAll.length + ' "' + T + '" @' + (Date.now() - T0) + 'ms');
+  return cardsAll;
+}
+async function m4uPostCards(hit, T, Y, isS, s, e, maxh, T0, maxN) {
+  let ents = null;
+  const ch = M4U_PGC.get(hit.url);
+  if (ch && Date.now() - ch.ts < 30 * 60e3) ents = ch.ents;
+  if (!ents) {
+    const pg = await m4uHReq(hit.url, { ref: M4U_HLIVE + '/', tmo: 6000 });
+    ents = m4uHParse(pg.body);
+    if (ents.length) { if (M4U_PGC.size > 40) M4U_PGC.clear(); M4U_PGC.set(hit.url, { ts: Date.now(), ents: ents }); }
+  }
+  if (!ents || !ents.length) { if (DBG) console.error('[m4u2] no-entries ' + hit.slug.slice(0, 40)); return []; }
+  ents = ents.slice();
+  if (isS) {
+    const want = Number(e || 1);
+    ents = ents.filter(x => (x.ep && x.ep === want) || (x.epA && want >= x.epA && want <= x.epB) || (!x.ep && !x.epA && want === 1));
+  }
+  ents = ents.filter(x => !maxh || !x.q || Number(x.q) <= maxh);
+  const seen = new Set(); const use = [];
+  for (const x of ents) { const k = x.q + '|' + x.size; if (seen.has(k)) continue; seen.add(k); use.push(x); }
+  const pick = use.slice(0, maxN || 4);
+  if (!pick.length) { if (DBG) console.error('[m4u2] filtered-out ' + hit.slug.slice(0, 36)); return []; }
+  const audio = dtAudio(hit.slug.replace(/-/g, ' ')) || '';
+  if (DBG) console.error('[m4u2] heap@resolve0 ' + Math.round(process.memoryUsage().heapUsed / 1048576) + 'MB');
+  const res = await Promise.all(pick.map(x => m4uHFast(x.href).catch(() => null)));
+  if (DBG) console.error('[m4u2] heap@resolved ' + Math.round(process.memoryUsage().heapUsed / 1048576) + 'MB');
+  const cards = [];
+  res.forEach((r, i) => {
+    const x = pick[i];
+    if (!r || !r.url) return;
+    const qq = Number(x.q) || 0;
+    const size = mlsMB(r.cl || 0) || x.size;
+    const ept = isS ? ('E' + (x.epA && x.epB ? x.epA + '-' + x.epB : (x.ep || 1))) : '';
+    const lines = '⊞ Movies4u ◧ gdrive' + (audio ? ' ⌗ ' + audio : '') + (size ? ' · ' + size : '');
+    const txt = '⧉ ' + T + (Y ? ' | ' + Y + ' |' : ' |') + '\n'
+      + (isS ? ('⬡ S' + (s || 1) + ept + (x.pack && !ept ? ' Pack' : '')) : '⬡ Movie') + (size ? ' · ' + size : '') + '\n' + lines;
+    cards.push({
+      name: '⫥ ' + (qq || 'Auto') + ' ⫥', title: txt, description: txt, quality: String(qq || ''),
+      url: r.url, _srv: 'movies4u', _direct: r.url,
+      behaviorHints: { notWebReady: false, isBingeable: true, filename: 'movies4u-' + (qq || 'auto') + '.mkv' },
+      bingeGroup: 'm4u|' + mlsNorm(T) + '::' + (isS ? 'S' + (s || 1) + 'E' + (e || 1) : 'm')
+    });
+  });
+  if (DBG) console.error('[m4u2] post ' + hit.slug.slice(0, 30) + ' → ' + cards.length + '/' + pick.length + ' @' + (Date.now() - T0) + 'ms');
+  return cards;
+}
 async function m4uStreams(tmdbId, title, type, s, e, origin, maxh) { // maxh: cfg.m4ur রেজো-ছাঁকনি (0=সব); HLS-সিক-প্রথম + সরাসরি-MKV
   if (!tmdbId) return []; // v1.15.82: মুভি + সিরিজ (আগে type!=='movie'-তে সিরিজ-শূন্য ছিল)
+  // ★★ v1.32.1: নতুন HTML-পথ আগে (পুরোনো lookup.php API মৃত)। সেটি সাড়া দিলে ওটাই চূড়ান্ত।
+  if (process.env.M4ULEG !== '1') {
+    try { const rv = await m4uRevive(tmdbId, title, type, s, e, origin, maxh); if (rv && rv.length) return rv; } catch (err) { if (DBG) console.error('[m4u2] err ' + String(err && err.message).slice(0, 60)); }
+    if (M4U_HLIVE && Date.now() - M4U_HPAT < 15 * 60e3) return [];   // নতুন-বেস জীবিত ⇒ মৃত-লিগ্যাসি-পথে সময় নষ্ট নয়
+  }
   if (type === 'series') return m4uSeries(tmdbId, title, s, e, origin, maxh); // সিরিজ = নিজস্ব-পথ (মুভি-কোড-অস্পৃষ্ট — ভাঙার-ঝুঁকি-না)
   const t3 = Date.now(); const WOB = 7000; const left = () => Math.max(250, WOB - (Date.now() - t3)); // v1.17.47: ৮.২সে ক্যাপের ভিতরে
   if (M4U_NEGC.has(String(tmdbId)) && Date.now() - M4U_NEGC.get(String(tmdbId)) < 10 * 60 * 1000) { if (DBG) console.error('[m4u] neg-cache hit'); return []; } // v1.17.48
@@ -11635,7 +11942,7 @@ async function withSources(cardsP, srcs, cfg, t0, mkey, lookupP) {
     // ★ v1.20.2 (মাপা: ৮.২সে-র কারণ ছিল hm — ০ কার্ড দিয়ে ৮.২সে পর্যন্ত ধরে রাখত; tw/rt তেমনই)
     // ★ v1.32.0: প্রোডে যেগুলো ৮–৯.৫সে নিয়ে ০ কার্ড দিত (tw/rt/vsp/nx) সেগুলোর ক্যাপ অনেক কম;
     //   nx (MovieBox) একটু বেশি পায় কারণ সেটা আসলে বড় সোর্স — কিন্তু ৬সে-র বেশি নয়।
-    const SRC_CAP_MAP = { ott: 3600, tw: 4200, rt: 4200, az: 4000, hm: 4200, vsp: 4200, nx: 6000, m4u: 4600, sky: 3800, mm: 4600, mlb: 4600, mls: 5200, dt: 5200 };   // v1.27.19: hm 8200-race + mlb 8200-বাজেটের জন্য ক্যাপ বাড়ানো // v1.26.1: toonworld-এর রেজলভারই ৭.৫সে নেয় (মাপা) — ৮.৫সে-ক্যাপে ওটা সবসময় কাটা পড়ত // ★ v1.22.3: prod-মাপা — এই সোর্সগুলো prod-এ ৭-৮সে নেয়, আগের ক্যাপে তারা সবসময় 'cut' হতো
+    const SRC_CAP_MAP = { ott: 3600, tw: 4200, rt: 4200, az: 4000, hm: 4200, vsp: 4200, nx: 6000, m4u: 5200, sky: 3800, mm: 4600, mlb: 4600, mls: 5200, dt: 5200 };   // v1.27.19: hm 8200-race + mlb 8200-বাজেটের জন্য ক্যাপ বাড়ানো // v1.26.1: toonworld-এর রেজলভারই ৭.৫সে নেয় (মাপা) — ৮.৫সে-ক্যাপে ওটা সবসময় কাটা পড়ত // ★ v1.22.3: prod-মাপা — এই সোর্সগুলো prod-এ ৭-৮সে নেয়, আগের ক্যাপে তারা সবসময় 'cut' হতো
     const SRC_CAP_MS = Number(process.env.VSCAP || 4600); // ★ v1.32.0: 5200→4600 (লক্ষ্য ≈৫সে) // v1.17.58: 9.3s-cap-e prod-e 10.2-10.6s hoi (edge-er kache) // ★ v1.17.52: প্রতি-সোর্স-ক্যাপ — একটি ঝুলন্ত সোর্স (ott/tw/nx) পুরো তালিকাকে ক্যাপে টেনে নিত
     const track = x => { // ★ v1.17.52: টাইমার ক্লিয়ার হয় — নইলে সেটেল হওয়া সোর্সের জন্যও ভুল '[srccap]' ছাপ পড়ত
       let _tm = null;
@@ -13261,6 +13568,26 @@ const server = http.createServer((req, res) => {
       const o = {};
       for (const [k, e] of SRC_STATS) o[k] = { calls: e.calls, cards: e.cards, avgMs: e.ms, streak0: e.streak0, cap: srcCapFor(k, 5200) };
       return sendJson(res, 200, { ver: VERSION, src: o });
+    }
+    if (p === '/_m4u') {   // v1.32.1: Movies4u-চেইনের লাইভ-ডায়াগনসিস (search → post → nexdrive → fast-dl → HEAD)
+      let qp; try { qp = new URL(req.url, 'http://x').searchParams; } catch (e) { qp = new URLSearchParams(); }
+      const q = qp.get('q') || '';
+      if (!q) return sendJson(res, 400, { err: 'need ?q=' });
+      const job = (async () => {
+        const T0 = Date.now(); const base = await m4uHB().catch(() => '');
+        const posts = await m4uHSearch(q).catch(() => []);
+        const pick = m4uHPick(posts, qp.get('title') || q, Number(qp.get('y') || 0), Number(qp.get('s') || 0));
+        let ents = [], res2 = [];
+        if (pick) {
+          const pg = await m4uHReq(pick.url, { ref: base + '/', tmo: 6000 }).catch(() => ({}));
+          ents = m4uHParse(pg.body || '');
+          const use = ents.slice(0, Number(qp.get('n') || 4));
+          const rr = await Promise.all(use.map(x => m4uHFast(x.href).catch(e => ({ url: '', why: String(e && e.message).slice(0, 30) }))));
+          res2 = rr.map((r, i) => ({ q: use[i].q, size: use[i].size, host: use[i].host, url: r.url ? r.url.slice(0, 70) : '', why: r.why || '', ct: r.ct || '', gb: r.cl ? +(r.cl / 1073741824).toFixed(2) : 0 }));
+        }
+        return { ver: VERSION, base: base, q: q, posts: posts.length, top: posts.slice(0, 5).map(x => x.slug), pick: pick ? pick.slug : '', entries: ents.length, hosts: [...new Set(ents.map(x => x.host))], resolved: res2, ms: Date.now() - T0 };
+      })();
+      return Promise.resolve(job).then(o => sendJson(res, 200, o)).catch(e => sendJson(res, 200, { ok: 0, err: String(e && e.message).slice(0, 80) }));
     }
     if (p === '/_lastsrc') return sendJson(res, 200, LAST_SRC || {});
     if (p === '/_pools') { // ★ v1.22.0: প্রতি-সোর্স প্রক্সি-পুলের অবস্থা
