@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.32.3';
+const VERSION = '1.32.4';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -9242,7 +9242,7 @@ async function m4uRevive(tmdbId, title, type, s, e, origin, maxh) {
     if (DBG) console.error('[m4u2] index-fallback n=' + cands.length);
   }
   if (!cands.length) return [];
-  const budget = Number(process.env.M4UBUD || 4200);
+  const budget = Number(process.env.M4UBUD || 6200);   // v1.32.4: ৪.২→৬.২সে (প্রোডে লুকআপ+সার্চই ৪সে খাচ্ছিল ⇒ guard খালি ফিরত)
   // ★ মাপা: দুই-পোস্ট ক্রমিক-চেষ্টায় দ্বিতীয়টি ৫.৪সে-তে শেষ হয়ে ক্যাপে কাটা পড়ত; আর Promise.all
   //   ধীর-পোস্টের জন্যও অপেক্ষা করত। এখন **first-win**: যে-পোস্ট আগে কার্ড দেয়, উত্তর সঙ্গে সঙ্গে ফেরে।
   let cardsAll = await new Promise(resolve => {
@@ -13569,7 +13569,7 @@ const server = http.createServer((req, res) => {
     }
     if (p === '/_srcstats') {   // v1.32.0: প্রতি-সোর্স মাপা গড় (n, ms) — কোন সোর্স সময় খাচ্ছে এক-নজরে
       const o = {};
-      for (const [k, e] of SRC_STATS) o[k] = { calls: e.calls, cards: e.cards, avgMs: e.ms, streak0: e.streak0, cap: srcCapFor(k, 5200) };
+      for (const [k, e] of SRC_STATS) o[k] = { calls: e.calls, cards: e.cards, avgMs: e.ms, streak0: e.streak0, cap: srcCapFor(k, Number(SRC_CAP_MAP[k] || 5200)) };
       return sendJson(res, 200, { ver: VERSION, src: o });
     }
     if (p === '/_m4u') {   // v1.32.1: Movies4u-চেইনের লাইভ-ডায়াগনসিস (search → post → nexdrive → fast-dl → HEAD)
