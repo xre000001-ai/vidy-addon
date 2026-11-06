@@ -11908,6 +11908,7 @@ const srcStatRec = (k, n, ms) => {
 // ★ v1.32.1: **m4u বাদ** — পুরোনো (মৃত-API) যুগের streak0>2 জমে থেকে ক্যাপ ৩.২সে-তে নেমে গিয়েছিল,
 //   অথচ নতুন chেইন কোল্ডে ২–৪সে নেয় ⇒ কার্ড সবসময় কাটা পড়ত (প্রোডে `_srcstats`: m4u cap=3200)।
 const SRC_CAP_EX = new Set(String(process.env.SCEX || 'm4u').split(',').filter(Boolean));
+const SRC_CAP_DEF = { ott: 3600, tw: 4200, rt: 4200, az: 4000, hm: 4200, vsp: 4200, nx: 6000, m4u: 6400, sky: 3800, mm: 4600, mlb: 4600, mls: 5200, dt: 5200 };   // v1.32.6: module-scope (/_srcstats-এও দরকার)
 const srcCapFor = (k, base) => {
   const e = SRC_STATS.get(k);
   if (!e || SRC_CAP_EX.has(k)) return base;
@@ -13576,7 +13577,7 @@ const server = http.createServer((req, res) => {
     }
     if (p === '/_srcstats') {   // v1.32.0: প্রতি-সোর্স মাপা গড় (n, ms) — কোন সোর্স সময় খাচ্ছে এক-নজরে
       const o = {};
-      for (const [k, e] of SRC_STATS) o[k] = { calls: e.calls, cards: e.cards, avgMs: e.ms, streak0: e.streak0, cap: srcCapFor(k, Number(SRC_CAP_MAP[k] || 5200)) };
+      for (const [k, e] of SRC_STATS) o[k] = { calls: e.calls, cards: e.cards, avgMs: e.ms, streak0: e.streak0, cap: srcCapFor(k, Number(SRC_CAP_DEF[k] || 5200)) };
       return sendJson(res, 200, { ver: VERSION, src: o });
     }
     if (p === '/_m4u') {   // v1.32.1: Movies4u-চেইনের লাইভ-ডায়াগনসিস (search → post → nexdrive → fast-dl → HEAD)
