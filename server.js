@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.31.0';
+const VERSION = '1.31.1';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -3104,6 +3104,12 @@ function mlsCurl(u, opt) {
       : /^\w+:\/\//.test(px0) ? px0 : ('http://' + px0);
     a.push('--proxy', pxArg, '--proxy-insecure');
   }
+  let hdrFile = '';
+  if (opt.range) {                       // ★ v1.31.1: Range-প্রমাণ (ডাউনলোড-কার্ডের শর্ত)
+    a.push('-r', String(opt.range));
+    hdrFile = tmp + '.h';
+    a.push('-D', hdrFile);
+  }
   if (opt.post) { for (const f of opt.post) a.push('-F', f); a.push('-H', 'x-token: ' + (opt.host || mlsHost(u)), '-H', 'Accept: application/json'); }
   if (opt.xhr) a.push('-H', 'X-Requested-With: XMLHttpRequest');
   if (opt.ct) a.push('-H', 'content-type: ' + opt.ct);
@@ -3118,7 +3124,9 @@ function mlsCurl(u, opt) {
         try { body = require('fs').readFileSync(tmp, 'utf8'); } catch (e) { }
         const meta = String(stdout || '').trim();
         const st = parseInt(meta.split('|')[0], 10) || 0;
-        fin({ st: st, body: body, ct: (meta.split('|')[1] || ''), eu: (meta.split('|')[2] || '') });
+        let hdr = '';
+        if (hdrFile) { try { hdr = require('fs').readFileSync(hdrFile, 'utf8'); } catch (e) { } try { require('fs').unlink(hdrFile, () => { }); } catch (e) { } }
+        fin({ st: st, body: body, ct: (meta.split('|')[1] || ''), eu: (meta.split('|')[2] || ''), hdr: hdr });
       });
     } catch (e) { fin(null); }
   });
@@ -4108,6 +4116,7 @@ const DT_C = new Map();                                     // key → {ts, card
 //   • HubCloud ⇒ `hubcloud.ist/drive/<id>` ⇒ `gamerxyt.com/hubcloud.php` ⇒ পেজের ভেতরের
 //     `var pxl = "…pixeldrain.dev/u/<id>"` (JS-এ বসানো) — তাই HubCloud-পথও শেষে pixeldrain.dev-এ গড়ায়;
 //     সাইটের নিজের Pixeldrain-এন্ট্রি থাকলে সেটাই সোজা পথ হিসেবে আগে।
+const DT_PXR = new Map();             // v1.31.1: pixeldrain-এ পাস-করা প্রক্সি নোড (প্রমাণের জন্য)
 const DT_UNLOCK = new Map();          // link_server_id → {url, ts, tries}
 const DT_UNLOCK_JOBS = new Map();     // link_server_id → Promise (single-flight)
 const DT_UNLOCK_FILE = 'dt_unlock.json';
@@ -4191,24 +4200,51 @@ async function dtFileProof(url, ms) {
     // ★ v1.31.0: pixeldrain `/api/file/<id>/info` — আসল ফাইলনাম (অডিও-লেবেল এখানেই: "MULTi AAC2 0 …")
     //   ও নিখুঁত সাইজ; Range-প্রমাণের সঙ্গে **সমান্তরাল** (বাড়তি দেরি নেই)।
     const inf = /pixeldrain\.com\/api\/file\/([A-Za-z0-9]+)/.exec(direct);
-    const infoP = inf ? fetch('https://pixeldrain.com/api/file/' + inf[1] + '/info', {
+    const infoUrl = inf ? ('https://pixeldrain.com/api/file/' + inf[1] + '/info') : '';
+    const infoP = infoUrl ? fetch(infoUrl, {
       headers: { 'User-Agent': DT_UA, 'Accept': 'application/json' }, signal: AbortSignal.timeout(Math.max(3000, ms || 8000))
     }).then(r => (r.ok ? r.json() : null)).catch(() => null) : Promise.resolve(null);
+    var dtNode = '';
+    let st = 0, ct = '', cr = '', clen = 0;
     const r = await fetch(direct, {
       headers: { 'User-Agent': DT_UA, 'Accept': '*/*', 'Range': 'bytes=0-1023' },
       signal: AbortSignal.timeout(Math.max(3000, ms || 9000))
-    });
-    if (!(r.status === 200 || r.status === 206)) return null;
-    const ct = String(r.headers.get('content-type') || '').toLowerCase();
-    if (/text\/html|json/.test(ct)) return null;
-    const cr = String(r.headers.get('content-range') || '');
-    const size = Number((cr.split('/')[1] || r.headers.get('content-length') || 0)) || 0;
-    try { await r.arrayBuffer(); } catch (e) { }
+    }).catch(() => null);
+    if (r) {
+      st = r.status; ct = String(r.headers.get('content-type') || '').toLowerCase();
+      cr = String(r.headers.get('content-range') || ''); clen = Number(r.headers.get('content-length') || 0) || 0;
+      try { await r.arrayBuffer(); } catch (e) { }
+    }
+    // ★ v1.31.1 (প্রোডে-মাপা: Beamup-হোস্ট থেকে pixeldrain **সম্পূর্ণ বন্ধ** — `/api/file/…` ও `/u/…`
+    //   দুটোই ৫০২/৫০৪, অথচ দর্শকের ডিভাইস থেকে ২০৬)। তাই প্রমাণটাও **প্রক্সি-পুল দিয়ে** —
+    //   শিক্ষিত নোড আগে (DT_PXR), তারপর mls_px.json + BD; যা পাস করে সেটাই পরের বার আগে।
+    if (!(st === 200 || st === 206) || /text\/html|json/.test(ct)) {
+      const nodes = [...DT_PXR.entries()].sort((a, b) => a[1] - b[1]).map(x => x[0])
+        .concat(MLS_PXA, MLS_PXBD).filter((v, i, arr) => v && arr.indexOf(v) === i).slice(0, 6);
+      for (const node of nodes) {
+        const c = await mlsCurl(direct, { ms: Math.max(3000, Math.min(6000, ms || 6000)), proxy: node, range: '0-1023' }).catch(() => null);
+        if (!c || !(c.st === 200 || c.st === 206)) continue;
+        const ct2 = String(c.ct || '').toLowerCase();
+        if (/text\/html|json/.test(ct2)) continue;
+        const cr2 = (/content-range:\s*bytes\s+[^/]+\/(\d+)/i.exec(String(c.hdr || '')) || [])[1];
+        if (!cr2) continue;
+        st = c.st; ct = ct2; cr = 'bytes 0-1023/' + cr2;
+        DT_PXR.set(node, 1); if (DT_PXR.size > 40) DT_PXR.clear();
+        dtNode = node;                       // v1.31.1: ইনফো-কলেও একই নোড (প্রোডে pixeldrain সরাসরি বন্ধ)
+        break;
+      }
+    }
+    if (!(st === 200 || st === 206)) return null;
+    let size = Number((cr.split('/')[1] || clen || 0)) || 0;
     if (!size) return null;
-    const ij = await Promise.race([infoP, new Promise(r2 => setTimeout(() => r2(null), 1200))]);
+    let ij = await Promise.race([infoP, new Promise(r2 => setTimeout(() => r2(null), 1200))]);
+    if ((!ij || !ij.name) && infoUrl && dtNode) {       // প্রক্সি পথে ফাইলনাম (অডিও-লেবেল এখান থেকেই)
+      const ci = await mlsCurl(infoUrl, { ms: 4500, proxy: dtNode, json: true }).catch(() => null);
+      try { ij = JSON.parse((ci && ci.body) || 'null') || ij; } catch (e) { }
+    }
     if (ij && ij.name) { name = String(ij.name); if (ij.size) size = Number(ij.size) || size; }
     return { direct: direct, size: size, ct: ct, name: name, ms: Date.now() - t0 };
-  } catch (e) { return null; }
+  } catch (e) { if (DBG) console.error('[dt] proof-err ' + ((e && e.message) || e)); return null; }
 }
 // ডাউনলোড-প্রার্থী: প্রতিটি লিংকের কোয়ালিটি থেকে **একটি** সার্ভার (Pixeldrain আগে, নইলে HubCloud)
 function dtDlCands(links, n) {
@@ -4346,18 +4382,25 @@ async function dtProbeHls(u, referer, ms) {
   } catch (e) { return null; }
 }
 function dtAudio(text) {
-  const a = mlsAudio(text);
-  if (a) return a;
+  // ★ v1.31.1 (মাপা: ফাইলনাম "…[1080p x265 10bit]…"-এ mlsAudio "1080p x265 10bit Audio" ফেরাত —
+  //   কোয়ালিটি-টোকেনকে ভাষা ভেবে নিত)। এখন **ভাষার নাম-তালিকা** দিয়ে যাচাই, তারপর গুনে লেবেল
+  //   (ইউজার-নিয়ম: ১ ভাষা = ভাষা · ২ = Dual · ৩+ = Multi)।
   const T = String(text || '');
-  // ★ v1.31.0: ফাইলনামের রিলিজ-ট্যাগ (মাপা: "…1080p CR WEB-DL MULTi AAC2 0 H 264…") — MULTi/DUAL একা
-  //   থাকলেও ধরা পড়ুক; একাধিক ভাষার নাম থাকলে গুনে Multi (ইউজার-নিয়ম: ৩+ ভাষা = Multi)।
-  if (/\bmulti\b/i.test(T) && !/\bdual\b/i.test(T)) return 'Multi Audio';
-  if (/\bdual\b/i.test(T)) return 'Dual Audio';
-  if (/\bmulti\s*audio\b/i.test(T)) return 'Multi Audio';
-  if (/\bdual\s*audio\b/i.test(T)) return 'Dual Audio';
-  if (/japanese|jpn/i.test(T)) return 'Japanese Audio';
-  if (/english|eng/i.test(T)) return 'English Audio';
-  if (/hindi/i.test(T)) return 'Hindi Audio';
+  const LANG = [['hindi', 'Hindi'], ['english', 'English'], ['japanese', 'Japanese'], ['jpn', 'Japanese'],
+    ['tamil', 'Tamil'], ['telugu', 'Telugu'], ['malayalam', 'Malayalam'], ['kannada', 'Kannada'],
+    ['bengali', 'Bengali'], ['korean', 'Korean'], ['chinese', 'Chinese'], ['spanish', 'Spanish'],
+    ['french', 'French'], ['german', 'German'], ['arabic', 'Arabic'], ['urdu', 'Urdu'], ['thai', 'Thai']];
+  const found = [];
+  for (const [re, nm] of LANG) if (new RegExp('\\b' + re + '\\b', 'i').test(T) && found.indexOf(nm) < 0) found.push(nm);
+  if (/\bmulti\b/i.test(T) && found.length < 3) found.push('Multi');
+  if (/\bdual\b/i.test(T) && found.length < 2) found.push('Dual');
+  const langs = found.filter(x => x !== 'Multi' && x !== 'Dual');
+  if (langs.length >= 3) return 'Multi Audio [' + langs.slice(0, 5).join('+') + ']';
+  if (langs.length === 2) return 'Dual Audio [' + langs.join('+') + ']';
+  if (langs.length === 1) return found.indexOf('Multi') >= 0 ? 'Multi Audio [' + langs[0] + '…]' : langs[0] + ' Audio';
+  if (found.indexOf('Multi') >= 0) return 'Multi Audio';
+  if (found.indexOf('Dual') >= 0) return 'Dual Audio';
+  if (/\bsub(bed)?\b|esub/i.test(T)) return 'Jpn + Eng Sub';
   return '';
 }
 const dtSizeH = (q0, links) => {   // HLS-উচ্চতা থেকে সবচেয়ে কাছের লেবেলের সাইজ
