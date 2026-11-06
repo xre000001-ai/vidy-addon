@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.32.1';
+const VERSION = '1.32.2';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -11898,9 +11898,12 @@ const srcStatRec = (k, n, ms) => {
   e.streak0 = n ? 0 : (e.streak0 || 0) + 1; e.last = Date.now();
   SRC_STATS.set(k, e);
 };
+// ★ v1.32.1: **m4u বাদ** — পুরোনো (মৃত-API) যুগের streak0>2 জমে থেকে ক্যাপ ৩.২সে-তে নেমে গিয়েছিল,
+//   অথচ নতুন chেইন কোল্ডে ২–৪সে নেয় ⇒ কার্ড সবসময় কাটা পড়ত (প্রোডে `_srcstats`: m4u cap=3200)।
+const SRC_CAP_EX = new Set(String(process.env.SCEX || 'm4u').split(',').filter(Boolean));
 const srcCapFor = (k, base) => {
   const e = SRC_STATS.get(k);
-  if (!e) return base;
+  if (!e || SRC_CAP_EX.has(k)) return base;
   if (e.streak0 >= Number(process.env.SC0 || 2) && e.ms > 2500) return Math.min(base, Number(process.env.SCFAST || 3200));
   return base;
 };
