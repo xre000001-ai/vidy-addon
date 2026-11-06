@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.30.0';
+const VERSION = '1.31.0';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -4091,6 +4091,139 @@ async function mlsTask(nameP, infoP, type, s, e) {
 const DT_API = 'https://api.deadbase.host/api/v1/public';
 const DT_REF = 'https://deadtoons.sbs/';
 const DT_C = new Map();                                     // key → {ts, cards}  (৩০ মিনিট)
+
+// ================= v1.31.0: Deadtoons ডাউনলোড-গেট (HubCloud / Pixeldrain) =================
+// ★ মাপা (৬-১১-২০২৬, ডেডটুনসের ২য় দফা — ইউজার: "hub cloud, pixeldrain link ache but ad er pore
+//   dekho valo kore … streamhg easily solve kora jai"):
+//   • সাইটের ডাউনলোড-লিংক (HubCloud/Pixeldrain/FilePress) ৪-ধাপের unlock-গেটের পেছনে, কিন্তু
+//     **আমাদের নিজের শর্টনার (`shortener_id: 7`, `animedigest.world`) — কোনো Cloudflare/Turnstile নেই**।
+//     পুরো চেইন curl-এ চলে: `/unlock/{id}/start` → `redirect_url`-এর টোকেন → `own-shortener/gate/{tok}`
+//     (১৫সে অপেক্ষা) → `gate/{tok}/continue` → **`/unlock/callback/{tok}` ⇒ {"url": …}** (মাপা ১৭.০–১৭.৭সে)।
+//     archive.deadtoons.sbs-এর ক্যাপচা-পাতা আমাদের লাগেই না — callback সরাসরি API-তে।
+//   • ox-shortener-এর অপেক্ষা ১৫সে ⇒ ৯.২সে CAP-এ ফোরগ্রাউন্ডে অসম্ভব। তাই: **ব্যাকগ্রাউন্ড আনলক +
+//     ডিস্ক-ক্যাশ** (৬ঘণ্টা) — প্রথম খোলে HLS-কার্ড, ২য় খোলে (বা অন্য কেউ খুললে) ডাউনলোড-কার্ডও।
+//   • Pixeldrain ফাইনাল লিংক `https://pixeldrain.com/u/<id>` ⇒ `api/file/<id>?download`-এ Range-প্রমাণ
+//     (মাপা: Solo Leveling S01E01 1080p x264 = **২০৬, video/x-matroska, 1,481,000,847 বাইট**) — এটাই
+//     কার্ড-শর্ত (প্রমাণ ছাড়া কার্ড নয়, ইউজার-নীতি)। পুরোনো ফাইল মৃত হলে সৎ-শূন্য (Naruto E01-এ ৪০৪)।
+//   • HubCloud ⇒ `hubcloud.ist/drive/<id>` ⇒ `gamerxyt.com/hubcloud.php` ⇒ পেজের ভেতরের
+//     `var pxl = "…pixeldrain.dev/u/<id>"` (JS-এ বসানো) — তাই HubCloud-পথও শেষে pixeldrain.dev-এ গড়ায়;
+//     সাইটের নিজের Pixeldrain-এন্ট্রি থাকলে সেটাই সোজা পথ হিসেবে আগে।
+const DT_UNLOCK = new Map();          // link_server_id → {url, ts, tries}
+const DT_UNLOCK_JOBS = new Map();     // link_server_id → Promise (single-flight)
+const DT_UNLOCK_FILE = 'dt_unlock.json';
+const DT_UNLOCk_TTL = 6 * 3600e3;
+function dtULoad() {
+  try {
+    const d = JSON.parse(require('fs').readFileSync(require('path').join(__dirname, DT_UNLOCK_FILE), 'utf8'));
+    for (const k of Object.keys(d || {})) { const e = d[k]; if (e && (Date.now() - (e.ts || 0)) < DT_UNLOCk_TTL) DT_UNLOCK.set(String(k), e); }
+  } catch (e) { }
+}
+let dtUSaveAt = 0;
+function dtUSave(force) {
+  if (!force && Date.now() - dtUSaveAt < 30000) return; dtUSaveAt = Date.now();
+  try {
+    const out = {};
+    for (const [k, v] of DT_UNLOCK) if (v && v.url) out[k] = v;
+    require('fs').writeFileSync(require('path').join(__dirname, DT_UNLOCK_FILE), JSON.stringify(out));
+  } catch (e) { }
+}
+dtULoad();
+setInterval(() => dtUSave(), 60000).unref?.();
+function dtJsonPost(p, body, ms) {
+  return fetch(DT_API + p, {
+    method: body === null ? 'GET' : 'POST',
+    headers: Object.assign({ 'User-Agent': DT_UA, 'Accept': 'application/json', 'Referer': DT_REF, 'Origin': 'https://deadtoons.sbs' },
+      body === null ? {} : { 'Content-Type': 'application/json' }),
+    body: body === null ? undefined : JSON.stringify(body),
+    signal: AbortSignal.timeout(Math.max(3000, ms || 12000))
+  }).then(r => (r.ok ? r.json() : null)).catch(() => null);
+}
+// ★ ১৫সে-অপেক্ষা একবারই; প্রতি link_server_id-তে একাধিক অনুরোধ একই জবে যোগ দেয়।
+function dtUnlockOne(lsid, short) {
+  if (DT_UNLOCK.has(String(lsid))) return Promise.resolve(DT_UNLOCK.get(String(lsid)).url);
+  if (DT_UNLOCK_JOBS.has(String(lsid))) return DT_UNLOCK_JOBS.get(String(lsid));
+  const job = (async () => {
+    const t0 = Date.now();
+    try {
+      const st = await dtJsonPost('/unlock/' + lsid + '/start', { shortener_id: Number(short || 7) }, 9000);
+      const ru = st && st.redirect_url;
+      if (!ru) return null;
+      const tok = String(ru).replace(/\/+$/, '').split('/').pop();
+      const g = await dtJsonPost('/own-shortener/gate/' + tok, {}, 9000);
+      if (!g || g.done) return null;
+      const wait = Math.max(1, Number(g.wait_seconds || 15)) * 1000 + 900;
+      if (wait > 30000) return null;
+      await new Promise(r => setTimeout(r, wait));
+      const c = await dtJsonPost('/own-shortener/gate/' + tok + '/continue', {}, 9000);
+      if (!c || !c.done) return null;
+      const f = await dtJsonPost('/unlock/callback/' + tok, {}, 9000);
+      const url = f && f.url;
+      if (!url) return null;
+      DT_UNLOCK.set(String(lsid), { url: url, ts: Date.now() }); dtUSave(true);
+      diag('dt', 'unlock ok id=' + lsid + ' ' + String(url).slice(0, 46) + ' @' + (Date.now() - t0) + 'ms');
+      return url;
+    } catch (e) { return null; }
+    finally { DT_UNLOCK_JOBS.delete(String(lsid)); }
+  })();
+  DT_UNLOCK_JOBS.set(String(lsid), job);
+  return job;
+}
+// ফাইনাল লিংক ⇒ **প্রমাণিত** ডাউনলোড-URL (Range ১কেবি; ভিডিও/ম্যাট্রোস্কা হলে তবেই)
+async function dtFileProof(url, ms) {
+  const t0 = Date.now();
+  let direct = String(url || ''), name = '';
+  try {
+    if (/pixeldrain\.(com|dev|pw)\/u\//i.test(direct)) {
+      const id = direct.split('/u/')[1].split(/[?#]/)[0];
+      direct = 'https://pixeldrain.com/api/file/' + id + '?download';
+    } else if (/hubcloud\.|gamerxyt\./i.test(direct)) {
+      const h = await fetch(direct, { headers: { 'User-Agent': DT_UA, 'Referer': 'https://hubcloud.ist/' }, signal: AbortSignal.timeout(Math.max(3000, ms || 8000)) })
+        .then(r => (r.ok ? r.text() : '')).catch(() => '');
+      const gx = (h.match(/https:\/\/gamerxyt\.com\/hubcloud\.php\?[^"']+/) || [])[0];
+      const y = gx ? await fetch(gx, { headers: { 'User-Agent': DT_UA, 'Referer': 'https://hubcloud.ist/' }, signal: AbortSignal.timeout(Math.max(3000, ms || 8000)) })
+        .then(r => (r.ok ? r.text() : '')).catch(() => '') : h;
+      const pxl = (y || '').match(/var\s+pxl\s*=\s*["']([^"']+)["']/) || (y || '').match(/(https:\/\/pixeldrain\.dev\/u\/[A-Za-z0-9]+)/);
+      if (!pxl) return null;
+      const id2 = pxl[1].split('/u/')[1].split(/[?#"']/)[0];
+      direct = 'https://pixeldrain.com/api/file/' + id2 + '?download';
+      name = (y.match(/card-header[^>]*>\s*([^<]{4,160})</) || [])[1] || '';
+    }
+    // ★ v1.31.0: pixeldrain `/api/file/<id>/info` — আসল ফাইলনাম (অডিও-লেবেল এখানেই: "MULTi AAC2 0 …")
+    //   ও নিখুঁত সাইজ; Range-প্রমাণের সঙ্গে **সমান্তরাল** (বাড়তি দেরি নেই)।
+    const inf = /pixeldrain\.com\/api\/file\/([A-Za-z0-9]+)/.exec(direct);
+    const infoP = inf ? fetch('https://pixeldrain.com/api/file/' + inf[1] + '/info', {
+      headers: { 'User-Agent': DT_UA, 'Accept': 'application/json' }, signal: AbortSignal.timeout(Math.max(3000, ms || 8000))
+    }).then(r => (r.ok ? r.json() : null)).catch(() => null) : Promise.resolve(null);
+    const r = await fetch(direct, {
+      headers: { 'User-Agent': DT_UA, 'Accept': '*/*', 'Range': 'bytes=0-1023' },
+      signal: AbortSignal.timeout(Math.max(3000, ms || 9000))
+    });
+    if (!(r.status === 200 || r.status === 206)) return null;
+    const ct = String(r.headers.get('content-type') || '').toLowerCase();
+    if (/text\/html|json/.test(ct)) return null;
+    const cr = String(r.headers.get('content-range') || '');
+    const size = Number((cr.split('/')[1] || r.headers.get('content-length') || 0)) || 0;
+    try { await r.arrayBuffer(); } catch (e) { }
+    if (!size) return null;
+    const ij = await Promise.race([infoP, new Promise(r2 => setTimeout(() => r2(null), 1200))]);
+    if (ij && ij.name) { name = String(ij.name); if (ij.size) size = Number(ij.size) || size; }
+    return { direct: direct, size: size, ct: ct, name: name, ms: Date.now() - t0 };
+  } catch (e) { return null; }
+}
+// ডাউনলোড-প্রার্থী: প্রতিটি লিংকের কোয়ালিটি থেকে **একটি** সার্ভার (Pixeldrain আগে, নইলে HubCloud)
+function dtDlCands(links, n) {
+  const out = [];
+  for (const l of (links || [])) {
+    const q = mlsQ(l.quality) || 0;
+    const sv = (l.servers || []).filter(s => /pixeldrain/i.test(s.name))[0]
+      || (l.servers || []).filter(s => /hubcloud/i.test(s.name))[0];
+    if (!sv || !sv.link_server_id) continue;
+    if (out.some(x => x.quality === String(l.quality || ''))) continue;   // v1.31.0: কোয়ালিটি-স্ট্রিং ধরে (1080p x264 ও x265 আলাদা কার্ড)
+    out.push({ q: q, id: sv.link_server_id, srv: /pixeldrain/i.test(sv.name) ? 'pixeldrain' : 'hubcloud', size: String(l.size || ''), quality: String(l.quality || '') });
+  }
+  // ছোট ফাইল আগে (একই কোয়ালিটিতে x265 10bit সাধারণত অনেক ছোট ⇒ স্ট্রিমিং-এ দ্রুত), তারপর উচ্চ কোয়ালিটি
+  return out.sort((a, b) => (b.q - a.q) || String(a.size).localeCompare(String(b.size))).slice(0, n || 3);
+}
 const DT_UA = UA;
 function dtOn(cfg) { return process.env.DTOFF !== '1' && !(cfg && cfg.dt === 0); }
 function dtJson(p, ms) {
@@ -4124,6 +4257,35 @@ function dtUnpackJs(html) {                                  // Dean-Edwards/bas
   try { return String(eval('(' + s.slice(start, end) + ')')); } catch (e) { return ''; }
 }
 async function dtEmbedHls(embedUrl, ms, T0, CAP) {
+  // ★ v1.31.0 (ইউজার: \"streamhg easily solve kora jai\"): StreamHG-এর এমবেড-পেজ শুধু \"Loading…\" +
+  //   `main.js` (ভারী obfuscation) ⇒ HTML-রেজেক্সে কিছুই মেলে না। ওদের পাবলিক সোর্স-API
+  //   (`/api/source/<id>`, POST/GET দুটোই) সাধারণত `{"data":[{"file":…m3u8,"label":"HD"}]}` দেয় ⇒
+  //   সেটাই আগে চেষ্টা করি। মাপা (৬-১১-২০২৬): API এখন **৫২২** (তাদের অরিজিন ডাউন) ⇒ সৎভাবে কিছু
+  //   ফেরে না, অন্য পথ (EarnVids) আগের মতোই কাজ করে।
+  try {
+    const eu = String(embedUrl || '');
+    if (/hgcloud\.|streamhg|streamsb|hgcloud\.to/i.test(eu)) {
+      const id = (eu.split('/e/')[1] || eu.split('/').filter(Boolean).pop() || '').split(/[?#]/)[0];
+      if (id) {
+        for (const method of ['POST', 'GET']) {
+          const left = Math.max(2500, Math.min(5000, (CAP || 9000) - (Date.now() - (T0 || Date.now()))));
+          const r = await fetch('https://hgcloud.to/api/source/' + id, {
+            method: method,
+            headers: { 'User-Agent': DT_UA, 'Accept': 'application/json, text/plain, */*', 'Referer': eu, 'X-Requested-With': 'XMLHttpRequest' },
+            signal: AbortSignal.timeout(left)
+          }).catch(() => null);
+          if (!r || !r.ok) continue;
+          const txt = await r.text().catch(() => '');
+          const out = [];
+          for (const m of String(txt).matchAll(/(https?:\/\/[^\s\"',\\]+?\.(?:m3u8|mp4)[^\s\"',\\]*)/g)) {
+            const u = m[1].replace(/\\\//g, '/');
+            if (out.indexOf(u) < 0) out.push(u);
+          }
+          if (out.length) return out;
+        }
+      }
+    }
+  } catch (e) { }
   try {
     const r = await fetch(embedUrl, {
       headers: { 'User-Agent': DT_UA, 'Accept': 'text/html,application/xhtml+xml,*/*;q=0.8', 'Referer': DT_REF },
@@ -4187,6 +4349,10 @@ function dtAudio(text) {
   const a = mlsAudio(text);
   if (a) return a;
   const T = String(text || '');
+  // ★ v1.31.0: ফাইলনামের রিলিজ-ট্যাগ (মাপা: "…1080p CR WEB-DL MULTi AAC2 0 H 264…") — MULTi/DUAL একা
+  //   থাকলেও ধরা পড়ুক; একাধিক ভাষার নাম থাকলে গুনে Multi (ইউজার-নিয়ম: ৩+ ভাষা = Multi)।
+  if (/\bmulti\b/i.test(T) && !/\bdual\b/i.test(T)) return 'Multi Audio';
+  if (/\bdual\b/i.test(T)) return 'Dual Audio';
   if (/\bmulti\s*audio\b/i.test(T)) return 'Multi Audio';
   if (/\bdual\s*audio\b/i.test(T)) return 'Dual Audio';
   if (/japanese|jpn/i.test(T)) return 'Japanese Audio';
@@ -4286,6 +4452,9 @@ async function dtTask(nameP, infoP, type, s, e, origin) {
     const svs = (det.watch_servers || []).slice(0, 3);
     const links = det.links || [];
     const titleTxt = [name, det.episode_name || '', (det.anime_name || used.anime_name) || ''].join(' ').slice(0, 120);
+    const dlCands = dtDlCands(links, 3);            // v1.31.0: ডাউনলোড-প্রার্থী (৪K/1080 → 480)
+    const TTL0 = (det.anime_name || used.anime_name || name);
+    const YR0 = year || (det.release_date ? parseInt(String(det.release_date).slice(0, 4), 10) || 0 : 0);
     if (DBG) console.error('[dt] hit slug=' + used.slug + ' sv=' + svs.length + ' links=' + links.length + ' @' + (Date.now() - T0) + 'ms');
     // (৩) প্রতি watch-server ⇒ resolve ⇒ embed ⇒ unpack ⇒ HLS-প্রমাণ (সমান্তরাল)
     const cards = [];
@@ -4325,6 +4494,47 @@ async function dtTask(nameP, infoP, type, s, e, origin) {
         }
       } catch (err) { }
     }));
+    // (৪) v1.31.0: **ডাউনলোড-কার্ড** (Pixeldrain/HubCloud) — ক্যাশে থাকলে এখনই, নইলে ব্যাকগ্রাউন্ডে
+    //     ১৫সে-গেট পেরিয়ে ক্যাশে (পরের খোলায় কার্ড)। প্রমাণ (Range ২০৬ + video/*) ছাড়া কার্ড নয়।
+    const mkDlCard = (cand, pr) => {
+      const qq = cand.q || mlsQ(cand.quality) || 0;
+      const size = mlsMB(pr.size || 0) || cand.size;
+      const audio = dtAudio(titleTxt + ' ' + (pr.name || '') + ' ' + (cand.quality || ''));
+      const lines = '⊞ Deadtoons ◧ ' + cand.srv + (audio ? ' ⌗ ' + audio : '') + (size ? ' · ' + size : '');
+      const txt = '⧉ ' + TTL0 + (YR0 ? ' | ' + YR0 + ' |' : ' |') + '\n'
+        + (type === 'series' && SE > 0 ? '⬡ S' + SE + 'E' + EP : '⬡ Movie') + (size ? ' · ' + size : '') + '\n' + lines;
+      return {
+        name: '⫥ ' + (qq || 'Auto') + ' ⫥', title: txt, description: txt, quality: String(qq || ''),
+        url: pr.direct, _srv: 'deadtoons·' + cand.srv, _direct: pr.direct, _dl: 1,
+        behaviorHints: { notWebReady: false, isBingeable: true, filename: (pr.name || ('deadtoons-' + (qq || 'auto') + '.mkv')).trim() },
+        bingeGroup: 'dtd|' + mlsNorm(TTL0) + '::' + (type === 'series' && SE > 0 ? 'S' + SE + 'E' + EP : 'm')
+      };
+    };
+    const dlReady = dlCands.filter(c => DT_UNLOCK.has(String(c.id)));
+    if (dlReady.length) {
+      const prs = await Promise.all(dlReady.map(c => dtFileProof(DT_UNLOCK.get(String(c.id)).url, 4500)));
+      prs.forEach((pr, i) => {
+        if (!pr) { DT_UNLOCK.delete(String(dlReady[i].id)); return; }
+        cards.push(mkDlCard(dlReady[i], pr));
+        if (DBG) console.error('[dt] file-card ' + dlReady[i].q + 'p ' + dlReady[i].srv + ' ' + mlsMB(pr.size) + ' @' + (Date.now() - T0) + 'ms');
+      });
+    }
+    const dlBg = dlCands.filter(c => !DT_UNLOCK.has(String(c.id))).slice(0, 3);   // তিনটিই সমান্তরাল (১৭সে একবারই)
+    if (dlBg.length && process.env.DTBG !== '0') {
+      // ব্যাকগ্রাউন্ড: ১৫সে-গেট ⇒ প্রমাণ ⇒ DT_C-তে কার্ড যোগ (৩০ মিনিট বেঁচে থাকে)
+      Promise.all(dlBg.map(c => dtUnlockOne(c.id)
+        .then(u => (u ? dtFileProof(u, 8000) : null))
+        .then(pr => (pr ? mkDlCard(c, pr) : null)).catch(() => null))).then(list => {
+        const add = list.filter(Boolean);
+        if (!add.length) { diag('dt', 'dl-bg none ready=' + dlReady.length + ' tried=' + dlBg.length); return; }
+        const cur = DT_C.get(ck);
+        const old = (cur && cur.cards) ? cur.cards.slice() : [];
+        for (const c of cards) if (!old.some(x => x.url === c.url)) old.push(c);
+        for (const c of add) if (!old.some(x => x.url === c.url)) old.push(c);
+        DT_C.set(ck, { ts: Date.now(), cards: old });
+        diag('dt', 'dl-bg +' + add.length + ' (refresh এ যোগ হবে)');
+      }).catch(() => { });
+    }
     if (cards.length) { DT_C.set(ck, { ts: Date.now(), cards: cards.slice() }); if (DT_C.size > 300) DT_C.clear(); }
     diag('dt', 'cards=' + cards.length + ' slug=' + used.slug + ' @' + (Date.now() - T0) + 'ms');
     return cards;
