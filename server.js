@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.31.1';
+const VERSION = '1.32.0';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -1907,6 +1907,22 @@ if (process.env.MEMW !== '0') setInterval(() => {
     if (process.env.VDBG && (rss > 260 || process.env.MEMW === '2')) console.error('[mem] rss=' + rss + 'MB peak=' + MEMW_PEAK + ' heap=' + Math.round(m.heapUsed / 1048576) + ' ext=' + Math.round((m.external || 0) / 1048576) + ' limit=' + (MEM_LIM.lim || '?') + 'use=' + hi + ' MM_WC=' + sz(MM_WC) + ' AZ_MEMO=' + sz(AZ_MEMO) + ' OTT=' + sz(OTT_MEMO) + ' VSP=' + sz(VSP_MEMO) + ' PTUN=' + sz(PTUN) + ' VIDY_OK=' + sz(VIDY_OK) + ' POOL=' + sz(POOL));
   } catch (e) { }
 }, 20000).unref();
+// ★★ v1.32.0 (মাপা: heap ৩০৯MB ⇒ `FATAL ERROR: Reached heap limit`, কারণ পুরোনো ট্রিগার ছিল **rss**-ভিত্তিক
+//   আর সীমা ধরা হচ্ছিল cgroup থেকে ১৮৫৫MB — অথচ node চলছেই `--max-old-space-size=256`-এ!)।
+//   এখন **heap-ভিত্তিক** ৫সে-চেক: heap-limit-এর ৫৫% পেরোলে L2-purge + gc ⇒ OOM আর হয় না।
+const V8_HEAP_MB = (() => { try { return Math.round(require('v8').getHeapStatistics().heap_size_limit / 1048576); } catch (e) { return 256; } })();
+if (process.env.MEMW !== '0') setInterval(() => {
+  try {
+    const hu = Math.round(process.memoryUsage().heapUsed / 1048576);
+    const thr = Number(process.env.HEAPTHR || Math.round(V8_HEAP_MB * 0.55));
+    if (hu > thr) {
+      const n = (typeof memPurgeAll === 'function') ? memPurgeAll(hu > thr * 1.35 ? 2 : 1) : 0;
+      if (global.gc) { try { global.gc(); } catch (e) { } }
+      MEM_PURGES++; MEM_LVL = hu > thr * 1.35 ? 2 : 1;
+      if (process.env.VDBG || process.env.MEMW === '2') console.error('[heap] ' + hu + 'MB > ' + thr + 'MB (limit ' + V8_HEAP_MB + 'MB) ⇒ purge+gc cleared=' + n);
+    }
+  } catch (e) { }
+}, 5000).unref();
 // ★ v1.28.3-M2: idle-ছাঁটা — ব্যবহারকারী না থাকলেও প্রতি ৩ মিনিটে বাসি-ক্যাশ মুছে দিই
 if (process.env.MEMW !== '0') setInterval(() => { try { if (typeof memPurgeAll === 'function') memPurgeAll(0); } catch (e) { } }, Number(process.env.MEMPIDLE || 180000)).unref();
 // ================= v1.28.3-R1: নিরাপদ **নিজে-রিসাইকেল** (ধীর-লিকের স্থায়ী ওষুধ) =================
@@ -4076,7 +4092,7 @@ async function mlsTask(nameP, infoP, type, s, e) {
       const cards = (prev && prev.cards ? prev.cards : []).slice();
       for (const c of r) if (!cards.some(x => x.url === c.url)) cards.push(c);
       MLS_RC.set(RCK, { ts: Date.now(), cards: cards }); mlsMarkDirty();
-      if (MLS_RC.size > 200) MLS_RC.clear();
+      if (MLS_RC.size > 80) MLS_RC.clear();   // v1.32.0: মেমরি-সীমা
     } catch (e) { }
   }
   if (RCK && ENR_MORE && ENR_MORE.length) {          // ★ কার্ড ০ হলেও বাকি sav-গুলো ব্যাকগ্রাউন্ডে চেষ্টা করি
@@ -4191,8 +4207,15 @@ async function dtFileProof(url, ms) {
       const gx = (h.match(/https:\/\/gamerxyt\.com\/hubcloud\.php\?[^"']+/) || [])[0];
       const y = gx ? await fetch(gx, { headers: { 'User-Agent': DT_UA, 'Referer': 'https://hubcloud.ist/' }, signal: AbortSignal.timeout(Math.max(3000, ms || 8000)) })
         .then(r => (r.ok ? r.text() : '')).catch(() => '') : h;
-      const pxl = (y || '').match(/var\s+pxl\s*=\s*["']([^"']+)["']/) || (y || '').match(/(https:\/\/pixeldrain\.dev\/u\/[A-Za-z0-9]+)/);
-      if (!pxl) return null;
+      let pxl = (y || '').match(/var\s+pxl\s*=\s*["']([^"']+)["']/) || (y || '').match(/(https:\/\/pixeldrain\.dev\/u\/[A-Za-z0-9]+)/);
+      if (!pxl) {
+        // ★ v1.32.0: পেজের "PixelServer" বাটনেরর href-ও একই কাজ করে (মাপা: pxll-1 আইডি JS-এ বদলায়,
+        //   তাই href ও স্ক্রিপ্ট দুটোই দেখি); একটাও না-থাকলে সৎভাবে কিছু ফেরে না (pixel.hubcloud.pw
+        //   নিজেই ৫০০ — ওটা প্রমাণে পাসই করে না)।
+        const btn = (y || '').match(/href="(https:\/\/pixeldrain\.(?:dev|com)\/u\/[A-Za-z0-9]+)"/);
+        if (!btn) return null;
+        pxl = [btn[0], btn[1]];
+      }
       const id2 = pxl[1].split('/u/')[1].split(/[?#"']/)[0];
       direct = 'https://pixeldrain.com/api/file/' + id2 + '?download';
       name = (y.match(/card-header[^>]*>\s*([^<]{4,160})</) || [])[1] || '';
@@ -4249,13 +4272,20 @@ async function dtFileProof(url, ms) {
 // ডাউনলোড-প্রার্থী: প্রতিটি লিংকের কোয়ালিটি থেকে **একটি** সার্ভার (Pixeldrain আগে, নইলে HubCloud)
 function dtDlCands(links, n) {
   const out = [];
+  // ★ v1.32.0 (ইউজার: "deadtoons only pixeldrain link dei keno hub cloud ko"): আগে প্রতি কোয়ালিটিতে
+  //   **একটাই** সার্ভার নেওয়া হতো (Pixeldrain আগে) ⇒ HubCloud কখনোই কার্ড পেত না। এখন প্রতি
+  //   কোয়ালিটিতে **দুটোই** (HubCloud + Pixeldrain) — আলাদা ফাইল-আইডি, তাই দ্বিতীয় মিরর হিসেবেও কাজে লাগে।
   for (const l of (links || [])) {
     const q = mlsQ(l.quality) || 0;
-    const sv = (l.servers || []).filter(s => /pixeldrain/i.test(s.name))[0]
-      || (l.servers || []).filter(s => /hubcloud/i.test(s.name))[0];
-    if (!sv || !sv.link_server_id) continue;
-    if (out.some(x => x.quality === String(l.quality || ''))) continue;   // v1.31.0: কোয়ালিটি-স্ট্রিং ধরে (1080p x264 ও x265 আলাদা কার্ড)
-    out.push({ q: q, id: sv.link_server_id, srv: /pixeldrain/i.test(sv.name) ? 'pixeldrain' : 'hubcloud', size: String(l.size || ''), quality: String(l.quality || '') });
+    const svs = (l.servers || []).filter(s => /pixeldrain|hubcloud/i.test(s.name) && s.link_server_id);
+    if (!svs.length) continue;
+    const uniq = [];
+    for (const sv of svs) { const tag = /pixeldrain/i.test(sv.name) ? 'pixeldrain' : 'hubcloud'; if (uniq.indexOf(tag) < 0) uniq.push(tag); }
+    for (const tag of uniq) {
+      const sv = svs.filter(s => (/pixeldrain/i.test(s.name) ? 'pixeldrain' : 'hubcloud') === tag)[0];
+      if (out.some(x => x.id === sv.link_server_id)) continue;
+      out.push({ q: q, id: sv.link_server_id, srv: tag, size: String(l.size || ''), quality: String(l.quality || '') });
+    }
   }
   // ছোট ফাইল আগে (একই কোয়ালিটিতে x265 10bit সাধারণত অনেক ছোট ⇒ স্ট্রিমিং-এ দ্রুত), তারপর উচ্চ কোয়ালিটি
   return out.sort((a, b) => (b.q - a.q) || String(a.size).localeCompare(String(b.size))).slice(0, n || 3);
@@ -4495,7 +4525,7 @@ async function dtTask(nameP, infoP, type, s, e, origin) {
     const svs = (det.watch_servers || []).slice(0, 3);
     const links = det.links || [];
     const titleTxt = [name, det.episode_name || '', (det.anime_name || used.anime_name) || ''].join(' ').slice(0, 120);
-    const dlCands = dtDlCands(links, 3);            // v1.31.0: ডাউনলোড-প্রার্থী (৪K/1080 → 480)
+    const dlCands = dtDlCands(links, 6);            // v1.32.0: প্রতি কোয়ালিটিতে HubCloud + Pixeldrain (৫টি পর্যন্ত)
     const TTL0 = (det.anime_name || used.anime_name || name);
     const YR0 = year || (det.release_date ? parseInt(String(det.release_date).slice(0, 4), 10) || 0 : 0);
     if (DBG) console.error('[dt] hit slug=' + used.slug + ' sv=' + svs.length + ' links=' + links.length + ' @' + (Date.now() - T0) + 'ms');
@@ -4543,12 +4573,13 @@ async function dtTask(nameP, infoP, type, s, e, origin) {
       const qq = cand.q || mlsQ(cand.quality) || 0;
       const size = mlsMB(pr.size || 0) || cand.size;
       const audio = dtAudio(titleTxt + ' ' + (pr.name || '') + ' ' + (cand.quality || ''));
-      const lines = '⊞ Deadtoons ◧ ' + cand.srv + (audio ? ' ⌗ ' + audio : '') + (size ? ' · ' + size : '');
+      const srvTxt = cand.srv === 'hubcloud' && /pixeldrain/i.test(pr.direct) ? 'hubcloud→pixel' : cand.srv;
+      const lines = '⊞ Deadtoons ◧ ' + srvTxt + (audio ? ' ⌗ ' + audio : '') + (size ? ' · ' + size : '');
       const txt = '⧉ ' + TTL0 + (YR0 ? ' | ' + YR0 + ' |' : ' |') + '\n'
         + (type === 'series' && SE > 0 ? '⬡ S' + SE + 'E' + EP : '⬡ Movie') + (size ? ' · ' + size : '') + '\n' + lines;
       return {
         name: '⫥ ' + (qq || 'Auto') + ' ⫥', title: txt, description: txt, quality: String(qq || ''),
-        url: pr.direct, _srv: 'deadtoons·' + cand.srv, _direct: pr.direct, _dl: 1,
+        url: pr.direct, _srv: 'deadtoons·' + srvTxt.replace('→', '-'), _direct: pr.direct, _dl: 1,
         behaviorHints: { notWebReady: false, isBingeable: true, filename: (pr.name || ('deadtoons-' + (qq || 'auto') + '.mkv')).trim() },
         bingeGroup: 'dtd|' + mlsNorm(TTL0) + '::' + (type === 'series' && SE > 0 ? 'S' + SE + 'E' + EP : 'm')
       };
@@ -4562,7 +4593,7 @@ async function dtTask(nameP, infoP, type, s, e, origin) {
         if (DBG) console.error('[dt] file-card ' + dlReady[i].q + 'p ' + dlReady[i].srv + ' ' + mlsMB(pr.size) + ' @' + (Date.now() - T0) + 'ms');
       });
     }
-    const dlBg = dlCands.filter(c => !DT_UNLOCK.has(String(c.id))).slice(0, 3);   // তিনটিই সমান্তরাল (১৭সে একবারই)
+    const dlBg = dlCands.filter(c => !DT_UNLOCK.has(String(c.id))).slice(0, 6);   // ৪টিই সমান্তরাল (১৭সে একবারই)
     if (dlBg.length && process.env.DTBG !== '0') {
       // ব্যাকগ্রাউন্ড: ১৫সে-গেট ⇒ প্রমাণ ⇒ DT_C-তে কার্ড যোগ (৩০ মিনিট বেঁচে থাকে)
       Promise.all(dlBg.map(c => dtUnlockOne(c.id)
@@ -4578,7 +4609,7 @@ async function dtTask(nameP, infoP, type, s, e, origin) {
         diag('dt', 'dl-bg +' + add.length + ' (refresh এ যোগ হবে)');
       }).catch(() => { });
     }
-    if (cards.length) { DT_C.set(ck, { ts: Date.now(), cards: cards.slice() }); if (DT_C.size > 300) DT_C.clear(); }
+    if (cards.length) { DT_C.set(ck, { ts: Date.now(), cards: cards.slice() }); if (DT_C.size > 120) DT_C.clear(); }   // v1.32.0: মেমরি-সীমা
     diag('dt', 'cards=' + cards.length + ' slug=' + used.slug + ' @' + (Date.now() - T0) + 'ms');
     return cards;
   } catch (err) {
@@ -4649,7 +4680,7 @@ async function twrStreams(base, tag, title, type, s, e, pre) {
     };
     const seas = type === 'series' ? [tCore + ' Season ' + s, tCore + ' Season ' + String(s).padStart(2, '0')] : [];
     const altT = await Promise.race([altP.catch(() => []), new Promise(r => setTimeout(() => r([]), 1200))]); // ★ v1.17.52: alt-টাইটেল ১.২সে-ক্যাপ (আগে ঝুলত)
-    const alts = (altT || []).filter(a => !tries.some(t => t.toLowerCase() === String(a).toLowerCase()) && lcs4(a)).slice(0, 4);
+    const alts = (altT || []).filter(a => !tries.some(t => t.toLowerCase() === String(a).toLowerCase()) && lcs4(a)).slice(0, Number(process.env.TWRALT || 2));   // v1.32.0: ৪ → ২
     const extra = seas.concat(alts).filter(a => !tries.some(t => t.toLowerCase() === String(a).toLowerCase()));
     tries.push(...extra);
     // v1.15.9: Promise.all → প্রথম-জয়ী-রেস (ঢেউ-১-এর-প্রমাণিত-প্যাটার্ন) — ফলব্যাকে-৫-ভ্যারিয়েন্ট-সবার-জন্য-অপেক্ষা-আর-নয়:
@@ -4797,11 +4828,20 @@ async function rtDubMap(slug, SE, EP, budgetMs) { // {mq_fid: \"Muse\"} — স�
   if (RT_DUB_MAP.size > 400) RT_DUB_MAP.clear();
   return map;
 }
+const TWR_INFLIGHT = { n: 0 };   // v1.32.0: একসাথে সর্বোচ্চ ৬টি রেজলভার-কল (OOM-প্রতিরোধ)
 async function twrFetch(base, tag, title, type, s, e, t3) {
   const qs = new URLSearchParams({ source: tag, title: String(title || '').replace(/[\u2018\u2019\u02BC]/g, "'"), _: String(Date.now()) }); // v1.15.11: ইউনিকোড-অ্যাপস্ট্রফি→ASCII (রেজলভার-ক্যাশ-কী-একতা)
   if (type === 'series') { qs.set('season', String(s || 1)); qs.set('episode', String(e || 1)); }
   try {
-    if (DBG) console.error('[twrURL] ' + base + '/find?' + qs.toString()); const b = await directGet(base + '/find?' + qs.toString(), 30000);
+    // ★★ v1.32.0 (প্রোড-লগ-বিশ্লেষণ): `/find`-এর টাইমআউট ছিল **৩০সে** আর কোনো abort নেই — হারভেস্ট
+    //   ৩.২সে-তে কেটে গেলেও ওই কাজগুলো পেছনে চলত (লগে `[twr] … @18390ms`, `@27430ms`)। ২৪টি টাইটেলের
+    //   ম্যাস-টেস্টে কয়েকশো ৩০সে-র অনুরোধ জমে **heap ৩০৯MB ⇒ OOM ক্র্যাশ** (মাপা: `FATAL ERROR:
+    //   Reached heap limit`)। এখন ৬সে + ইন-ফ্লাইট সীমা ⇒ সার্ভার মরে না, উত্তরও দ্রুত।
+    if (TWR_INFLIGHT.n >= Number(process.env.TWRINF || 6)) { if (DBG) console.error('[twr] inflight-skip ' + tag); return []; }
+    TWR_INFLIGHT.n++;
+    let b = '';
+    try { b = await directGet(base + '/find?' + qs.toString(), Number(process.env.TWRTMO || 6000)); }
+    finally { TWR_INFLIGHT.n--; }
     const j = JSON.parse(b);
     // v1.12.3: twr-কার্ড-ও-ইউনিফর্ম-ভিডি-ফরম্যাটে (⧉ Title / ⧠ SsEe • EpTitle / ⨞ Server ⌧ Audio) — resolution-শুধু-name-ব্যাজে, সবসময়-1080 (Auto/360-লেবেল-নয়)
     const raws = ((j && j.results) || []).filter(x => x && typeof x.url === 'string' && /^https?:/.test(x.url));
@@ -11537,6 +11577,26 @@ function stashGet(k) {
   for (const sk in e) if (now - e[sk].ts < STASH_TTL) { out[sk] = e[sk]; any = true; }
   return any ? out : null;
 }
+// ★ v1.32.0 (প্রোড-লগ-বিশ্লেষণ, ৬-১১-২০২৬): `/stream`-এর প্রতিটি উত্তর ৯.৩–৯.৫সে-তে আটকে ছিল,
+//   কারণ সব সোর্সের ক্যাপ ৯.২–৯.৭সে আর `outsP` **সব সোর্স সেটেল হওয়া পর্যন্ত** অপেক্ষা করত।
+//   প্রোড-ডায়াগ: dt ০.৬৬সে · hd ০.৭৯ · m4u ০.৭৯ · az ১.০৯ · hm ১.১১ · sky ১.১৮ · mlb ১.৮২ ·
+//   mm ২.২০ · ott ২.৫৮ · mls ৪.২৬ — **এর পরেই ৮.২–৯.৫সে-তে tw/nx/rt/vsp, সবগুলোই n=০**।
+//   অর্থাৎ শেষ ৩টি সোর্স শুধু সময় খাচ্ছিল, কার্ড দিচ্ছিল না ⇒ উত্তর ৪.৩সে-র বদলে ৯.৫সে।
+//   সমাধান: (ক) ক্যাপ অনেক নিচে, (খ) **শিখে-নেওয়া ক্যাপ** — যে সোর্স টানা ২ বার খালি ফিরে আর নিজেই
+//   ২.৫সে-র বেশি নেয়, তার ক্যাপ ৩.২সে; (গ) কার্ড পাওয়া গেলে আর বেশি অপেক্ষা নয়।
+const SRC_STATS = new Map();          // key → {calls, cards, ms, streak0, last}
+const srcStatRec = (k, n, ms) => {
+  const e = SRC_STATS.get(k) || { calls: 0, cards: 0, ms: 0, streak0: 0, last: 0 };
+  e.calls++; e.cards += (n || 0); e.ms = Math.round(e.ms ? (e.ms * 3 + ms) / 4 : ms);
+  e.streak0 = n ? 0 : (e.streak0 || 0) + 1; e.last = Date.now();
+  SRC_STATS.set(k, e);
+};
+const srcCapFor = (k, base) => {
+  const e = SRC_STATS.get(k);
+  if (!e) return base;
+  if (e.streak0 >= Number(process.env.SC0 || 2) && e.ms > 2500) return Math.min(base, Number(process.env.SCFAST || 3200));
+  return base;
+};
 async function withSources(cardsP, srcs, cfg, t0, mkey, lookupP) {
   const SKEY = mkey ? String(mkey).split(' [')[0] : '';
   // ★ v1.26.2: নাম/TMDB-লুকআপ কত সময় নিল — সোর্সগুলো ওই সময়ের **পরে** শুরু হয়, তাই ওদের বাজেট
@@ -11559,13 +11619,13 @@ async function withSources(cardsP, srcs, cfg, t0, mkey, lookupP) {
     //   পুরনো "৬ কার্ড হলেই ৪.৬সে-এ কাট" নিয়ম **বাতিল** — সেটাই দেরিতে-আসা সোর্সের
     //   (sky/m4u/hm/nx) কার্ড ফেলে দিত। এখন: **সব লাইভ-সোর্স সেটেল হলেই ফেরা**,
     //   নইলে শুধু ৮.২সে হার্ড-ক্যাপ (Beamup-এর ১২সে-কাটঅফের ভিতরে)।
-    const MIN_WAIT_MS = Number(process.env.VFLOOR || 1200), HARD_CAP_MS = Number(process.env.VCAP || 10200); // v1.26.2: লুকআপ-সময় যোগ (১২সে-হার্ড-ক্যাপের ভিতরে) // v1.26.1: ১২সে-হার্ড-ক্যাপের ভিতরে ১০.২সে পর্যন্ত কাজে লাগাই // v1.17.52: ৭.৮সে-ক্যাপেই sky/hm/m4u/nx কাটা পড়ত ⇒ ১০.৫সে
+    const MIN_WAIT_MS = Number(process.env.VFLOOR || 1200), HARD_CAP_MS = Number(process.env.VCAP || 6200); // v1.26.2: লুকআপ-সময় যোগ (১২সে-হার্ড-ক্যাপের ভিতরে) // v1.26.1: ১২সে-হার্ড-ক্যাপের ভিতরে ১০.২সে পর্যন্ত কাজে লাগাই // v1.17.52: ৭.৮সে-ক্যাপেই sky/hm/m4u/nx কাটা পড়ত ⇒ ১০.৫সে
     let lit = 0, settled = 0, fireCut = null;
     _cutP = new Promise(r => { fireCut = r; });
     _watch = setInterval(() => {
       if (cutFlag) return;
       const el2 = Date.now() - t0;
-      const _hc = Math.min(11800, HARD_CAP_MS + _LK.ms);   // ★ v1.26.3: লুকআপ-সময়সহ (লাইভ)
+      const _hc = Math.min(11800, HARD_CAP_MS + Math.min(_LK.ms, 1500));   // ★ v1.26.3: লুকআপ-সময়সহ (লাইভ)
       if (el2 >= _hc) { cutFlag = true; try { fireCut(true); } catch (e) { } } // ক্যাপ: যা এসেছে তাই
       else if (el2 >= MIN_WAIT_MS && settled >= live.length) { cutFlag = true; try { fireCut(true); } catch (e) { } } // সব সেটেল → আর অপেক্ষা নয়
     }, 60);
@@ -11573,13 +11633,15 @@ async function withSources(cardsP, srcs, cfg, t0, mkey, lookupP) {
     // ★ v1.17.56: **গৌণ-সোর্সের নিজস্ব ছোট-ক্যাপ** — ott/tw/rt/az বসে-থাকলে পুরো উত্তর ১১.৫সে-দেয়ালে
     //   গিয়ে ঠেকত (প্রোড-লগে জোড়ায়-জোড়ায় 11.5s), অথচ ওরা কার্ড দিচ্ছিল না (n=0)। এখন ৬.৫সে।
     // ★ v1.20.2 (মাপা: ৮.২সে-র কারণ ছিল hm — ০ কার্ড দিয়ে ৮.২সে পর্যন্ত ধরে রাখত; tw/rt তেমনই)
-    const SRC_CAP_MAP = { ott: 9400, tw: 9600, rt: 9400, az: 9600, hm: 9700, vsp: 9400, nx: 9200, m4u: 9200, sky: 9000, mm: 9600, mlb: 9000, mls: 9200 };   // v1.27.19: hm 8200-race + mlb 8200-বাজেটের জন্য ক্যাপ বাড়ানো // v1.26.1: toonworld-এর রেজলভারই ৭.৫সে নেয় (মাপা) — ৮.৫সে-ক্যাপে ওটা সবসময় কাটা পড়ত // ★ v1.22.3: prod-মাপা — এই সোর্সগুলো prod-এ ৭-৮সে নেয়, আগের ক্যাপে তারা সবসময় 'cut' হতো
-    const SRC_CAP_MS = Number(process.env.VSCAP || 9600); // v1.17.58: 9.3s-cap-e prod-e 10.2-10.6s hoi (edge-er kache) // ★ v1.17.52: প্রতি-সোর্স-ক্যাপ — একটি ঝুলন্ত সোর্স (ott/tw/nx) পুরো তালিকাকে ক্যাপে টেনে নিত
+    // ★ v1.32.0: প্রোডে যেগুলো ৮–৯.৫সে নিয়ে ০ কার্ড দিত (tw/rt/vsp/nx) সেগুলোর ক্যাপ অনেক কম;
+    //   nx (MovieBox) একটু বেশি পায় কারণ সেটা আসলে বড় সোর্স — কিন্তু ৬সে-র বেশি নয়।
+    const SRC_CAP_MAP = { ott: 3600, tw: 4200, rt: 4200, az: 4000, hm: 4200, vsp: 4200, nx: 6000, m4u: 4600, sky: 3800, mm: 4600, mlb: 4600, mls: 5200, dt: 5200 };   // v1.27.19: hm 8200-race + mlb 8200-বাজেটের জন্য ক্যাপ বাড়ানো // v1.26.1: toonworld-এর রেজলভারই ৭.৫সে নেয় (মাপা) — ৮.৫সে-ক্যাপে ওটা সবসময় কাটা পড়ত // ★ v1.22.3: prod-মাপা — এই সোর্সগুলো prod-এ ৭-৮সে নেয়, আগের ক্যাপে তারা সবসময় 'cut' হতো
+    const SRC_CAP_MS = Number(process.env.VSCAP || 4600); // ★ v1.32.0: 5200→4600 (লক্ষ্য ≈৫সে) // v1.17.58: 9.3s-cap-e prod-e 10.2-10.6s hoi (edge-er kache) // ★ v1.17.52: প্রতি-সোর্স-ক্যাপ — একটি ঝুলন্ত সোর্স (ott/tw/nx) পুরো তালিকাকে ক্যাপে টেনে নিত
     const track = x => { // ★ v1.17.52: টাইমার ক্লিয়ার হয় — নইলে সেটেল হওয়া সোর্সের জন্যও ভুল '[srccap]' ছাপ পড়ত
       let _tm = null;
       // ★ v1.26.3 (আগের ফিক্সটা ভুল ছিল — লগ-প্রমাণ: `[srccap]` সবসময় base মানে ফায়ার করত):
       //   `_LK.ms` মাইক্রোটাস্কে সেট হয়, আর ক্যাপের মান ৪০–৬০ms পর **ফায়ার করার সময়** পড়া হয়।
-      const base = Math.min(SRC_CAP_MS, SRC_CAP_MAP[x.key] || SRC_CAP_MS);
+      const base = srcCapFor(x.key, Math.min(SRC_CAP_MS, SRC_CAP_MAP[x.key] || SRC_CAP_MS));
       const capP = new Promise(r => { _tm = setInterval(() => {
         const lim = Math.min(11800, base + _LK.ms);
         if (Date.now() - t0 >= lim) { clearInterval(_tm); if (DBG) console.error('[srccap] ' + x.key + ' @' + lim + 'ms' + (_LK.ms ? ' (base ' + base + ' + look ' + _LK.ms + ')' : '')); r(null); }
@@ -11587,6 +11649,7 @@ async function withSources(cardsP, srcs, cfg, t0, mkey, lookupP) {
       return Promise.race([x.p, capP]).then(v => { clearInterval(_tm);
       if (v && v.length) lit += v.length;
       settled++;
+      srcStatRec(x.key, (v || []).length, Date.now() - t0);   // v1.32.0: শেখা-ক্যাপের জন্য
       diag('src', x.key + ' n=' + ((v || []).length) + ' @' + (Date.now() - t0) + 'ms');
       if (DBG) console.error('[srcsettle] ' + x.key + ' @' + (Date.now() - t0) + 'ms n=' + ((v || []).length) + ' (' + settled + '/' + live.length + ')');
       return v;
@@ -11609,7 +11672,9 @@ async function withSources(cardsP, srcs, cfg, t0, mkey, lookupP) {
       (x.key === 'nx' ? nxCutP : _cutP).then(() => null)
     ]))).finally(() => clearInterval(_watch));
   }
-  const cLeft = Math.max(500, Math.min(10600, Number(process.env.VPICK || 9600) + 1200) + _LK.ms - (Date.now() - t0)); // ★ v1.20.2: vidy-কার্ড-কাট 5.7সে (আগে 9.2সে) // ⚠️ v1.17.27: ৪.৬সে-ক্যাপ **ফেরত নেওয়া হলো** — মাপা: vidy ৪.৩সে-তে ৩০+ কার্ড দেয়, ক্যাপ করলে E9/E12/E14-এ ১–১০ কার্ডে নেমে যায়
+  // ★ v1.32.0: vidy-কার্ডের অপেক্ষাও ছোট (আগে ১০.৬সে ⇒ Mirzapur-এ ৮সে উত্তর)। মাপা: vidy কার্ড
+  //   ২–৪সে-তেই আসে; দেরিতে-আসা সার্ভার ব্যাকগ্রাউন্ডে ক্যাশে জমে, পরের খোলে পুরো।
+  const cLeft = Math.max(500, Math.min(10600, Number(process.env.VPICK || 4200) + 1200) + Math.min(_LK.ms, 800) - (Date.now() - t0)); // ★ v1.20.2: vidy-কার্ড-কাট 5.7সে (আগে 9.2সে) // ⚠️ v1.17.27: ৪.৬সে-ক্যাপ **ফেরত নেওয়া হলো** — মাপা: vidy ৪.৩সে-তে ৩০+ কার্ড দেয়, ক্যাপ করলে E9/E12/E14-এ ১–১০ কার্ডে নেমে যায়
   const cards = await Promise.race([
     cardsP.catch(e => { if (DBG) console.error('[srcdbg] cardsP died: ' + String(e && e.message || e).slice(0, 90)); return []; }),
     new Promise(r => setTimeout(() => r([]), cLeft))
@@ -12420,7 +12485,11 @@ async function unifyCards(cards, meta) { // শুধু-টেক্সট-ব�
 //   নীতি: **খালি ফল কখনো ক্যাশ নয়**; আংশিক (কাটা) ফল ছোট TTL — দেরিতে-আসা সোর্স শিগগির যোগ হয়;
 //   ডিপ্লয়ের সাথে সাথে অকার্যকর (কী-তে VERSION)।
 const STREAM_RES_CACHE = new Map();
-const STREAM_RES_MAX = 240;
+// ★★ v1.32.0 (OOM-তদন্ত): প্রতি এন্ট্রি পুরো JSON-বডি (২০০KB পর্যন্ত) ধরে ⇒ ২৪০টি = ৪৮MB পর্যন্ত।
+//   ম্যাস-টেস্টে heap ৩০৯MB ⇒ `FATAL ERROR: Reached heap limit` (প্রোডও `--max-old-space-size=256`-এ
+//   চলে ⇒ সার্ভার রিস্টার্ট ⇒ পুল/ক্যাশ হারিয়ে "টাইটেল মিস")। এখন **বাইট-বাজেট** (24MB) + ১২০ এন্ট্রি।
+const STREAM_RES_MAX = Number(process.env.VRCMAX || 120);
+const STREAM_RES_BYTES = Number(process.env.VRCBYTES || 24 * 1024 * 1024);
 function sresKey(plog, cfg) {
   let sig = '';
   try { sig = JSON.stringify(cfg || {}); } catch (e) { sig = ''; }
@@ -12468,12 +12537,19 @@ function sresPut(k, body, partial) {
   const _pw = Number(process.env.VRPART || 8) * 1000; // v1.26.1: আংশিক-ফল ৬০সে ধরে রিপ্লে করলে রিফ্রেশেও পুরোনো কম-তালিকা আসত — এখন ৮সে (স্ট্যাশ ভরাট করে)
   // ★★ v1.21.7 (ইউজার: "refresh dile keno kome jay"): **মনোটনিক** — নতুন স্ক্যানে কোনো কার্ড কমলে
   //   আগের ফলটার কার্ডগুলোও রাখা হয় (url-ডিডুপ, নতুনগুলো আগে)। mane রিফ্রেশ কখনো তালিকা ছোট করে না।
-  STREAM_RES_CACHE.set(k, { body: body, exp: Date.now() + (partial ? _pw : _vrc * 1000), partial: !!partial, ts: Date.now() });
+  STREAM_RES_CACHE.delete(k);   // নতুন এন্ট্রি শেষে (LRU-ক্রম ঠিক রাখতে)
+  STREAM_RES_CACHE.set(k, { body: body, exp: Date.now() + (partial ? _pw : _vrc * 1000), partial: !!partial, ts: Date.now(), sz: body.length });
   if (partial && DBG) console.error('[vmc] partial ফল — ' + Math.round(_pw / 1000) + 'সে ক্যাশ (' + k.split('|')[0] + ')'); // v1.20.0: পূর্ণ-ফল ৩০মিন, আংশিক ১মিনে-আসা সোর্স তাড়াতাড়ি যোগ হোক)
-  if (STREAM_RES_CACHE.size > STREAM_RES_MAX) {
+  {
     const now = Date.now();
     for (const [kk, vv] of STREAM_RES_CACHE) if (vv.exp <= now) STREAM_RES_CACHE.delete(kk);
-    while (STREAM_RES_CACHE.size > STREAM_RES_MAX) STREAM_RES_CACHE.delete(STREAM_RES_CACHE.keys().next().value);
+    let bytes = 0; for (const vv of STREAM_RES_CACHE.values()) bytes += (vv.sz || 0);
+    while (STREAM_RES_CACHE.size > STREAM_RES_MAX || bytes > STREAM_RES_BYTES) {   // v1.32.0: বাইট-বাজেট
+      const first = STREAM_RES_CACHE.keys().next().value;
+      const ev = STREAM_RES_CACHE.get(first); bytes -= (ev && ev.sz) || 0;
+      STREAM_RES_CACHE.delete(first);
+      if (!STREAM_RES_CACHE.size) break;
+    }
   }
 }
 // ================= v1.30.0: Deadtoons HLS রিলে (/dh/) =================
@@ -13160,6 +13236,31 @@ const server = http.createServer((req, res) => {
         : kind === 'task' ? mlsTask(Promise.resolve(u), Promise.resolve(null), u2.searchParams.get('t') === 'series' ? 'series' : 'movie', Number(u2.searchParams.get('s') || 0), Number(u2.searchParams.get('e') || 0))
         : mlsWatch(u, 9000);
       return Promise.resolve(job).then(r => sendJson(res, 200, { ok: 1, kind: kind, r: r })).catch(e => sendJson(res, 200, { ok: 0, err: String(e && e.message) }));
+    }
+    if (p === '/_memmaps') {   // v1.32.0: মেমরি-মানচিত্র (OOM-তদন্ত) — কোন কাঠামো ফুলছে এক-নজরে (OOM-তদন্ত)
+      const sz = m => { try { return m ? (m.size !== undefined ? m.size : Object.keys(m).length) : 0; } catch (e) { return -1; } };
+      const mu = process.memoryUsage();
+      return sendJson(res, 200, {
+        ver: VERSION, uptime: Math.round(process.uptime()),
+        heapUsedMB: +(mu.heapUsed / 1048576).toFixed(1), heapTotalMB: +(mu.heapTotal / 1048576).toFixed(1), rssMB: +(mu.rss / 1048576).toFixed(1),
+        maps: {
+          STREAM_RES_CACHE: sz(typeof STREAM_RES_CACHE !== 'undefined' ? STREAM_RES_CACHE : null),
+          MLS_RC: sz(typeof MLS_RC !== 'undefined' ? MLS_RC : null), MLS_GD: sz(typeof MLS_GD !== 'undefined' ? MLS_GD : null),
+          MLS_SAV: sz(typeof MLS_SAV !== 'undefined' ? MLS_SAV : null), MLS_C: sz(typeof MLS_C !== 'undefined' ? MLS_C : null),
+          DT_C: sz(typeof DT_C !== 'undefined' ? DT_C : null), DT_UNLOCK: sz(typeof DT_UNLOCK !== 'undefined' ? DT_UNLOCK : null),
+          HM_RC: sz(typeof HM_RC !== 'undefined' ? HM_RC : null), SPOOL: sz(typeof SPOOL !== 'undefined' ? SPOOL : null),
+          VIDY_OK: sz(typeof VIDY_OK !== 'undefined' ? VIDY_OK : null), POOL: sz(typeof POOL !== 'undefined' ? POOL : null),
+          PX_RAW: sz(typeof PX_RAW !== 'undefined' ? PX_RAW : null), PXSTASH: sz(typeof PXSTASH !== 'undefined' ? PXSTASH : null),
+          RT_INFLIGHT: sz(typeof RT_INFLIGHT !== 'undefined' ? RT_INFLIGHT : null), SRC_STATS: sz(typeof SRC_STATS !== 'undefined' ? SRC_STATS : null),
+          MLS_PX_OK: sz(typeof MLS_PX_OK !== 'undefined' ? MLS_PX_OK : null), MLS_PX_CANDS: (typeof MLS_PX_CANDS !== 'undefined' ? MLS_PX_CANDS.length : 0),
+          SRC_STASH: sz(typeof SRC_STASH !== 'undefined' ? SRC_STASH : null)
+        }
+      });
+    }
+    if (p === '/_srcstats') {   // v1.32.0: প্রতি-সোর্স মাপা গড় (n, ms) — কোন সোর্স সময় খাচ্ছে এক-নজরে
+      const o = {};
+      for (const [k, e] of SRC_STATS) o[k] = { calls: e.calls, cards: e.cards, avgMs: e.ms, streak0: e.streak0, cap: srcCapFor(k, 5200) };
+      return sendJson(res, 200, { ver: VERSION, src: o });
     }
     if (p === '/_lastsrc') return sendJson(res, 200, LAST_SRC || {});
     if (p === '/_pools') { // ★ v1.22.0: প্রতি-সোর্স প্রক্সি-পুলের অবস্থা
@@ -14144,10 +14245,14 @@ function memPurgeAll(lvl) {
   };
   for (const k in BM) { const bud = CACHE_BUDGET_MB[k]; if (bud) step(() => capByBytes(BM[k], bud)); }
   if (lvl <= 0) return n;
+  // ★ v1.32.0: /stream-রেসপন্স, সোর্স-স্ট্যাশ ও MLS/Deadtoons ক্যাশও এখানে (আগে বাদ ⇒ heap ফুলত)
+  step(() => { try { let k = 0; const now = Date.now(); for (const [kk, vv] of STREAM_RES_CACHE) { if (vv.exp <= Date.now()) { STREAM_RES_CACHE.delete(kk); k++; } } return k; } catch (e) { return 0; } });
   // ---- স্তর ১ ----
   step(() => _prune(VH_C, L1)); step(() => _prune(MM_WC, L1)); step(() => _prune(OL_CACHE, L1));
   step(() => _prune(ALTCACHE, L1)); step(() => _prune(SUBS_CACHE, L1)); step(() => _prune(memo, L1));
   if (lvl >= 2) {   // ---- স্তর ২: ভিডিও-ক্যাশ পুরো ফাঁকা ----
+    step(() => clear(STREAM_RES_CACHE)); step(() => clear(SRC_STASH)); step(() => clear(DT_C)); step(() => clear(DT_UNLOCK));
+    step(() => clear(MLS_RC)); step(() => clear(MLS_SAV)); step(() => clear(MLS_GD)); step(() => clear(MLS_C));
     step(() => clear(MM_WC)); step(() => clear(MM_WC_INFLIGHT)); step(() => clear(VH_C));
     step(() => clear(VSP_MEMO)); step(() => clear(OTT_MEMO)); step(() => clear(AZ_MEMO));
     step(() => clear(AZ_CARD)); step(() => clear(OL_CACHE)); step(() => clear(SUBS_CACHE));
