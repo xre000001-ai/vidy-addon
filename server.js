@@ -9190,7 +9190,7 @@ function m4uHParse(html) {   // পোস্ট-পেজ → ডাউনলো
   }
   return out;
 }
-async function m4uHFast(nexUrl) {   // nexdrive → fast-dl → 302 (Google direct) + HEAD-প্রমাণ
+async function m4uHFast(nexUrl, needProof) {   // nexdrive → fast-dl → 302 (Google direct) + HEAD-প্রমাণ
   const hit = M4U_FLY.get(nexUrl); if (hit && Date.now() - hit.ts < 5 * 60e3) return hit;
   const q0 = Date.now(); const stp = {}; let _q = q0;
   const mark = k => { stp[k] = Date.now() - _q; _q = Date.now(); };
@@ -9215,12 +9215,15 @@ async function m4uHFast(nexUrl) {   // nexdrive → fast-dl → 302 (Google dire
   }
   let loc = r3.loc || '';
   if (!/^https?:/.test(loc)) { if (DBG) console.error('[m4u2] no-302 ' + c + ' st=' + r3.st); return { ts: Date.now(), url: '', why: 'no-302' }; }
-  const hd = await m4uHReq(loc, { method: 'HEAD', ref: host + '/', tmo: 5000 }); mark('head');
-  const rec = { ts: Date.now(), url: loc, ct: hd.ct, cl: hd.cl || r3.cl, st: hd.st };
-  if (!(hd.st === 200 || hd.st === 206) || !hd.cl || /text\/html/i.test(hd.ct)) {
-    if (DBG) console.error('[m4u2] head-fail ' + c + ' st=' + hd.st + ' ct=' + hd.ct + ' cl=' + hd.cl);
-    return { ts: Date.now(), url: '', why: 'head-fail' };
+  let hd = { st: 302, ct: '', cl: 0 };
+  if (needProof !== false) {
+    hd = await m4uHReq(loc, { method: 'HEAD', ref: host + '/', tmo: 5000 }); mark('head');
+    if (!(hd.st === 200 || hd.st === 206) || !hd.cl || /text\/html/i.test(hd.ct)) {
+      if (DBG) console.error('[m4u2] head-fail ' + c + ' st=' + hd.st + ' ct=' + hd.ct + ' cl=' + hd.cl);
+      return { ts: Date.now(), url: '', why: 'head-fail' };
+    }
   }
+  const rec = { ts: Date.now(), url: loc, ct: hd.ct, cl: hd.cl || r3.cl, st: hd.st };
   if (M4U_FLY.size > 100) M4U_FLY.clear();
   M4U_FLY.set(nexUrl, rec);
   if (DBG) console.error('[m4u2] ok ' + c + ' ' + (rec.cl / 1073741824).toFixed(2) + 'GB ' + rec.ct + ' ' + JSON.stringify(stp) + ' tot=' + (Date.now() - q0) + 'ms');
@@ -9228,10 +9231,12 @@ async function m4uHFast(nexUrl) {   // nexdrive → fast-dl → 302 (Google dire
 }
 async function m4uRevive(tmdbId, title, type, s, e, origin, maxh) {
   const T0 = Date.now();
-  const T = String(title || '').trim() || (await nameForTmdb(tmdbId, type === 'series' ? 'tv' : 'movie').catch(() => ''));
-  if (!T) return [];
   const isS = type === 'series';
+  // ★ সমান্তরাল: নাম আর বছর একসাথে (ক্রমিকে এক-রাউন্ডট্রিপ বেশি লাগত)
+  const nameP = String(title || '').trim() ? Promise.resolve(String(title).trim()) : nameForTmdb(tmdbId, isS ? 'tv' : 'movie').catch(() => '');
   const Y = await skyYear(tmdbId, isS).catch(() => 0);
+  const T = await nameP;
+  if (!T) return [];
   const q = isS ? (T + ' season ' + (s || 1)) : T;
   const posts = await m4uHSearch(q);
   if (DBG) console.error('[m4u2] heap@search ' + Math.round(process.memoryUsage().heapUsed / 1048576) + 'MB');
@@ -9279,7 +9284,9 @@ async function m4uPostCards(hit, T, Y, isS, s, e, maxh, T0, maxN) {
   if (!pick.length) { if (DBG) console.error('[m4u2] filtered-out ' + hit.slug.slice(0, 36)); return []; }
   const audio = dtAudio(hit.slug.replace(/-/g, ' ')) || '';
   if (DBG) console.error('[m4u2] heap@resolve0 ' + Math.round(process.memoryUsage().heapUsed / 1048576) + 'MB');
-  const res = await Promise.all(pick.map(x => m4uHFast(x.href).catch(() => null)));
+  // ★ প্রতি-এন্ট্রিতে HEAD নয়: প্রথমটি প্রমাণ হিসেবে (২০০+video/*+আসল সাইজ), বাকিগুলো পোস্টের
+  //   সাইজ-লেবেলেই (মাপা: লেবেল ও আসল সাইজ হুবহু মেলে) ⇒ ৪টি HEAD-এর ~০.৫সে বাঁচে।
+  const res = await Promise.all(pick.map((x, i) => m4uHFast(x.href, i === 0).catch(() => null)));
   if (DBG) console.error('[m4u2] heap@resolved ' + Math.round(process.memoryUsage().heapUsed / 1048576) + 'MB');
   const cards = [];
   res.forEach((r, i) => {
