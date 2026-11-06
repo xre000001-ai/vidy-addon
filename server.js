@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.33.2';
+const VERSION = '1.34.3';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -9232,6 +9232,206 @@ async function m4uHFast(nexUrl, needProof) {   // nexdrive → fast-dl → 302 (
   if (DBG) console.error('[m4u2] ok ' + c + ' ' + (rec.cl / 1073741824).toFixed(2) + 'GB ' + rec.ct + ' ' + JSON.stringify(stp) + ' tot=' + (Date.now() - q0) + 'ms');
   return rec;
 }
+
+// ═══════════════ v1.34.0: **নতুন Movies4u — movies4u.td (WordPress) + mdrive.cloud** ═══════════════
+//   ইউজার-দেওয়া নতুন ডোমেইন https://movies4u.td/ ; মাপা (৬-১১-২০২৬):
+//     • সার্চ = WordPress `GET /?s=<q>` (POST `do=search` নয় — পুরোনো DLE-ধাঁচ এখানে নেই)
+//     • পোস্ট = `/<slug>/`; ভেতরে `<h5>` = কোয়ালিটি+সাইজ ("…480p AMZN WEB-DL x264 [435MB]"),
+//       তার ঠিক পরে `mdrive.cloud/mdisk/<id>` ("NEX DRIVE" হাব-পেজ)
+//     • mdrive পেজে সার্ভার-তালিকা: **G-Direct [Instant]** (fastdl.beer) · **V-Cloud [Resumable]**
+//       (vcloud.beer) · V-Drive [Multi] (one.vegadrive.app) · Filepress (filebee.top) · gofile · viking · megaup
+//   ইউজার-নির্দেশ: "hubcloud e fsl er duita server ase … jeigula resume kora jai, 10gbps badhe" ⇒
+//     **রিজিউমেবল সার্ভার আগে** (V-Cloud → G-Direct), আর `10gbps` লেবেল/bookmark-যুক্ত লিংক **বাদ**।
+//     ব্লকড/নিষিদ্ধ হোস্ট (filepress·filebee·viking·gofile·megaup·gdtot·gdxfiles) কখনোই কার্ড নয়।
+const M4U_TD_BASE = process.env.M4UTD || 'https://movies4u.td';
+const M4U_TD_CACHE = new Map();     // post-url → parsed entries (৩০মিন)
+const M4U_TD_NEG = new Map();       // title → ts (৫মিন)
+const M4U_TD_S = new Map();         // search q → posts (৩০মিন, CF-চাপ কমাতে)
+const M4U_TD_LAST = { found: false, ts: 0 };   // .td-এ পোস্ট-মিল পেল কি না (পুরোনো-পথে সময় নষ্ট নয়)
+function m4uTdEntries(html) {       // পোস্ট-পেজ → [{q,size,mdisk}]
+  const h = String(html || '');
+  const heads = [];
+  for (const m of h.matchAll(/<h([2-6])[^>]*>([\s\S]*?)<\/h\1>/g)) {
+    const t = m[2].replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/\s+/g, ' ').trim();
+    if (t) heads.push({ i: m.index, t: t });
+  }
+  const out = [];
+  for (const m of h.matchAll(/href="(https?:\/\/(?:mdrive\.cloud|nexdrive\.[a-z]+)\/mdisk\/(\d+)[^"]*)"/g)) {
+    const at = m.index, url = m[1];
+    let ctx = '';
+    for (const hd of heads) { if (hd.i < at) ctx = hd.t; else break; }
+    if (!/\b(?:2160|1440|1080|720|480|360)p\b/i.test(ctx)) continue;      // কোয়ালিটি-হেডিং-বিহীন ব্লক নয়
+    const q = (ctx.match(/\b(2160|1440|1080|720|480|360)p\b/i) || [])[1] || '';
+    const sz = (ctx.match(/\[([\d.]+)\s*(GB|MB)\]/i) || []);
+    out.push({ q: q, size: sz[1] ? (sz[1] + ' ' + String(sz[2]).toUpperCase()) : '', mdisk: url, title: ctx, id: m[2] });
+  }
+  return out;
+}
+const M4U_TD_BAD = /(?:filebee|filepress|viking|gofile|megaup|gdtot|gdxfiles|pixeldra|10\s*gbps)/i;
+async function m4uTdMdisk(mdisk) {
+  const r = await m4uHReq(mdisk, { ref: M4U_TD_BASE + '/', tmo: 6000 });
+  const h = String(r.body || '');
+  const links = [];
+  for (const m of h.matchAll(/<a[^>]*href="(https?:\/\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/g)) {
+    const href = m[1].replace(/&amp;/g, '&');
+    const txt = m[2].replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!/^https?:/.test(href)) continue;
+    if (M4U_TD_BAD.test(href) || M4U_TD_BAD.test(txt)) continue;          // ★ 10Gbps + নিষিদ্ধ হোস্ট বাদ
+    // ★★ v1.34.1 (ইউজার: "10gbps badhe"): যে-সার্ভার নিজেই বলছে "10Gbps Direct / Not resumable" — বাদ
+    if (/10\s*gbps|not\s*resumable|non[\s-]*resumable/i.test(txt)) continue;
+    // রিজিউমেবল আগে: V-Cloud (resumable) → G-Direct (instant) → V-Drive (multi)
+    let rank = 9, srv = '';
+    if (/vcloud\.(?:beer|xyz|live)/i.test(href)) { rank = 1; srv = 'V-Cloud'; }
+    else if (/fastdl\.(?:beer|one|site)/i.test(href)) { rank = 2; srv = 'G-Direct'; }
+    else if (/vegadrive\.app|v-drive/i.test(href)) { rank = 3; srv = 'V-Drive'; }
+    if (rank > 3) continue;                                              // অচেনা হোস্ট ⇒ কার্ড নয়
+    links.push({ href: href, srv: srv, rank: rank, txt: txt });
+  }
+  links.sort((a, b) => a.rank - b.rank);
+  return links;
+}
+// চেইন-শেষ: যেকোনো সার্ভার-পেজ → আসল ফাইল-URL (প্রমাণ-সহ)
+async function m4uTdResolve(link, needProof) {
+  const T0 = Date.now();
+  let url = '', srv = link.srv;
+  try {
+    if (link.rank === 2) {   // G-Direct → embed পেজের ভেতরেই Google-URL বসানো থাকে (JS ছাড়াই পড়া যায়)
+      const r = await m4uHReq(link.href, { ref: 'https://mdrive.cloud/', tmo: 6000 });
+      const m = /https:\/\/video-downloads\.googleusercontent\.com\/[A-Za-z0-9_\-]+/.exec(String(r.body || ''));
+      if (m) url = m[0];
+    } else {                 // V-Cloud / V-Drive — CF Turnstile হলে (403) সৎভাবে বাদ
+      const r = await m4uHReq(link.href, { ref: 'https://mdrive.cloud/', tmo: 6000 });
+      const b = String(r.body || '');
+      let m = /https:\/\/video-downloads\.googleusercontent\.com\/[A-Za-z0-9_\-]+/.exec(b);
+      if (!m && link.rank === 3) {
+        // ★★ v1.34.1: V-Drive পেজে প্রাইমারি বোতামটাই "Vegadrop (10Gbps Direct) — Not resumable"
+        //   (মাপা) ⇒ সেটি বাদ; শুধু **রিজিউমেবল মিরর** (FSL-জাতীয়) নেওয়া হয়।
+        for (const mm of b.matchAll(/<a[^>]*href="(https?:\/\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/g)) {
+          const href2 = mm[1].replace(/&amp;/g, '&');
+          const t2 = mm[2].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+          const host2 = (href2.match(/^https?:\/\/([^/]+)/) || [])[1] || '';
+          if (!/vegadrive\.me\/d\//i.test(href2)) continue;
+          if (/10\s*gbps|not\s*resumable|telegram/i.test(t2)) continue;
+          if (/gofile|buzzheavier|skydrop|10gbps/i.test(host2 + ' ' + href2)) continue;
+          srv = 'V-Drive'; url = href2; m = [href2]; break;
+        }
+      }
+      if (m) { if (!url) url = m[0]; }
+      else if (DBG) console.error('[m4utd] ' + srv + ' blocked/no-link st=' + r.st);
+    }
+  } catch (e) { if (DBG) console.error('[m4utd] ' + srv + ' err ' + String(e && e.message).slice(0, 50)); }
+  if (!url) return { url: '', srv: srv, why: 'no-link' };
+  if (needProof !== false) {
+    let hd = await m4uHReq(url, { method: 'HEAD', ref: link.href, tmo: 5000 });
+    if (!(hd.st === 200 || hd.st === 206) || /text\/html/i.test(hd.ct || '')) {
+      // ★ v1.34.1: HEAD ব্যর্থ/খালি হলে **এক-বাইট Range-GET** দিয়েই প্রমাণ (মাপা: কিছু নোডে HEAD st=0)
+      try { hd = await m4uHReq(url, { headers: { Range: 'bytes=0-0' }, ref: link.href, tmo: 6000, maxBody: 4000 }); } catch (e) { }
+      if (!(hd.st === 200 || hd.st === 206) || /text\/html/i.test(hd.ct || '')) {
+        if (DBG) console.error('[m4utd] head-fail ' + srv + ' st=' + hd.st + ' ct=' + hd.ct);
+        return { url: '', srv: srv, why: 'head-fail' };
+      }
+    }
+    return { url: url, srv: srv, cl: hd.cl, ct: hd.ct, ts: Date.now() - T0 };
+  }
+  return { url: url, srv: srv, ts: Date.now() - T0 };
+}
+async function m4uTdStreams(tmdbId, title, type, s, e, origin, maxh) {
+  const T0 = Date.now();
+  const isS = type === 'series';
+  if (!tmdbId && !String(title || '').trim()) return [];
+  const nameP = String(title || '').trim() ? Promise.resolve(String(title).trim()) : nameForTmdb(tmdbId, isS ? 'tv' : 'movie').catch(() => '');
+  const Y = await skyYear(tmdbId, isS).catch(() => 0);
+  const T = await nameP;
+  if (!T) return [];
+  const nk = String(tmdbId || T) + ':' + (isS ? (s || 1) : 'm');
+  if (M4U_TD_NEG.has(nk) && Date.now() - M4U_TD_NEG.get(nk) < 5 * 60e3) return [];
+  // ১) সার্চ (WordPress ?s=)
+  const q = isS ? (T + ' season ' + (s || 1)) : T;
+  let posts = [];
+  const _sk = M4U_TD_S.get(q);
+  if (_sk && Date.now() - _sk.ts < 30 * 60e3) { posts = _sk.posts; }
+  else {
+    for (let attempt = 0; attempt < 2 && !posts.length; attempt++) {
+      try {
+        if (attempt) await new Promise(r => setTimeout(r, 500));      // ★ CF-রেটলিমিটে একবার রিট্রাই
+        const r = await m4uHReq(M4U_TD_BASE + '/?s=' + encodeURIComponent(q), { ref: M4U_TD_BASE + '/', tmo: 6000 });
+        const h = String(r.body || '');
+        for (const m of h.matchAll(/<h[1-4][^>]*class="[^"]*entry-title[^"]*"[^>]*>\s*<a[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g)) {
+          const url = m[1].replace(/&amp;/g, '&');
+          const tt = m[2].replace(/<[^>]+>/g, ' ').replace(/&amp;/g, '&').replace(/&#8211;/g, '-').replace(/\s+/g, ' ').trim();
+          posts.push({ url: url, slug: url.replace(/\/+$/, '').split('/').pop() || tt, title: tt });
+        }
+        if (DBG) console.error('[m4utd] search "' + q + '" st=' + r.st + ' n=' + posts.length + ' try=' + (attempt + 1));
+      } catch (e) { if (DBG) console.error('[m4utd] search-err ' + String(e && e.message).slice(0, 50)); }
+    }
+    if (posts.length) { if (M4U_TD_S.size > 80) M4U_TD_S.clear(); M4U_TD_S.set(q, { ts: Date.now(), posts: posts }); }
+  }
+  if (DBG) console.error('[m4utd] search-total "' + T + '" n=' + posts.length + ' @' + (Date.now() - T0) + 'ms');
+  let cands = posts.length ? m4uHPickAll(posts, T, Y, isS ? (s || 1) : 0).slice(0, 2) : [];
+  M4U_TD_LAST.found = cands.length > 0; M4U_TD_LAST.ts = Date.now();   // ★ v1.34.3
+  if (!cands.length) { M4U_TD_NEG.set(nk, Date.now()); return []; }
+  // ২) প্রথম-জয়ী পোস্ট → এন্ট্রি → mdrive → সার্ভার → প্রমাণ
+  const one = async (hit) => {
+    let ents = M4U_TD_CACHE.get(hit.url);
+    if (!ents || Date.now() - ents.ts > 30 * 60e3) {
+      const pg = await m4uHReq(hit.url, { ref: M4U_TD_BASE + '/', tmo: 6000 });
+      ents = { ts: Date.now(), list: m4uTdEntries(pg.body) };
+      if (ents.list.length) { if (M4U_TD_CACHE.size > 40) M4U_TD_CACHE.clear(); M4U_TD_CACHE.set(hit.url, ents); }
+    }
+    let list = (ents.list || []).slice();
+    if (isS) {
+      const want = Number(e || 1);
+      const ep = list.filter(x => /(?:episode|ep)\s*0*(0*(\d{1,4}))|e0*(\d{1,3})\b/i.test(x.title) ? (Number((x.title.match(/(?:episode|ep)\s*0*(\d{1,4})/i) || [])[1] || 0) === want) : true);
+      if (ep.length) list = ep;
+    }
+    if (maxh) list = list.filter(x => !x.q || Number(x.q) <= maxh);
+    // কোয়ালিটি-ডুপ বাদ (একই q+size একবার)
+    const seen = new Set(); const pick = [];
+    for (const x of list) { const k = x.q + '|' + x.size; if (seen.has(k)) continue; seen.add(k); pick.push(x); }
+    if (!pick.length) return [];
+    if (DBG) console.error('[m4utd] post ' + hit.slug.slice(0, 34) + ' ents=' + pick.length + ' @' + (Date.now() - T0) + 'ms');
+    const cards = [];
+    await Promise.all(pick.slice(0, 4).map(async (x, i) => {
+      const links = await m4uTdMdisk(x.mdisk).catch(() => []);
+      if (!links.length) { if (DBG) console.error('[m4utd] no-server ' + x.q + ' ' + x.size); return; }
+      // ★★ v1.34.3 (মাপা-বাগ): rank-ক্রমে slice(0,3) করায় তিনটি V-Cloud (CF-৪০৩) স্লট ভরে ফেলত
+      //   ⇒ G-Direct কখনো চেষ্টাই হতো না। এখন **সার্ভার-ধরন ধরে**: V-Cloud (resumable) → G-Direct
+      //   (instant) → V-Drive, প্রতিটির সর্বোচ্চ ২টি লিংক।
+      const _bk = {};
+      for (const l of links) { (_bk[l.srv || 'x'] = _bk[l.srv || 'x'] || []).push(l); }
+      let r = null;
+      for (const k of ['V-Cloud', 'G-Direct', 'V-Drive']) {
+        if (!_bk[k]) continue;
+        for (const l of _bk[k].slice(0, 2)) {
+          const rr = await m4uTdResolve(l, i === 0).catch(() => null);
+          if (rr && rr.url) { r = rr; break; }
+        }
+        if (r) break;
+      }
+      if (!r || !r.url) return;
+      const audio = dtAudio(String(hit.slug).replace(/-/g, ' ')) || '';
+      const size = x.size || (r.cl ? mlsMB(r.cl) : '');
+      const txt = '\u29c9 ' + T + (Y ? ' | ' + Y + ' |' : ' |') + '\n'
+        + (isS ? ('\u29e0 S' + (s || 1) + 'E' + (e || 1)) : '\u29e0 Movie') + '\n'
+        + '\u229e Movies4u' + (audio ? ' \u2317 ' + audio : '') + (size ? ' \u00b7 ' + size : '');
+      cards.push({
+        name: '\u25a5 ' + (x.q || 'Auto') + ' \u25a5', title: txt, description: txt, quality: String(x.q || ''),
+        url: r.url, _src: 'Movies4u', _srv: r.srv || 'Google Drive', _direct: r.url,
+        behaviorHints: { notWebReady: false, isBingeable: true, filename: 'movies4u-' + (x.q || 'auto') + '.mkv' },
+        bingeGroup: 'm4u|' + mlsNorm(T) + '::' + (isS ? 'S' + (s || 1) + 'E' + (e || 1) : 'm')
+      });
+    }));
+    return cards.sort((a, b) => (Number(b.quality) || 0) - (Number(a.quality) || 0));
+  };
+  const budget = Number(process.env.M4UBUD || 9000);
+  return await new Promise(resolve => {
+    let done = false;
+    const fin = v => { if (!done) { done = true; resolve(v || []); } };
+    const guard = setTimeout(() => fin([]), Math.max(1500, budget - (Date.now() - T0))); if (guard.unref) guard.unref();
+    cands.forEach(h => one(h).then(c => { if (c && c.length) fin(c); }).catch(() => { }));
+  });
+}
+
 async function m4uRevive(tmdbId, title, type, s, e, origin, maxh) {
   const T0 = Date.now();
   const isS = type === 'series';
@@ -9314,7 +9514,21 @@ async function m4uPostCards(hit, T, Y, isS, s, e, maxh, T0, maxN) {
 }
 async function m4uStreams(tmdbId, title, type, s, e, origin, maxh) { // maxh: cfg.m4ur রেজো-ছাঁকনি (0=সব); HLS-সিক-প্রথম + সরাসরি-MKV
   if (!tmdbId) return []; // v1.15.82: মুভি + সিরিজ (আগে type!=='movie'-তে সিরিজ-শূন্য ছিল)
-  // ★★ v1.32.1: নতুন HTML-পথ আগে (পুরোনো lookup.php API মৃত)। সেটি সাড়া দিলে ওটাই চূড়ান্ত।
+  // ★★ v1.34.0 (ইউজার: "https://movies4u.td/ this is the new domain"): **নতুন WP-সাইট আগে**।
+  //   এটা জীবিত থাকলে পুরোনো DLE-পথে সময় নষ্ট নয় (সাইট দুটোই ২০০, কিন্তু নতুনটাই আপডেটেড)।
+  if (String(process.env.M4UTD || '') !== '0') {
+    try {
+      const td = await m4uTdStreams(tmdbId, title, type, s, e, origin, maxh);
+      if (td && td.length) { if (DBG) console.error('[m4utd] ok n=' + td.length); return td; }
+      // ★ v1.34.3: .td-এ সঠিক পোস্ট পাওয়া গেছে কিন্তু কোনো সার্ভার লিংক দিল না ⇒
+      //   পুরোনো (এখন প্রায়-মৃত) nexdrive-চেইনে বাকি সময় নষ্ট না করে সৎভাবে শূন্য।
+      if (M4U_TD_LAST.found && Date.now() - M4U_TD_LAST.ts < 60000) {
+        if (DBG) console.error('[m4utd] post found, no server-link → skip legacy');
+        return [];
+      }
+    } catch (eT) { if (DBG) console.error('[m4utd] err ' + String(eT && eT.message).slice(0, 60)); }
+  }
+  // ★★ v1.32.1: পুরোনো HTML-পথ (movies4u.one — এখনো জীবিত)। সেটি সাড়া দিলে ওটাই চূড়ান্ত।
   if (process.env.M4ULEG !== '1') {
     try { const rv = await m4uRevive(tmdbId, title, type, s, e, origin, maxh); if (rv && rv.length) return rv; } catch (err) { if (DBG) console.error('[m4u2] err ' + String(err && err.message).slice(0, 60)); }
     if (M4U_HLIVE && Date.now() - M4U_HPAT < 15 * 60e3) return [];   // নতুন-বেস জীবিত ⇒ মৃত-লিগ্যাসি-পথে সময় নষ্ট নয়
@@ -12882,9 +13096,15 @@ async function unifyCards(cards, meta) { // শুধু-টেক্সট-ব�
     //   T/Y-অপেক্ষার **সমান্তরালে** শুরু হয় ⇒ সাধারণত অতিরিক্ত সময় শূন্য; সর্বোচ্চ ৩০০ms-ক্যাপ।
     const epP = (meta.type === 'series' && meta.tmdbId)
       ? epMetaFor(String(meta.tmdbId), 'series', meta.s, meta.e).catch(() => null) : null;
-    const T = (meta.tmdbId ? await Promise.race([nameForTmdb(meta.tmdbId, meta.type).catch(() => ''), new Promise(r => setTimeout(() => r(''), 600))]) : '') || String(meta.title || '').trim();
+    // ★★ v1.33.3 (মাপা: ১১.২সে-কাটের পরেও উত্তর ১২.৪-১২.৭সে): নাম আর বছর **ক্রমিক** ৬০০ms-রেসে
+    //   অপেক্ষা করত ⇒ শেষ-মুহূর্তে কার্ড এলে আরও ১.২সে যোগ হতো। এখন দুটোই সমান্তরাল, বাজেট ৪০০ms।
+    const _Tp = meta.tmdbId ? Promise.race([nameForTmdb(meta.tmdbId, meta.type).catch(() => ''), new Promise(r => setTimeout(() => r(''), 400))]) : Promise.resolve('');
+    const _Yp = (parseInt(meta.year, 10) || 0) ? Promise.resolve(parseInt(meta.year, 10) || 0)
+      : (meta.tmdbId ? Promise.race([yearForTmdb(meta.tmdbId, meta.type).catch(() => 0), new Promise(r => setTimeout(() => r(0), 400))]) : Promise.resolve(0));
+    const _TY = await Promise.all([_Tp, _Yp]);
+    const T = _TY[0] || String(meta.title || '').trim();
     if (!T) return cards; // টাইটেল-না-পেলে পুরনো-লেখাই-থাকে (খালি-কখনো-নয়)
-    const Y = (parseInt(meta.year, 10) || 0) || (meta.tmdbId ? await Promise.race([yearForTmdb(meta.tmdbId, meta.type).catch(() => 0), new Promise(r => setTimeout(() => r(0), 600))]) : 0); // v1.15.52: imdb-রুটে Cinemeta-বছর-আগে (ম্যাপ-নিরপেক্ষ-সত্য)
+    const Y = _TY[1] || 0; // v1.15.52: imdb-রুটে Cinemeta-বছর-আগে (ম্যাপ-নিরপেক্ষ-সত্য)
     const head = '\u29c9 ' + T + (Y ? ' | ' + Y + ' |' : '');
     const epLine = meta.type === 'series' ? ('\u29e0 S' + (parseInt(meta.s, 10) || 1) + 'E' + (parseInt(meta.e, 10) || 1)) : '\u29e0 Movie';
     for (const c of tcards) {
