@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.33.0';
+const VERSION = '1.33.1';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -11954,14 +11954,18 @@ async function withSources(cardsP, srcs, cfg, t0, mkey, lookupP) {
     //   তারা সবাই সেটেল হয়ে গেলে আর অপেক্ষা করা হয় না — ঝুলন্ত-শূন্য সোর্সগুলো ব্যাকগ্রাউন্ডে শেষ হয়ে
     //   স্ট্যাশে জমে (BG fetch), পরের ওপেনে কার্ড হিসেবে যোগ হয়। মাপা-উদ্দেশ্য: প্রথম ওপেন ~৫-৭সে,
     //   প্রোডিউসার-সোর্স কখনো কাটা পড়ে না। ঠান্ডা-বুটে (পর্যাপ্ত হিস্টরি নেই) আগের মতোই সব-সেটেল।
-    const _prodKnown = () => { let n = 0; for (const e of SRC_STATS.values()) if (e.calls >= 2) n++; return n; };
+    //   ⚠️ v1.33.1 (প্রোড-মাপা বাগ): "শুধু-প্রোডিউসার-অপেক্ষা" নিয়মে অচেনা-সোর্স (m4u) কখনো গোনা
+    //   হতো না ⇒ প্রথম কাটেই বাদ ⇒ চিরকাল বাদ (আত্ম-নিশ্চিতকরণ-ফাঁদ; প্রোডে m4u=0 হয়েছিল)।
+    //   এখন **অচেনা/কম-মাপা সোর্সও প্রোডিউসার** — শুধু ২+ কল-দিয়ে-প্রমাণিত-শূন্য সোর্স বাদ যায়,
+    //   আর তাড়াতাড়ি-ফেরার আগে ন্যূনতম ৫.৫সে অপেক্ষা (m4u/hd/mlb-এর জন্য)।
+    const SPAT_MS = Number(process.env.SPAT || 5500);
+    const _isProd = k => { const e = SRC_STATS.get(k); return !e || e.calls < 2 || e.cards > 0; };
     const _prodAllDone = () => {
-      if (String(process.env.SPAT || '') === '0') return false;
-      if (_prodKnown() < 3) return false;
+      if (SPAT_MS <= 0) return false;
+      if (Date.now() - t0 < SPAT_MS) return false;
       let any = false;
       for (let i = 0; i < live.length; i++) {
-        const e = SRC_STATS.get(live[i].key);
-        if (!e || !(e.cards > 0)) continue;
+        if (!_isProd(live[i].key)) continue;
         any = true;
         if (!_doneSet.has(live[i].key)) return false;
       }
