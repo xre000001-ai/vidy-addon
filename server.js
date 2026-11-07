@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.28';
+const VERSION = '1.34.29';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -10603,7 +10603,7 @@ async function m4uSeries(tmdbId, title, s, e, origin, maxh) {
 // বর্তমান ডোমেইনেই নির্দেশ করে: প্রমাণিত, সেখান থেকে https://new1.skymovieshd.clinic/ লিংক পাওয়া গেছে)
 // → প্রার্থী-ডোমেইন বের করা → **যাচাই** (search.php + /movie/*.html আছে?) → SKY_BASE বসানো।
 // যাচাই বাধ্যতামূলক: ঘোষক-পাতায় সাইটের পুরনো/মৃত ডোমেইন-নামও লেখা থাকে ("SkymoviesHD.in", ".com" …)।
-let SKY_BASE = 'https://new1.skymovieshd.clinic'; // বুট-মান = পরিচিত-ভালো ডোমেইন (ঘোষক-ব্যর্থ হলে এইটিই)
+let SKY_BASE = 'https://new4.skymovieshd.clinic'; // বুট-মান = ঘোষক-যাচাইকৃত বর্তমান ডোমেইন (2026-11-07: skybap.site → new4; আগের new1 শুধু 301 দিত)
 const SKY_ANNOUNCERS = ['https://skybap.site/', 'https://skybap.com/']; // ডোমেইন-ঘোষক
 let SKY_DOM_TS = 0; const SKY_DOM_TTL = 6 * 3600 * 1000; // ৬ ঘণ্টা
 function skyDomCands(html) { // ঘোষক-পাতা থেকে প্রার্থী-ডোমেইন (ঘোষক-নিজে বাদ)
@@ -10713,9 +10713,9 @@ async function skyStreams(tmdbId, title, type, s, e, origin, maxh) {
     const skyQ = T.replace(/['\u2018\u2019\u02bc`]/g, '').trim();
     const skySearch = async () => m4uText(SKY_BASE + '/search.php?search=' + encodeURIComponent(skyQ) + '&cat=All', SKY_BASE + '/', Math.min(3600, lS())).catch(() => '');
     let sh = await skySearch();
-    if (!sh && lS() > 3200) { // v1.15.86: ডোমেইন মরে থাকতে পারে → ঘোষক থেকে তাজা ডোমেইন নিয়ে একবার পুনঃচেষ্টা
+    if ((!sh || !/\/movie\/[^'"]+?\.html/.test(sh)) && lS() > 3200) { // v1.34.29: ডোমেইন-মৃত/জাঙ্ক-পেজ/ক্ষণিক-ব্যর্থতা → ঘোষক-রিফ্রেশ + একবার পুনঃচেষ্টা (বেস একই থাকলেও — ক্ষণিক egress-ব্যর্থতা সারে)
       const nb = await skyDomRefresh(true).catch(() => SKY_BASE);
-      if (nb && nb !== SKY_BASE) { SKY_BASE = nb; sh = await skySearch(); if (DBG) console.error('[sky-dom] পুনঃচেষ্টা → ' + nb); }
+      if (nb) { SKY_BASE = nb; const sh2 = await skySearch().catch(() => ''); if (sh2) sh = sh2; if (DBG) console.error('[sky-dom] পুনঃচেষ্টা → ' + nb); }
     }
     if (!sh) { if (DBG) console.error('[sky] no-search @' + (Date.now() - tS) + 'ms'); return []; }
     const posts = [...new Set((sh.match(/\/movie\/[^'"]+?\.html/g) || []).map(z => z.replace(/&amp;/g, '&')))];
@@ -13083,7 +13083,7 @@ async function withSources(cardsP, srcs, cfg, t0, mkey, lookupP) {
     // ★ v1.17.34: **অভিযোজিত-উইন্ডো বাতিল** (মাপা: প্রোডে ৬.২সে-ও MB আনত না, শুধু উত্তর
     //   ৭–৮সে হয়ে যেত)। এখন সবসময় ৫.১সে — MB দেরিতে এলে ব্যাকগ্রাউন্ডে ক্যাশে জমে, আর
     //   ওই ফল `$partial` হয় ⇒ আমাদের /stream-ক্যাশ ১২সে-তেই মেয়াদোত্তীর্ণ ⇒ দ্বিতীয় ট্যাপে MB পুরো।
-    const nxFirstWait = Math.min(Number(process.env.NXW || 9000), Number(process.env.SCUT || 11200)); // ★ v1.22.2: prod-এ MB ৯.২সে ধরে উত্তর টানত (মাপা ৯.৪সে) ⇒ ৭সে // v1.17.52: ৭.২সে-এ MB প্রায়ই কাটা পড়ত // v1.17.47: MB আর কাটা পড়বে না (আগে ৫.১সে)
+    const nxFirstWait = Math.min(Number(process.env.NXW || 10200), Number(process.env.SCUT || 11200)); // v1.34.29: ঠান্ডা-bench-এ child-resolve 9-10.5s লাগে (মাপা) ⇒ 9s-কাটে প্রথম-খোলায় MB ঝরত; 10.2s (12s-ক্যাপের ভিতরে, streams>speed) // ★ v1.22.2: prod-এ MB ৯.২সে ধরে উত্তর টানত (মাপা ৯.৪সে) ⇒ ৭সে // v1.17.52: ৭.২সে-এ MB প্রায়ই কাটা পড়ত // v1.17.47: MB আর কাটা পড়বে না (আগে ৫.১সে)
     const nxCutP = new Promise(r => setTimeout(() => r(true), Math.max(0, Math.min(uniLeft0, nxFirstWait - (Date.now() - t0)))));
     // ★ v1.26.1: প্রতিটা সোর্স-প্রমিসের ফল **যে-সময়েই আসুক** স্ট্যাশে জমা (কাটা পড়লেও)
     if (SKEY) live.forEach(x => { try { x.p.then(v => stashPut(SKEY, x.key, v)).catch(() => { }); } catch (e) { } });
