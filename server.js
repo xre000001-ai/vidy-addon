@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.12';
+const VERSION = '1.34.13';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -11744,7 +11744,9 @@ function bfSniffCt(buf) {                     // ফাইলের আসল �
 const BF_GUC = new Map();                       // url → {f, got, total, done, err, ts, used}
 const BF_GU_DIR = process.env.GUCACHE_DIR || '/var/tmp/vidy-gu';
 const BF_GU_MAX = Number(process.env.GUCACHE_MAX || 2.4e9);
-let BF_GU_BYTES = 0, BF_GU_READY = null, BF_GU_OFF = 0;   // BF_GU_OFF: জায়গা-সংকটে ১০ মিনিট ক্যাশ-বিরতি
+let BF_GU_BYTES = 0, BF_GU_READY = null, BF_GU_OFF = 0;
+const BF_GU_LOG = [];   // v1.34.13: শেষ কয়েকটা সার্ভের ফেজ-টাইমিং (প্রোড-নিদান)
+const bfGuLog = o => { try { BF_GU_LOG.push(o); if (BF_GU_LOG.length > 12) BF_GU_LOG.shift(); } catch (e) { } };   // BF_GU_OFF: জায়গা-সংকটে ১০ মিনিট ক্যাশ-বিরতি
 const bfGuDir = () => {
   if (BF_GU_READY !== null) return BF_GU_READY;
   try { fs.mkdirSync(BF_GU_DIR, { recursive: true }); BF_GU_READY = BF_GU_DIR; }
@@ -11847,9 +11849,11 @@ async function bfGuServe(req, res, url, start, endQ, base) {
   let pos = start;
   const hardEnd = total ? total - 1 : Number.MAX_SAFE_INTEGER;
   const stopAt = endF >= 0 ? endF : (endQ >= 0 ? endQ : hardEnd);
+  const _lx = { t: new Date().toISOString().slice(11, 19), start: start, stop: stopAt, got: e.got, ranges: 0, w: 0, drain: 0, err: '' };
+  bfGuLog(_lx);
   try {
     for (;;) {
-      if (res.destroyed) break;
+      if (res.destroyed) { _lx.err = 'destroyed'; break; }
       if (pos > stopAt) break;
       const can = e.got - pos;
       if (can <= 0) {
@@ -11859,14 +11863,17 @@ async function bfGuServe(req, res, url, start, endQ, base) {
       const n = Math.min(can, 262144, stopAt - pos + 1);
       const buf = Buffer.alloc(n);
       const fh = await fs.promises.open(e.f, 'r');
+      const _t1 = Date.now();
       const rd = await fh.read(buf, 0, n, pos);
       await fh.close();
+      _lx.w += Date.now() - _t1; _lx.ranges++;
       if (!rd.bytesRead) { if (e.done) break; await new Promise(r2 => setTimeout(r2, 80)); continue; }
       pos += rd.bytesRead;
-      if (!res.write(buf.subarray(0, rd.bytesRead))) await new Promise(r2 => { res.once('drain', r2); res.once('close', r2); });
+      if (!res.write(buf.subarray(0, rd.bytesRead))) { const _t2 = Date.now(); await new Promise(r2 => { res.once('drain', r2); res.once('close', r2); }); _lx.drain += Date.now() - _t2; }
     }
-  } catch (er) { }
+  } catch (er) { _lx.err = String((er && er.message) || er).slice(0, 40); }
   try { res.end(); } catch (er) { }
+  _lx.ms = Date.now() - T0;
   if (DBG) console.error('[guc] served ' + start + '-' + stopAt + ' got=' + e.got + ' done=' + e.done + ' ' + (Date.now() - T0) + 'ms');
 }
 
@@ -14396,7 +14403,8 @@ const server = http.createServer((req, res) => {
       return sendJson(res, 200, {
         off: BF_GU_OFF ? Math.round((Date.now() - BF_GU_OFF) / 1000) + 's-ago' : 0, bytesMB: Math.round(BF_GU_BYTES / 1048576),
         max: BF_GU_MAX, disk: st,
-        items: [...BF_GUC.entries()].map(([k, e]) => ({ k: k.slice(0, 26), src: String(e.src || '').slice(-26), gotMB: Math.round(e.got / 1048576), totalMB: Math.round((e.total || 0) / 1048576), done: e.done, err: e.err || '' }))
+        items: [...BF_GUC.entries()].map(([k, e]) => ({ k: k.slice(0, 26), src: String(e.src || '').slice(-26), gotMB: Math.round(e.got / 1048576), totalMB: Math.round((e.total || 0) / 1048576), done: e.done, err: e.err || '' })),
+        log: BF_GU_LOG
       });
     }
     if (p === '/_lastsrc') return sendJson(res, 200, LAST_SRC || {});
