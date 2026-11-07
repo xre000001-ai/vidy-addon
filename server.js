@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.3';
+const VERSION = '1.34.5';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -9248,6 +9248,7 @@ const M4U_TD_CACHE = new Map();     // post-url → parsed entries (৩০মি
 const M4U_TD_NEG = new Map();       // title → ts (৫মিন)
 const M4U_TD_S = new Map();         // search q → posts (৩০মিন, CF-চাপ কমাতে)
 const M4U_TD_LAST = { found: false, ts: 0 };   // .td-এ পোস্ট-মিল পেল কি না (পুরোনো-পথে সময় নষ্ট নয়)
+let M4U_VC_WALL = 0;   // V-Cloud CF-Turnstile দেয়াল (৪০৩) — ৩০মিন পর্যন্ত আর চেষ্টা নয়
 function m4uTdEntries(html) {       // পোস্ট-পেজ → [{q,size,mdisk}]
   const h = String(html || '');
   const heads = [];
@@ -9268,6 +9269,69 @@ function m4uTdEntries(html) {       // পোস্ট-পেজ → [{q,size,md
   return out;
 }
 const M4U_TD_BAD = /(?:filebee|filepress|viking|gofile|megaup|gdtot|gdxfiles|pixeldra|10\s*gbps)/i;
+// ★★★ v1.34.4 — **প্লে না হওয়ার আসল কারণ**: `video-downloads.googleusercontent.com` (GU) লিংক
+//   (ক) যে-IP থেকে রিজলভ হয়েছে **সেই IP-তে বাঁধা** ⇒ ইউজারের ফোন থেকে সরাসরি চাইলে 400,
+//   (খ) Google CDN `Range` মানে না ⇒ প্লেয়ার ইনিশিয়ালাইজ/সিক করতে পারে না।
+//   তাই GU-কার্ড **কখনোই সরাসরি নয়** — আমাদের `/bfz/…/v.mkv` রিলে (bfServeZip→bfServeGeneric:
+//   Range-সংশ্লেষিত ২০৬ + content-range + skip-stream)। প্রমাণ: মাপা ২০০ · 577MB · video/mkv।
+const PUB_BASE_DEF = process.env.PUBBASE || 'https://3404d3c5dc63-vidy.baby-beamup.club';
+const m4uHostOf = u => ((String(u || '').match(/^https?:\/\/([^/]+)/) || [])[1] || '').toLowerCase();
+const m4uIsIpLocked = u => /(?:^|\.)googleusercontent\.com$|(?:^|\.)drive\.google\.com$/i.test(m4uHostOf(u));
+function m4uRelayUrl(u, origin) {
+  const base = String(origin || '').replace(/\/+$/, '') || PUB_BASE_DEF;
+  const ext = /\.mp4(?:\?|$)/i.test(String(u)) ? 'v.mp4' : 'v.mkv';
+  return base + '/bfz/' + Buffer.from(String(u)).toString('base64url') + '/' + ext;
+}
+// শুধু **আসল মিডিয়া** URL কার্ড হবে (পেজ/HTML নয়) — vegadrive.me/d/… জাতীয় পেজ বাদ
+const m4uIsMediaUrl = u => m4uIsIpLocked(u)
+  || /(?:^|\.)r2\.cloudflarestorage\.com$/i.test(m4uHostOf(u))
+  || /(?:^|\.)fsldownload\.com$/i.test(m4uHostOf(u))
+  || /\.(?:mkv|mp4)(?:\?|$)/i.test(String(u));
+const m4uCardUrl = (u, origin) => m4uIsIpLocked(u) ? m4uRelayUrl(u, origin) : String(u);
+// ★★★ v1.34.5 (মাপা: কার্ড-বানানোর ৩০ মিনিট পরেই GU লিংক **400**) — Google-signed লিংক মিনিটেই মেয়াদোত্তীর্ণ।
+//   তাই কার্ডে রিজলভ-করা লিংক বেক করা যায় না; কার্ড = **লেজি-রুট** `/m4d/<b64>/v.mkv`, ক্লিকের সময়ই
+//   mdrive → সার্ভার → GU আবার রিজলভ হয়ে আমাদের IP থেকেই স্ট্রিম হয় (bfServeGeneric: Range-সংশ্লেষিত)।
+const M4U_TD_LOC = new Map();      // mdisk/nexdrive url → {ts, links}
+const M4U_TD_USED = new Map();     // mdisk url → {ts, final}
+function m4uLazyUrl(u, origin) {
+  const base = String(origin || '').replace(/\/+$/, '') || PUB_BASE_DEF;
+  const ext = /\.mp4(?:\?|$)/i.test(String(u)) ? 'v.mp4' : 'v.mkv';
+  return base + '/m4d/' + Buffer.from(String(u)).toString('base64url') + '/' + ext;
+}
+async function m4uTdServe(req, res, target) {
+  const okJson = (code, o) => { try { res.writeHead(code, { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'cache-control': 'no-store' }); res.end(JSON.stringify(o)); } catch (e) { } };
+  try {
+    const host = m4uHostOf(target);
+    // (ক) পুরোনো চেইন-পেজ (nexdrive/fast-dl) ⇒ সেখান থেকেই রিজলভ
+    if (!/mdrive\.cloud$/.test(host)) {
+      const r = await m4uHFast(target, true).catch(() => null);
+      if (!r || !r.url) return okJson(502, { error: 'no-file' });
+      return await bfServeGeneric(req, res, r.url);
+    }
+    // (খ) নতুন: mdrive হাব → সার্ভার লিংক (১০-মিনিট ক্যাশ) → ফ্রেশ ফাইল-URL (৯০সে ক্যাশ)
+    let ent = M4U_TD_LOC.get(target);
+    if (!ent || Date.now() - ent.ts > 10 * 60e3) {
+      const links = await m4uTdMdisk(target).catch(() => []);
+      ent = { ts: Date.now(), links: links };
+      if (links.length) { if (M4U_TD_LOC.size > 200) M4U_TD_LOC.clear(); M4U_TD_LOC.set(target, ent); }
+    }
+    let used = M4U_TD_USED.get(target);
+    if (used && Date.now() - used.ts < 90e3) return await bfServeGeneric(req, res, used.final);
+    let fin = '';
+    const order = (M4U_VC_WALL && Date.now() < M4U_VC_WALL) ? ['G-Direct', 'V-Drive', 'V-Cloud'] : ['V-Cloud', 'G-Direct', 'V-Drive'];
+    for (const k of order) {
+      for (const l of (ent.links || []).filter(x => x.srv === k).slice(0, 2)) {
+        const rr = await m4uTdResolve(l, false).catch(() => null);
+        if (rr && rr.url && m4uIsMediaUrl(rr.url)) { fin = rr.url; break; }
+      }
+      if (fin) break;
+    }
+    if (!fin) return okJson(502, { error: 'no-source' });
+    M4U_TD_USED.set(target, { ts: Date.now(), final: fin });
+    if (M4U_TD_USED.size > 300) M4U_TD_USED.clear();
+    return await bfServeGeneric(req, res, fin);
+  } catch (e) { return okJson(502, { error: 'serve-fail' }); }
+}
 async function m4uTdMdisk(mdisk) {
   const r = await m4uHReq(mdisk, { ref: M4U_TD_BASE + '/', tmo: 6000 });
   const h = String(r.body || '');
@@ -9317,7 +9381,10 @@ async function m4uTdResolve(link, needProof) {
         }
       }
       if (m) { if (!url) url = m[0]; }
-      else if (DBG) console.error('[m4utd] ' + srv + ' blocked/no-link st=' + r.st);
+      else {
+        if (srv === 'V-Cloud' && (r.st === 403 || r.st === 503)) M4U_VC_WALL = Date.now() + 30 * 60e3;
+        if (DBG) console.error('[m4utd] ' + srv + ' blocked/no-link st=' + r.st);
+      }
     }
   } catch (e) { if (DBG) console.error('[m4utd] ' + srv + ' err ' + String(e && e.message).slice(0, 50)); }
   if (!url) return { url: '', srv: srv, why: 'no-link' };
@@ -9400,15 +9467,17 @@ async function m4uTdStreams(tmdbId, title, type, s, e, origin, maxh) {
       const _bk = {};
       for (const l of links) { (_bk[l.srv || 'x'] = _bk[l.srv || 'x'] || []).push(l); }
       let r = null;
-      for (const k of ['V-Cloud', 'G-Direct', 'V-Drive']) {
+      const order = (M4U_VC_WALL && Date.now() < M4U_VC_WALL) ? ['G-Direct', 'V-Drive'] : ['V-Cloud', 'G-Direct', 'V-Drive'];
+      for (const k of order) {
         if (!_bk[k]) continue;
-        for (const l of _bk[k].slice(0, 2)) {
+        for (const l of _bk[k].slice(0, (k === 'V-Cloud' ? 1 : 2))) {
           const rr = await m4uTdResolve(l, i === 0).catch(() => null);
           if (rr && rr.url) { r = rr; break; }
         }
         if (r) break;
       }
       if (!r || !r.url) return;
+      if (!m4uIsMediaUrl(r.url)) { if (DBG) console.error('[m4utd] not-media ' + String(r.url).slice(0, 60)); return; }
       const audio = dtAudio(String(hit.slug).replace(/-/g, ' ')) || '';
       const size = x.size || (r.cl ? mlsMB(r.cl) : '');
       const txt = '\u29c9 ' + T + (Y ? ' | ' + Y + ' |' : ' |') + '\n'
@@ -9416,7 +9485,7 @@ async function m4uTdStreams(tmdbId, title, type, s, e, origin, maxh) {
         + '\u229e Movies4u' + (audio ? ' \u2317 ' + audio : '') + (size ? ' \u00b7 ' + size : '');
       cards.push({
         name: '\u25a5 ' + (x.q || 'Auto') + ' \u25a5', title: txt, description: txt, quality: String(x.q || ''),
-        url: r.url, _src: 'Movies4u', _srv: r.srv || 'Google Drive', _direct: r.url,
+        url: m4uLazyUrl(x.mdisk, origin), _src: 'Movies4u', _srv: r.srv || 'Google Drive', _direct: r.url,
         behaviorHints: { notWebReady: false, isBingeable: true, filename: 'movies4u-' + (x.q || 'auto') + '.mkv' },
         bingeGroup: 'm4u|' + mlsNorm(T) + '::' + (isS ? 'S' + (s || 1) + 'E' + (e || 1) : 'm')
       });
@@ -9459,13 +9528,13 @@ async function m4uRevive(tmdbId, title, type, s, e, origin, maxh) {
     const left = Math.max(1200, budget - (Date.now() - T0));
     const guard = setTimeout(() => fin([]), left); if (guard.unref) guard.unref();
     cands.slice(0, 2).forEach((h, i) => {
-      m4uPostCards(h, T, Y, isS, s, e, maxh, T0, i ? 3 : 4).then(c => { if (c && c.length) fin(c); }).catch(() => { });
+      m4uPostCards(h, T, Y, isS, s, e, maxh, T0, i ? 3 : 4, origin).then(c => { if (c && c.length) fin(c); }).catch(() => { });
     });
   });
   if (DBG) console.error('[m4u2] cards=' + cardsAll.length + ' "' + T + '" @' + (Date.now() - T0) + 'ms');
   return cardsAll;
 }
-async function m4uPostCards(hit, T, Y, isS, s, e, maxh, T0, maxN) {
+async function m4uPostCards(hit, T, Y, isS, s, e, maxh, T0, maxN, origin) {
   let ents = null;
   const ch = M4U_PGC.get(hit.url);
   if (ch && Date.now() - ch.ts < 30 * 60e3) ents = ch.ents;
@@ -9504,7 +9573,7 @@ async function m4uPostCards(hit, T, Y, isS, s, e, maxh, T0, maxN) {
       + (isS ? ('\u29e0 S' + (s || 1) + ept + (x.pack && !ept ? ' Pack' : '')) : '\u29e0 Movie') + '\n' + lines;
     cards.push({
       name: '⫥ ' + (qq || 'Auto') + ' ⫥', title: txt, description: txt, quality: String(qq || ''),
-      url: r.url, _srv: 'Google Drive', _src: 'Movies4u', _direct: r.url,
+      url: (origin ? m4uLazyUrl(x.href, origin) : m4uCardUrl(r.url, origin)), _srv: 'Google Drive', _src: 'Movies4u', _direct: r.url,
       behaviorHints: { notWebReady: false, isBingeable: true, filename: 'movies4u-' + (qq || 'auto') + '.mkv' },
       bingeGroup: 'm4u|' + mlsNorm(T) + '::' + (isS ? 'S' + (s || 1) + 'E' + (e || 1) : 'm')
     });
@@ -13404,7 +13473,7 @@ const GW_ON = process.env.GW !== '0';
 //   ২০,০০০-এ নামানো হলো — ৬ঘণ্টা TTL-এও বাস্তবে কখনো ২০k ছুঁয়েছে কি না সন্দেহ; মেমরির ছাদ নামল।
 const GW_TTL = Number(process.env.GWTTL || 6 * 3600e3), GW_MAX = Number(process.env.GWMAX || 20000);
 const GW = new Map();
-const GW_PRE = ['/mm/', '/mma/', '/mmr/', '/bfz/', '/vsp/', '/vh/', '/m4u/', '/m4h/', '/m4i/', '/fod/', '/rel/'];
+const GW_PRE = ['/mm/', '/mma/', '/mmr/', '/bfz/', '/m4d/', '/vsp/', '/vh/', '/m4u/', '/m4h/', '/m4i/', '/fod/', '/rel/'];
 function gwMint(internal) {
   const t = require('crypto').randomBytes(9).toString('base64url');
   GW.set(t, { u: internal, ts: Date.now() });
@@ -14387,6 +14456,22 @@ const server = http.createServer((req, res) => {
 
 
     // ★ v1.17.26: /bfzh/ HLS রুট সরানো হয়েছে (উপরের নোট দেখুন)।
+
+    // ★ v1.34.5: Movies4u লেজি-কার্ড — `/m4d/<b64 of mdrive|nexdrive পেজ>/v.mkv`
+    //   প্লে-ক্লিকের সময়ই সার্ভার-চেইন ফ্রেশ রিজলভ হয় (GU লিংক মিনিটেই মেয়াদোত্তীর্ণ হয়), তারপর
+    //   আমাদের IP থেকেই স্ট্রিম (Range-সংশ্লেষিত) ⇒ EU/BD-র ফোনেও প্লে + সিক চলে।
+    const m4dM = p.match(/^\/m4d\/([A-Za-z0-9_=-]{8,2400})(?:\/c\/[a-z0-9]+)?\/v\.(?:mkv|mp4)$/);
+    if (m4dM) return (async () => {
+      let tgt = '';
+      try { tgt = Buffer.from(m4dM[1], 'base64url').toString('utf8'); } catch { }
+      if (!tgt || !/^https?:\/\//i.test(tgt)) { res.writeHead(400); return res.end('bad-m4d'); }
+      const cq = /\/c\/[a-z0-9]+\/v\.(?:mkv|mp4)$/.test(p);
+      if (!cq) {   // হোস্ট-ক্যাশ ভাঙতে প্রতি রিকোয়েস্টে নতুন nonce (bfz-এর মতোই)
+        const nce = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+        return (res.writeHead(302, { Location: p.replace(/\/(v\.(?:mkv|mp4))$/, '/c/' + nce + '/$1'), 'cache-control': 'no-store', 'access-control-allow-origin': '*' }), res.end());
+      }
+      return await m4uTdServe(req, res, tgt);
+    })();
 
     const bfzM = p.match(/^\/bfz\/([A-Za-z0-9_=-]{8,2400})(?:\/c\/[a-z0-9]+)?\/v\.(?:mkv|mp4)$/);
     if (bfzM) return (async () => {
