@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.14';
+const VERSION = '1.34.15';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -11851,10 +11851,15 @@ async function bfGuServe(req, res, url, start, endQ, base) {
   // ★ v1.34.14: দরকারি বাইট সময়ের ভিতরে না এলে (ক) ৪১৬ দিলে অ্যাপ "play hoi na" দেখায়, (খ) আটকে
   //   থাকলে প্ল্যাটফর্ম ~৪০সে-তে কানেকশন কাটে। তাই তখন **২০০ + ০ থেকে ক্রমিক** দিই — পটভূমির পুল চলতে
   //   থাকে, ডেটা বইতেই থাকে; একবার পুল শেষ হলে পরের সব সিক/রিপ্লে ক্যাশ থেকে তাৎক্ষণিক ২০৬।
-  let _degrade = false;
-  if (endQ >= 0 && avail <= endQ && !e.done) { _degrade = true; if (DBG) console.error('[guc] degrade need=' + endQ + ' got=' + avail); }
   if (!avail) return false;
-  if (_degrade) { start = 0; endQ = -1; }
+  // ★ v1.34.15: **আর কখনোই ছোট Range-এর বদলে পুরো ফাইল পাঠাই না** — মাপা: degrade-পথে প্লেয়ারের
+  //   টেল-অনুরোধে আমরা ৭১৬MB স্ট্রিম করতাম ⇒ কনটেইনারের ব্যান্ডউইথ শেষ, সব রিকোয়েস্ট ৩৫-৪৫সে।
+  //   এখন দরকারি বাইট না থাকলে **দ্রুত ৫০৩ + Retry-After** (পটভূমির পুল চলতেই থাকে) — প্লেয়ার রিট্রাই
+  //   করলে ক্যাশ প্রস্তুত থাকে আর সব Range সত্যিকারের ২০৬।
+  if (endQ >= 0 && avail <= endQ && !e.done) {
+    if (DBG) console.error('[guc] notready need=' + endQ + ' got=' + avail);
+    res.writeHead(503, Object.assign({}, base, { 'retry-after': '8' })); return res.end();
+  }
   const endF = endQ >= 0 ? Math.min(endQ, avail - 1) : (e.done ? avail - 1 : -1);
   const hdr = Object.assign({}, base);
   if (total) { hdr['content-length'] = String((endF >= 0 ? endF : avail - 1) - start + 1); hdr['content-range'] = 'bytes ' + start + '-' + (endF >= 0 ? endF : (total - 1)) + '/' + total; }
@@ -11863,7 +11868,7 @@ async function bfGuServe(req, res, url, start, endQ, base) {
     const fd = fs.openSync(e.f, 'r'); const buf = Buffer.alloc(16); fs.readSync(fd, buf, 0, 16, 0); fs.closeSync(fd);
     const ct0 = bfSniffCt(buf); if (ct0) hdr['content-type'] = ct0;
   } catch (er) { }
-  const isRanged = !_degrade && (start > 0 || endQ >= 0);
+  const isRanged = (start > 0 || endQ >= 0);
   hdr['x-guc'] = 'hit' + (BF_GUC.has(key) ? '1' : '0') + ' wait' + (Date.now() - T0) + 'ms got' + Math.round(e.got / 1048576) + 'MB';  // v1.34.12 ডায়াগনসিস
   res.writeHead(isRanged && total ? 206 : 200, hdr);
   if (req.method === 'HEAD') return res.end();
