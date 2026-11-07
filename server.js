@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.21';
+const VERSION = '1.34.22';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -4205,22 +4205,29 @@ async function dtFileProof(url, ms) {
       const id = direct.split('/u/')[1].split(/[?#]/)[0];
       direct = 'https://pixeldrain.com/api/file/' + id + '?download';
     } else if (/hubcloud\.|gamerxyt\./i.test(direct)) {
-      const h = await fetch(direct, { headers: { 'User-Agent': DT_UA, 'Referer': 'https://hubcloud.ist/' }, signal: AbortSignal.timeout(Math.max(3000, ms || 8000)) })
+      // ★ v1.34.22: drive/gamerxyt ফেচে একবার রিট্রাই (লোডের মুহূর্তে ছোট/ফাঁকা বডি এলে প্রুফ মরে যেত — মাপা +২/+৬ flaky)
+      const getT = u2 => fetch(u2, { headers: { 'User-Agent': DT_UA, 'Referer': 'https://hubcloud.ist/' }, signal: AbortSignal.timeout(Math.max(3000, ms || 8000)) })
         .then(r => (r.ok ? r.text() : '')).catch(() => '');
+      let h = await getT(direct);
+      if (!h || h.length < 2000) h = (await getT(direct)) || h;
       const gx = (h.match(/https:\/\/gamerxyt\.com\/hubcloud\.php\?[^"']+/) || [])[0];
-      const y = gx ? await fetch(gx, { headers: { 'User-Agent': DT_UA, 'Referer': 'https://hubcloud.ist/' }, signal: AbortSignal.timeout(Math.max(3000, ms || 8000)) })
-        .then(r => (r.ok ? r.text() : '')).catch(() => '') : h;
+      let y = gx ? await getT(gx) : h;
+      if (gx && (!y || y.length < 2000)) y = (await getT(gx)) || y;
       let pxl = (y || '').match(/var\s+pxl\s*=\s*["']([^"']+)["']/) || (y || '').match(/(https:\/\/pixeldrain\.dev\/u\/[A-Za-z0-9]+)/);
+      if (DBG) console.error('[dt] hc-proof h=' + h.length + ' gx=' + (gx ? 1 : 0) + ' y=' + (y || '').length + ' pxl=' + (pxl ? pxl[1] : 'none'));
       if (!pxl) {
-        // ★ v1.32.0: পেজের "PixelServer" বাটনেরর href-ও একই কাজ করে (মাপা: pxll-1 আইডি JS-এ বদলায়,
-        //   তাই href ও স্ক্রিপ্ট দুটোই দেখি); একটাও না-থাকলে সৎভাবে কিছু ফেরে না (pixel.hubcloud.pw
-        //   নিজেই ৫০০ — ওটা প্রমাণে পাসই করে না)।
         const btn = (y || '').match(/href="(https:\/\/pixeldrain\.(?:dev|com)\/u\/[A-Za-z0-9]+)"/);
-        if (!btn) return null;
-        pxl = [btn[0], btn[1]];
+        if (btn) pxl = [btn[0], btn[1]];
       }
-      const id2 = pxl[1].split('/u/')[1].split(/[?#"']/)[0];
-      direct = 'https://pixeldrain.com/api/file/' + id2 + '?download';
+      if (pxl) {
+        const id2 = pxl[1].split('/u/')[1].split(/[?#"']/)[0];
+        direct = 'https://pixeldrain.com/api/file/' + id2 + '?download';
+      } else {
+        // ★ v1.34.22: PixelServer নেই এমন ড্রাইভে **FSL (r2)** থাকে (Movies4u-মাপা) — সেটাই কার্ড
+        const fsl = (y || '').match(/https:\/\/[A-Za-z0-9.\-]+\.r2\.cloudflarestorage\.com\/[^"' ]+/) || (y || '').match(/https:\/\/[A-Za-z0-9.\-]+\.workers\.dev\/[^"' ]+/);
+        if (!fsl) return null;
+        direct = fsl[0];
+      }
       name = (y.match(/card-header[^>]*>\s*([^<]{4,160})</) || [])[1] || '';
     }
     // ★ v1.31.0: pixeldrain `/api/file/<id>/info` — আসল ফাইলনাম (অডিও-লেবেল এখানেই: "MULTi AAC2 0 …")
@@ -4597,13 +4604,18 @@ async function dtTask(nameP, infoP, type, s, e, origin) {
       });
     }
     const dlBg = dlCands.filter(c => !DT_UNLOCK.has(String(c.id))).slice(0, 6);   // ৪টিই সমান্তরাল (১৭সে একবারই)
+    // ★★ v1.34.22 (ইউজার: "Deadtoons Kono fsl, pixel or hub cloud theke Kono stream dei na"): আনলক (~১৭সে)
+    //   ব্যাকগ্রাউন্ডেই শেষ হয়, অথচ উত্তরটা আগে **full** ক্যাশ (১০মিন) হয়ে যেত ⇒ ডাউনলোড-কার্ড
+    //   রিফ্রেশেও দেখা যেত না। এখন $pend ⇒ partial (8s) + BG-stream-fetch ⇒ পরের খোলায়/রিফ্রেশে
+    //   FSL/Pixeldrain/HubCloud কার্ড ক্যাশে মার্জ হয়ে আসে।
+    if (dlBg.length) cards.$pend = 1;
     if (dlBg.length && process.env.DTBG !== '0') {
       // ব্যাকগ্রাউন্ড: ১৫সে-গেট ⇒ প্রমাণ ⇒ DT_C-তে কার্ড যোগ (৩০ মিনিট বেঁচে থাকে)
       Promise.all(dlBg.map(c => dtUnlockOne(c.id)
         .then(u => (u ? dtFileProof(u, 8000) : null))
-        .then(pr => (pr ? mkDlCard(c, pr) : null)).catch(() => null))).then(list => {
+        .then(pr => { if (DBG) console.error('[dt] dlbg ' + c.srv + ' ' + c.q + 'p proof=' + (pr ? 'ok' : 'null')); return (pr ? mkDlCard(c, pr) : null); }).catch(() => null))).then(list => {
         const add = list.filter(Boolean);
-        if (!add.length) { diag('dt', 'dl-bg none ready=' + dlReady.length + ' tried=' + dlBg.length); return; }
+        if (!add.length) { DT_C.set(ck, { ts: Date.now() - 25 * 60e3, cards: cards.slice() }); diag('dt', 'dl-bg none ready=' + dlReady.length + ' tried=' + dlBg.length); return; } // ★ v1.34.22: ৫মিন-পুরনো ts ⇒ শীঘ্রই পুনঃচেষ্টা
         const cur = DT_C.get(ck);
         const old = (cur && cur.cards) ? cur.cards.slice() : [];
         for (const c of cards) if (!old.some(x => x.url === c.url)) old.push(c);
@@ -4612,7 +4624,7 @@ async function dtTask(nameP, infoP, type, s, e, origin) {
         diag('dt', 'dl-bg +' + add.length + ' (refresh এ যোগ হবে)');
       }).catch(() => { });
     }
-    if (cards.length) { DT_C.set(ck, { ts: Date.now(), cards: cards.slice() }); if (DT_C.size > 120) DT_C.clear(); }   // v1.32.0: মেমরি-সীমা
+    if (cards.length && !dlBg.length) { DT_C.set(ck, { ts: Date.now(), cards: cards.slice() }); if (DT_C.size > 120) DT_C.clear(); }   // v1.32.0: মেমরি-সীমা ★ v1.34.22: dlBg চললে লেখা dl-bg-এর হাতে (নইলে HLS-মাত্র তালিকা পিন হয়)
     diag('dt', 'cards=' + cards.length + ' slug=' + used.slug + ' @' + (Date.now() - T0) + 'ms');
     return cards;
   } catch (err) {
@@ -12963,7 +12975,7 @@ async function withSources(cardsP, srcs, cfg, t0, mkey, lookupP) {
   //   তারপর অন্য সোর্সদের দিকে তাকানো হত ⇒ হারভেস্ট-ঘড়িও ৩ সে দেরিতে শুরু হয়ে মোট ৫.৭সে-তে ঠেকত।
   //   এখন দুটোই সমান্তরাল: vidy + ৯ সোর্স একসাথে দৌড়ায়, ৬ কার্ড হলেই গ্রেস-শেষে উত্তর।
   const live = (srcs || []).filter(x => x && x.p && !(cfg && cfg[x.key] === 0));
-  let errFlag = false, cutFlag = false, _watch = null, _cutP = null, outsP = null;
+  let errFlag = false, cutFlag = false, pendFlag = false, _watch = null, _cutP = null, outsP = null; // ★ v1.34.22: pendFlag = কোনো সোর্সের ব্যাকগ্রাউন্ড-কাজ বাকি (dt-আনলক)
   if (live.length) {
     // ⚠️ v1.17.26-কড়াকড়ি: শুধু "৬ কার্ড হয়েছে" দেখে কাটা যাবে না — Multimovies ১.৫সে-তে
     //   ২৬ কার্ড দেয়, তাতে BollyFlix (৩–৪সে) কেটে যেত আর BF কার্ডই হারিয়ে যেত (মাপা: BF=0)।
@@ -13028,6 +13040,7 @@ async function withSources(cardsP, srcs, cfg, t0, mkey, lookupP) {
         if (Date.now() - t0 >= lim) { clearInterval(_tm); if (DBG) console.error('[srccap] ' + x.key + ' @' + lim + 'ms' + (_LK.ms ? ' (base ' + base + ' + look ' + _LK.ms + ')' : '')); r(null); }
       }, 50); });
       return Promise.race([x.p, capP]).then(v => { clearInterval(_tm);
+      if (v && v.$pend) pendFlag = true; // ★ v1.34.22: সোর্স বলছে "আরও কার্ড ব্যাকগ্রাউন্ডে আসছে" ⇒ full-cache নয়
       if (v && v.length) lit += v.length;
       settled++; _doneSet.add(x.key);
       srcStatRec(x.key, (v || []).length, Date.now() - t0);   // v1.32.0: শেখা-ক্যাপের জন্য
@@ -13140,7 +13153,7 @@ async function withSources(cardsP, srcs, cfg, t0, mkey, lookupP) {
     try { LAST_SRC = { ts: Date.now(), el: el, cards: all.length, src: live.map((x2, i2) => x2.key + ':' + (outs[i2] ? outs[i2].length : 'cut')) }; } catch (e) { }
     if (DBG) console.error('[srcdbg] withSources el=' + el + 'ms uniLeft=' + uniLeft + 'ms → ' + all.length + ' কার্ড (partial=' + !!all.$partial + ') সোর্স=' + live.map((x2, i2) => x2.key + ':' + (outs[i2] ? outs[i2].length : 'কাটা')).join(','));
 
-    all.$partial = outs.some(v => v === null) || errFlag || cutFlag || _stN > 0; // v1.15.3: কাটা-বা-ত্রুটিজ-সোর্স → ৩০মিন-নয়-৯০সে-ক্যাশ (পরের-ট্যাপে-সম্পূর্ণ-আপগ্রেড)
+    all.$partial = outs.some(v => v === null) || errFlag || cutFlag || _stN > 0 || pendFlag; // v1.15.3: কাটা-বা-ত্রুটিজ-সোর্স → ৩০মিন-নয়-৯০সে-ক্যাশ (পরের-ট্যাপে-সম্পূর্ণ-আপগ্রেড) ★ v1.34.22: +pendFlag
     return all;
   } catch (e) { if (DBG) console.error('[srcdbg] ERR ' + String(e && e.message).slice(0, 80)); return cards; }
 }
