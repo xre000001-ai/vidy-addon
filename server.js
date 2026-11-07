@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.19';
+const VERSION = '1.34.20';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -9885,7 +9885,7 @@ async function m4uTdStreams(tmdbId, title, type, s, e, origin, maxh) {
             + '\u229e Movies4u' + (audioM ? ' \u2317 ' + audioM : '') + (sizeM ? ' \u00b7 ' + sizeM : '');
           cards.push({
             name: '\u25a5 ' + (x.q || 'Auto') + ' \u25a5', title: txtM, description: txtM, quality: String(x.q || ''),
-            url: m4uLazyUrl(x.mdisk + '#vc' + v.srv, origin), _src: 'Movies4u', _srv: v.srv, _direct: v.url,
+            url: ((v.srv === 'FSL' || v.srv === 'Pixeldrain' || (v.srv === 'GDFlix' && !/googleusercontent/i.test(v.url))) ? m4uCardUrl(v.url, origin) : m4uLazyUrl(x.mdisk + '#vc' + v.srv, origin)), _src: 'Movies4u', _srv: v.srv, _direct: v.url,
             behaviorHints: { notWebReady: false, isBingeable: true, filename: 'movies4u-' + (x.q || 'auto') + '.mkv' },
             bingeGroup: 'm4u|' + mlsNorm(T) + '::' + (isS ? 'S' + (s || 1) + 'E' + (e || 1) : 'm')
           });
@@ -9901,7 +9901,7 @@ async function m4uTdStreams(tmdbId, title, type, s, e, origin, maxh) {
         + '\u229e Movies4u' + (audio ? ' \u2317 ' + audio : '') + (size ? ' \u00b7 ' + size : '');
       cards.push({
         name: '\u25a5 ' + (x.q || 'Auto') + ' \u25a5', title: txt, description: txt, quality: String(x.q || ''),
-        url: m4uLazyUrl(x.mdisk, origin), _src: 'Movies4u', _srv: r.srv || 'Google Drive', _direct: r.url,
+        url: (r.srv === 'FSL' ? m4uCardUrl(r.url, origin) : m4uLazyUrl(x.mdisk, origin)), _src: 'Movies4u', _srv: r.srv || 'Google Drive', _direct: r.url,
         behaviorHints: { notWebReady: false, isBingeable: true, filename: 'movies4u-' + (x.q || 'auto') + '.mkv' },
         bingeGroup: 'm4u|' + mlsNorm(T) + '::' + (isS ? 'S' + (s || 1) + 'E' + (e || 1) : 'm')
       });
