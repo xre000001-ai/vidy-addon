@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.25';
+const VERSION = '1.34.26';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -13170,7 +13170,19 @@ async function withSources(cardsP, srcs, cfg, t0, mkey, lookupP) {
     try { LAST_SRC = { ts: Date.now(), el: el, cards: all.length, src: live.map((x2, i2) => x2.key + ':' + (outs[i2] ? outs[i2].length : 'cut')) }; } catch (e) { }
     if (DBG) console.error('[srcdbg] withSources el=' + el + 'ms uniLeft=' + uniLeft + 'ms → ' + all.length + ' কার্ড (partial=' + !!all.$partial + ') সোর্স=' + live.map((x2, i2) => x2.key + ':' + (outs[i2] ? outs[i2].length : 'কাটা')).join(','));
 
-    all.$partial = outs.some(v => v === null) || errFlag || cutFlag || _stN > 0 || pendFlag; // v1.15.3: কাটা-বা-ত্রুটিজ-সোর্স → ৩০মিন-নয়-৯০সে-ক্যাশ (পরের-ট্যাপে-সম্পূর্ণ-আপগ্রেড) ★ v1.34.22: +pendFlag
+    // ★ v1.34.26: rt/tw খাঁটি-শূন্য হলেও রেজলভার এই-ইনস্ট্যান্সে সদ্য (৫মিন) কার্ড দিয়ে থাকলে সেই শূন্য
+    //   অবিশ্বাস্য — রেজলভারের নেগেটিভ-ক্যাশ (৪মিন) দ্রুত-[] পাঠিয়ে খাঁটি-শূন্য সাজে, আর সেটা আগের
+    //   নিয়মে ১০মিনের পূর্ণ-ক্যাশে পিন হতো (প্রোডে মাপা: JJK-তে RT ০, রেজলভার সুস্থ থাকা সত্ত্বেও)।
+    //   আংশিক ধরলে BG-ঢেউ আবার চেষ্টা করে; জানালা কাটলেই পূর্ণ-ফল নিজে থেকেই বসে।
+    let _rtwD = false;
+    for (let _i2 = 0; _i2 < live.length; _i2++) {
+      const _k = live[_i2].key;
+      if ((_k === 'rt' || _k === 'tw') && Array.isArray(outs[_i2]) && !outs[_i2].length) {
+        const _ss = SRC_STATS.get(_k);
+        if (_ss && _ss.cards > 0 && (Date.now() - (_ss.last || 0)) < 300000) { _rtwD = true; if (DBG) console.error('[srcdbg] ' + _k + ' empty-but-resolver-alive -> partial'); }
+      }
+    }
+    all.$partial = outs.some(v => v === null) || errFlag || cutFlag || _stN > 0 || pendFlag || _rtwD; // v1.15.3 ★ v1.34.22: +pendFlag ★ v1.34.26: +_rtwD
     return all;
   } catch (e) { if (DBG) console.error('[srcdbg] ERR ' + String(e && e.message).slice(0, 80)); return cards; }
 }
