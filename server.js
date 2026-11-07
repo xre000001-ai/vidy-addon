@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.22';
+const VERSION = '1.34.23';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -13099,6 +13099,7 @@ async function withSources(cardsP, srcs, cfg, t0, mkey, lookupP) {
     for (let i = 0; i < live.length; i++) {
       const v = outs[i];
       if (!v || !v.length) continue;
+      const _b4 = all.length; // ★ v1.34.23
       if (live[i].key === 'nx') {
         const nxAllow = qToList(cfg && cfg.nxq);
         const nxSel = Array.isArray(cfg && cfg.nxl) ? cfg.nxl : [];
@@ -13113,7 +13114,7 @@ async function withSources(cardsP, srcs, cfg, t0, mkey, lookupP) {
         const rtSel = Array.isArray(cfg && cfg.rtl) ? cfg.rtl : [];
         const rtAllow = qToList(cfg && cfg.rtq); // v1.15.80-wip: RareToons-নিজের-রেজো-সাদৃশ্য (অজানা-উচ্চতা-থাকে)
         const rtSrv = (Array.isArray(cfg && cfg.rtsrv) && cfg.rtsrv.length) ? cfg.rtsrv : null; // v1.15.81: বাদ-তালিকা (খালি=সব; দুটোই-বাদ → RT-শূন্য — কনফিগ-টগলের-সাথে-সৎ)
-        all = all.concat(v.filter(z => rtLangPass(z, rtSel) && qPass(z, rtAllow)).filter(z => !rtSrv || rtSrv.indexOf(/pixeldrain/.test(String(z.url || '')) ? 'pd' : 'mq') < 0));
+        all = all.concat(v.filter(z => rtLangPass(z, rtSel) && (!z._hq || !rtAllow.length || rtAllow.indexOf(z._hq) >= 0)).filter(z => !rtSrv || rtSrv.indexOf(/pixeldrain/.test(String(z.url || '')) ? 'pd' : 'mq') < 0)); // ★ v1.34.23: rtq এখন _hq-তে (আগে নামমাত্র quality — resolver-লেবেল বদলালেই কার্ড মরত)
       } else if (live[i].key === 'tw') {
         const twAllow = qToList(cfg && cfg.twq); // ToonWorld-নিজের-চিপস — রেজলভারের-আসল-উচ্চতায়
         const twSel = Array.isArray(cfg && cfg.twl) ? cfg.twl : []; // v1.15.80-wip: ToonWorld-ভাষা-সাদৃশ্য
@@ -13149,6 +13150,7 @@ async function withSources(cardsP, srcs, cfg, t0, mkey, lookupP) {
         const lSel = Array.isArray(cfg && cfg[live[i].key + 'l']) ? cfg[live[i].key + 'l'] : [];
         all = all.concat(lSel.length ? v.filter(z => rtLangPass(z, lSel)) : v);
       } else all = all.concat(v);
+      if (v.length && all.length === _b4) diag('flt', live[i].key + ' raw=' + v.length + ' filtered-to-0'); // ★ v1.34.23 (/_diag?g=flt)
     }
     try { LAST_SRC = { ts: Date.now(), el: el, cards: all.length, src: live.map((x2, i2) => x2.key + ':' + (outs[i2] ? outs[i2].length : 'cut')) }; } catch (e) { }
     if (DBG) console.error('[srcdbg] withSources el=' + el + 'ms uniLeft=' + uniLeft + 'ms → ' + all.length + ' কার্ড (partial=' + !!all.$partial + ') সোর্স=' + live.map((x2, i2) => x2.key + ':' + (outs[i2] ? outs[i2].length : 'কাটা')).join(','));
@@ -13584,7 +13586,10 @@ const DEFAULT_CFG = { q: 0, sub: 1, cat: 'kd,mv', lang: '', sort: 'pop', era: ''
 function parseCfgFromObj(o) {
   const c = Object.assign({}, DEFAULT_CFG, { g: [] });
   if (o) {
-    if (o.q !== undefined && o.q !== null && o.q !== '') c.q = qToList(o.q);
+    if (o.q !== undefined && o.q !== null && o.q !== '') { // ★ v1.34.23: অ্যারে = ক্যাপ (সর্বোচ্চ-টিকই সীমা; পেজের '≤' লেবেলের সঙ্গে মিল — আগে [1080]-কে 'শুধু-1080' ধরে Vidy-র 720/480 কার্ড মরে যেত)
+      if (Array.isArray(o.q)) { const _mx = Math.max.apply(null, o.q.map(Number).filter(h => QH.indexOf(h) >= 0).concat([0])); c.q = _mx ? QH.filter(h => h <= _mx) : []; }
+      else c.q = qToList(o.q);
+    }
     if (o.sub === 0 || o.sub === '0') c.sub = 0;
     if (typeof o.cat === 'string' && o.cat) c.cat = o.cat;
     if (o.lang === 'ko' || o.lang === 'zh') c.lang = o.lang;
@@ -13598,12 +13603,12 @@ function parseCfgFromObj(o) {
     if (o.twq !== undefined && o.twq !== null && o.twq !== '') c.twq = qToList(o.twq); // ToonWorld-নিজের-কোয়ালিটি-ফিল্টার (আসল-উচ্চতায়, কার্ড-লেবেল-নয়)
     if (o.rt === 0 || o.rt === '0') c.rt = 0;
     if (o.nxq !== undefined && o.nxq !== null && o.nxq !== '') c.nxq = qToList(o.nxq);
-    if (Array.isArray(o.nxl)) c.nxl = o.nxl.map(x => String(x).toLowerCase().replace(/[^a-z]/g, '')).filter(x => x.length >= 2 && x.length <= 12).slice(0, 12);
-    if (Array.isArray(o.rtl)) c.rtl = o.rtl.map(x => String(x).toLowerCase().replace(/[^a-z]/g, '')).filter(x => x.length >= 2 && x.length <= 12).slice(0, 14); // v1.15.80-wip: RareToons-ভাষা-তালিকা-প্রশস্ত (nxl-মানদণ্ড) — অনুপস্থিত-ভাষা-সৎ-শূন্য
+    if (Array.isArray(o.nxl)) { const _nl = o.nxl.map(x => String(x).toLowerCase().replace(/[^a-z]/g, '')).filter(x => x.length >= 2 && x.length <= 12); c.nxl = _nl.length >= 20 ? [] : _nl.slice(0, 12); } // ★ v1.34.23: ≥২০ ভাষা = সব ⇒ ফিল্টার নয়
+    if (Array.isArray(o.rtl)) { const _rl = o.rtl.map(x => String(x).toLowerCase().replace(/[^a-z]/g, '')).filter(x => x.length >= 2 && x.length <= 12); c.rtl = _rl.length >= 20 ? [] : _rl.slice(0, 14); } // v1.15.80-wip ★ v1.34.23: ≥২০ ভাষা = 'সব' ⇒ ফিল্টার নয় (আগে slice(0,14)-এ বাকি ভাষা মরত)
     const wipQ = (key) => { const val = o[key]; if (val !== undefined && val !== null && val !== '') c[key] = qToList(val).filter(x => [2160, 1080, 720, 480].indexOf(x) >= 0).sort((a, b) => b - a).slice(0, 4); }; // v1.15.80-wip
     wipQ('rtq'); wipQ('mmq'); wipQ('m4uq'); wipQ('skyq'); wipQ('bfq'); // v1.15.86: Sky+BollyFlix-নিজস্ব-কোয়ালিটি
     if (Array.isArray(o.rtsrv)) { const rs = o.rtsrv.map(x => String(x).toLowerCase()).filter(x => ['mq', 'pd'].indexOf(x) >= 0).slice(0, 2); if (rs.length) c.rtsrv = rs; } // v1.15.81: RT-নিজস্ব-সার্ভার (বাদ-তালিকা; ১ বা ২ — দুটোই-বাদ-মানে-RT-শূন্য)
-    const wipL = (key) => { if (Array.isArray(o[key])) c[key] = o[key].map(x => String(x).toLowerCase().replace(/[^a-z]/g, '')).filter(x => x.length >= 2 && x.length <= 12).slice(0, 14); }; // v1.15.80-wip
+    const wipL = (key) => { if (Array.isArray(o[key])) { const _wl = o[key].map(x => String(x).toLowerCase().replace(/[^a-z]/g, '')).filter(x => x.length >= 2 && x.length <= 12); c[key] = _wl.length >= 20 ? [] : _wl.slice(0, 14); } }; // v1.15.80-wip ★ v1.34.23: ≥২০ = সব ⇒ ফিল্টার নয়
     wipL('twl'); wipL('mml'); wipL('m4ul'); wipL('skyl'); wipL('bfl'); wipL('vspl'); wipL('ottl'); wipL('azl'); // v1.15.86: Sky+BollyFlix-নিজস্ব-ভাষা
     if (o.mmr !== undefined && o.mmr !== null && o.mmr !== '') { const mv = parseInt(o.mmr, 10) || 0; if ([0, 480, 720, 1080, 2160].indexOf(mv) >= 0) c.mmr = mv; } // v1.15.39: MM-রেজোলিউশন-ছাঁকনি
     if (o.m4u === 0 || o.m4u === '0') c.m4u = 0; // v1.15.42: Movies4u-মাস্টার-সুইচ
