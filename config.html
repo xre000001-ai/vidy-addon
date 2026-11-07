@@ -861,7 +861,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     var h=$('tuneHost'),o;
     /* Vidy — fleet-wide cap + subtitle gate */
     o=tuneCard('tune-v','v','Vidy — global','Quality cap and subtitle gate for the whole 16-server fleet');h.appendChild(o.card);
-    chipsInto(o.zone,'Quality cap',st.q,RES,rebuild,'empty = all',1);
+    chipsInto(o.zone,'Resolutions',st.q,RES,rebuild,'empty = all',1); // ★ v1.34.25: cap নয় — শুধু-টিক-দেওয়া-রেজোই আসবে (সব-সোর্সে এক নিয়ম)
     singleInto(o.zone,'Subtitles','sub',SUBS,rebuild);
     /* MovieBox */
     o=tuneCard('tune-nx','nx','MovieBox','HLS · huge catalog — own chips below');h.appendChild(o.card);
@@ -995,10 +995,10 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
       if(x[0]==='sky'&&!ql.length&&st.skyr)ql=[st.skyr];
       if(x[0]==='hm'&&!ql.length&&st.hmr)ql=[st.hmr];
       if(x[0]==='mlb'&&!ql.length&&st.mlbr)ql=[st.mlbr];   // .mlbr = MovieLinkBD-cap
-      if(ql.length)s.appendChild(el('div','chip',x[4]+' ≤'+Math.max.apply(null,ql)+'p'));
+      if(ql.length){var _isCap=!((st[QK[x[0]]]||[]).length);s.appendChild(el('div','chip',x[4]+' '+(_isCap?'≤'+ql[0]+'p':ql.slice().sort(function(a,b){return b-a;}).join('/')+'p only')));} // ★ v1.34.25: exact-set হলে 'only', একক-cap হলে '≤'
       if(ll.length)s.appendChild(el('div','chip',x[4]+' '+ll.slice(0,2).join('/')+(ll.length>2?'+'+ll.length:'')));
     });
-    if(st.v===1){if(st.q.length)s.appendChild(el('div','chip','fleet ≤ '+Math.max.apply(null,st.q)+'p'));if(st.sub===0)s.appendChild(el('div','chip','no subs'));if(st.srv.length&&st.srv.length!==SRVS.length)s.appendChild(el('div','chip',st.srv.length+' servers'));}
+    if(st.v===1){if(st.q.length)s.appendChild(el('div','chip','fleet '+st.q.slice().sort(function(a,b){return b-a;}).join('/')+'p only')); // ★ v1.34.25if(st.sub===0)s.appendChild(el('div','chip','no subs'));if(st.srv.length&&st.srv.length!==SRVS.length)s.appendChild(el('div','chip',st.srv.length+' servers'));}
     if(st.rt===1&&st.rtsrv.length)s.appendChild(el('div','chip','RareToons '+(st.rtsrv.length>=2?'— no server':(st.rtsrv.indexOf('mq')>=0?'Pixeldrain only':'MQ only')))); /* v1.15.81 */
   }
 
