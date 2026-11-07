@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.27';
+const VERSION = '1.34.28';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -2872,6 +2872,10 @@ function twRtPrewarm(nameP, type, s, e) { // v1.14.5 series tap → পরের
     }
   }).catch(() => {}); }, 1200);
 }
+function dtPrewarm(nameP, infoP, type, s, e, origin, cfg) { // ★ v1.34.28: series-ট্যাপ → পরের-২ এপিসোডের DeadToons-আনলক আগেই পোড়াও। ১৫সে গেট সার্ভার-এনফোর্সড (ব্রাউজারেও কাটে না) — কিন্তু ব্যাকগ্রাউন্ডে পুড়ে থাকলে পরের এপিসোড খুললেই ডাউনলোড-কার্ড প্রথম উত্তরেই (DT_C ৩০মিন / DT_UNLOCK ৬ঘণ্টা)
+  if (!dtOn(cfg) || type !== 'series' || process.env.DTBG === '0') return;
+  setTimeout(() => { for (let k = 1; k <= 2; k++) { try { dtTask(nameP, infoP, 'series', s, e + k, origin).catch(() => {}); } catch (e2) { } } }, 1500);
+}
 function nxPrewarm(type, id, s, e) { // series tap → quietly fetch the next 3 episodes' NetHex into NXCACHE (binge tap-2 = instant)
   if (!NEXBASE) return;
   // v1.11.2: মূল-ট্যাপের-resolve-পুল-থেকে-প্রথম-কামড়-নেয় (সঙ্গে-সঙ্গে-৪-resolve-প্লাবন-ঠান্ডা-E1-ধীর-করত) — ৯০০ms-দেরি
@@ -4179,10 +4183,25 @@ function dtUnlockOne(lsid, short) {
       const tok = String(ru).replace(/\/+$/, '').split('/').pop();
       const g = await dtJsonPost('/own-shortener/gate/' + tok, {}, 9000);
       if (!g || g.done) return null;
-      const wait = Math.max(1, Number(g.wait_seconds || 15)) * 1000 + 900;
-      if (wait > 30000) return null;
-      await new Promise(r => setTimeout(r, wait));
-      const c = await dtJsonPost('/own-shortener/gate/' + tok + '/continue', {}, 9000);
+      // ★ v1.34.28 (ইউজার: "deadtoons er oi time ta bypass kora jai na, jerokom brave kore"):
+      //   লাইভ-প্রমাণ — গেট **সার্ভার-সাইড** enforce হয় (আগে continue দিলে 409 "Please wait for
+      //   the timer", callback-এ 403) ⇒ ১৫সে কোনো ব্রাউজার/ক্লায়েন্ট দিয়েই কাটানো যায় না।
+      //   কিন্তু re-poll-এ timer reset হয় না (মাপা: 15→9) ⇒ deadline-অপেক্ষা + continue-রিট্রাই
+      //   নিরাপদ: আগের wait+900ms-এক-চেষ্টায় ঘড়ির হেরফেরে 409 খেলে পুরো আনলক মরে যেত।
+      let remMs = Math.max(1, Number(g.remaining_seconds || g.wait_seconds || 15)) * 1000 + 400;
+      if (remMs > 32000) return null;
+      let c = null;
+      for (let att = 0; att < 3; att++) {
+        await new Promise(r => setTimeout(r, remMs));
+        c = await dtJsonPost('/own-shortener/gate/' + tok + '/continue', {}, 9000);
+        if (c && c.done) break;
+        c = null;
+        if (att === 2) break;
+        const g2 = await dtJsonPost('/own-shortener/gate/' + tok, {}, 9000);
+        if (!g2) break;
+        if (g2.done) { c = g2; break; }
+        remMs = Math.max(600, Number(g2.remaining_seconds || 1) * 1000 + 400);
+      }
       if (!c || !c.done) return null;
       const f = await dtJsonPost('/unlock/callback/' + tok, {}, 9000);
       const url = f && f.url;
@@ -4536,6 +4555,7 @@ async function dtTask(nameP, infoP, type, s, e, origin) {
     const links = det.links || [];
     const titleTxt = [name, det.episode_name || '', (det.anime_name || used.anime_name) || ''].join(' ').slice(0, 120);
     const dlCands = dtDlCands(links, 6);            // v1.32.0: প্রতি কোয়ালিটিতে HubCloud + Pixeldrain (৫টি পর্যন্ত)
+    if (process.env.DTBG !== '0') for (const c0 of dlCands) if (!DT_UNLOCK.has(String(c0.id))) dtUnlockOne(c0.id).catch(() => {}); // ★ v1.34.28: ১৫সে-গেটের ঘড়ি watch-রিজলভ চলাকালেই শুরু (single-flight — dlBg পরে একই জবে যোগ দেয়, দ্বিতীয়বার জ্বলে না)
     const TTL0 = (det.anime_name || used.anime_name || name);
     const YR0 = year || (det.release_date ? parseInt(String(det.release_date).slice(0, 4), 10) || 0 : 0);
     if (DBG) console.error('[dt] hit slug=' + used.slug + ' sv=' + svs.length + ' links=' + links.length + ' @' + (Date.now() - T0) + 'ms');
@@ -15433,6 +15453,7 @@ cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'movie', s: 0, e: 0 }
       const azP = !(cfg && cfg.az === 0) ? azStreams(Number(m[1]), 'tv', Number(m[2] || 1), Number(m[3] || 1), cfg && cfg.azq || []).catch(() => []) : null; // v1.15.76: AniZone
       if (nxOn) nxPrewarm('series', String(m[1]), Number(m[2] || 1), Number(m[3] || 1));
       twRtPrewarm(tp, 'series', Number(m[2] || 1), Number(m[3] || 1));
+      dtPrewarm(tp, infoP, 'series', Number(m[2] || 1), Number(m[3] || 1), originOf(req), cfg); // ★ v1.34.28
       kickSubs('tmdb' + m[1], 'series', Number(m[2] || 1), Number(m[3] || 1), cfg);
       const lookP = Promise.all([typeof tp !== 'undefined' ? tp : null, typeof nmP !== 'undefined' ? nmP : null, typeof infoP !== 'undefined' ? infoP : null].filter(Boolean)).catch(() => []); // v1.26.2
       const mlbP = mlbdOn(cfg) ? mlbdTask(tp, infoP, 'series', Number(m[2] || 1), Number(m[3] || 1), (cfg && cfg.mlbr) || 0) : null;
@@ -15488,6 +15509,7 @@ cards => { if (DBG) console.error('[rt] cards-ready @' + (Date.now() - t0) + 'ms
       const azP = !(cfg && cfg.az === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? azStreams(info.id, 'tv', Number(m[2]), Number(m[3]), cfg && cfg.azq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.76: AniZone
       if (nxOn) nxPrewarm('series', m[1], Number(m[2]), Number(m[3]));
       twRtPrewarm(nmP, 'series', Number(m[2]), Number(m[3]));
+      dtPrewarm(nmP, infoP, 'series', Number(m[2]), Number(m[3]), originOf(req), cfg); // ★ v1.34.28
       kickSubs(m[1], 'series', Number(m[2]), Number(m[3]), cfg);
       const lookP = Promise.all([typeof tp !== 'undefined' ? tp : null, typeof nmP !== 'undefined' ? nmP : null, typeof infoP !== 'undefined' ? infoP : null].filter(Boolean)).catch(() => []); // v1.26.2
       const mlbP = mlbdOn(cfg) ? mlbdTask(nmP, infoP, 'series', Number(m[2]), Number(m[3]), (cfg && cfg.mlbr) || 0) : null;
@@ -15516,6 +15538,7 @@ cards => { Promise.all([raceObjP(infoP, 1500), raceObjP(nmP, 1500)]).then(([info
       const azP = !(cfg && cfg.az === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? azStreams(info.id, 'tv', 1, 1, cfg && cfg.azq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.76: AniZone
       if (nxOn) nxPrewarm('series', m[1], 1, 1);
       twRtPrewarm(nmP, 'series', 1, 1);
+      dtPrewarm(nmP, infoP, 'series', 1, 1, originOf(req), cfg); // ★ v1.34.28
       kickSubs(m[1], 'series', 1, 1, cfg);
       const lookP = Promise.all([typeof tp !== 'undefined' ? tp : null, typeof nmP !== 'undefined' ? nmP : null, typeof infoP !== 'undefined' ? infoP : null].filter(Boolean)).catch(() => []); // v1.26.2
       const mlbP = mlbdOn(cfg) ? mlbdTask(nmP, infoP, 'series', 1, 1, (cfg && cfg.mlbr) || 0) : null;
