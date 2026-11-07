@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.23';
+const VERSION = '1.34.24';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -7197,7 +7197,7 @@ async function azStreams(tmdbId, type, s, e, azq) { // সার্চ→সি�
       if (Array.isArray(ch.subs) && ch.subs.length) AZ_SUBS.set((isTv0 ? 'series' : 'movie') + ':' + tmdbId + ':' + (isTv0 ? (s || 1) + 'x' + Number(e || 1) : 'm'), { ts: Date.now(), v: ch.subs });
       if (DBG) console.error('[az] মেমো-হিট ' + ckey + ' q=' + ch.q);
       const txt0 = (ch.txt || '');
-      return [{ name: '▥ ' + ch.q + ' ▥', quality: String(ch.q), url: ch.url, title: txt0, description: txt0, behaviorHints: { filename: 'anizone.m3u8' }, bingeGroup: 'az|' + (ch.title0 || '') + '::' }];
+      return [{ name: '▥ ' + ch.q + ' ▥', quality: String(ch.q), url: ch.url, title: txt0, description: txt0, _lang: 'Japanese', behaviorHints: { filename: 'anizone.m3u8' }, bingeGroup: 'az|' + (ch.title0 || '') + '::' }]; // ★ v1.34.24: _lang
     }
     const T0 = await nameForTmdb(tmdbId, type).catch(() => '');
     if (!T0) return [];
@@ -7267,9 +7267,10 @@ async function azStreams(tmdbId, type, s, e, azq) { // সার্চ→সি�
     const hit = pool2[0].x;
     const ep = isTv ? Number(e || 1) : 1;
     if (isTv && Number(hit.episode_count || 0) > 0 && ep > Number(hit.episode_count)) { if (DBG) console.error('[az] ' + T0 + ' E' + ep + ' > episode_count=' + hit.episode_count); return []; } // সত্যিই-নেই → সৎ-শূন্য
-    const wp = await azGet(AZ_BASE + '/anime/' + hit.slug + '/' + ep, 'w:' + hit.slug + '#' + ep, 600000, 6500);
+    let wp = await azGet(AZ_BASE + '/anime/' + hit.slug + '/' + ep, 'w:' + hit.slug + '#' + ep, 600000, 6500);
+    if (!wp && Date.now() - t3 < 6500) { if (DBG) console.error('[az] watch-পুনঃচেষ্টা ' + hit.slug); wp = await azGet(AZ_BASE + '/anime/' + hit.slug + '/' + ep, 'w:' + hit.slug + '#' + ep, 600000, 5200, 14); } // ★ v1.34.24
     const pl = wp ? azPlayer(wp) : null;
-    if (!pl) { if (DBG) console.error('[az] ' + T0 + ' E' + ep + ' player-নেই (' + hit.slug + ')'); return []; }
+    if (!pl) { if (DBG) console.error('[az] ' + T0 + ' E' + ep + ' player-নেই (' + hit.slug + ') wp=' + (wp ? wp.length : 0) + ' src=' + (wp ? String(/"sources"/.test(wp)) : '-') + ' 404ish=' + (wp ? String(/not found|404/i.test(wp.slice(0, 3000))) : '-')); return []; } // ★ v1.34.24 diag
     // ★★ v1.34.21 (ইউজার: "1080 holeo 720 lekha ase, filter korle badh hoia Jai"): মাস্টার-প্রোব সরাসরি
     //   ব্যর্থ হলে প্রক্সি-রেসে আরেকবার — আসল সর্বোচ্চ উচ্চতাই লেবেল হবে (beamup-ইগ্রেসে সরাসরি
     //   মাস্টার না-এলে আগে অন্ধভাবে 720 বসে মেমোতে ৩০মিন আটকে থাকত)।
@@ -7287,7 +7288,7 @@ async function azStreams(tmdbId, type, s, e, azq) { // সার্চ→সি�
     if (subs.length) AZ_SUBS.set((isTv ? 'series' : 'movie') + ':' + tmdbId + ':' + (isTv ? (s || 1) + 'x' + ep : 'm'), { ts: Date.now(), v: subs }); // /subtitles-রিসোর্স-চ্যানেল
     if (DBG) console.error('[az] ' + type + ':' + tmdbId + ' কার্ড=১ q=' + q + ' slug=' + hit.slug + ' subs=' + subs.length + ' @' + (Date.now() - t3) + 'ms');
     AZ_CARD.set(ckey, { ts: Date.now(), q, pq, url: pl.src, subs, title0: T0.toLowerCase(), txt });
-    return [{ name: '\u25a5 ' + q + ' \u25a5', quality: String(q), url: pl.src, title: txt, description: txt, behaviorHints: { filename: 'anizone.m3u8' }, bingeGroup: 'az|' + T0.toLowerCase() + '::' }];
+    return [{ name: '\u25a5 ' + q + ' \u25a5', quality: String(q), url: pl.src, title: txt, description: txt, _lang: 'Japanese', behaviorHints: { filename: 'anizone.m3u8' }, bingeGroup: 'az|' + T0.toLowerCase() + '::' }]; // ★ v1.34.24: _lang
   } catch (e2) { if (DBG) console.error('[az] ' + tmdbId + ' ERR ' + String(e2 && e2.message).slice(0, 60) + ' @' + (Date.now() - t3) + 'ms'); return []; }
 }
 // ---------- v1.15.40-local: Movies4u (M4U) — lookup.php-সার্চ + hubcloud→gamerxyt→FSL-R2 সরাসরি-MKV ----------
