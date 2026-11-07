@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.7';
+const VERSION = '1.34.9';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -11705,14 +11705,178 @@ function bfIsExoReq(req) {
 //   — আমাদের সার্ভার যাচাইয়ে 200 পায়, কিন্তু প্লেয়ার তার নিজের IP থেকে চাইলে **400** ⇒
 //   "ডাউনলোড হয় কিন্তু ভিডিও প্লে হয় না"। তাই বাইটগুলো আমাদের সার্ভার দিয়েই যায়।
 //   Range: আপস্ট্রিম Range মানলে হুবহু পাস-থ্রু; না মানলে শুরু থেকে স্ট্রিম করে বাদ দিয়ে ঠিক উত্তর দিই।
+// ★★★ v1.34.8 — ইউজার: "Ar merry berry love deklam play hoi na GDrive ta, seek dile mone hoi full download
+//   suru hoi"। মাপা: ওই কার্ডের আসল ফাইল **MP4** (`00 00 00 1c 66 74 79 70 6d 70 34 32` = ftyp mp42),
+//   অথচ রিলে লেবেল দিত `video/x-matroska` (এক্সটেনশনহীন GU/nexdrive লিংকে গোপন-অনুমান) ⇒ ExoPlayer
+//   MatroskaExtractor দিয়ে MP4 পার্স করতে গিয়ে খোলে না। আর **suffix-range** (`Range: bytes=-2048`,
+//   MP4-র moov/টেল-ইনডেক্স পড়তে প্লেয়ার এটাই চায়) আমাদের regex-এ ম্যাচই করত না ⇒ Range পাঠানো হত না ⇒
+//   **২০০ + পুরো ফাইল (৭৫০,৫৬২,৬৩৪ বাইট)** ফেরত ⇒ ঠিক "full download suru hoi"।
+//   এখন: (ক) আকার-প্রোব ক্যাশ, (খ) সব ধরনের Range (closed/open/suffix) **বন্ধ-রেঞ্জে** অনূদিত,
+//   (গ) প্রথম-চাঙ্কের ম্যাজিকে আসল content-type, (ঘ) HEAD-এ লেংথ।
+const BF_SZ = new Map();                      // url → {ts, total}
+async function bfUpSize(url) {
+  const c = BF_SZ.get(url);
+  if (c && Date.now() - c.ts < 10 * 60e3 && c.total) return c.total;
+  const r = await fetch(url, { headers: { 'User-Agent': UA, Accept: '*/*', Range: 'bytes=0-0' }, signal: AbortSignal.timeout(9000) }).catch(() => null);
+  if (!r) return 0;
+  try { if (r.body) await r.body.cancel(); } catch { }
+  const cr = /bytes\s+(\d+)-(\d+)\/(\d+)/i.exec(String(r.headers.get('content-range') || ''));
+  const total = cr ? Number(cr[3]) : Number(r.headers.get('content-length') || 0);
+  if (total > 0) { if (BF_SZ.size > 300) BF_SZ.clear(); BF_SZ.set(url, { ts: Date.now(), total: total }); }
+  return total;
+}
+function bfSniffCt(buf) {                     // ফাইলের আসল কনটেইনার ⇒ সঠিক content-type
+  if (!buf || buf.length < 12) return '';
+  if (buf[0] === 0x1a && buf[1] === 0x45 && buf[2] === 0xdf && buf[3] === 0xa3) return 'video/x-matroska';
+  if (buf.toString('latin1', 4, 8) === 'ftyp') return 'video/mp4';
+  if (buf.toString('latin1', 0, 4) === 'RIFF') return 'video/x-msvideo';
+  if (buf.toString('latin1', 0, 4) === 'OggS') return 'video/ogg';
+  if (buf.toString('latin1', 0, 3) === 'ID3' || (buf[0] === 0xff && (buf[1] & 0xe0) === 0xe0)) return 'audio/mpeg';
+  return '';
+}
+
+// ★★★ v1.34.9 — **G-Drive (GU) ফাইল আসলে সিক করতে পারে না** (মাপা: `video-downloads.googleusercontent.com`
+//   `server: UploadServer`, `Accept-Ranges` নেই, প্রতিটা `Range:`-এ ২০০ + পুরো ৭৫০,৫৬২,৬৩৪ বাইট)।
+//   আর ওই MP4-এর গঠন `ftyp → free → mdat(৭৪৯MB) → moov(শেষে)` ⇒ প্লেয়ারকে **টেল** পড়তেই হয়, ফলে
+//   প্রতিবার আমাদের "০ থেকে পড়ে বাদ দাও" পথ ⇒ ইউজার ঠিকই বলেছেন "seek dile mone hoi full download suru hoi"।
+//   সমাধান: GU-এর জন্য **একবার-পড়া ডিস্ক-ক্যাশ** — পেছনে একবার পুরো ফাইল নামে (~৯সে, মাপা ~৯০MB/s),
+//   তারপর যেকোনো Range ক্যাশ-ফাইল থেকে সত্যিকারের ২০৬ (সিক/রিজিউম তাৎক্ষণিক, Google-এ বারবার চাপ নেই)।
+const BF_GUC = new Map();                       // url → {f, got, total, done, err, ts, used}
+const BF_GU_DIR = process.env.GUCACHE_DIR || '/var/tmp/vidy-gu';
+const BF_GU_MAX = Number(process.env.GUCACHE_MAX || 2.4e9);
+let BF_GU_BYTES = 0, BF_GU_READY = null, BF_GU_OFF = 0;   // BF_GU_OFF: জায়গা-সংকটে ১০ মিনিট ক্যাশ-বিরতি
+const bfGuDir = () => {
+  if (BF_GU_READY !== null) return BF_GU_READY;
+  try { fs.mkdirSync(BF_GU_DIR, { recursive: true }); BF_GU_READY = BF_GU_DIR; }
+  catch (e) { try { fs.mkdirSync('/tmp/vidy-gu', { recursive: true }); BF_GU_READY = '/tmp/vidy-gu'; } catch (e2) { BF_GU_READY = ''; } }
+  return BF_GU_READY;
+};
+const bfGuEvict = (keep) => {                   // পুরোনো-শেষ হওয়া ক্যাশ ফাইল মুছে জায়গা রাখি
+  const arr = [...BF_GUC.entries()].filter(([u, e]) => e.done && u !== keep).sort((a, b) => a[1].used - b[1].used);
+  for (const [u, e] of arr) {
+    if (BF_GU_BYTES < BF_GU_MAX) break;
+    try { fs.unlink(e.f, () => { }); } catch (er) { }
+    BF_GU_BYTES -= (e.total || e.got || 0); BF_GUC.delete(u);
+  }
+};
+function bfGuStart(url) {
+  const d = bfGuDir();
+  if (!d) return null;
+  const e = { f: d + '/' + require('crypto').createHash('sha1').update(url).digest('hex').slice(0, 22) + '.bin', got: 0, total: 0, done: false, err: '', ts: Date.now(), used: Date.now() };
+  BF_GUC.set(url, e);
+  (async () => {
+    const r = await fetch(url, { headers: { 'User-Agent': UA, Accept: '*/*' }, signal: AbortSignal.timeout(20 * 60e3) }).catch(() => null);
+    if (!r || !r.ok || !r.body) { e.err = 'up' + (r ? r.status : 0); return; }
+    e.total = Number(r.headers.get('content-length') || 0);
+    // ★ জায়গা-গার্ড: কনটেইনার-ডিস্ক ভরে গেলে পুরো অ্যাডনই মরে যেত ⇒ জায়গা না থাকলে ক্যাশ বাদ,
+    //   পুরোনো "০ থেকে পড়ে বাদ" পথে চলে যাই (ধীর, কিন্তু ভাঙে না)
+    try {
+      const stt = fs.statfsSync(bfGuDir());
+      const free = Number(stt.bavail) * Number(stt.bsize);
+      if (free < (e.total || 0) + 300 * 1048576) { e.err = 'nospace'; BF_GU_OFF = Date.now(); return; }
+    } catch (er) { }
+    const ws = fs.createWriteStream(e.f);
+    const rd = r.body.getReader();
+    try {
+      for (;;) {
+        const { done, value } = await rd.read();
+        if (done) break;
+        const b = Buffer.from(value);
+        e.got += b.length; BF_GU_BYTES += b.length;
+        if (!ws.write(b)) await new Promise(r2 => ws.once('drain', r2));
+        if (BF_GU_BYTES > BF_GU_MAX) bfGuEvict(url);
+      }
+      await new Promise(r2 => ws.end(r2));
+      e.done = true;
+      if (DBG) console.error('[guc] done ' + (e.got / 1048576).toFixed(0) + 'MB ' + String(url).slice(-24));
+    } catch (er) {
+      try { ws.destroy(); } catch (x) { }
+      e.err = String((er && er.message) || er).slice(0, 40);
+      if (DBG) console.error('[guc] err ' + e.err + ' got=' + e.got);
+    }
+  })();
+  return e;
+}
+async function bfGuServe(req, res, url, start, endQ, base) {
+  const T0 = Date.now();
+  if (BF_GU_OFF && Date.now() - BF_GU_OFF < 10 * 60e3) return false;   // ক্যাশ বন্ধ ⇒ সাধারণ পথ
+  let e = BF_GUC.get(url);
+  if (!e || (e.err && !e.got)) e = bfGuStart(url);
+  if (!e || (e.err && !e.got)) return false;
+  e.used = Date.now();
+  const waitMs = Number(process.env.GUWAIT_MS || 60000);
+  if (req.method === 'HEAD') {                      // HEAD-এ আকার জানা দরকার (প্লেয়ার আগে এটাই চায়)
+    const hd0 = Date.now();
+    while (!e.total && !e.done && !e.err && Date.now() - hd0 < 12000) await new Promise(r2 => setTimeout(r2, 100));
+    const T = e.total || e.got;
+    const hObj = Object.assign({}, base, T ? { 'content-length': String(T), 'content-range': 'bytes 0-' + (T - 1) + '/' + T } : {});
+    try {
+      const fd = fs.openSync(e.f, 'r'); const buf = Buffer.alloc(16); fs.readSync(fd, buf, 0, 16, 0); fs.closeSync(fd);
+      const c0 = bfSniffCt(buf); if (c0) hObj['content-type'] = c0;
+    } catch (er) { }
+    res.writeHead(T ? 200 : 502, hObj);
+    return res.end();
+  }
+  // (১) ক্যাশে ফাইল থেকে যতটুকু আছে/আসবে তা-ই দিই — বন্ধ-রেঞ্জ হলে শেষ বাইট আসা পর্যন্ত অপেক্ষা
+  while (endQ >= 0 && !e.done && !e.err && e.got <= endQ && Date.now() - T0 < waitMs) await new Promise(r2 => setTimeout(r2, 100));
+  const total = e.total || (e.done ? e.got : 0);
+  const avail = e.got;
+  if (!avail) return false;
+  const endF = endQ >= 0 ? Math.min(endQ, avail - 1) : (e.done ? avail - 1 : -1);
+  const hdr = Object.assign({}, base);
+  if (total) { hdr['content-length'] = String((endF >= 0 ? endF : avail - 1) - start + 1); hdr['content-range'] = 'bytes ' + start + '-' + (endF >= 0 ? endF : (total - 1)) + '/' + total; }
+  // content-type ক্যাশ-ফাইলের ম্যাজিক থেকে
+  try {
+    const fd = fs.openSync(e.f, 'r'); const buf = Buffer.alloc(16); fs.readSync(fd, buf, 0, 16, 0); fs.closeSync(fd);
+    const ct0 = bfSniffCt(buf); if (ct0) hdr['content-type'] = ct0;
+  } catch (er) { }
+  const isRanged = (start > 0 || endQ >= 0);
+  res.writeHead(isRanged && total ? 206 : 200, hdr);
+  if (req.method === 'HEAD') return res.end();
+  // (২) ফাইল বাড়তে থাকলে **সঙ্গে সঙ্গে অনুসরণ** করে লিখি (টেল-ফলো)
+  let pos = start;
+  const hardEnd = total ? total - 1 : Number.MAX_SAFE_INTEGER;
+  const stopAt = endF >= 0 ? endF : (endQ >= 0 ? endQ : hardEnd);
+  try {
+    for (;;) {
+      if (res.destroyed) break;
+      if (pos > stopAt) break;
+      const can = e.got - pos;
+      if (can <= 0) {
+        if (e.done || e.err) break;
+        await new Promise(r2 => setTimeout(r2, 80)); continue;
+      }
+      const n = Math.min(can, 262144, stopAt - pos + 1);
+      const buf = Buffer.alloc(n);
+      const fh = await fs.promises.open(e.f, 'r');
+      const rd = await fh.read(buf, 0, n, pos);
+      await fh.close();
+      if (!rd.bytesRead) { if (e.done) break; await new Promise(r2 => setTimeout(r2, 80)); continue; }
+      pos += rd.bytesRead;
+      if (!res.write(buf.subarray(0, rd.bytesRead))) await new Promise(r2 => { res.once('drain', r2); res.once('close', r2); });
+    }
+  } catch (er) { }
+  try { res.end(); } catch (er) { }
+  if (DBG) console.error('[guc] served ' + start + '-' + stopAt + ' got=' + e.got + ' done=' + e.done + ' ' + (Date.now() - T0) + 'ms');
+}
+
 async function bfServeGeneric(req, res, url) {
   try {
     const qs = new URL(req.url, 'http://x').searchParams;
     const rbQ = qs.get('rb');
     const rngHdr = String(req.headers.range || (rbQ ? 'bytes=' + rbQ : '')).trim();
     const rm = /^bytes=(\d+)-(\d*)$/i.exec(rngHdr);
-    const rawStart = rm ? Math.max(0, parseInt(rm[1], 10) || 0) : 0;
-    const rawEndQ = (rm && rm[2]) ? parseInt(rm[2], 10) : -1;
+    let rawStart = rm ? Math.max(0, parseInt(rm[1], 10) || 0) : 0;
+    let rawEndQ = (rm && rm[2]) ? parseInt(rm[2], 10) : -1;
+    const sufm = /^bytes=-(\d+)$/i.exec(rngHdr);          // suffix: শেষের N বাইট (ছোট ফাইল-শেষের ইনডেক্স)
+    let sfx = sufm ? Math.max(1, parseInt(sufm[1], 10)) : 0;
+    const _extCt = /\.mp4(?:\.zip)?(?:\?|$)/i.test(url) ? 'video/mp4' : (/\.mkv(?:\?|$)/i.test(url) ? 'video/x-matroska' : '');
+    let _totalHint = 0;
+    if (sfx || (rm && rawStart === 0 && rawEndQ < 0)) {    // suffix বা `bytes=0-` ⇒ সাইজ জেনে বন্ধ-রেঞ্জ বানাই
+      _totalHint = await bfUpSize(url).catch(() => 0);
+      if (sfx && _totalHint) { rawStart = Math.max(0, _totalHint - sfx); rawEndQ = _totalHint - 1; sfx = 0; }
+      else if (!sfx && _totalHint) { rawEndQ = _totalHint - 1; }
+    }
     const base = {
       'access-control-allow-origin': '*',
       'cache-control': 'no-store, no-cache, must-revalidate, max-age=0',
@@ -11722,8 +11886,19 @@ async function bfServeGeneric(req, res, url) {
       'pragma': 'no-cache',
       'x-accel-buffering': 'no',
       'accept-ranges': 'bytes',
-      'content-type': /\.mp4(?:\.zip)?(?:\?|$)/i.test(url) ? 'video/mp4' : 'video/x-matroska'
+      'content-type': _extCt || 'video/x-matroska'
     };
+    if (req.method === 'HEAD') {                          // ★ HEAD-এও লেংথ+range-দাবি (কিছু প্লেয়ার আগে এটাই চায়)
+      const T = _totalHint || await bfUpSize(url).catch(() => 0);
+      const h = Object.assign({}, base);
+      if (T) { h['content-length'] = String(T); h['content-range'] = 'bytes 0-' + (T - 1) + '/' + T; }
+      res.writeHead(T ? 200 : 502, h); return res.end();
+    }
+    // ★ v1.34.9: GU (Google Drive direct) Range মানেই না ⇒ ডিস্ক-ক্যাশ পথে (সত্যিকারের ২০৬)
+    if (/(?:^|\.)googleusercontent\.com$/i.test(String(url).replace(/^https?:\/\//i, '').split('/')[0])) {
+      const _okg = await bfGuServe(req, res, url, rawStart, rawEndQ, base);
+      if (_okg !== false) return;
+    }
     const up = await fetch(url, {
       headers: (rawStart > 0 || rawEndQ >= 0)
         ? { 'User-Agent': UA, Accept: '*/*', Range: 'bytes=' + rawStart + '-' + (rawEndQ >= 0 ? String(rawEndQ) : '') }
@@ -11752,13 +11927,22 @@ async function bfServeGeneric(req, res, url) {
     const mCR = /^bytes\s+(\d+)-(\d+)\/(\d+)/i.exec(upCR);
     // (ক) আপস্ট্রিম Range মানল ⇒ হুবহু পাস-থ্রু
     if (upFinal.status === 206 && mCR && Number(mCR[1]) === rawStart) {
+      const _upCt0 = String(upFinal.headers.get('content-type') || '');
+      const rd = upFinal.body.getReader();
+      // ★ v1.34.8: শুরু থেকে পড়ার সময় **প্রথম চাঙ্ক দেখে** আসল কনটেইনার ঠিক করি (mkv বনাম mp4)
+      let firstB = null;
+      if (rawStart === 0) { try { const r0 = await rd.read(); if (!r0.done) firstB = Buffer.from(r0.value); } catch { } }
+      const _ct = (firstB ? bfSniffCt(firstB) : '') || (/^video\//i.test(_upCt0) || /^audio\//i.test(_upCt0) ? _upCt0 : '') || _extCt || base['content-type'];
       res.writeHead(206, Object.assign({}, base, {
+        'content-type': _ct,
         'content-length': String(upLen || (Number(mCR[2]) - Number(mCR[1]) + 1)),
         'content-range': 'bytes ' + mCR[1] + '-' + mCR[2] + '/' + mCR[3]
       }));
-      if (req.method === 'HEAD') { try { await upFinal.body.cancel(); } catch { } return res.end(); }
+      if (DBG) console.error('[bfg] 206 start=' + rawStart + ' ct=' + _ct + ' sniff=' + (firstB ? firstB.length : 0));
       try {
-        const rd = upFinal.body.getReader();
+        if (firstB && firstB.length) {
+          if (!res.write(firstB)) await new Promise(r2 => { res.once('drain', r2); res.once('close', r2); });
+        }
         for (;;) {
           const { done, value } = await rd.read();
           if (done) break;
@@ -11770,10 +11954,23 @@ async function bfServeGeneric(req, res, url) {
       return;
     }
     // (খ) Range মানল না (GU নিয়মিত 200 + পুরো বডি) ⇒ শুরু থেকে পড়ে বাদ দিই
-    const total = mCR ? Number(mCR[3]) : (upLen || 0);
+    const total = mCR ? Number(mCR[3]) : (upLen || _totalHint || 0);
+    // ★ v1.34.8: ফাইলের গভীরে (৩২MB+) সিক চাইলে ০ থেকে পড়ে বাদ দেওয়া মানে **পুরো ফাইল টেনে নেওয়া** ⇒
+    //   সেটাই ছিল "seek dile full download"। এখন ওখানে সৎভাবে ৫০২ (প্লেয়ার রিট্রাই করবে), আর
+    //   আকার জানা থাকলে ৪১৬ + `content-range: bytes */T` (মানক উত্তর)।
+    if (!mCR && rawStart > 32 * 1024 * 1024) {
+      const T = total || await bfUpSize(url).catch(() => 0);
+      try { if (upFinal.body) await upFinal.body.cancel(); } catch { }
+      const h = Object.assign({}, base);
+      if (T) { h['content-range'] = 'bytes */' + T; res.writeHead(416, h); }
+      else res.writeHead(502, h);
+      return res.end();
+    }
     const endFinal = total ? ((rawEndQ >= 0) ? Math.min(rawEndQ, total - 1) : total - 1) : -1;
     const want = total ? (endFinal - rawStart + 1) : 0;
+    const _upCt1 = String(upFinal.headers.get('content-type') || '');
     const hdr2 = Object.assign({}, base);
+    if (!_extCt && /^video\//i.test(_upCt1)) hdr2['content-type'] = _upCt1;   // ★ v1.34.8
     if (total) {
       hdr2['content-length'] = String(want);
       if (rawStart > 0 || rawEndQ >= 0) hdr2['content-range'] = 'bytes ' + rawStart + '-' + endFinal + '/' + total;
