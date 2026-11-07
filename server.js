@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.17';
+const VERSION = '1.34.18';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -9330,7 +9330,7 @@ async function m4uTdServe(req, res, target) {
     let used = M4U_TD_USED.get(target);
     if (used && Date.now() - used.ts < 90e3) return await bfServeGeneric(req, res, used.final);
     let fin = '';
-    const order = ['HubCloud'].concat((M4U_VC_WALL && Date.now() < M4U_VC_WALL) ? ['G-Direct', 'V-Drive', 'V-Cloud'] : ['V-Cloud', 'G-Direct', 'V-Drive']);
+    const order = ['HubCloud'].concat((M4U_VC_WALL && Date.now() < M4U_VC_WALL) ? ['GDFlix', 'G-Direct', 'V-Drive', 'V-Cloud'] : ['V-Cloud', 'GDFlix', 'G-Direct', 'V-Drive']);   // v1.34.18: GDFlix
     for (const k of order) {
       for (const l of (ent.links || []).filter(x => x.srv === k).slice(0, 2)) {
         const rr = await m4uTdResolve(l, false).catch(() => null);
@@ -9362,6 +9362,7 @@ async function m4uTdMdisk(mdisk) {
     if (m4uHubHost((href.match(/^https?:\/\/([^/]+)/) || [])[1])) { rank = 0; srv = 'HubCloud'; }   // ★ FSL-সোর্স
     else if (/vcloud\.(?:beer|xyz|live)/i.test(href)) { rank = 1; srv = 'V-Cloud'; }
     else if (/fastdl\.(?:beer|one|site)/i.test(href)) { rank = 2; srv = 'G-Direct'; }
+    else if (/gdflix\.|gdlink\.dev/i.test(href)) { rank = 2; srv = 'GDFlix'; }   // ★ v1.34.18: GDFlix-ও Google-পরিবার (নিচে রিজলভ)
     else if (/vegadrive\.app|v-drive/i.test(href)) { rank = 3; srv = 'V-Drive'; }
     if (rank > 3) { if (DBG && /hubcloud/i.test(href)) console.error('[m4utd] hubcloud-ish miss ' + href.slice(0, 60)); continue; }
     links.push({ href: href, srv: srv, rank: rank, txt: txt });
@@ -9470,7 +9471,16 @@ async function m4uTdResolve(link, needProof) {
       if (DBG) console.error('[m4utd] HubCloud→FSL ব্যর্থ ' + link.href.slice(-14));
       return { url: '', srv: srv, why: 'hub-nolink' };
     }
-    if (link.rank === 2) {   // G-Direct → embed পেজের ভেতরেই Google-URL বসানো থাকে (JS ছাড়া পড়া যায়)
+    if (srv === 'GDFlix') {   // ★ v1.34.18: GDFlix /file/<fid> → Instant-DL/cloud ⇒ GU/r2/pixeldrain (BF-রিজলভারই)
+      const fid = (/\/file\/([A-Za-z0-9]+)/.exec(link.href) || [])[1] || '';
+      const org = (/^https?:\/\/[^/]+/.exec(link.href) || [])[0] || '';
+      if (fid && org) {
+        // সরাসরি egress-এ GDFlix 429 দেয় (মাপা) ⇒ প্রক্সি-রোটেশনওয়ালা Smart-রিজলভার
+        const g = await bfResolveGdflixSmart(fid, 0, 6500).catch(() => null);
+        if (g && g.streamUrl && !g.isZip && !g.dead) url = g.streamUrl;
+        else if (DBG) console.error('[m4utd] gdflix-miss ' + fid + ' zip=' + (g && g.isZip) + ' dead=' + (g && g.dead));
+      }
+    } else if (link.rank === 2) {   // G-Direct → embed পেজের ভেতরেই Google-URL বসানো থাকে (JS ছাড়া পড়া যায়)
       const r = await m4uHReq(link.href, { ref: 'https://mdrive.cloud/', tmo: 6000 });
       const m = /https:\/\/video-downloads\.googleusercontent\.com\/[A-Za-z0-9_\-]+/.exec(String(r.body || ''));
       if (m) url = m[0];
@@ -9621,14 +9631,14 @@ async function m4uTdStreams(tmdbId, title, type, s, e, origin, maxh) {
     //   (১০-মিনিট ক্যাশ) — যেটিতে **HubCloud/FSL** আছে সেটি আগে, তারপর কোয়ালিটি। আগে শুধু প্রথম ৪টি
     //   এন্ট্রি দেখা হত ⇒ FSL-থাকা এন্ট্রি বাদ পড়ে যেত (মাপা)।
     const _lk = new Map();
-    await Promise.all(pick.slice(0, 8).map(async x => {
+    await Promise.all(pick.slice(0, 10).map(async x => {
       const c = M4U_TD_LOC.get(x.mdisk);
       if (c && Date.now() - c.ts < 10 * 60e3) { _lk.set(x.mdisk, c.links); return; }
       const l = await m4uTdMdisk(x.mdisk).catch(() => []);
       if (l.length) { if (M4U_TD_LOC.size > 200) M4U_TD_LOC.clear(); M4U_TD_LOC.set(x.mdisk, { ts: Date.now(), links: l }); }
       _lk.set(x.mdisk, l);
     }));
-    const _best = ls => (ls.some(l => l.srv === 'HubCloud') ? 0 : ls.some(l => l.srv === 'G-Direct') ? 1 : ls.some(l => l.srv === 'V-Drive') ? 2 : 3);
+    const _best = ls => (ls.some(l => l.srv === 'HubCloud') ? 0 : ls.some(l => l.srv === 'G-Direct' || l.srv === 'GDFlix') ? 1 : ls.some(l => l.srv === 'V-Drive') ? 2 : 3);   // v1.34.18
     const ranked = pick.slice(0, 8).map(x => ({ x: x, links: _lk.get(x.mdisk) || [] })).filter(o => o.links.length)
       .sort((a, b) => (_best(a.links) - _best(b.links)) || ((Number(b.x.q) || 0) - (Number(a.x.q) || 0)));
     if (DBG) console.error('[m4utd] ranked ' + ranked.map(o => (o.x.q || '?') + ':' + (o.links[0] || {}).srv).join(','));
@@ -9663,7 +9673,7 @@ async function m4uTdStreams(tmdbId, title, type, s, e, origin, maxh) {
         });
       }));
     }
-    await Promise.all(ranked.filter(o2 => !(o2.x.pack && o2.x.q === '')).slice(0, 4).map(async (o, i) => {
+    await Promise.all(ranked.filter(o2 => !(o2.x.pack && o2.x.q === '')).slice(0, 6).map(async (o, i) => {
       const x = o.x;
       const links = o.links || [];
       if (!links.length) { if (DBG) console.error('[m4utd] no-server ' + x.q + ' ' + x.size); return; }
@@ -9673,7 +9683,7 @@ async function m4uTdStreams(tmdbId, title, type, s, e, origin, maxh) {
       const _bk = {};
       for (const l of links) { (_bk[l.srv || 'x'] = _bk[l.srv || 'x'] || []).push(l); }
       let r = null;
-      const order = ['HubCloud'].concat((M4U_VC_WALL && Date.now() < M4U_VC_WALL) ? ['G-Direct', 'V-Drive'] : ['V-Cloud', 'G-Direct', 'V-Drive']);
+      const order = ['HubCloud'].concat((M4U_VC_WALL && Date.now() < M4U_VC_WALL) ? ['GDFlix', 'G-Direct', 'V-Drive'] : ['V-Cloud', 'GDFlix', 'G-Direct', 'V-Drive']);   // v1.34.18
       for (const k of order) {
         if (!_bk[k]) continue;
         for (const l of _bk[k].slice(0, (k === 'V-Cloud' ? 1 : 2))) {
@@ -9703,7 +9713,20 @@ async function m4uTdStreams(tmdbId, title, type, s, e, origin, maxh) {
     let done = false;
     const fin = v => { if (!done) { done = true; resolve(v || []); } };
     const guard = setTimeout(() => fin([]), Math.max(1500, budget - (Date.now() - T0))); if (guard.unref) guard.unref();
-    cands.forEach(h => one(h).then(c => { if (c && c.length) fin(c); else if (DBG) console.error('[m4utd] one-empty ' + h.slug.slice(0,30)); }).catch(e => { if (DBG) console.error('[m4utd] one-err ' + String(e && e.message).slice(0, 80)); }));
+    // ★ v1.34.18: আগে দুই প্রার্থী **রেস** করত ⇒ মাপা: "John Wick: Chapter 4"-এর জন্য Chapter-2
+    //   পোস্টের কার্ড আগে শেষ হয়ে জিতে যেত (ভুল ফাইল!)। এখন স্কোর-ক্রমে: প্রথম পোস্ট কার্ড দিলেই শেষ।
+    (async () => {
+      for (const h of cands) {
+        if (done) return;
+        try {
+          const c = await one(h);
+          if (done) return;
+          if (c && c.length) { fin(c); return; }
+          if (DBG) console.error('[m4utd] one-empty ' + h.slug.slice(0, 30));
+        } catch (e) { if (DBG) console.error('[m4utd] one-err ' + String(e && e.message).slice(0, 80)); }
+      }
+      fin([]);
+    })();
   });
 }
 
@@ -9734,7 +9757,7 @@ async function m4uRevive(tmdbId, title, type, s, e, origin, maxh) {
     const left = Math.max(1200, budget - (Date.now() - T0));
     const guard = setTimeout(() => fin([]), left); if (guard.unref) guard.unref();
     cands.slice(0, 2).forEach((h, i) => {
-      m4uPostCards(h, T, Y, isS, s, e, maxh, T0, i ? 3 : 4, origin).then(c => { if (c && c.length) fin(c); }).catch(() => { });
+      m4uPostCards(h, T, Y, isS, s, e, maxh, T0, i ? 4 : 6, origin).then(c => { if (c && c.length) fin(c); }).catch(() => { });   // v1.34.18: ক্যাপ ৪→৬
     });
   });
   if (DBG) console.error('[m4u2] cards=' + cardsAll.length + ' "' + T + '" @' + (Date.now() - T0) + 'ms');
@@ -9787,26 +9810,45 @@ async function m4uPostCards(hit, T, Y, isS, s, e, maxh, T0, maxN, origin) {
   if (DBG) console.error('[m4u2] post ' + hit.slug.slice(0, 30) + ' → ' + cards.length + '/' + pick.length + ' @' + (Date.now() - T0) + 'ms');
   return cards;
 }
+function _m4uMerge(a, b) {   // ★ v1.34.18: দুই ডোমেইনের কার্ড-ইউনিয়ন (একই ফাইল দুবার নয়)
+  const rk = c => (c._srv === 'FSL' ? 0 : c._srv === 'GDFlix' ? 1 : /direct|google/i.test(c._srv || '') ? 2 : 3);
+  const seen = new Map();
+  for (const c of [...(a || []), ...(b || [])]) {
+    if (!c || !c.url) continue;
+    const q = String(c.quality || (String(c.name || '').match(/\d{3,4}/) || [''])[0] || '');
+    const szm = String(c.title || '').match(/(\d+(?:\.\d+)?)\s*(GB|MB)/i);
+    const szb = szm ? Math.round(parseFloat(szm[1]) * (/gb/i.test(szm[2]) ? 1000 : 1)) : 0;
+    const k = q + '|' + szb;                       // একই কোয়ালিটি+সাইজ ≈ একই ফাইল (দুই ডোমেইনেই থাকতে পারে)
+    const pv = seen.get(k);
+    if (!pv || rk(c) < rk(pv)) seen.set(k, c);
+  }
+  return [...seen.values()]
+    .sort((x, y) => (Number(y.quality) || 0) - (Number(x.quality) || 0) || rk(x) - rk(y))
+    .slice(0, 12);
+}
 async function m4uStreams(tmdbId, title, type, s, e, origin, maxh) { // maxh: cfg.m4ur রেজো-ছাঁকনি (0=সব); HLS-সিক-প্রথম + সরাসরি-MKV
   if (!tmdbId) return []; // v1.15.82: মুভি + সিরিজ (আগে type!=='movie'-তে সিরিজ-শূন্য ছিল)
-  // ★★ v1.34.0 (ইউজার: "https://movies4u.td/ this is the new domain"): **নতুন WP-সাইট আগে**।
-  //   এটা জীবিত থাকলে পুরোনো DLE-পথে সময় নষ্ট নয় (সাইট দুটোই ২০০, কিন্তু নতুনটাই আপডেটেড)।
-  if (String(process.env.M4UTD || '') !== '0') {
-    try {
-      const td = await m4uTdStreams(tmdbId, title, type, s, e, origin, maxh);
-      if (td && td.length) { if (DBG) console.error('[m4utd] ok n=' + td.length); return td; }
-      // ★ v1.34.3: .td-এ সঠিক পোস্ট পাওয়া গেছে কিন্তু কোনো সার্ভার লিংক দিল না ⇒
-      //   পুরোনো (এখন প্রায়-মৃত) nexdrive-চেইনে বাকি সময় নষ্ট না করে সৎভাবে শূন্য।
-      if (M4U_TD_LAST.found && Date.now() - M4U_TD_LAST.ts < 60000) {
-        if (DBG) console.error('[m4utd] post found, no server-link → skip legacy');
-        return [];
-      }
-    } catch (eT) { if (DBG) console.error('[m4utd] err ' + String(eT && eT.message).slice(0, 60)); }
-  }
-  // ★★ v1.32.1: পুরোনো HTML-পথ (movies4u.one — এখনো জীবিত)। সেটি সাড়া দিলে ওটাই চূড়ান্ত।
-  if (process.env.M4ULEG !== '1') {
-    try { const rv = await m4uRevive(tmdbId, title, type, s, e, origin, maxh); if (rv && rv.length) return rv; } catch (err) { if (DBG) console.error('[m4u2] err ' + String(err && err.message).slice(0, 60)); }
-    if (M4U_HLIVE && Date.now() - M4U_HPAT < 15 * 60e3) return [];   // নতুন-বেস জীবিত ⇒ মৃত-লিগ্যাসি-পথে সময় নষ্ট নয়
+  // ★★★ v1.34.18 (ইউজার: "movies4u sob stream dicche na, age kemne dito Dekho, movies4u.garden
+  //   jokhon domain chilo") — garden-যুগে **একটাই** ডোমেইনে সব কোয়ালিটি×সব সার্ভার থাকত, তাই সব
+  //   কার্ড আসত। এখন ক্যাটালগ দুই ডোমেইনে ভাগ (.td WP + .one DLE) আর কোড ছিল "প্রথম-চেইন জিতলেই
+  //   বাকি বাদ" — মাপা ক্ষতি: JW4-এ পোস্টে ১০ এন্ট্রি থাকলেও কার্ড ৪; Endgame-এ .td পোস্ট পেয়েও
+  //   শুধু V-Cloud (CF-403) দেখে **০ কার্ড** (skip-legacy শর্টকাট .one-তে যেতেই দিত না)।
+  //   এখন: দুই ডোমেইন **সমান্তরালে**, ফল **ইউনিয়ন** (কোয়ালিটি+সাইজে ডিডুপ, FSL-আগে), ক্যাপ ১২।
+  {
+    let _td = null, _rv = null;
+    const _tdP = (String(process.env.M4UTD || '') !== '0')
+      ? m4uTdStreams(tmdbId, title, type, s, e, origin, maxh).then(v => { _td = v || []; }).catch(er => { _td = []; if (DBG) console.error('[m4utd] err ' + String(er && er.message).slice(0, 60)); })
+      : Promise.resolve();
+    const _rvP = (process.env.M4ULEG !== '1')
+      ? m4uRevive(tmdbId, title, type, s, e, origin, maxh).then(v => { _rv = v || []; }).catch(er => { _rv = []; if (DBG) console.error('[m4u2] err ' + String(er && er.message).slice(0, 60)); })
+      : Promise.resolve();
+    await Promise.race([
+      Promise.all([_tdP, _rvP]),
+      new Promise(r => setTimeout(r, Number(process.env.M4UUNI || 10200)))
+    ]).catch(() => { });
+    const uni = _m4uMerge(_td || [], _rv || []);
+    if (uni.length) { if (DBG) console.error('[m4u] union td=' + (_td ? _td.length : -1) + ' one=' + (_rv ? _rv.length : -1) + ' merged=' + uni.length); return uni; }
+    if (process.env.M4ULEG !== '1' && M4U_HLIVE && Date.now() - M4U_HPAT < 15 * 60e3) return [];   // .one জীবিত ⇒ মৃত-ক্লাসিকে সময় নয়
   }
   if (type === 'series') return m4uSeries(tmdbId, title, s, e, origin, maxh); // সিরিজ = নিজস্ব-পথ (মুভি-কোড-অস্পৃষ্ট — ভাঙার-ঝুঁকি-না)
   const t3 = Date.now(); const WOB = 7000; const left = () => Math.max(250, WOB - (Date.now() - t3)); // v1.17.47: ৮.২সে ক্যাপের ভিতরে
