@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.5';
+const VERSION = '1.34.7';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -9054,6 +9054,7 @@ function m4uCurl0(u, opt) {
   if (!opt.noredir) a.push('-L', '--max-redirs', '4');
   if (opt.head) a.push('-I');
   if (opt.data) { a.push('--data', opt.data, '-H', 'Content-Type: application/x-www-form-urlencoded'); }
+  if (opt.jar) { a.push('-c', opt.jar, '-b', opt.jar); }   // ★ v1.34.6: HubCloud-চেইনে সেশন-কুকি লাগে
   a.push('-D', hdr, '-o', out, '-w', '%{http_code}|%{content_type}|%{size_download}|%{url_effective}');
   a.push(u);
   return new Promise(resolve => {
@@ -9261,10 +9262,13 @@ function m4uTdEntries(html) {       // পোস্ট-পেজ → [{q,size,md
     const at = m.index, url = m[1];
     let ctx = '';
     for (const hd of heads) { if (hd.i < at) ctx = hd.t; else break; }
-    if (!/\b(?:2160|1440|1080|720|480|360)p\b/i.test(ctx)) continue;      // কোয়ালিটি-হেডিং-বিহীন ব্লক নয়
-    const q = (ctx.match(/\b(2160|1440|1080|720|480|360)p\b/i) || [])[1] || '';
+    // ★ v1.34.6: "All Links" / "Pack" এন্ট্রিতে কোয়ালিটি-হেডিং থাকে না, কিন্তু এর হাব-পেজে
+    //   **HubCloud (FSL)** থাকে — যা ইউজার চায়। এগুলো আলাদা `pack` এন্ট্রি হিসেবে রাখি।
+    const _q = (ctx.match(/\b(2160|1440|1080|720|480|360)p\b/i) || [])[1] || '';
+    const _pack = !_q && /all\s*links|all\s*quality|complete|pack|full\s*movie|zip/i.test(ctx);
+    if (!_q && !_pack) continue;                                            // অচেনা ব্লক নয়
     const sz = (ctx.match(/\[([\d.]+)\s*(GB|MB)\]/i) || []);
-    out.push({ q: q, size: sz[1] ? (sz[1] + ' ' + String(sz[2]).toUpperCase()) : '', mdisk: url, title: ctx, id: m[2] });
+    out.push({ q: _q, pack: _pack, size: sz[1] ? (sz[1] + ' ' + String(sz[2]).toUpperCase()) : '', mdisk: url, title: ctx, id: m[2] });
   }
   return out;
 }
@@ -9302,6 +9306,14 @@ async function m4uTdServe(req, res, target) {
   const okJson = (code, o) => { try { res.writeHead(code, { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'cache-control': 'no-store' }); res.end(JSON.stringify(o)); } catch (e) { } };
   try {
     const host = m4uHostOf(target);
+    // ★ (ক০) HubCloud পেজ ⇒ FSL (r2) লিংক ফ্রেশ করে নিয়ে স্ট্রিম (206/রিজিউম অক্ষত)
+    if (m4uHubHost(host)) {
+      const hc = M4U_TD_USED.get('hub:' + target);
+      let f = (hc && Date.now() - hc.ts < 20 * 60e3) ? hc.final : '';
+      if (!f) { f = await m4uHubFsl(target).catch(() => ''); if (f) M4U_TD_USED.set('hub:' + target, { ts: Date.now(), final: f }); }
+      if (!f) return okJson(502, { error: 'hub-no-fsl' });
+      return await bfServeGeneric(req, res, f);
+    }
     // (ক) পুরোনো চেইন-পেজ (nexdrive/fast-dl) ⇒ সেখান থেকেই রিজলভ
     if (!/mdrive\.cloud$/.test(host)) {
       const r = await m4uHFast(target, true).catch(() => null);
@@ -9318,7 +9330,7 @@ async function m4uTdServe(req, res, target) {
     let used = M4U_TD_USED.get(target);
     if (used && Date.now() - used.ts < 90e3) return await bfServeGeneric(req, res, used.final);
     let fin = '';
-    const order = (M4U_VC_WALL && Date.now() < M4U_VC_WALL) ? ['G-Direct', 'V-Drive', 'V-Cloud'] : ['V-Cloud', 'G-Direct', 'V-Drive'];
+    const order = ['HubCloud'].concat((M4U_VC_WALL && Date.now() < M4U_VC_WALL) ? ['G-Direct', 'V-Drive', 'V-Cloud'] : ['V-Cloud', 'G-Direct', 'V-Drive']);
     for (const k of order) {
       for (const l of (ent.links || []).filter(x => x.srv === k).slice(0, 2)) {
         const rr = await m4uTdResolve(l, false).catch(() => null);
@@ -9333,8 +9345,10 @@ async function m4uTdServe(req, res, target) {
   } catch (e) { return okJson(502, { error: 'serve-fail' }); }
 }
 async function m4uTdMdisk(mdisk) {
-  const r = await m4uHReq(mdisk, { ref: M4U_TD_BASE + '/', tmo: 6000 });
-  const h = String(r.body || '');
+  // ★ v1.34.7: হাব-পেজ মাঝে-মাঝে খালি/৩০২ দেয় (মাপা: ৪-এন্ট্রির পোস্টে ৩টিই ফেরত) ⇒ একবার রিট্রাই
+  let r = await m4uHReq(mdisk, { ref: M4U_TD_BASE + '/', tmo: 5000 }).catch(() => null);
+  let h = String((r && r.body) || '');
+  const _mk = () => {
   const links = [];
   for (const m of h.matchAll(/<a[^>]*href="(https?:\/\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/g)) {
     const href = m[1].replace(/&amp;/g, '&');
@@ -9345,21 +9359,84 @@ async function m4uTdMdisk(mdisk) {
     if (/10\s*gbps|not\s*resumable|non[\s-]*resumable/i.test(txt)) continue;
     // রিজিউমেবল আগে: V-Cloud (resumable) → G-Direct (instant) → V-Drive (multi)
     let rank = 9, srv = '';
-    if (/vcloud\.(?:beer|xyz|live)/i.test(href)) { rank = 1; srv = 'V-Cloud'; }
+    if (m4uHubHost((href.match(/^https?:\/\/([^/]+)/) || [])[1])) { rank = 0; srv = 'HubCloud'; }   // ★ FSL-সোর্স
+    else if (/vcloud\.(?:beer|xyz|live)/i.test(href)) { rank = 1; srv = 'V-Cloud'; }
     else if (/fastdl\.(?:beer|one|site)/i.test(href)) { rank = 2; srv = 'G-Direct'; }
     else if (/vegadrive\.app|v-drive/i.test(href)) { rank = 3; srv = 'V-Drive'; }
-    if (rank > 3) continue;                                              // অচেনা হোস্ট ⇒ কার্ড নয়
+    if (rank > 3) { if (DBG && /hubcloud/i.test(href)) console.error('[m4utd] hubcloud-ish miss ' + href.slice(0, 60)); continue; }
     links.push({ href: href, srv: srv, rank: rank, txt: txt });
   }
   links.sort((a, b) => a.rank - b.rank);
   return links;
+  };
+  let L = _mk();
+  if (!L.length) {
+    await new Promise(q => setTimeout(q, 500));
+    r = await m4uHReq(mdisk, { ref: 'https://mdrive.cloud/', tmo: 6000 }).catch(() => null);
+    h = String((r && r.body) || '');
+    L = _mk();
+    if (DBG) console.error('[m4utd] mdisk retry len=' + L.length + ' ' + mdisk.slice(-14));
+  }
+  return L;
+}
+// ★★★ v1.34.6 (ইউজার: "konotar vitore fsl server ache ektu wait korte hoi, kono cf nai") —
+//   **HubCloud-এর FSL সার্ভার**ই আসল উত্তর। মাপা-চেইন (কোনো CF নেই):
+//     hubcloud.ist/drive/<id> → 302 → hubcloud.pw/drive/<id>  (পেজে token-যুক্ত `gamerxyt.com/hubcloud.php`)
+//     → gamerxyt পেজ (সেশন-কুকি লাগে; কখনো এক মুহূর্ত দেরিতে আসে ⇒ একবার রিট্রাই)
+//     → `https://<hex>.r2.cloudflarestorage.com/hub/<hex>?X-Amz-…` = **Download [FSL Server]**
+//   প্রমাণ: `Range: bytes=1000000-1001023` ⇒ **206 + content-range 1000000-1001023/518921856**,
+//   `Accept-Ranges: bytes`, সই ৮ ঘণ্টা বৈধ ⇒ রিজিউম + সিক দুটোই আসল থেকে চলে।
+function m4uHubHost(h) { return /(?:^|\.)hubcloud\.(?:ist|pw|fans|xyz|site|life|cc|ws|to|ink)$/i.test(String(h || '')); }
+async function m4uHubFsl(drive) {
+  const cp = require('child_process'), fs = require('fs');
+  const jar = '/tmp/hubj_' + process.pid + '_' + Math.random().toString(36).slice(2, 8) + '.txt';
+  const clean = () => { try { fs.unlink(jar, () => { }); } catch (e) { } };
+  try {
+    const run = (u, ref, ms) => new Promise(resolve => {
+      const a = ['-g', '-s', '-k', '--compressed', '-L', '--max-redirs', '5', '-m', String(Math.max(3, Math.round(ms / 1000))),
+        '-A', M4U_UA4, '-c', jar, '-b', jar, '-e', ref || u,
+        '-H', 'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        '-H', 'Accept-Language: en-US,en;q=0.9',
+        '-w', '\n@@%{http_code}|%{url_effective}', u];
+      cp.execFile('curl', a, { maxBuffer: 4 * 1024 * 1024, timeout: ms + 1500 }, (err, stdout) => {
+        const b = String(stdout || '');
+        const i = b.lastIndexOf('\n@@');
+        const meta = i >= 0 ? b.slice(i + 3).split('|') : ['0', u];
+        resolve({ st: parseInt(meta[0], 10) || 0, eu: meta[1] || u, body: i >= 0 ? b.slice(0, i) : b });
+      });
+    });
+    let p1 = await run(drive, 'https://hubcloud.ist/', 6000);
+    let gx = (p1.body.match(/https:\/\/gamerxyt\.com\/hubcloud\.php\?[^"'\s<]+/) || [])[0] || '';
+    for (let k = 0; !gx && k < 2; k++) {          // ★ v1.34.7: মাঝে-মাঝে প্রথম চেষ্টায় ৩০২/খালি বডি — রিট্রাই
+      await new Promise(r => setTimeout(r, 700 + k * 600));
+      p1 = await run(drive, 'https://hubcloud.pw/', 7000);
+      gx = (p1.body.match(/https:\/\/gamerxyt\.com\/hubcloud\.php\?[^"'\s<]+/) || [])[0] || '';
+    }
+    if (!gx) { if (DBG) console.error('[hubfsl] no-gamerxyt st=' + p1.st); return ''; }
+    gx = gx.replace(/&amp;/g, '&');
+    for (let t = 0; t < 2; t++) {
+      if (t) await new Promise(r => setTimeout(r, 900));          // ★ "একটু wait" — দ্বিতীয় চেষ্টা
+      const p2 = await run(gx, p1.eu || 'https://hubcloud.pw/', 7000);
+      const m = /https:\/\/[a-z0-9]+\.r2\.cloudflarestorage\.com\/hub\/[^"'\s<]+/i.exec(p2.body);
+      if (m) return m[0].replace(/&amp;/g, '&');
+      if (DBG) console.error('[hubfsl] try' + (t + 1) + ' st=' + p2.st + ' len=' + p2.body.length);
+    }
+    return '';
+  } catch (e) { if (DBG) console.error('[hubfsl] err ' + String(e && e.message).slice(0, 50)); return ''; }
+  finally { clean(); }
 }
 // চেইন-শেষ: যেকোনো সার্ভার-পেজ → আসল ফাইল-URL (প্রমাণ-সহ)
 async function m4uTdResolve(link, needProof) {
   const T0 = Date.now();
   let url = '', srv = link.srv;
   try {
-    if (link.rank === 2) {   // G-Direct → embed পেজের ভেতরেই Google-URL বসানো থাকে (JS ছাড়াই পড়া যায়)
+    if (srv === 'HubCloud') {                    // ★ FSL Server (r2 presigned) — রিজিউমেবল
+      url = await m4uHubFsl(link.href).catch(() => '');
+      if (url) { srv = 'FSL'; return { url: url, srv: srv, ts: Date.now() - T0 }; }
+      if (DBG) console.error('[m4utd] HubCloud→FSL ব্যর্থ ' + link.href.slice(-14));
+      return { url: '', srv: srv, why: 'hub-nolink' };
+    }
+    if (link.rank === 2) {   // G-Direct → embed পেজের ভেতরেই Google-URL বসানো থাকে (JS ছাড়া পড়া যায়)
       const r = await m4uHReq(link.href, { ref: 'https://mdrive.cloud/', tmo: 6000 });
       const m = /https:\/\/video-downloads\.googleusercontent\.com\/[A-Za-z0-9_\-]+/.exec(String(r.body || ''));
       if (m) url = m[0];
@@ -9402,6 +9479,39 @@ async function m4uTdResolve(link, needProof) {
   }
   return { url: url, srv: srv, ts: Date.now() - T0 };
 }
+// ★ v1.34.6: HubCloud drive-পেজের শিরোনামেই আসল ফাইলনাম (কোয়ালিটি-সহ) থাকে — মাপা:
+//   "(Movies4u.Foo).Weapons.2025.720p.10Bit.HEVC.BluRay….mkv" ⇒ কার্ডে 720p বসে, FSL-এর প্রমাণ-ফেরত
+//   `content-range` থেকে আসল সাইজ।
+async function m4uHubInfo(driveUrl) {
+  const c0 = M4U_TD_INFO.get(driveUrl);
+  if (c0 && Date.now() - c0.ts < 30 * 60e3) return c0.v;
+  let r = await m4uHReq(driveUrl, { ref: 'https://hubcloud.ist/', tmo: 6000 }).catch(() => null);
+  let h = String((r && r.body) || '');
+  if (!/<title>/i.test(h)) { await new Promise(q => setTimeout(q, 600)); r = await m4uHReq(driveUrl, { ref: 'https://hubcloud.pw/', tmo: 7000 }).catch(() => null); h = String((r && r.body) || ''); }
+  const t = (/<title>([^<]*)<\/title>/i.exec(h) || [])[1] || '';
+  const fn = (/([A-Za-z0-9._\[\]()\-]{12,110}\.(?:mkv|mp4))/i.exec(t) || [])[1] || '';
+  const q = (/(\d{3,4})p/i.exec(t) || [])[1] || '';
+  // পেজেই সাইজ লেখা থাকে ("1019.71 MB") ⇒ আলাদা Range-প্রোব লাগে না (সময় বাঁচে)
+  const _sz = /(\d+(?:\.\d+)?)\s*(GB|MB)/i.exec(h.replace(/<[^>]+>/g, ' ')) || [];
+  const v = { q: q, name: fn, size: _sz[1] ? (_sz[1] + ' ' + _sz[2].toUpperCase()) : '', title: t.trim() };
+  if (v.q) { if (M4U_TD_INFO.size > 120) M4U_TD_INFO.clear(); M4U_TD_INFO.set(driveUrl, { ts: Date.now(), v: v }); }
+  return v;
+}
+const M4U_TD_INFO = new Map();       // hubcloud drive-url → {q, name}
+async function m4uHubCard(link, T, Y, isS, s, e, needProof, lazy) {
+  const inf = await m4uHubInfo(link.href).catch(() => ({}));
+  const q = String((inf && inf.q) || '').replace(/[^0-9]/g, '');
+  let size = (inf && inf.size) || '';
+  // ★ v1.34.7: `lazy` (origin আছে) হলে এখনই FSL-প্রিসাইন করতে **হয় না** — প্লে-ক্লিকে `/m4d/` ফ্রেশ
+  //   রিজলভ করবে (ইউজার: "কোনो समয় vcloud, কোনো समय hub cloud" ⇒ তালিকা স্থির নয়)। এতে ১২s বাজেটও রক্ষা।
+  let url = '';
+  if (lazy) url = lazy;
+  else {
+    url = await m4uHubFsl(link.href).catch(() => '');
+    if (!url) return null;
+  }
+  return { q: q, size: size, url: url, srv: 'FSL', name: (inf && inf.name) || '' };
+}
 async function m4uTdStreams(tmdbId, title, type, s, e, origin, maxh) {
   const T0 = Date.now();
   const isS = type === 'series';
@@ -9415,6 +9525,7 @@ async function m4uTdStreams(tmdbId, title, type, s, e, origin, maxh) {
   // ১) সার্চ (WordPress ?s=)
   const q = isS ? (T + ' season ' + (s || 1)) : T;
   let posts = [];
+  let _ok = 0;
   const _sk = M4U_TD_S.get(q);
   if (_sk && Date.now() - _sk.ts < 30 * 60e3) { posts = _sk.posts; }
   else {
@@ -9429,6 +9540,7 @@ async function m4uTdStreams(tmdbId, title, type, s, e, origin, maxh) {
           posts.push({ url: url, slug: url.replace(/\/+$/, '').split('/').pop() || tt, title: tt });
         }
         if (DBG) console.error('[m4utd] search "' + q + '" st=' + r.st + ' n=' + posts.length + ' try=' + (attempt + 1));
+        if (r.st === 200) { _ok = 1; }
       } catch (e) { if (DBG) console.error('[m4utd] search-err ' + String(e && e.message).slice(0, 50)); }
     }
     if (posts.length) { if (M4U_TD_S.size > 80) M4U_TD_S.clear(); M4U_TD_S.set(q, { ts: Date.now(), posts: posts }); }
@@ -9436,15 +9548,29 @@ async function m4uTdStreams(tmdbId, title, type, s, e, origin, maxh) {
   if (DBG) console.error('[m4utd] search-total "' + T + '" n=' + posts.length + ' @' + (Date.now() - T0) + 'ms');
   let cands = posts.length ? m4uHPickAll(posts, T, Y, isS ? (s || 1) : 0).slice(0, 2) : [];
   M4U_TD_LAST.found = cands.length > 0; M4U_TD_LAST.ts = Date.now();   // ★ v1.34.3
-  if (!cands.length) { M4U_TD_NEG.set(nk, Date.now()); return []; }
+  // ★ v1.34.7: সার্চই ব্যর্থ (st≠200 ⇒ st=0/429/CF) হলে **নেগেটিভ ক্যাশ নয়** — মাপা: একবারের
+  //   transient-এ ৫ মিনিট পুরো টাইটেল missing দেখাত (কারণ `st=0` ⇒ posts=[] ⇒ NEG)।
+  if (!cands.length) {
+    if (_ok || (posts.length && !cands.length)) { M4U_TD_NEG.set(nk, Date.now()); }
+    else if (DBG) console.error('[m4utd] no-neg (search-failed) ' + T);
+    return [];
+  }
   // ২) প্রথম-জয়ী পোস্ট → এন্ট্রি → mdrive → সার্ভার → প্রমাণ
   const one = async (hit) => {
     let ents = M4U_TD_CACHE.get(hit.url);
     if (!ents || Date.now() - ents.ts > 30 * 60e3) {
-      const pg = await m4uHReq(hit.url, { ref: M4U_TD_BASE + '/', tmo: 6000 });
-      ents = { ts: Date.now(), list: m4uTdEntries(pg.body) };
+      let pg = await m4uHReq(hit.url, { ref: M4U_TD_BASE + '/', tmo: 6000 }).catch(() => null);
+      let _el = m4uTdEntries(pg && pg.body);
+      if (!_el.length) {                                  // ★ v1.34.7: পোস্ট-পেজও মাঝে-মাঝে খালি — একবার রিট্রাই
+        await new Promise(q => setTimeout(q, 400));
+        pg = await m4uHReq(hit.url, { ref: 'https://movies4u.td/', tmo: 6000 }).catch(() => null);
+        _el = m4uTdEntries(pg && pg.body);
+        if (DBG) console.error('[m4utd] post retry ents=' + _el.length + ' @' + (Date.now() - T0) + 'ms');
+      }
+      ents = { ts: Date.now(), list: _el };
       if (ents.list.length) { if (M4U_TD_CACHE.size > 40) M4U_TD_CACHE.clear(); M4U_TD_CACHE.set(hit.url, ents); }
     }
+    if (DBG) console.error('[m4utd] page ' + hit.slug.slice(0, 30) + ' ents=' + (ents.list || []).length + ' @' + (Date.now() - T0) + 'ms');
     let list = (ents.list || []).slice();
     if (isS) {
       const want = Number(e || 1);
@@ -9457,9 +9583,55 @@ async function m4uTdStreams(tmdbId, title, type, s, e, origin, maxh) {
     for (const x of list) { const k = x.q + '|' + x.size; if (seen.has(k)) continue; seen.add(k); pick.push(x); }
     if (!pick.length) return [];
     if (DBG) console.error('[m4utd] post ' + hit.slug.slice(0, 34) + ' ents=' + pick.length + ' @' + (Date.now() - T0) + 'ms');
+    // ★★ v1.34.6 (ইউজার: "konotar vitore fsl server ache"): প্রতি-এন্ট্রির হাব-পেজ **সমান্তরালে** পড়ে
+    //   (১০-মিনিট ক্যাশ) — যেটিতে **HubCloud/FSL** আছে সেটি আগে, তারপর কোয়ালিটি। আগে শুধু প্রথম ৪টি
+    //   এন্ট্রি দেখা হত ⇒ FSL-থাকা এন্ট্রি বাদ পড়ে যেত (মাপা)।
+    const _lk = new Map();
+    await Promise.all(pick.slice(0, 8).map(async x => {
+      const c = M4U_TD_LOC.get(x.mdisk);
+      if (c && Date.now() - c.ts < 10 * 60e3) { _lk.set(x.mdisk, c.links); return; }
+      const l = await m4uTdMdisk(x.mdisk).catch(() => []);
+      if (l.length) { if (M4U_TD_LOC.size > 200) M4U_TD_LOC.clear(); M4U_TD_LOC.set(x.mdisk, { ts: Date.now(), links: l }); }
+      _lk.set(x.mdisk, l);
+    }));
+    const _best = ls => (ls.some(l => l.srv === 'HubCloud') ? 0 : ls.some(l => l.srv === 'G-Direct') ? 1 : ls.some(l => l.srv === 'V-Drive') ? 2 : 3);
+    const ranked = pick.slice(0, 8).map(x => ({ x: x, links: _lk.get(x.mdisk) || [] })).filter(o => o.links.length)
+      .sort((a, b) => (_best(a.links) - _best(b.links)) || ((Number(b.x.q) || 0) - (Number(a.x.q) || 0)));
+    if (DBG) console.error('[m4utd] ranked ' + ranked.map(o => (o.x.q || '?') + ':' + (o.links[0] || {}).srv).join(','));
     const cards = [];
-    await Promise.all(pick.slice(0, 4).map(async (x, i) => {
-      const links = await m4uTdMdisk(x.mdisk).catch(() => []);
+    const _pk = new Map();          // pack → quality-dedupe (বড় সাইজ জেতে)
+    // ★ pack ("All Links") এন্ট্রি: প্রতিটি HubCloud লিংক আলাদা কোয়ালিটি ⇒ আলাদা কার্ড
+    for (const o of ranked.filter(o2 => o2.x.pack && o2.x.q === '' )) {
+      const hubs = (o.links || []).filter(l => l.srv === 'HubCloud').slice(0, 4);
+      if (!hubs.length) continue;
+      await Promise.all(hubs.map(async hc => {
+        const r = await m4uHubCard(hc, T, Y, isS, s, e, true, origin ? m4uLazyUrl(hc.href, origin) : '').catch(() => null);
+        if (!r || !r.url) return;
+        const qq = Number(r.q) || 0;
+        if (!qq && !r.size) return;                     // ★ অচেনা কোয়ালিটি + সাইজহীন কার্ড নয় (মিরর-সন্দেহ)
+        if (maxh && qq && qq > maxh) return;
+        const _k2 = String(qq || 'auto'), _pv = _pk.get(_k2);
+        const _bytes = Number(String(r.size || '0').replace(/[^\d.]/g, '')) * (/GB/i.test(r.size || '') ? 1e3 : 1);
+        if (_pv && _pv.b >= _bytes) return;
+        _pk.set(_k2, { b: _bytes, fsl: r, hc: hc, info: r });
+        const audio = dtAudio(String(hit.slug).replace(/-/g, ' ')) || '';
+        const txt = '\u29c9 ' + T + (Y ? ' | ' + Y + ' |' : ' |') + '\n'
+          + (isS ? ('\u29e0 S' + (s || 1) + 'E' + (e || 1)) : '\u29e0 Movie') + '\n'
+          + '\u229e Movies4u' + (audio ? ' \u2317 ' + audio : '') + (r.size ? ' \u00b7 ' + r.size : '');
+        const _old = cards.findIndex(c => c._packq === String(qq || 'auto'));
+        if (_old >= 0) cards.splice(_old, 1);
+        cards.push({
+          _packq: String(qq || 'auto'),
+          name: '\u25a5 ' + (qq || 'Auto') + ' \u25a5', title: txt, description: txt, quality: String(qq || ''),
+          url: r.url, _src: 'Movies4u', _srv: 'FSL', _direct: origin ? '' : r.url,
+          behaviorHints: { notWebReady: false, isBingeable: true, filename: r.name || ('movies4u-' + (qq || 'auto') + '.mkv') },
+          bingeGroup: 'm4u|' + mlsNorm(T) + '::' + (isS ? 'S' + (s || 1) + 'E' + (e || 1) : 'm')
+        });
+      }));
+    }
+    await Promise.all(ranked.filter(o2 => !(o2.x.pack && o2.x.q === '')).slice(0, 4).map(async (o, i) => {
+      const x = o.x;
+      const links = o.links || [];
       if (!links.length) { if (DBG) console.error('[m4utd] no-server ' + x.q + ' ' + x.size); return; }
       // ★★ v1.34.3 (মাপা-বাগ): rank-ক্রমে slice(0,3) করায় তিনটি V-Cloud (CF-৪০৩) স্লট ভরে ফেলত
       //   ⇒ G-Direct কখনো চেষ্টাই হতো না। এখন **সার্ভার-ধরন ধরে**: V-Cloud (resumable) → G-Direct
@@ -9467,7 +9639,7 @@ async function m4uTdStreams(tmdbId, title, type, s, e, origin, maxh) {
       const _bk = {};
       for (const l of links) { (_bk[l.srv || 'x'] = _bk[l.srv || 'x'] || []).push(l); }
       let r = null;
-      const order = (M4U_VC_WALL && Date.now() < M4U_VC_WALL) ? ['G-Direct', 'V-Drive'] : ['V-Cloud', 'G-Direct', 'V-Drive'];
+      const order = ['HubCloud'].concat((M4U_VC_WALL && Date.now() < M4U_VC_WALL) ? ['G-Direct', 'V-Drive'] : ['V-Cloud', 'G-Direct', 'V-Drive']);
       for (const k of order) {
         if (!_bk[k]) continue;
         for (const l of _bk[k].slice(0, (k === 'V-Cloud' ? 1 : 2))) {
@@ -9497,7 +9669,7 @@ async function m4uTdStreams(tmdbId, title, type, s, e, origin, maxh) {
     let done = false;
     const fin = v => { if (!done) { done = true; resolve(v || []); } };
     const guard = setTimeout(() => fin([]), Math.max(1500, budget - (Date.now() - T0))); if (guard.unref) guard.unref();
-    cands.forEach(h => one(h).then(c => { if (c && c.length) fin(c); }).catch(() => { }));
+    cands.forEach(h => one(h).then(c => { if (c && c.length) fin(c); else if (DBG) console.error('[m4utd] one-empty ' + h.slug.slice(0,30)); }).catch(e => { if (DBG) console.error('[m4utd] one-err ' + String(e && e.message).slice(0, 80)); }));
   });
 }
 
