@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.15';
+const VERSION = '1.34.16';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -11744,7 +11744,7 @@ function bfSniffCt(buf) {                     // ফাইলের আসল �
 const BF_GUC = new Map();                       // url → {f, got, total, done, err, ts, used}
 const BF_GU_DIR = process.env.GUCACHE_DIR || '/var/tmp/vidy-gu';
 const BF_GU_MAX = Number(process.env.GUCACHE_MAX || 2.4e9);
-let BF_GU_BYTES = 0, BF_GU_READY = null, BF_GU_OFF = 0;
+let BF_GU_BYTES = 0, BF_GU_READY = null, BF_GU_OFF = 0, BF_GU_DEG = 0;   // BF_GU_DEG: একসাথে সর্বোচ্চ ১টি ক্রমিক-স্ট্রিম
 const BF_GU_LOG = [];   // v1.34.13: শেষ কয়েকটা সার্ভের ফেজ-টাইমিং (প্রোড-নিদান)
 const bfGuLog = o => { try { BF_GU_LOG.push(o); if (BF_GU_LOG.length > 12) BF_GU_LOG.shift(); } catch (e) { } };   // BF_GU_OFF: জায়গা-সংকটে ১০ মিনিট ক্যাশ-বিরতি
 function bfGuAdopt(key) {          // v1.34.14: রিস্টার্টের পরেও সম্পূর্ণ ক্যাশ-ফাইল আবার ব্যবহার করি
@@ -11852,14 +11852,19 @@ async function bfGuServe(req, res, url, start, endQ, base) {
   //   থাকলে প্ল্যাটফর্ম ~৪০সে-তে কানেকশন কাটে। তাই তখন **২০০ + ০ থেকে ক্রমিক** দিই — পটভূমির পুল চলতে
   //   থাকে, ডেটা বইতেই থাকে; একবার পুল শেষ হলে পরের সব সিক/রিপ্লে ক্যাশ থেকে তাৎক্ষণিক ২০৬।
   if (!avail) return false;
-  // ★ v1.34.15: **আর কখনোই ছোট Range-এর বদলে পুরো ফাইল পাঠাই না** — মাপা: degrade-পথে প্লেয়ারের
-  //   টেল-অনুরোধে আমরা ৭১৬MB স্ট্রিম করতাম ⇒ কনটেইনারের ব্যান্ডউইথ শেষ, সব রিকোয়েস্ট ৩৫-৪৫সে।
-  //   এখন দরকারি বাইট না থাকলে **দ্রুত ৫০৩ + Retry-After** (পটভূমির পুল চলতেই থাকে) — প্লেয়ার রিট্রাই
-  //   করলে ক্যাশ প্রস্তুত থাকে আর সব Range সত্যিকারের ২০৬।
+  // ★ v1.34.15/16: মাপা — আগের degrade-পথে **প্রতিটা** টেল-অনুরোধে ৭১৬MB স্ট্রিম হত ⇒ ব্যান্ডউইথ শেষ,
+  //   সব রিকোয়েস্ট ৩৫-৪৫সে। বাস্তবতা: moov-at-end MP4-তে প্লেয়ার **টেল** চায় ⇒ প্রথম প্লে-তে একবার পুরো ফাইল লাগবেই। তাই
+  //   **একটিমাত্র** ক্লায়েন্টকে ০ থেকে ক্রমিক স্ট্রিম দিই (ডেটা বইতেই থাকে, ~৪০সে-তে ফাইল ক্যাশে সম্পূর্ণ,
+  //   তারপরের সব সিক তাৎক্ষণিক ২০৬); একই সময়ে দ্বিতীয় কেউ এলে ৫০৩ ⇒ ব্যান্ডউইথ-বন্যা হয় না।
+  let _degrade = false;
   if (endQ >= 0 && avail <= endQ && !e.done) {
-    if (DBG) console.error('[guc] notready need=' + endQ + ' got=' + avail);
-    res.writeHead(503, Object.assign({}, base, { 'retry-after': '8' })); return res.end();
+    if (BF_GU_DEG < 1) { _degrade = true; BF_GU_DEG++; }
+    else {
+      if (DBG) console.error('[guc] busy need=' + endQ + ' got=' + avail);
+      res.writeHead(503, Object.assign({}, base, { 'retry-after': '8' })); return res.end();
+    }
   }
+  if (_degrade) { start = 0; endQ = -1; }
   const endF = endQ >= 0 ? Math.min(endQ, avail - 1) : (e.done ? avail - 1 : -1);
   const hdr = Object.assign({}, base);
   if (total) { hdr['content-length'] = String((endF >= 0 ? endF : avail - 1) - start + 1); hdr['content-range'] = 'bytes ' + start + '-' + (endF >= 0 ? endF : (total - 1)) + '/' + total; }
@@ -11868,7 +11873,7 @@ async function bfGuServe(req, res, url, start, endQ, base) {
     const fd = fs.openSync(e.f, 'r'); const buf = Buffer.alloc(16); fs.readSync(fd, buf, 0, 16, 0); fs.closeSync(fd);
     const ct0 = bfSniffCt(buf); if (ct0) hdr['content-type'] = ct0;
   } catch (er) { }
-  const isRanged = (start > 0 || endQ >= 0);
+  const isRanged = !_degrade && (start > 0 || endQ >= 0);
   hdr['x-guc'] = 'hit' + (BF_GUC.has(key) ? '1' : '0') + ' wait' + (Date.now() - T0) + 'ms got' + Math.round(e.got / 1048576) + 'MB';  // v1.34.12 ডায়াগনসিস
   res.writeHead(isRanged && total ? 206 : 200, hdr);
   if (req.method === 'HEAD') return res.end();
@@ -11900,6 +11905,7 @@ async function bfGuServe(req, res, url, start, endQ, base) {
     }
   } catch (er) { _lx.err = String((er && er.message) || er).slice(0, 40); }
   try { res.end(); } catch (er) { }
+  if (_degrade) BF_GU_DEG = Math.max(0, BF_GU_DEG - 1);
   _lx.ms = Date.now() - T0;
   if (DBG) console.error('[guc] served ' + start + '-' + stopAt + ' got=' + e.got + ' done=' + e.done + ' ' + (Date.now() - T0) + 'ms');
 }
