@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.11';
+const VERSION = '1.34.12';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -11840,6 +11840,7 @@ async function bfGuServe(req, res, url, start, endQ, base) {
     const ct0 = bfSniffCt(buf); if (ct0) hdr['content-type'] = ct0;
   } catch (er) { }
   const isRanged = (start > 0 || endQ >= 0);
+  hdr['x-guc'] = 'hit' + (BF_GUC.has(key) ? '1' : '0') + ' wait' + (Date.now() - T0) + 'ms got' + Math.round(e.got / 1048576) + 'MB';  // v1.34.12 ডায়াগনসিস
   res.writeHead(isRanged && total ? 206 : 200, hdr);
   if (req.method === 'HEAD') return res.end();
   // (২) ফাইল বাড়তে থাকলে **সঙ্গে সঙ্গে অনুসরণ** করে লিখি (টেল-ফলো)
