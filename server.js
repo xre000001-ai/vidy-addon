@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.18';
+const VERSION = '1.34.19';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -9290,6 +9290,7 @@ function m4uRelayUrl(u, origin) {
 const m4uIsMediaUrl = u => m4uIsIpLocked(u)
   || /(?:^|\.)r2\.cloudflarestorage\.com$/i.test(m4uHostOf(u))
   || /(?:^|\.)fsldownload\.com$/i.test(m4uHostOf(u))
+  || /pixeldrain\.(?:dev|com)\/api\/file\//i.test(String(u))
   || /\.(?:mkv|mp4)(?:\?|$)/i.test(String(u));
 const m4uCardUrl = (u, origin) => m4uIsIpLocked(u) ? m4uRelayUrl(u, origin) : String(u);
 // ★★★ v1.34.5 (মাপা: কার্ড-বানানোর ৩০ মিনিট পরেই GU লিংক **400**) — Google-signed লিংক মিনিটেই মেয়াদোত্তীর্ণ।
@@ -9329,15 +9330,24 @@ async function m4uTdServe(req, res, target) {
     }
     let used = M4U_TD_USED.get(target);
     if (used && Date.now() - used.ts < 90e3) return await bfServeGeneric(req, res, used.final);
-    let fin = '';
-    const order = ['HubCloud'].concat((M4U_VC_WALL && Date.now() < M4U_VC_WALL) ? ['GDFlix', 'G-Direct', 'V-Drive', 'V-Cloud'] : ['V-Cloud', 'GDFlix', 'G-Direct', 'V-Drive']);   // v1.34.18: GDFlix
+    let fin = '', finPref = '';
+    const _pref = (/#vc([A-Za-z]+)$/.exec(target) || [])[1] || '';   // কার্ডে ক্লিক-করা সার্ভার
+    const order = ['HubCloud', 'V-Cloud', 'GDFlix', 'G-Direct', 'V-Drive'];   // v1.34.19: V-Cloud প্রক্সি-পথে
     for (const k of order) {
       for (const l of (ent.links || []).filter(x => x.srv === k).slice(0, 2)) {
-        const rr = await m4uTdResolve(l, false).catch(() => null);
-        if (rr && rr.url && m4uIsMediaUrl(rr.url)) { fin = rr.url; break; }
+        if (k === 'V-Cloud' && _pref) {
+          const vs = await m4uVcloudResolve(l.href).catch(() => []);
+          const pv = vs.find(v => v.srv === _pref) || vs[0];
+          if (pv && m4uIsMediaUrl(pv.url)) { if (pv.srv === _pref) finPref = pv.url; else if (!fin) fin = pv.url; }
+        } else {
+          const rr = await m4uTdResolve(l, false).catch(() => null);
+          if (rr && rr.url && m4uIsMediaUrl(rr.url)) { if (_pref && rr.srv === _pref) finPref = rr.url; else if (!fin) fin = rr.url; }
+        }
+        if (finPref) break;
       }
-      if (fin) break;
+      if (finPref || (fin && !_pref)) break;
     }
+    fin = finPref || fin;
     if (!fin) return okJson(502, { error: 'no-source' });
     M4U_TD_USED.set(target, { ts: Date.now(), final: fin });
     if (M4U_TD_USED.size > 300) M4U_TD_USED.clear();
@@ -9461,6 +9471,170 @@ async function m4uHubFsl(drive) {
   finally { clean(); }
 }
 // চেইন-শেষ: যেকোনো সার্ভার-পেজ → আসল ফাইল-URL (প্রমাণ-সহ)
+
+// ★★★ v1.34.19 (ইউজার: "Movies4u ei fsl, pixeldrain, gdflix link gulo dicche na, but age dito,
+//   jokhon movies4u.garden chilo" + নমুনা vcloud.beer/pc7ijcv1cj0ajfw) — মাপা সত্য: vcloud পেজের
+//   **ভিতরেই** আসল সার্ভারগুলো থাকে: [FSLv2 → r2.cloudflarestorage সরাসরি] · [PixelServer →
+//   pixeldrain] · [GDFlix] · [Google Drive], আর 10Gbps (বাদ — ইউজারের নিয়ম)। পেজ-১-এ শুধু
+//   "Generate Download Link" — আসল বোতাম token-পেজে (ডাবল-base64-এ লুকানো `?token=` URL)।
+//   একমাত্র দেয়াল: vcloud-এর CF Managed-Challenge **ডেটাসেন্টার IP** দেখলেই ৪০৩ দেয় (স্যান্ডবক্স/
+//   প্রোড/ফ্রি-প্রক্সি সব মাপা) — বাসার IP-তে চ্যালেঞ্জই আসে না (ইউজার: "Kono cf nai")। তাই পেজ
+//   আনা হয় আমাদের **প্রক্সি-পুল রেস** দিয়ে (spoolPick/proxiedGet — জয়ী প্রক্সি স্কোরে মনে থাকে,
+//   সময়ে হিট-রেট বাড়ে)। মাপা: ৭০-প্রক্সির ব্যাচে ১টি পেরিয়ে ২৮KB আসল পেজ এনেছে।
+const M4U_VC_CACHE = new Map();   // vcloud href → {ts, list:[{url,srv,cl,ct}]} (খালি list = ৩মিন নেগেটিভ)
+const M4U_VC_BG = new Set();      // ব্যাকগ্রাউন্ড-ওয়ার্ম চলছে এমন href
+let M4U_VC_LASTPX = '';
+const _vcChallenge = b => !b || b.length < 3000 || /Just a moment|Attention Required|have been blocked|Enable JavaScript and cookies|challenges\.cloudflare|cf-challenge|Checking your browser/i.test(b);
+const _vcAccept1 = b => /<\/html>/i.test(b) && /Generate Download|atob\(|Download\s*\[|pixeldrain|cloudflarestorage|hubcloud/i.test(b);
+const _vcAccept2 = b => /<\/html>/i.test(b) && /Download\s*\[|cloudflarestorage|pixeldrain|gdflix|hubcloud\.[a-z.]+\/(?:drive|video)\//i.test(b);
+async function _vcRace(url, tmoMs, cands, accept) {
+  if (!cands.length) return null;
+  const tEnd = Date.now() + tmoMs;
+  return await new Promise(resolve => {
+    let done = false, fails = 0;
+    const hard = setTimeout(() => { if (!done) { done = true; resolve(null); } }, tmoMs);
+    if (hard.unref) hard.unref();
+    for (const px of cands) {
+      const t0 = Date.now();
+      proxiedGet(px, url, Math.max(700, tEnd - Date.now())).then(body => {
+        const okBody = !_vcChallenge(body) && (!accept || accept(body));
+        spoolRec('vcloud', px, okBody, Date.now() - t0);
+        if (done) return;
+        if (okBody) { done = true; clearTimeout(hard); M4U_VC_LASTPX = px; resolve({ body: body, px: px }); }
+        else if (++fails >= cands.length) { done = true; clearTimeout(hard); resolve(null); }
+      }).catch(() => { spoolRec('vcloud', px, false, 0); if (++fails >= cands.length && !done) { done = true; clearTimeout(hard); resolve(null); } });
+    }
+  });
+}
+let M4U_VC_LIST = { ts: 0, pxs: [] };
+let M4U_VC_ROT = 0;
+async function m4uVcListPxs() {   // কাঁচা পাবলিক-লিস্ট (বেঞ্চ-পুলে CF-পেরোনো নোড থাকে না — মাপা)
+  if (Date.now() - M4U_VC_LIST.ts < 10 * 60e3 && M4U_VC_LIST.pxs.length) return M4U_VC_LIST.pxs;
+  const out = [];
+  for (const L of ['https://raw.githubusercontent.com/proxmint/free-proxy-list/main/proxies/http.txt',
+                   'https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&protocol=http&proxy_format=ipport&format=text&timeout=5000']) {
+    try {
+      const r = await m4uHReq(L, { tmo: 6000 });
+      for (const m of String(r.body || '').matchAll(/\d{1,3}(?:\.\d{1,3}){3}:\d+/g)) if (!out.includes(m[0])) out.push(m[0]);
+    } catch (e) { }
+  }
+  if (out.length) M4U_VC_LIST = { ts: Date.now(), pxs: out.slice(0, 500) };
+  return M4U_VC_LIST.pxs;
+}
+async function m4uVcFetch(url, tmoMs, nPx, seedPx, accept) {
+  // প্রার্থী: vcloud-কীতে শেখা + কাঁচা লিস্ট + গ্লোবাল POOL (CF-পাস হার ~১-৩% ⇒ চওড়া রেস লাগে)
+  const seen = new Set(); const cands = [];
+  const push = px => { if (px && !seen.has(px)) { seen.add(px); cands.push(px); } };
+  if (seedPx) push(seedPx);
+  spoolPick('vcloud', Math.max(4, Math.round(nPx / 2)), M4U_VC_LASTPX).forEach(push);
+  const raw = await m4uVcListPxs().catch(() => []);
+  const rw = Math.min(raw.length, nPx);
+  const rot = raw.length ? (M4U_VC_ROT = (M4U_VC_ROT + 13) % raw.length) : 0;   // প্রতি ঢেউয়ে আলাদা স্লাইস
+  for (let i = 0; i < rw && cands.length < nPx + 6; i++) push(raw[(rot + Math.floor(i * raw.length / Math.max(1, rw))) % raw.length]);
+  const sorted = POOL.slice().sort((a, b) => (a.ms || 9999) - (b.ms || 9999));
+  const want = Math.min(sorted.length, nPx);
+  for (let i = 0; i < want && cands.length < nPx + 6; i++) push(sorted[Math.floor(i * sorted.length / Math.max(1, want))].px);
+  const got = await _vcRace(url, tmoMs, cands.slice(0, nPx + 6), accept);
+  if (got) return got;
+  const r = await m4uHReq(url, { ref: 'https://mdrive.cloud/', tmo: 2500 }).catch(() => null);
+  if (r && !_vcChallenge(r.body) && (!accept || accept(String(r.body || '')))) return { body: String(r.body || ''), px: '' };
+  return null;
+}
+async function m4uVcloudResolve(href, bg) {
+  if (!href || process.env.M4UVC === '0') return [];
+  const c = M4U_VC_CACHE.get(href);
+  if (c && Date.now() - c.ts < (c.list.length ? 10 * 60e3 : 3 * 60e3)) return c.list;
+  const T0 = Date.now();
+  // ★ token সম্ভবত IP-বাঁধা (মাপা-আচরণ): পেজ-১ যে প্রক্সিতে এলো, token-পেজও **সেই প্রক্সিতেই**
+  //   (ব্যর্থ হলে নতুন পেজ-১+নতুন token; bg-তে ৩ চক্র)। অন্য প্রক্সির token-GET পেজ-১-ই ফেরত দেয়।
+  const vcTwoStep = async () => {
+    const cycles = bg ? 3 : 1;
+    for (let cy = 0; cy < cycles; cy++) {
+      let got = null;
+      if (bg) { const dl = Date.now() + 9000; while (!got && Date.now() < dl) got = await m4uVcFetch(href, 4800, 22, '', _vcAccept1).catch(() => null); }
+      else got = await m4uVcFetch(href, 3200, 12, '', _vcAccept1).catch(() => null);   // কার্ড-পথ ছোট (9s গার্ডে G-Direct ফলব্যাকের সময় রাখতে)
+      if (!got) continue;
+      let tok = '';
+      for (const m of got.body.matchAll(/atob\(\s*atob\(\s*['"]([A-Za-z0-9+/=]+)['"]/g)) {
+        try { const d = Buffer.from(Buffer.from(m[1], 'base64').toString('latin1'), 'base64').toString('latin1'); if (/token=/.test(d)) { tok = d; break; } } catch (e) { }
+      }
+      if (!tok) { const tm = /https?:\/\/[^\s"'<>]*\?token=[^\s"'<>]+/.exec(got.body); if (tm) tok = tm[0].replace(/&amp;/g, '&'); }
+      if (!tok || tok === href) return got.body;
+      for (let t = 0; t < (bg ? 2 : 1); t++) {
+        const g2 = got.px ? await _vcRace(tok, bg ? 3800 : 2600, [got.px], _vcAccept2).catch(() => null) : null;
+        if (g2) return g2.body;
+      }
+      if (DBG) console.error('[m4uvc] p2-samepx-fail cy=' + cy + ' ' + href.slice(-16));
+    }
+    return '';
+  };
+  let html = await vcTwoStep().catch(() => '');
+  if (!html && !bg) {
+    // কার্ড-পথ: এখনই হাল ছেড়ে ব্যাকগ্রাউন্ডে পুরো চেষ্টা (পরের খোলা/প্লে-তে ক্যাশ থেকে কার্ড)
+    if (!M4U_VC_BG.has(href)) {
+      M4U_VC_BG.add(href);
+      m4uVcloudResolve(href, true).then(() => M4U_VC_BG.delete(href)).catch(() => M4U_VC_BG.delete(href));
+    }
+    if (DBG) console.error('[m4uvc] miss→bg ' + href.slice(-16));
+    return [];
+  }
+  if (!html) { if (DBG) console.error('[m4uvc] fail ' + href.slice(-16) + ' @' + (Date.now() - T0) + 'ms'); M4U_VC_CACHE.set(href, { ts: Date.now(), list: [] }); return []; }
+  // বোতাম-স্ক্যান (টেক্সটে 10Gbps/Not-resumable = বাদ, সবসময়)
+  const raw = [];
+  const push = (srv, url) => { if (url && !raw.some(r => r.url === url)) raw.push({ srv: srv, url: url }); };
+  for (const m of html.matchAll(/<a[^>]*href="(https?:\/\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/g)) {
+    const u = m[1].replace(/&amp;/g, '&');
+    const tx = m[2].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+    if (/10\s*gbps|not\s*resumable/i.test(tx + ' ' + u)) continue;
+    if (/signup|login|register|create an account|telegram|bit\.ly/i.test(u + ' ' + tx)) continue;
+    if (/r2\.cloudflarestorage\.com/i.test(u)) push('FSL', u);
+    else if (/pixeldrain\.(?:dev|com)\/u\/([A-Za-z0-9]+)/i.test(u)) push('Pixeldrain', 'https://pixeldrain.dev/api/file/' + (/pixeldrain\.(?:dev|com)\/u\/([A-Za-z0-9]+)/i.exec(u) || [])[1]);
+    else if (/gdflix|gdlink/i.test(u)) push('GDFlixPage', u);
+    else if (/hubcloud\.[a-z.]+\/(?:drive|video)\//i.test(u)) push('HubPage', u);
+    else if (/video-downloads\.googleusercontent\.com/i.test(u)) push('G-Direct', u);
+  }
+  // ★ raw-স্ক্যান সবসময় (মাপা: আসল Pixeldrain আইডি অনেক সময় অ্যাঙ্করের বাইরে/স্ক্রিপ্টে থাকে,
+  //   আর প্রথম বোতামটা মৃত-ছোট-আইডি হতে পারে — প্রুফ-লুপ প্রতিটা চেষ্টা করে)
+  for (const m of html.matchAll(/https?:\/\/[^\s"'<>]+/g)) {
+    const u = m[0].replace(/[),.]+$/, '');
+    if (/r2\.cloudflarestorage\.com/i.test(u)) push('FSL', u);
+    else if (/pixeldrain\.(?:dev|com)\/u\/([A-Za-z0-9]+)/i.test(u)) push('Pixeldrain', 'https://pixeldrain.dev/api/file/' + (/pixeldrain\.(?:dev|com)\/u\/([A-Za-z0-9]+)/i.exec(u) || [])[1]);
+    else if (/gdflix|gdlink/i.test(u) && /\/file\/[A-Za-z0-9]+/.test(u)) push('GDFlixPage', u);
+  }
+  if (DBG) console.error('[m4uvc] subs ' + href.slice(-16) + ' → ' + raw.map(r => r.srv).join(',') + ' @' + (Date.now() - T0) + 'ms');
+  // সাব-লিংক → ফাইনাল URL (FSL আগে → Pixeldrain → GDFlix → G-Direct), প্রতিটিতে Range-প্রমাণ
+  const out = [];
+  const proof = async (srv, url) => {
+    try {
+      const hd = await m4uHReq(url, { headers: { Range: 'bytes=0-0' }, ref: href, tmo: 4500, maxBody: 2000 });
+      if ((hd.st === 200 || hd.st === 206) && !/text\/html/i.test(hd.ct || '')) { out.push({ srv: srv, url: url, cl: hd.cl || 0, ct: hd.ct || '' }); return true; }
+      if (DBG) console.error('[m4uvc] proof-fail ' + srv + ' st=' + hd.st);
+    } catch (e) { }
+    return false;
+  };
+  // প্রুফগুলো সমান্তরালে (ঠান্ডা-পথে সময় বাঁচাতে), বাজেট পেরোলে যা পাস করেছে তাই
+  const _ptasks = [];
+  _ptasks.push((async () => { for (const r of raw.filter(x => x.srv === 'FSL')) { if (await proof('FSL', r.url)) break; } })());
+  _ptasks.push((async () => { for (const r of raw.filter(x => x.srv === 'HubPage')) { const f = await m4uHubFsl(r.url).catch(() => ''); if (DBG) console.error('[m4uvc] hubpage ' + r.url.slice(-18) + ' → ' + (f ? f.slice(0, 44) : 'EMPTY')); if (f) { await proof('FSL', f); break; } } })());
+  _ptasks.push((async () => { for (const r of raw.filter(x => x.srv === 'Pixeldrain')) { if (await proof('Pixeldrain', r.url)) break; } })());
+  _ptasks.push((async () => {
+    for (const r of raw.filter(x => x.srv === 'GDFlixPage')) {
+      const fid = (/\/file\/([A-Za-z0-9]+)/.exec(r.url) || [])[1] || '';
+      if (!fid) continue;
+      const g = await bfResolveGdflixSmart(fid, 0, 5200).catch(() => null);
+      if (g && g.streamUrl && !g.isZip && !g.dead) { if (await proof('GDFlix', g.streamUrl)) break; }
+    }
+  })());
+  _ptasks.push((async () => { for (const r of raw.filter(x => x.srv === 'G-Direct')) { if (await proof('G-Direct', r.url)) break; } })());
+  await Promise.race([Promise.all(_ptasks), new Promise(r => { const t = setTimeout(r, bg ? 6500 : 3200); if (t.unref) t.unref(); })]).catch(() => { });
+  out.sort((a, b) => ({ FSL: 0, Pixeldrain: 1, GDFlix: 2, 'G-Direct': 3 }[a.srv] || 9) - ({ FSL: 0, Pixeldrain: 1, GDFlix: 2, 'G-Direct': 3 }[b.srv] || 9));
+  const fin = out.slice(0, 3);
+  if (M4U_VC_CACHE.size > 120) M4U_VC_CACHE.clear();
+  M4U_VC_CACHE.set(href, { ts: Date.now(), list: fin });
+  if (DBG) console.error('[m4uvc] ok ' + href.slice(-16) + ' n=' + fin.length + ' [' + fin.map(f => f.srv).join(',') + '] @' + (Date.now() - T0) + 'ms');
+  return fin;
+}
+
 async function m4uTdResolve(link, needProof) {
   const T0 = Date.now();
   let url = '', srv = link.srv;
@@ -9480,6 +9654,10 @@ async function m4uTdResolve(link, needProof) {
         if (g && g.streamUrl && !g.isZip && !g.dead) url = g.streamUrl;
         else if (DBG) console.error('[m4utd] gdflix-miss ' + fid + ' zip=' + (g && g.isZip) + ' dead=' + (g && g.dead));
       }
+    } else if (srv === 'V-Cloud') {   // ★ v1.34.19: পেজের ভিতরের আসল সার্ভারগুলো (নিচে m4uVcloudResolve)
+      const vs = await m4uVcloudResolve(link.href).catch(() => []);
+      if (vs && vs.length) { const v0 = vs[0]; return { url: v0.url, srv: v0.srv, cl: v0.cl, ct: v0.ct, ts: Date.now() - T0 }; }
+      if (DBG) console.error('[m4uvc] no sub-link ' + link.href.slice(-16));
     } else if (link.rank === 2) {   // G-Direct → embed পেজের ভেতরেই Google-URL বসানো থাকে (JS ছাড়া পড়া যায়)
       const r = await m4uHReq(link.href, { ref: 'https://mdrive.cloud/', tmo: 6000 });
       const m = /https:\/\/video-downloads\.googleusercontent\.com\/[A-Za-z0-9_\-]+/.exec(String(r.body || ''));
@@ -9682,15 +9860,37 @@ async function m4uTdStreams(tmdbId, title, type, s, e, origin, maxh) {
       //   (instant) → V-Drive, প্রতিটির সর্বোচ্চ ২টি লিংক।
       const _bk = {};
       for (const l of links) { (_bk[l.srv || 'x'] = _bk[l.srv || 'x'] || []).push(l); }
-      let r = null;
-      const order = ['HubCloud'].concat((M4U_VC_WALL && Date.now() < M4U_VC_WALL) ? ['GDFlix', 'G-Direct', 'V-Drive'] : ['V-Cloud', 'GDFlix', 'G-Direct', 'V-Drive']);   // v1.34.18
+      let r = null, multi = null;
+      const order = ['HubCloud', 'V-Cloud', 'GDFlix', 'G-Direct', 'V-Drive'];   // v1.34.19: V-Cloud এখন প্রক্সি-পথে খোলে
       for (const k of order) {
         if (!_bk[k]) continue;
         for (const l of _bk[k].slice(0, (k === 'V-Cloud' ? 1 : 2))) {
+          if (k === 'V-Cloud') {   // ★ v1.34.19: এক এন্ট্রি → ভিতরের FSL/Pixeldrain/GDFlix আলাদা কার্ড
+            const vs = await m4uVcloudResolve(l.href).catch(() => []);
+            if (vs && vs.length) { multi = vs.slice(0, 3); break; }
+            continue;
+          }
           const rr = await m4uTdResolve(l, i === 0).catch(() => null);
           if (rr && rr.url) { r = rr; break; }
         }
-        if (r) break;
+        if (r || multi) break;
+      }
+      if (multi) {
+        const audioM = dtAudio(String(hit.slug).replace(/-/g, ' ')) || '';
+        for (const v of multi) {
+          if (!m4uIsMediaUrl(v.url)) continue;
+          const sizeM = x.size || (v.cl ? mlsMB(v.cl) : '');
+          const txtM = '\u29c9 ' + T + (Y ? ' | ' + Y + ' |' : ' |') + '\n'
+            + (isS ? ('\u29e0 S' + (s || 1) + 'E' + (e || 1)) : '\u29e0 Movie') + '\n'
+            + '\u229e Movies4u' + (audioM ? ' \u2317 ' + audioM : '') + (sizeM ? ' \u00b7 ' + sizeM : '');
+          cards.push({
+            name: '\u25a5 ' + (x.q || 'Auto') + ' \u25a5', title: txtM, description: txtM, quality: String(x.q || ''),
+            url: m4uLazyUrl(x.mdisk + '#vc' + v.srv, origin), _src: 'Movies4u', _srv: v.srv, _direct: v.url,
+            behaviorHints: { notWebReady: false, isBingeable: true, filename: 'movies4u-' + (x.q || 'auto') + '.mkv' },
+            bingeGroup: 'm4u|' + mlsNorm(T) + '::' + (isS ? 'S' + (s || 1) + 'E' + (e || 1) : 'm')
+          });
+        }
+        return;
       }
       if (!r || !r.url) return;
       if (!m4uIsMediaUrl(r.url)) { if (DBG) console.error('[m4utd] not-media ' + String(r.url).slice(0, 60)); return; }
@@ -9818,7 +10018,7 @@ function _m4uMerge(a, b) {   // ★ v1.34.18: দুই ডোমেইনের
     const q = String(c.quality || (String(c.name || '').match(/\d{3,4}/) || [''])[0] || '');
     const szm = String(c.title || '').match(/(\d+(?:\.\d+)?)\s*(GB|MB)/i);
     const szb = szm ? Math.round(parseFloat(szm[1]) * (/gb/i.test(szm[2]) ? 1000 : 1)) : 0;
-    const k = q + '|' + szb;                       // একই কোয়ালিটি+সাইজ ≈ একই ফাইল (দুই ডোমেইনেই থাকতে পারে)
+    const k = q + '|' + szb + '|' + String(c._srv || '');   // একই ফাইল, কিন্তু **আলাদা সার্ভার = আলাদা কার্ড** (ইউজার: "Ekta server keno only")
     const pv = seen.get(k);
     if (!pv || rk(c) < rk(pv)) seen.set(k, c);
   }
