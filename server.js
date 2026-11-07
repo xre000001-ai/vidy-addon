@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.9';
+const VERSION = '1.34.10';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -11759,11 +11759,11 @@ const bfGuEvict = (keep) => {                   // পুরোনো-শেষ 
     BF_GU_BYTES -= (e.total || e.got || 0); BF_GUC.delete(u);
   }
 };
-function bfGuStart(url) {
+function bfGuStart(key, url) {
   const d = bfGuDir();
   if (!d) return null;
-  const e = { f: d + '/' + require('crypto').createHash('sha1').update(url).digest('hex').slice(0, 22) + '.bin', got: 0, total: 0, done: false, err: '', ts: Date.now(), used: Date.now() };
-  BF_GUC.set(url, e);
+  const e = { f: d + '/' + require('crypto').createHash('sha1').update(key).digest('hex').slice(0, 22) + '.bin', src: url, got: 0, total: 0, done: false, err: '', ts: Date.now(), used: Date.now() };
+  BF_GUC.set(key, e);
   (async () => {
     const r = await fetch(url, { headers: { 'User-Agent': UA, Accept: '*/*' }, signal: AbortSignal.timeout(20 * 60e3) }).catch(() => null);
     if (!r || !r.ok || !r.body) { e.err = 'up' + (r ? r.status : 0); return; }
@@ -11800,8 +11800,17 @@ function bfGuStart(url) {
 async function bfGuServe(req, res, url, start, endQ, base) {
   const T0 = Date.now();
   if (BF_GU_OFF && Date.now() - BF_GU_OFF < 10 * 60e3) return false;   // ক্যাশ বন্ধ ⇒ সাধারণ পথ
-  let e = BF_GUC.get(url);
-  if (!e || (e.err && !e.got)) e = bfGuStart(url);
+  // ★ ক্যাশ-কী = **স্থির পরিচয়** (আমাদের `/m4d/<b64 source>`), সই-করা GU টোকেন নয় —
+  //   মাপা: প্রতি রিজলভে GU টোকেন বদলায় (`ADGPM2nz9…` → `ADGPM2mbV…`), তাই URL-কী হলে প্রতিবার
+  //   নতুন করে ৭৫০MB নামত (প্রোডে ২৯সে-এর কারণ এটাই ছিল)।
+  const _ckB = (/^\/m4d\/([A-Za-z0-9_\-]+)/.exec(String(req.url || '')) || [])[1];
+  const key = _ckB || url;
+  let e = BF_GUC.get(key);
+  if (e && e.err && !e.done && e.got < (e.total || Infinity) && e.src !== url) {   // মৃত-আধা পুল ⇒ নতুন লিংকে আবার
+    try { fs.unlink(e.f, () => { }); } catch (er) { }
+    BF_GUC.delete(key); e = null;
+  }
+  if (!e || (e.err && !e.got)) e = bfGuStart(key, url);
   if (!e || (e.err && !e.got)) return false;
   e.used = Date.now();
   const waitMs = Number(process.env.GUWAIT_MS || 60000);
