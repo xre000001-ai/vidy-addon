@@ -9,3 +9,6 @@ pxbig.json
 mls_cache.json
 mls_px_learned.json
 dt_unlock.json
+
+# v1.34.17: HubCloud r2-লিংক ক্যাশ — রানটাইম
+hub_r2_cache.json

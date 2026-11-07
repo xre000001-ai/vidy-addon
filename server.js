@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.16';
+const VERSION = '1.34.17';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -9387,7 +9387,36 @@ async function m4uTdMdisk(mdisk) {
 //   প্রমাণ: `Range: bytes=1000000-1001023` ⇒ **206 + content-range 1000000-1001023/518921856**,
 //   `Accept-Ranges: bytes`, সই ৮ ঘণ্টা বৈধ ⇒ রিজিউম + সিক দুটোই আসল থেকে চলে।
 function m4uHubHost(h) { return /(?:^|\.)hubcloud\.(?:ist|pw|fans|xyz|site|life|cc|ws|to|ink)$/i.test(String(h || '')); }
+// ★★★ v1.34.17 — ইউজার: "Gamerxt page ta ad"। ঠিক: ওই পেজ অ্যাড-ফার্ম, তাই ওটা **শুধু আমাদের সার্ভার**
+//   সার্ভার-সাইডে পড়ে, অ্যাপ/ইউজার কোনোদিন দেখে না — কার্ডে বসে সরাসরি r2-লিংক। তবু ছোঁয়া যত কম হয়
+//   তত ভালো ⇒ প্রাপ্ত r2-লিংক (প্রিসাইন ~৮ঘণ্টা) এখন **ডিস্ক-ক্যাশে** থাকে (৫ঘণ্টা TTL) — রিস্টার্টের পরেও
+//   একই ফাইলের জন্য gamerxyt আর খুলতে হয় না।
+const HUB_R2 = new Map(); let HUB_R2_LOADED = 0, HUB_R2_SAVE_T = null;
+const hubR2File = () => { try { return require('path').join(__dirname, 'hub_r2_cache.json'); } catch (e) { return ''; } };
+function hubR2Load() {
+  if (HUB_R2_LOADED) return; HUB_R2_LOADED = 1;
+  try {
+    const j = JSON.parse(require('fs').readFileSync(hubR2File(), 'utf8')) || {};
+    const now = Date.now();
+    for (const k of Object.keys(j)) { const v = j[k]; if (v && v.u && now - (v.ts || 0) < 5 * 3600e3) HUB_R2.set(k, v); }
+    if (DBG && HUB_R2.size) console.error('[hubfsl] cache-adopt ' + HUB_R2.size);
+  } catch (e) { }
+}
+function hubR2Save() {
+  if (HUB_R2_SAVE_T) return;
+  HUB_R2_SAVE_T = setTimeout(() => {
+    HUB_R2_SAVE_T = null;
+    try {
+      const o = {}; let n = 0;
+      for (const [k, v] of [...HUB_R2.entries()].sort((a, b) => (b.ts || 0) - (a.ts || 0))) { if (n++ >= 300) break; o[k] = v; }
+      require('fs').writeFile(hubR2File(), JSON.stringify(o), () => { });
+    } catch (e) { }
+  }, 4000);
+}
 async function m4uHubFsl(drive) {
+  hubR2Load();
+  const _hc = HUB_R2.get(drive);
+  if (_hc && _hc.u && Date.now() - _hc.ts < 5 * 3600e3) return _hc.u;   // ★ ক্যাশে থাকলে gamerxyt ছোঁয়াই হয় না
   const cp = require('child_process'), fs = require('fs');
   const jar = '/tmp/hubj_' + process.pid + '_' + Math.random().toString(36).slice(2, 8) + '.txt';
   const clean = () => { try { fs.unlink(jar, () => { }); } catch (e) { } };
@@ -9418,7 +9447,12 @@ async function m4uHubFsl(drive) {
       if (t) await new Promise(r => setTimeout(r, 900));          // ★ "একটু wait" — দ্বিতীয় চেষ্টা
       const p2 = await run(gx, p1.eu || 'https://hubcloud.pw/', 7000);
       const m = /https:\/\/[a-z0-9]+\.r2\.cloudflarestorage\.com\/hub\/[^"'\s<]+/i.exec(p2.body);
-      if (m) return m[0].replace(/&amp;/g, '&');
+      if (m) {
+        const u2 = m[0].replace(/&amp;/g, '&');
+        if (HUB_R2.size > 300) HUB_R2.clear();
+        HUB_R2.set(drive, { ts: Date.now(), u: u2 }); hubR2Save();   // ★ v1.34.17: ৫ঘণ্টা ক্যাশ (ডিস্ক-স্থায়ী)
+        return u2;
+      }
       if (DBG) console.error('[hubfsl] try' + (t + 1) + ' st=' + p2.st + ' len=' + p2.body.length);
     }
     return '';
