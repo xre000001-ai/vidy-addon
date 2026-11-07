@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.26';
+const VERSION = '1.34.27';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -4860,7 +4860,7 @@ async function twrFetch(base, tag, title, type, s, e, t3) { // ★ v1.34.25: ব
     if (TWR_INFLIGHT.n >= Number(process.env.TWRINF || 6)) { if (DBG) console.error('[twr] inflight-skip ' + tag); return null; } // ★ v1.34.25: skip = ব্যর্থতা
     TWR_INFLIGHT.n++;
     let b = '';
-    try { b = await directGet(base + '/find?' + qs.toString(), Number(process.env.TWRTMO || 6000)); }
+    try { b = await directGet(base + '/find?' + qs.toString(), Number(process.env.TWRTMO || 9000) /* ★ v1.34.27: ঠান্ডা-resolver-walk যেন 1st-Try-তেই শেষ হয় (harvest-ক্যাপ 11.2s-ই চূড়ান্ত সীমা) */); }
     finally { TWR_INFLIGHT.n--; }
     const j = JSON.parse(b);
     // v1.12.3: twr-কার্ড-ও-ইউনিফর্ম-ভিডি-ফরম্যাটে (⧉ Title / ⧠ SsEe • EpTitle / ⨞ Server ⌧ Audio) — resolution-শুধু-name-ব্যাজে, সবসময়-1080 (Auto/360-লেবেল-নয়)
@@ -6284,7 +6284,7 @@ async function hmBase() {
   try {
     const r = await fetch('https://hindmovie.one/', { headers: { 'User-Agent': UA }, redirect: 'follow', signal: AbortSignal.timeout(6000) });
     const h = new URL(r.url || 'https://hindmovie.one/').hostname;
-    if (/^hindmovie\.[a-z]{2,6}$/i.test(h)) HM_HOST = h;
+    if (/^(?:[a-z0-9-]+\.)?hindmovie\.[a-z]{2,6}$/i.test(h)) HM_HOST = h;
     HM_HOST_TS = Date.now();
     try { await r.arrayBuffer(); } catch (e) { }
   } catch (e) {
@@ -6467,18 +6467,18 @@ async function hmStreamsRaw(tmdbId, title, type, s, e, origin, maxh) {
       //   সেই-কারণে-প্রতি-টাইটেলে-সার্চ-ফেল ⇒ HindMovie-০ কার্ড)। এখন ফিল্ড-প্যারাম ছাড়া (মাত্র 2.6KB) কল)
       const r1 = await hmText(HMB + '/wp-json/wp/v2/search?search=' + encodeURIComponent(T) + '&per_page=5', rq);
       if (!(r1.t && r1.st < 400)) diag('hm', 'rest st=' + r1.st + ' bytes=' + (r1.t || '').length);
-      try { const a = JSON.parse(r1.t); if (Array.isArray(a)) posts = a.map(x => String(x.url || '')).filter(u => /^https:\/\/hindmovie\.[a-z]{2,6}\/[a-z0-9][a-z0-9\-]*\/?$/i.test(u)); } catch (e) { }
+      try { const a = JSON.parse(r1.t); if (Array.isArray(a)) posts = a.map(x => String(x.url || '')).filter(u => /^https:\/\/(?:[a-z0-9-]+\.)?hindmovie\.[a-z]{2,6}\/[a-z0-9][a-z0-9\-]*\/?$/i.test(u)); } catch (e) { }
       if (!posts || !posts.length) {
         const r2 = await hmText(HMB + '/?s=' + encodeURIComponent(T), Math.min(4300, Math.max(rq, left())));
         diag('hm', 'html st=' + r2.st + ' bytes=' + (r2.t || '').length);
-        posts = [...new Set((r2.t.match(/href="(https:\/\/hindmovie\.[a-z]{2,6}\/[a-z0-9][a-z0-9\-]*\/)"/gi) || []).map(z => z.slice(6, -1)))]
+        posts = [...new Set((r2.t.match(/href="(https:\/\/(?:[a-z0-9-]+\.)?hindmovie\.[a-z]{2,6}\/[a-z0-9][a-z0-9\-]*\/)"/gi) || []).map(z => z.slice(6, -1)))]
           .filter(u => !/\/(wp-content|wp-json|genre|category|tag|page|author|dramas|anime|movies|language|quality|web-?series|contact|about|privacy|dmca|how2unzip|feed|search)\/?$/i.test(u))
           .filter(u => (u.match(/-/g) || []).length >= 2)     // v1.27.21: nav-অব্রাজ বাদ (আগে wp-content/movies/quality-ও-পাস-করত)
           .slice(0, 6);
       }
       // স্লাগ-ফিল্টার: শুধু আসল পোস্ট-ইউআরএল (এক-সেগমেন্ট + বছর + টাইটেল-টোকেন); wp-content/series-genre বাদ
       const toks = T.toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/).filter(z => z.length > 2 && z !== 'the' && z !== 'and');
-      posts = (posts || []).map(String).filter(u => /^https:\/\/hindmovie\.[a-z]{2,6}\/[a-z0-9][a-z0-9\-]*\/?$/i.test(u) && !/wp-content|series-genre|web-series/i.test(u))
+      posts = (posts || []).map(String).filter(u => /^https:\/\/(?:[a-z0-9-]+\.)?hindmovie\.[a-z]{2,6}\/[a-z0-9][a-z0-9\-]*\/?$/i.test(u) && !/wp-content|series-genre|web-series/i.test(u))
         .filter(u => { const sl = u.toLowerCase(); return /-\d{4}-/.test(sl) || /-season-\d/.test(sl) || toks.every(t => sl.indexOf(t) >= 0); })
         .sort((a, b) => { const sc = z => toks.filter(t => z.toLowerCase().indexOf(t) >= 0).length; return sc(b) - sc(a); })
         .slice(0, 6);
@@ -6491,10 +6491,10 @@ async function hmStreamsRaw(tmdbId, title, type, s, e, origin, maxh) {
     const infos = await Promise.all(posts.slice(0, 4).map(u => hmPost(u, Math.min(1800, left())).catch(() => null)));
     let idx = -1;
     if (imdb) idx = infos.findIndex(x => x && x.imdb === imdb);          // ★ শক্তিশালী গার্ড: IMDb id মিলতেই হবে
-    if (idx < 0 && !imdb) { // IMDb অনিশ্চিত হলে শুধু টাইটেল-স্টেম মিলিয়ে (ভুল-টাইটেল কার্ড নয়)
+    if (idx < 0) { // ★ v1.34.27: v3-থিমে অনেক পোস্টে IMDb-মেটা নেই (নিষ্কাশন ফাঁকা) — বের-করা-IMDb ভিন্ন হলে বাতিলই, কিন্তু IMDb-অজানা পোস্ট স্লাগ-টোকেন+পোস্ট-টাইটেল মিললে গ্রহণ (নইলে HM চিরতরে ০ — মাপা 0/38)
       const norm = z => String(z).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
       const tn = norm(T);
-      idx = infos.findIndex(x => x && norm(x.title).indexOf(tn) >= 0);
+      idx = infos.findIndex(x => x && !x.imdb && norm(x.title || '').indexOf(tn) >= 0);
     }
     if (idx < 0) { if (DBG) console.error('[hm] no-imdb-match "' + T + '" got=' + infos.map(x => x && x.imdb).join(',')); return []; }
     if (DBG) console.error('[hmT] post-matched @' + (Date.now() - T0) + 'ms');
@@ -7273,17 +7273,17 @@ async function azStreams(tmdbId, type, s, e, azq) { // সার্চ→সি�
     const hit = pool2[0].x;
     const ep = isTv ? Number(e || 1) : 1;
     if (isTv && Number(hit.episode_count || 0) > 0 && ep > Number(hit.episode_count)) { if (DBG) console.error('[az] ' + T0 + ' E' + ep + ' > episode_count=' + hit.episode_count); return []; } // সত্যিই-নেই → সৎ-শূন্য
-    let wp = await azGet(AZ_BASE + '/anime/' + hit.slug + '/' + ep, 'w:' + hit.slug + '#' + ep, 600000, 6500);
-    if (!wp && Date.now() - t3 < 6500) { if (DBG) console.error('[az] watch-পুনঃচেষ্টা ' + hit.slug); wp = await azGet(AZ_BASE + '/anime/' + hit.slug + '/' + ep, 'w:' + hit.slug + '#' + ep, 600000, 5200, 14); } // ★ v1.34.24
+    let wp = await azGet(AZ_BASE + '/anime/' + hit.slug + '/' + ep, 'w:' + hit.slug + '#' + ep, 600000, 4800 /* ★ v1.34.27 */);
+    if (!wp && Date.now() - t3 < 8400) /* ★ v1.34.27 */ { if (DBG) console.error('[az] watch-পুনঃচেষ্টা ' + hit.slug); wp = await azGet(AZ_BASE + '/anime/' + hit.slug + '/' + ep, 'w:' + hit.slug + '#' + ep, 600000, 3600, 14 /* ★ v1.34.27 */); } // ★ v1.34.24
     const pl = wp ? azPlayer(wp) : null;
     if (!pl) { if (DBG) console.error('[az] ' + T0 + ' E' + ep + ' player-নেই (' + hit.slug + ') wp=' + (wp ? wp.length : 0) + ' src=' + (wp ? String(/"sources"/.test(wp)) : '-') + ' 404ish=' + (wp ? String(/not found|404/i.test(wp.slice(0, 3000))) : '-')); return []; } // ★ v1.34.24 diag
     // ★★ v1.34.21 (ইউজার: "1080 holeo 720 lekha ase, filter korle badh hoia Jai"): মাস্টার-প্রোব সরাসরি
     //   ব্যর্থ হলে প্রক্সি-রেসে আরেকবার — আসল সর্বোচ্চ উচ্চতাই লেবেল হবে (beamup-ইগ্রেসে সরাসরি
     //   মাস্টার না-এলে আগে অন্ধভাবে 720 বসে মেমোতে ৩০মিন আটকে থাকত)।
     let q = 0;
-    try { const mt = await fetch(pl.src, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(7000) }).then(r2 => r2.ok ? r2.text() : ''); q = azQOf(mt); }
+    try { const mt = await fetch(pl.src, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(4000) }).then(r2 => r2.ok ? r2.text() : ''); q = azQOf(mt); /* ★ v1.34.27 */ }
     catch (er2) { if (DBG) console.error('[az] মাস্টার-প্রোব ' + String(er2.message).slice(0, 30)); }
-    if (!q) { try { q = azQOf(await pxsGet(pl.src, { key: 'azpl', n: 4, tmo: 8000 })); if (q && DBG) console.error('[az] প্রক্সি-প্রোবে q=' + q); } catch (e3) { } }
+    if (!q && Date.now() - t3 < 9500) { try { q = azQOf(await pxsGet(pl.src, { key: 'azpl', n: 4, tmo: 5000 })); if (q && DBG) console.error('[az] প্রক্সি-প্রোবে q=' + q); } catch (e3) { } } // ★ v1.34.27
     const pq = q > 0;
     if (!q) q = 720; // প্রোব-ব্যর্থ-হলেও-কার্ড (ইউজার-IP-চলতে-পারে — রেফারার-ফ্রি-প্রমাণিত)
     if (Array.isArray(azq) && azq.length && azq.indexOf(q) < 0) { if (DBG) console.error('[az] ' + T0 + ' q=' + q + ' ছাঁকা'); return []; }
@@ -13075,7 +13075,7 @@ async function withSources(cardsP, srcs, cfg, t0, mkey, lookupP) {
   }
   // ★ v1.32.0: vidy-কার্ডের অপেক্ষাও ছোট (আগে ১০.৬সে ⇒ Mirzapur-এ ৮সে উত্তর)। মাপা: vidy কার্ড
   //   ২–৪সে-তেই আসে; দেরিতে-আসা সার্ভার ব্যাকগ্রাউন্ডে ক্যাশে জমে, পরের খোলে পুরো।
-  const cLeft = Math.max(500, Math.min(Number(process.env.SCUT || 11200), Number(process.env.VPICK || 4200) + 1200) + Math.min(_LK.ms, 800) - (Date.now() - t0)); // ★ v1.20.2: vidy-কার্ড-কাট 5.7সে (আগে 9.2সে) // ⚠️ v1.17.27: ৪.৬সে-ক্যাপ **ফেরত নেওয়া হলো** — মাপা: vidy ৪.৩সে-তে ৩০+ কার্ড দেয়, ক্যাপ করলে E9/E12/E14-এ ১–১০ কার্ডে নেমে যায়
+  const cLeft = Math.max(500, Math.min(Number(process.env.SCUT || 11200), Number(process.env.VPICK || 9000) + 1200) + Math.min(_LK.ms, 800) - (Date.now() - t0)); // ★ v1.34.27: রুট-অপেক্ষা getSources-এর আসল বাজেটের (9s) সঙ্গে মিলল — আগে 4200 ধরে vidy 5.4s-এ কাটা পড়ত
   const cards = await Promise.race([
     cardsP.catch(e => { if (DBG) console.error('[srcdbg] cardsP died: ' + String(e && e.message || e).slice(0, 90)); return []; }),
     new Promise(r => setTimeout(() => r([]), cLeft))
@@ -13385,9 +13385,9 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
         if (DBG) console.error('[t1g] ' + srv + ' BUDGET-CUT');
         pend.delete(srv); // v1.14.2: বসে-গেছে — early-harvest-গণিত-যেন-ভুল-না-হয়
         fire({ srv, err: new Error('srv-budget') });
-      }, isPriSrv(srv) ? Number(process.env.VPRIB || 7600)                              // ★ v1.26.2: Miami/Boise — দীর্ঘ বাজেট
+      }, isPriSrv(srv) ? Number(process.env.VPRIB || 8800) /* ★ v1.34.27 */                              // ★ v1.26.2: Miami/Boise — দীর্ঘ বাজেট
         : srv === 'delhi' ? Number(process.env.VDELB || 2600)
-          : (GIANT.indexOf(srv) >= 0 ? (viaProxy ? 5200 : 5000) : (viaProxy ? 5000 : 4800))); // v1.21.5: delhi (500) ছোট বাজেট — ৪.৫সে-উইন্ডো/quota খায় না // ★ v1.17.56: vidy-সেশন ২–৩সে নেয় ⇒ ৩.৮সে-বাজেট ভিডি-কার্ডই কেটে দিত // v1.17.39: কাট-ঘড়ির (≤৪.২সে) পরে বাজেট-টাইমারের কোনো মানে নেই // v1.15.24 (ইউজার: '৬-৭সে-তে-সব-কার্ড'): প্রক্সি-পথ-বাজেট ৮.৫/৭→৬.৫/৫.৫সে — vidy-শাখা-নিজেই-ধীরতম-হয়ে-গোটা-উত্তর-৮-১০সে-টানছিল; প্রক্সি-চেইনের-সফল-ফেচ ৪.৭-৬.৩সে-তে-বলে-৬.৫সে-দৈত্য-সীমা-ওদের-ধরে; সরাসরি-পথ ৫.৫/৩.৮-অক্ষত
+          : (GIANT.indexOf(srv) >= 0 ? (viaProxy ? 7000 : 5000) : (viaProxy ? 6200 : 4800)) /* ★ v1.34.27: ঠান্ডা-স্ক্যানে giant-বাজেট বাড়ল (tighten-কাট আগের মতোই দ্রুত-সাফল্যে কাটে) */); // v1.21.5: delhi (500) ছোট বাজেট — ৪.৫সে-উইন্ডো/quota খায় না // ★ v1.17.56: vidy-সেশন ২–৩সে নেয় ⇒ ৩.৮সে-বাজেট ভিডি-কার্ডই কেটে দিত // v1.17.39: কাট-ঘড়ির (≤৪.২সে) পরে বাজেট-টাইমারের কোনো মানে নেই // v1.15.24 (ইউজার: '৬-৭সে-তে-সব-কার্ড'): প্রক্সি-পথ-বাজেট ৮.৫/৭→৬.৫/৫.৫সে — vidy-শাখা-নিজেই-ধীরতম-হয়ে-গোটা-উত্তর-৮-১০সে-টানছিল; প্রক্সি-চেইনের-সফল-ফেচ ৪.৭-৬.৩সে-তে-বলে-৬.৫সে-দৈত্য-সীমা-ওদের-ধরে; সরাসরি-পথ ৫.৫/৩.৮-অক্ষত
       return Promise.race([
         one(srv).then(r => { done = true; clearTimeout(tmo); pend.delete(srv); if (r.ok) okWave++; return r; }), // timer cleared on win — no dangling timeouts
         new Promise(r => { fire = r; pend.set(srv, v => { done = true; clearTimeout(tmo); fire(v); }); }) // v1.14.2: tighten-কাটও-টাইমার-পরিষ্কার-করে — পরের-আসল-বাজেট-কাট/শাস্তি-আর-গুলে-খায়-না
