@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.13';
+const VERSION = '1.34.14';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -11747,6 +11747,21 @@ const BF_GU_MAX = Number(process.env.GUCACHE_MAX || 2.4e9);
 let BF_GU_BYTES = 0, BF_GU_READY = null, BF_GU_OFF = 0;
 const BF_GU_LOG = [];   // v1.34.13: শেষ কয়েকটা সার্ভের ফেজ-টাইমিং (প্রোড-নিদান)
 const bfGuLog = o => { try { BF_GU_LOG.push(o); if (BF_GU_LOG.length > 12) BF_GU_LOG.shift(); } catch (e) { } };   // BF_GU_OFF: জায়গা-সংকটে ১০ মিনিট ক্যাশ-বিরতি
+function bfGuAdopt(key) {          // v1.34.14: রিস্টার্টের পরেও সম্পূর্ণ ক্যাশ-ফাইল আবার ব্যবহার করি
+  const d = bfGuDir(); if (!d) return null;
+  try {
+    const h = require('crypto').createHash('sha1').update(key).digest('hex').slice(0, 22);
+    const f = d + '/' + h + '.bin';
+    const st = fs.statSync(f);
+    if (!st || !st.size) return null;
+    const meta = JSON.parse(fs.readFileSync(f + '.meta', 'utf8'));
+    if (!meta || meta.k !== key) return null;
+    const e = { f: f, src: '', got: st.size, total: st.size, done: true, err: '', ts: Date.now(), used: Date.now() };
+    BF_GUC.set(key, e); BF_GU_BYTES += st.size;
+    if (DBG) console.error('[guc] adopt ' + Math.round(st.size / 1048576) + 'MB');
+    return e;
+  } catch (e) { return null; }
+}
 const bfGuDir = () => {
   if (BF_GU_READY !== null) return BF_GU_READY;
   try { fs.mkdirSync(BF_GU_DIR, { recursive: true }); BF_GU_READY = BF_GU_DIR; }
@@ -11790,6 +11805,7 @@ function bfGuStart(key, url) {
       }
       await new Promise(r2 => ws.end(r2));
       e.done = true;
+      try { fs.writeFileSync(e.f + '.meta', JSON.stringify({ k: key, t: e.got })); } catch (er) { }   // v1.34.14
       if (DBG) console.error('[guc] done ' + (e.got / 1048576).toFixed(0) + 'MB ' + String(url).slice(-24));
     } catch (er) {
       try { ws.destroy(); } catch (x) { }
@@ -11807,7 +11823,7 @@ async function bfGuServe(req, res, url, start, endQ, base) {
   //   নতুন করে ৭৫০MB নামত (প্রোডে ২৯সে-এর কারণ এটাই ছিল)।
   const _ckB = (/^\/m4d\/([A-Za-z0-9_\-]+)/.exec(String(req.url || '')) || [])[1];
   const key = _ckB || url;
-  let e = BF_GUC.get(key);
+  let e = BF_GUC.get(key) || bfGuAdopt(key);
   if (e && e.err && !e.done && e.got < (e.total || Infinity) && e.src !== url) {   // মৃত-আধা পুল ⇒ নতুন লিংকে আবার
     try { fs.unlink(e.f, () => { }); } catch (er) { }
     BF_GUC.delete(key); e = null;
@@ -11815,7 +11831,7 @@ async function bfGuServe(req, res, url, start, endQ, base) {
   if (!e || (e.err && !e.got)) e = bfGuStart(key, url);
   if (!e || (e.err && !e.got)) return false;
   e.used = Date.now();
-  const waitMs = Number(process.env.GUWAIT_MS || 60000);
+  const waitMs = Number(process.env.GUWAIT_MS || 25000);   // ★ প্ল্যাটফর্ম ~৪০সে-তে কানেকশন কাটে (মাপা)
   if (req.method === 'HEAD') {                      // HEAD-এ আকার জানা দরকার (প্লেয়ার আগে এটাই চায়)
     const hd0 = Date.now();
     while (!e.total && !e.done && !e.err && Date.now() - hd0 < 12000) await new Promise(r2 => setTimeout(r2, 100));
@@ -11832,7 +11848,13 @@ async function bfGuServe(req, res, url, start, endQ, base) {
   while (endQ >= 0 && !e.done && !e.err && e.got <= endQ && Date.now() - T0 < waitMs) await new Promise(r2 => setTimeout(r2, 100));
   const total = e.total || (e.done ? e.got : 0);
   const avail = e.got;
+  // ★ v1.34.14: দরকারি বাইট সময়ের ভিতরে না এলে (ক) ৪১৬ দিলে অ্যাপ "play hoi na" দেখায়, (খ) আটকে
+  //   থাকলে প্ল্যাটফর্ম ~৪০সে-তে কানেকশন কাটে। তাই তখন **২০০ + ০ থেকে ক্রমিক** দিই — পটভূমির পুল চলতে
+  //   থাকে, ডেটা বইতেই থাকে; একবার পুল শেষ হলে পরের সব সিক/রিপ্লে ক্যাশ থেকে তাৎক্ষণিক ২০৬।
+  let _degrade = false;
+  if (endQ >= 0 && avail <= endQ && !e.done) { _degrade = true; if (DBG) console.error('[guc] degrade need=' + endQ + ' got=' + avail); }
   if (!avail) return false;
+  if (_degrade) { start = 0; endQ = -1; }
   const endF = endQ >= 0 ? Math.min(endQ, avail - 1) : (e.done ? avail - 1 : -1);
   const hdr = Object.assign({}, base);
   if (total) { hdr['content-length'] = String((endF >= 0 ? endF : avail - 1) - start + 1); hdr['content-range'] = 'bytes ' + start + '-' + (endF >= 0 ? endF : (total - 1)) + '/' + total; }
@@ -11841,7 +11863,7 @@ async function bfGuServe(req, res, url, start, endQ, base) {
     const fd = fs.openSync(e.f, 'r'); const buf = Buffer.alloc(16); fs.readSync(fd, buf, 0, 16, 0); fs.closeSync(fd);
     const ct0 = bfSniffCt(buf); if (ct0) hdr['content-type'] = ct0;
   } catch (er) { }
-  const isRanged = (start > 0 || endQ >= 0);
+  const isRanged = !_degrade && (start > 0 || endQ >= 0);
   hdr['x-guc'] = 'hit' + (BF_GUC.has(key) ? '1' : '0') + ' wait' + (Date.now() - T0) + 'ms got' + Math.round(e.got / 1048576) + 'MB';  // v1.34.12 ডায়াগনসিস
   res.writeHead(isRanged && total ? 206 : 200, hdr);
   if (req.method === 'HEAD') return res.end();
