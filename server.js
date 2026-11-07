@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.10';
+const VERSION = '1.34.11';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -14387,6 +14387,16 @@ const server = http.createServer((req, res) => {
         return { ver: VERSION, base: base, q: q, posts: posts.length, top: posts.slice(0, 5).map(x => x.slug), pick: pick ? pick.slug : '', entries: ents.length, hosts: [...new Set(ents.map(x => x.host))], resolved: res2, ms: Date.now() - T0 };
       })();
       return Promise.resolve(job).then(o => sendJson(res, 200, o)).catch(e => sendJson(res, 200, { ok: 0, err: String(e && e.message).slice(0, 80) }));
+    }
+    if (p === '/_guc') {   // ★ v1.34.10: GU ডিস্ক-ক্যাশের অবস্থা (দেখতে পাই ক্যাশ আসলে হচ্ছে কি না)
+      let st = null;
+      try { const q = fs.statfsSync(bfGuDir()); st = { dir: bfGuDir(), freeMB: Math.round(Number(q.bavail) * Number(q.bsize) / 1048576), totalMB: Math.round(Number(q.blocks) * Number(q.bsize) / 1048576) }; }
+      catch (e) { st = { dir: bfGuDir(), err: String(e && e.message).slice(0, 60) }; }
+      return sendJson(res, 200, {
+        off: BF_GU_OFF ? Math.round((Date.now() - BF_GU_OFF) / 1000) + 's-ago' : 0, bytesMB: Math.round(BF_GU_BYTES / 1048576),
+        max: BF_GU_MAX, disk: st,
+        items: [...BF_GUC.entries()].map(([k, e]) => ({ k: k.slice(0, 26), src: String(e.src || '').slice(-26), gotMB: Math.round(e.got / 1048576), totalMB: Math.round((e.total || 0) / 1048576), done: e.done, err: e.err || '' }))
+      });
     }
     if (p === '/_lastsrc') return sendJson(res, 200, LAST_SRC || {});
     if (p === '/_pools') { // ★ v1.22.0: প্রতি-সোর্স প্রক্সি-পুলের অবস্থা
