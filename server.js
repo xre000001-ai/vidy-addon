@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.51';
+const VERSION = '1.34.52';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -9038,17 +9038,29 @@ async function m4gHeadInfo(f, upto) {
 //   আকার-আনুপাতিক (VBR-এ ছোটখাটো অমিল থাকতে পারে; pull শেষে একই URL-ই আসল Cues-প্লেলিস্টে বদলে যায়)।
 function m4gPlaylistLive(hi, origin, key, gotB, totalB) {
   const SEG = 4 * 1024 * 1024;
-  const base = Math.max(0, (hi && hi.cut) || 0);   // হেড বাদে ক্লাস্টার-এলাকা থেকে ব্লক (init আলাদা আসে)
-  const n = Math.floor(((gotB || 0) - base) / SEG);
-  if (!n || !(totalB > 0)) return null;
-  const dEach = (hi && hi.dur > 0) ? (hi.dur * SEG / totalB) : 8;
+  const base = Math.max(0, (hi && hi.cut) || 0);   // header block excluded (init separate)
+  const have = Math.floor(((gotB || 0) - base) / SEG);
+  if (!(totalB > 0)) return null;
+  // ★ v1.34.52 (user: GD start shows <1min length): list ALL blocks from the start when the
+  //   header Duration is known => displayed length = full movie; not-yet-pulled segments
+  //   wait in /m4seg/ instead of 503. Without duration info, fall back to pulled-only blocks.
+  let n = have, durs = null, td = 8;
+  if (hi && hi.dur > 0) {
+    n = Math.max(1, Math.ceil((totalB - base) / SEG));
+    const dEach = hi.dur / n;
+    td = Math.max(1, Math.ceil(dEach));
+    durs = ix => (ix === n - 1 ? Math.max(0.1, hi.dur - dEach * (n - 1)) : dEach);
+  } else {
+    if (!have) return null;
+    durs = () => 8;
+  }
   const L = ['#EXTM3U', '#EXT-X-VERSION:6', '#EXT-X-PLAYLIST-TYPE:EVENT', '#EXT-X-MEDIA-SEQUENCE:0',
-    '#EXT-X-INDEPENDENT-SEGMENTS', '#EXT-X-TARGETDURATION:' + Math.max(1, Math.ceil(dEach)),
+    '#EXT-X-INDEPENDENT-SEGMENTS', '#EXT-X-TARGETDURATION:' + td,
     '#EXT-X-START:TIME-OFFSET=0',
     '#EXT-X-MAP:URI=\"' + (origin || '') + '/m4gi/' + key + '/init.bin\"'];
   for (let i = 0; i < n; i++) {
-    const a = base + i * SEG, b = a + SEG - 1;
-    L.push('#EXTINF:' + dEach.toFixed(3) + ',');
+    const a = base + i * SEG, b = Math.min(a + SEG - 1, totalB - 1);
+    L.push('#EXTINF:' + durs(i).toFixed(3) + ',');
     L.push((origin || '') + '/m4seg/' + key + '/' + i + '.bin?a=' + a + '&b=' + b);
   }
   return L.join('\n') + '\n';
@@ -9529,6 +9541,7 @@ const m4uIsMediaUrl = u => m4uIsIpLocked(u)
   || /pixeldrain\.(?:dev|com)\/api\/file\//i.test(String(u))
   || /\.(?:mkv|mp4)(?:\?|$)/i.test(String(u));
 const m4uCardUrl = (u, origin) => m4uIsIpLocked(u) ? m4uRelayUrl(u, origin) : String(u);
+const _fnOf = u => { try { return decodeURIComponent(String(u || '').split('?')[0].split('/').pop() || ''); } catch (e) { return ''; } };   // v1.34.52: filename from final URL (audio-label source)
 const m4uDirectOk = u => /(?:^|\.)r2\.dev$/i.test(m4uHostOf(u)) || /(?:^|\.)r2\.cloudflarestorage\.com$/i.test(m4uHostOf(u)) || /(?:^|\.)fsldownload\.com$/i.test(m4uHostOf(u)) || /pixeldrain\.(?:dev|com)\/api\/file\//i.test(String(u)); // v1.34.31: Range-native হোস্ট ⇒ /m4d/ 302-সরাসরি (স্ট্রিম-রিলে নয়)
 // ★★★ v1.34.5 (মাপা: কার্ড-বানানোর ৩০ মিনিট পরেই GU লিংক **400**) — Google-signed লিংক মিনিটেই মেয়াদোত্তীর্ণ।
 //   তাই কার্ডে রিজলভ-করা লিংক বেক করা যায় না; কার্ড = **লেজি-রুট** `/m4d/<b64>/v.mkv`, ক্লিকের সময়ই
@@ -9603,6 +9616,14 @@ async function m4uTdServe(req, res, target) {
 }
 async function m4uFinalFor(target) {   // ★ v1.34.35: m4uTdServe-এর রিজলভ-অর্ধেক (সার্ভ না করে শুধু ফাইনাল-URL) — /m4g/ ব্যবহার করে
   const host = m4uHostOf(target);
+  if (/gdflix\.|gdlink\.dev/i.test(host)) {   // ★ v1.34.52: GDFlix file-page -> fresh final (GU/r2/pixeldrain)
+    const gc = M4U_TD_USED.get('gf:' + target);
+    if (gc && Date.now() - gc.ts < 5 * 60e3) return gc.final;
+    const rr = await m4uTdResolve({ href: target, srv: 'GDFlix' }, false).catch(() => null);
+    const gf2 = (rr && rr.url) || '';
+    if (gf2) M4U_TD_USED.set('gf:' + target, { ts: Date.now(), final: gf2 });
+    return gf2;
+  }
   if (m4uHubHost(host)) {
     const hc = M4U_TD_USED.get('hub:' + target);
     if (hc && Date.now() - hc.ts < 4 * 60e3) return hc.final;   // v1.34.41
@@ -10049,6 +10070,26 @@ async function m4uHubCard(link, T, Y, isS, s, e, needProof, lazy) {
   }
   return { q: q, size: size, url: url, srv: 'FSL', name: (inf && inf.name) || '' };
 }
+const M4U_GF = new Map();   // v1.34.52: gdflix file-url -> {ts,q,size,name}
+async function m4uGfInfo(href) {
+  const c = M4U_GF.get(href);
+  if (c && Date.now() - c.ts < 30 * 60e3) return c;
+  const out = { ts: Date.now(), q: '', size: '', name: '' };
+  try {
+    const r = await mlsGet(href, { ms: 4500 });
+    const b = String((r && r.body) || '');
+    const fn = (((/<title>([^<]{5,220})<\/title>/i.exec(b) || [])[1]) || ((/property="og:title" content="([^"]+)"/i.exec(b) || [])[1]) || '').replace(/&amp;/g, '&').replace(/\s*[-|]\s*(gdflix|gdlink).*$/i, '').trim();
+    if (fn) {
+      out.name = fn;
+      out.q = (/\b(2160|1440|1080|720|480|360)p\b/i.exec(fn) || [])[1] || '';
+      const sz = /([\d.]+\s*(?:GB|MB))/i.exec(fn); if (sz) out.size = sz[1].replace(/\s+/g, ' ').toUpperCase();
+    }
+  } catch (e) { }
+  if (M4U_GF.size > 120) M4U_GF.clear();
+  M4U_GF.set(href, out);
+  return out;
+}
+
 async function m4uTdStreams(tmdbId, title, type, s, e, origin, maxh) {
   const T0 = Date.now();
   const isS = type === 'series';
@@ -10140,7 +10181,8 @@ async function m4uTdStreams(tmdbId, title, type, s, e, origin, maxh) {
     // ★ pack ("All Links") এন্ট্রি: প্রতিটি HubCloud লিংক আলাদা কোয়ালিটি ⇒ আলাদা কার্ড
     for (const o of ranked.filter(o2 => o2.x.pack && o2.x.q === '' )) {
       const hubs = (o.links || []).filter(l => l.srv === 'HubCloud').slice(0, 4);
-      if (!hubs.length) continue;
+      const gfs = (o.links || []).filter(l => l.srv === 'GDFlix').slice(0, 4);   // v1.34.52: pack GDFlix mirrors too
+      if (!hubs.length && !gfs.length) continue;
       await Promise.all(hubs.map(async hc => {
         const r = await m4uHubCard(hc, T, Y, isS, s, e, true, origin ? m4uLazyUrl(hc.href, origin) : '').catch(() => null);
         if (!r || !r.url) return;
@@ -10151,7 +10193,7 @@ async function m4uTdStreams(tmdbId, title, type, s, e, origin, maxh) {
         const _bytes = Number(String(r.size || '0').replace(/[^\d.]/g, '')) * (/GB/i.test(r.size || '') ? 1e3 : 1);
         if (_pv && _pv.b >= _bytes) return;
         _pk.set(_k2, { b: _bytes, fsl: r, hc: hc, info: r });
-        const audio = dtAudio(String(hit.slug).replace(/-/g, ' ')) || '';
+        const audio = dtAudio(String(hit.slug).replace(/-/g, ' ') + ' ' + String((r && r.name) || '') + ' ' + String(o.x.title || '')) || '';   // v1.34.52: dual-audio label from filename/entry-title
         const txt = '\u29c9 ' + T + (Y ? ' | ' + Y + ' |' : ' |') + '\n'
           + (isS ? ('\u29e0 S' + (s || 1) + 'E' + (e || 1)) : '\u29e0 Movie') + '\n'
           + '\u229e Movies4u' + (audio ? ' \u2317 ' + audio : '') + (r.size ? ' \u00b7 ' + r.size : '');
@@ -10162,6 +10204,23 @@ async function m4uTdStreams(tmdbId, title, type, s, e, origin, maxh) {
           name: '\u25a5 ' + (qq || 'Auto') + ' \u25a5', title: txt, description: txt, quality: String(qq || ''),
           url: r.url, _src: 'Movies4u', _srv: 'FSL', _direct: origin ? '' : r.url,
           behaviorHints: { notWebReady: false, isBingeable: true, filename: r.name || ('movies4u-' + (qq || 'auto') + '.mkv') },
+          bingeGroup: 'm4u|' + mlsNorm(T) + '::' + (isS ? 'S' + (s || 1) + 'E' + (e || 1) : 'm')
+        });
+      }));
+      await Promise.all(gfs.map(async gf => {   // ★ v1.34.52: Pack GDFlix card (lazy via /m4g/ at click)
+        const inf = await m4uGfInfo(gf.href).catch(() => null);
+        const qq = Number(inf && inf.q) || 0;
+        const sz = (inf && inf.size) || '';
+        if (!qq && !sz) return;                    // no quality+size-known card
+        if (maxh && qq && qq > maxh) return;
+        const audioG = dtAudio(String(hit.slug).replace(/-/g, ' ') + ' ' + String((inf && inf.name) || '') + ' ' + String(o.x.title || '')) || '';
+        const txtG = '\u29c9 ' + T + (Y ? ' | ' + Y + ' |' : ' |') + '\n'
+          + (isS ? ('\u29e0 S' + (s || 1) + 'E' + (e || 1)) : '\u29e0 Movie') + '\n'
+          + '\u229e Movies4u' + (audioG ? ' \u2317 ' + audioG : '') + (sz ? ' \u00b7 ' + sz : '');
+        cards.push({
+          name: '\u25a5 ' + (qq || 'Auto') + ' \u25a5', title: txtG, description: txtG, quality: String(qq || ''),
+          url: m4uSeekUrl(gf.href, origin), _src: 'Movies4u', _srv: 'GDFlix', _direct: '',
+          behaviorHints: { notWebReady: false, isBingeable: true, filename: (inf && inf.name) || ('movies4u-' + (qq || 'auto') + '.mkv') },
           bingeGroup: 'm4u|' + mlsNorm(T) + '::' + (isS ? 'S' + (s || 1) + 'E' + (e || 1) : 'm')
         });
       }));
@@ -10196,7 +10255,7 @@ async function m4uTdStreams(tmdbId, title, type, s, e, origin, maxh) {
         if (r || multi) break;
       }
       if (multi) {
-        const audioM = dtAudio(String(hit.slug).replace(/-/g, ' ')) || '';
+        const audioM = dtAudio(String(hit.slug).replace(/-/g, ' ') + ' ' + String(x.title || '') + ' ' + multi.map(v => _fnOf(v.url)).join(' ')) || '';   // v1.34.52
         for (const v of multi) {
           if (!m4uIsMediaUrl(v.url)) continue;
           const sizeM = x.size || (v.cl ? mlsMB(v.cl) : '');
@@ -10214,7 +10273,7 @@ async function m4uTdStreams(tmdbId, title, type, s, e, origin, maxh) {
       }
       if (!r || !r.url) return;
       if (!r.lazy && !m4uIsMediaUrl(r.url)) { if (DBG) console.error('[m4utd] not-media ' + String(r.url).slice(0, 60)); return; }
-      const audio = dtAudio(String(hit.slug).replace(/-/g, ' ')) || '';
+      const audio = dtAudio(String(hit.slug).replace(/-/g, ' ') + ' ' + String(x.title || '') + ' ' + _fnOf(r && r.url)) || '';   // v1.34.52
       const size = x.size || (r.cl ? mlsMB(r.cl) : '');
       const txt = '\u29c9 ' + T + (Y ? ' | ' + Y + ' |' : ' |') + '\n'
         + (isS ? ('\u29e0 S' + (s || 1) + 'E' + (e || 1)) : '\u29e0 Movie') + '\n'
@@ -15785,7 +15844,7 @@ const server = http.createServer((req, res) => {
     // init-সেকশন (ক্যাশ-ফাইল থেকে) — /m4gi/<key>/init.bin
     const m4giR = p.match(/^\/m4gi\/([A-Za-z0-9_=-]{8,2400})\/init\.bin$/);
     if (m4giR) return (async () => {
-      const e = BF_GUC.get(m4giR[1]);
+      let e = BF_GUC.get(m4giR[1]); if (!e) { try { e = bfGuAdopt(m4giR[1]); } catch { } }
       if (!e || !e.f || !(e.got > 0)) { try { res.writeHead(503, { 'retry-after': '5' }); } catch { } return res.end(); }
       const g = e.done ? await m4hGeoFile(e.f, e.total || e.got).catch(() => null) : null;
       if (e.done && !g) { try { res.writeHead(502); } catch { } return res.end(); }
@@ -15810,11 +15869,17 @@ const server = http.createServer((req, res) => {
     // সেগমেন্ট (ক্যাশ-ফাইল থেকে বাইট-স্লাইস) — /m4seg/<key>/<i>.bin?a=<off>&b=<end>
     const m4segR = p.match(/^\/m4seg\/([A-Za-z0-9_=-]{8,2400})\/(\d+)\.bin$/);
     if (m4segR) return (async () => {
-      const e = BF_GUC.get(m4segR[1]);
+      let e = BF_GUC.get(m4segR[1]); if (!e) { try { e = bfGuAdopt(m4segR[1]); } catch { } }
       let a = 0, b = -1;
       try { const q = new URL(String(req.url || ''), 'http://x').searchParams; a = Number(q.get('a') || 0); b = Number(q.get('b') || -1); } catch { }
       if (!e || !e.f || !(b >= a) || a < 0) { try { res.writeHead(400); } catch { } return res.end(); }
       e.used = Date.now();
+      if (!e.done && !e.err && b >= (e.got || 0)) {
+        // ★ v1.34.52: wait (<=22s) for not-yet-pulled bytes => buffering in player, not a hard error
+        const tW = Date.now() + 22000;
+        while (!e.done && !e.err && b >= (e.got || 0) && Date.now() < tW) await new Promise(r2 => setTimeout(r2, 300));
+      }
+      if (e.err) { try { res.writeHead(502); } catch { } return res.end(); }
       if (!e.done && b >= (e.got || 0)) { try { res.writeHead(503, { 'retry-after': '3' }); } catch { } return res.end(); }
       const tot = e.total || e.got || 0;
       const bb = tot ? Math.min(b, tot - 1) : b;
