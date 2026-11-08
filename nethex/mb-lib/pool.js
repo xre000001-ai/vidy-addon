@@ -345,12 +345,20 @@ export async function poolOnce(force = false) {
     //   একটাও চলত না ⇒ বেঞ্চ যাচাই-হীন হয়ে পড়ে থাকত। বাকিগুলো পরের চেকার-ঢেউয়ে ধীরে যাচাই হয়।
     const SEED_BUDGET = Math.max(8000, Number(process.env.NX_SEED_BUDGET || 0) || 25000);
     const tBoot = Date.now();
-    for (const list of [seedList, scrapeList]) {
+    // v1.34.67: seed-order — generic-ms-krome datacenter-exit age (MB-er jonno sabcheye kharap);
+    //   prothom 60 druto, bakita shuffle. Bench khub patla (<12) hole fresh scrape age —
+    //   ar scrape-pass-o budget-baddho (lomba pass checker-ke thamiye LASTOK-cut dakto).
+    const seedOrdered = seedList.slice(0, 60).concat(seedList.slice(60).sort(() => Math.random() - 0.5));
+    const SCRAPE_BUDGET = Math.max(10000, Number(process.env.NX_SCRAPE_BUDGET || 0) || 45000);
+    const lists = POOL.length < 12 ? [[scrapeList, false], [seedOrdered, true]] : [[seedOrdered, true], [scrapeList, false]];
+    for (const [list, isSeed] of lists) {
       if (!list.length) continue;
+      const tList = Date.now();
       await runLimited(list, async (u) => {
         if (POOL.length >= BOOT_TARGET) return;
-        if (list === seedList && Date.now() - tBoot > SEED_BUDGET) return;   // লেজ-কাটা
-        const r = await verifyOne(u, list === seedList);
+        if (isSeed && Date.now() - tBoot > SEED_BUDGET) return;   // লেজ-কাটা
+        if (!isSeed && Date.now() - tList > SCRAPE_BUDGET) return; // v1.34.67: scrape-o budget-baddho
+        const r = await verifyOne(u, isSeed);
         if (r) tested.push(r);
       });
       if (POOL.length >= BOOT_TARGET) break;
