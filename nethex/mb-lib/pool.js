@@ -401,7 +401,7 @@ async function checkerWave() {
   //   blind/403 হয়ে বেঞ্চ-দুলুনি। এখন: ঢেউ-প্রতি **স্লাইস** (বেঞ্চের ১/৬, সর্বনিম্ন ১৬, সর্বোচ্চ ৩২),
   //   সবচেয়ে-পুরনো-প্রমাণ আগে, প্রতি-exit-গ্যাপ ≥ `NX_VERIFY_GAP` (ডিফল্ট ৬০সে) + সীমিত-সমান্তরালতা।
   const GAP = Math.max(20000, Number(process.env.NX_VERIFY_GAP || 0) || 60000);
-  const sliceN = Math.max(16, Math.min(32, Math.ceil(POOL.length / 6)));
+  const sliceN = Math.max(16, Math.min(96, Math.ceil(POOL.length / 4))); // v1.34.65: bench 480-scale — wave slice cap 32 -> 96
   const wave = POOL.filter(u => { const b = BAD.get(u); return !b || b <= now; })
     .filter(u => now - (LASTOK.get(u) || 0) >= GAP)
     .sort((a, b) => (LASTOK.get(a) || 0) - (LASTOK.get(b) || 0))

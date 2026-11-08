@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.64';
+const VERSION = '1.34.65';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -233,6 +233,11 @@ function prunePool(snap) {
 // জীবিত-কিন্তু-সাইট-অন্ধ=স্পেয়ার (থাকে, স্কোর-জরিমানায়-পিছিয়ে); Google-204-ও-মরা=প্রমাণহীন → ৬০০সে-কাটা → এনরিচ
 const PX_SITE_URL = VIDY_REFERER; // টার্গেট-সাইট-নিজেই
 const PX_SITE = new Set(); // v1.15.17 বেঞ্চ-মানদণ্ড (ইউজার): বেঞ্চ = সাইটে-যেতে-পারে + জীবিত — চেকার-ই-একমাত্র-কর্তৃত্ব (রেস-জয়/Google-204 সাইট-প্রমাণ-নয়)
+// v1.34.65: bench (PX_SITE) persist — age restart-e trained bench muche jeto (POOL thakto, bench 0 theke shuru)
+const PX_SITE_FILE = path.join(__dirname, 'vidy_px_site.json');
+try { for (const px of JSON.parse(fs.readFileSync(PX_SITE_FILE, 'utf8'))) if (POOL.some(c => c.px === px)) PX_SITE.add(px); } catch (e) { }
+let _pxSiteSaveAt = 0;
+function pxSiteSave() { const n = Date.now(); if (n - _pxSiteSaveAt < 60000) return; _pxSiteSaveAt = n; try { fs.promises.writeFile(PX_SITE_FILE, JSON.stringify([...PX_SITE])).catch(() => { }); } catch (e) { } }
 const PX_MISS = new Map(); // v1.15.21 কম্পন-সহনশীলতা: সাইট-উত্তর-পাতলা/CF-পাতা = ২-টানা-ব্যর্থতায়-নামা (১-বারে-বেঞ্চ-দোলে-নয়; হার্ড-ব্যর্থ=তাৎক্ষণিক)
 const PX_COOL = new Map(); // v1.15.16b: পূর্ণ-মৃত → ১২০সে-শীতল (রেজলভার-প্যারিটি — একই-১২-মৃত-ঢেউয়ে-ঢেউয়ে-পিটানো-বন্ধ; ৬০০সে-কাটার-আগে-৫-সুযোগ)
 let PXCHK = 0, pxChkBusy = false;
@@ -269,6 +274,7 @@ async function pxCheckerWave() {
       if (t2 - (PX_LASTOK.get(POOL[i].px) || t2) > 600000) { const g = POOL.splice(i, 1)[0]; PX_RUN.delete(g.px); PX_LASTOK.delete(g.px); PX_COOL.delete(g.px); PX_SITE.delete(g.px); PX_MISS.delete(g.px); cut++; }
     }
     if (cut) { try { fs.promises.writeFile(POOL_FILE, JSON.stringify(POOL)).catch(() => {}); } catch (e) {} setTimeout(enrichPool, 1500).unref(); }
+    pxSiteSave(); // v1.34.65: bench-state disk-e rakho
     const benchN = POOL.filter(c => PX_SITE.has(c.px)).length;
     try { global.__benchN = benchN; } catch (e) { }
     // ★★ v1.26.9 (ইউজার: "node, benched proxy eigula onek baraw"): বেঞ্চ-লক্ষ্য ৪৮ → PXBMIN(২৪০)।
@@ -1822,6 +1828,22 @@ async function vidySweep(n) {
   }
 }
 vidyVLoad();
+// v1.34.65: dedicated VIDY_OK freshness trainer — boro sweep-er opekkha na kore proti 15s-e purono 60 node reverify
+setInterval(async () => {
+  try {
+    if (Date.now() < MMR_ACTIVE_UNTIL) return;
+    const now = Date.now();
+    const stale = [...VIDY_OK.entries()].filter(([, v]) => now - (v.ts || 0) > 90000).sort((a, b) => (a[1].ts || 0) - (b[1].ts || 0)).slice(0, 60);
+    for (let i = 0; i < stale.length; i += 20) {
+      await Promise.all(stale.slice(i, i + 20).map(async ([px]) => {
+        if (!vpxTake(px)) return;
+        try { await vySlot(1500); const ms = await vidyPing(px); vidyNodeOk(px, ms); }
+        catch (e) { vidyNodeBad(px); }
+        finally { try { vyFree(); } catch (e2) { } vpxFree(px); }
+      }));
+    }
+  } catch (e) { }
+}, 15000).unref?.();
 // ★ v1.17.56: **প্রশিক্ষণ-গতি** — verified লক্ষ্যের নিচে থাকলে প্রতি ~৯সে-এ স্ক্যান (আগে ২৫সে), পূর্ণ হলে ৩০সে।
 // ★★ v1.21.12 (মাপা: ভিতরের ডেমন CPU ভাগ করে নেয় ⇒ cold ৭-৮সে → ১২-১৪সে): prod-এ ডেমন **ডিফল্ট বন্ধ** (VDAEMON=1 করলে চালু)। পুল বাড়ে সার্ভারের নিজের হালকা sweeper দিয়ে (হেডার-ফিক্সের পর ওটা সত্যিই নোড যোগ করছে: vyfresh ১১→২৭)।
 // ★★ v1.21.11 (মাপা: DW=10/DN=1500 দিলে ছোট কন্টেইনারে CPU-ক্ষুধা ⇒ উত্তর ৭→১১সে, একবার ২৫সে): ডেমন এখন হালকা (৪ কর্মী/৬০০ নোড/৫মিন)।
@@ -16310,7 +16332,7 @@ function ensureNxChild(nxPort) { // v1.15.8: ৯০সে-অন্তর-7137-�
       if (Date.now() - lastSpawn < 180000) return;
       lastSpawn = Date.now();
       if (DBG) console.error('[nx-embed] ensure: চাইল্ড-নেই — পুনঃস্পন');
-      try { require('child_process').spawn(process.execPath, [path.join(__dirname, 'nethex', 'server.js')], { env: Object.assign({}, process.env, { PORT: String(nxPort), NX_POOL_FILE: MB_POOL_FILE, NX_POOL_OUT: MB_POOL_FILE, NX_BENCH_MAX: '480', NX_BOOT_TARGET: '360', NX_SAMPLE: '720', NX_CONC: '20', NX_SEED_BUDGET: '25000', NX_VERIFY_GAP: '60000', NX_FRESH_SAMPLE: '150', NX_CARD_CAP: '40', NX_CAP_MS: '900' }), stdio: 'ignore' }); } catch (e) {}
+      try { require('child_process').spawn(process.execPath, [path.join(__dirname, 'nethex', 'server.js')], { env: Object.assign({}, process.env, { PORT: String(nxPort), NX_POOL_FILE: MB_POOL_FILE, NX_POOL_OUT: MB_POOL_FILE, NX_BENCH_MAX: '480', NX_BOOT_TARGET: '360', NX_SAMPLE: '720', NX_CONC: '20', NX_SEED_BUDGET: '50000', NX_VERIFY_GAP: '60000', NX_FRESH_SAMPLE: '450', NX_CARD_CAP: '40', NX_CAP_MS: '900' }), stdio: 'ignore' }); } catch (e) {}
     });
     rq.on('timeout', () => { rq.destroy(); });
   }, 90000);
@@ -16335,6 +16357,11 @@ function mbPoolSync() {
       }
     } catch (e) { }
     // আমাদের প্রমাণিত (wx/px)-তালিকা: দ্রুততম আগে
+    // v1.34.65: session-proven VIDY_OK exit age — sudhu Google-probe pass na, asol session-promanto node age seed-e jabe
+    try {
+      const vy = [...VIDY_OK.entries()].map(([px, v]) => ({ px, ms: Number(v && v.ms) || 1500 })).sort((a, b) => a.ms - b.ms).slice(0, 270);
+      for (const o of vy) if (!merged.has(o.px)) merged.set(o.px, o);
+    } catch (e) { }
     const ours = (Array.isArray(POOL) ? POOL : []).filter(c => c && c.px && /^[\w.-]+:\d{2,5}$/.test(c.px))
       .map(c => ({ px: c.px, ms: Number(c.ms) || 1200 }))
       .sort((a, b) => a.ms - b.ms).slice(0, 270); // v1.34.64: 3x
@@ -16350,7 +16377,7 @@ function startEmbeddedNx() {
       if (!fs.existsSync(path.join(__dirname, 'nethex', 'server.js'))) return resolve('');
       const nxPort = Number(process.env.PORT || 7000) + 137;
       const child = require('child_process').spawn(process.execPath, [path.join(__dirname, 'nethex', 'server.js')], {
-        env: Object.assign({}, process.env, { PORT: String(nxPort), NX_POOL_FILE: MB_POOL_FILE, NX_POOL_OUT: MB_POOL_FILE, NX_BENCH_MAX: '480', NX_BOOT_TARGET: '360', NX_SAMPLE: '720', NX_CONC: '20', NX_SEED_BUDGET: '25000', NX_VERIFY_GAP: '60000', NX_CARD_CAP: '40', NX_CAP_MS: '900' }), // v1.17.31: আমাদের-বীজ+বড়-বেঞ্চ
+        env: Object.assign({}, process.env, { PORT: String(nxPort), NX_POOL_FILE: MB_POOL_FILE, NX_POOL_OUT: MB_POOL_FILE, NX_BENCH_MAX: '480', NX_BOOT_TARGET: '360', NX_SAMPLE: '720', NX_CONC: '20', NX_SEED_BUDGET: '50000', NX_VERIFY_GAP: '60000', NX_CARD_CAP: '40', NX_CAP_MS: '900' }), // v1.17.31: আমাদের-বীজ+বড়-বেঞ্চ
         stdio: 'ignore',
       });
       ensureNxChild(nxPort); // v1.15.8: বুট থেকেই-প্রহরী — চাইল্ড-বুটেই-ব্যর্থ-হলেও-৯০সে-অন্তর-যাচাই→পুনঃস্পন (আগে-স্থায়ী-off-হয়ে-যেত)
@@ -16362,7 +16389,7 @@ function startEmbeddedNx() {
         setTimeout(() => {
           try {
             const c3 = require('child_process').spawn(process.execPath, [path.join(__dirname, 'nethex', 'server.js')], {
-              env: Object.assign({}, process.env, { PORT: String(nxPort), NX_POOL_FILE: MB_POOL_FILE, NX_POOL_OUT: MB_POOL_FILE, NX_BENCH_MAX: '480', NX_BOOT_TARGET: '360', NX_SAMPLE: '720', NX_CONC: '20', NX_SEED_BUDGET: '25000', NX_VERIFY_GAP: '60000', NX_CARD_CAP: '40', NX_CAP_MS: '900' }), // v1.17.31: আমাদের-বীজ+বড়-বেঞ্চ
+              env: Object.assign({}, process.env, { PORT: String(nxPort), NX_POOL_FILE: MB_POOL_FILE, NX_POOL_OUT: MB_POOL_FILE, NX_BENCH_MAX: '480', NX_BOOT_TARGET: '360', NX_SAMPLE: '720', NX_CONC: '20', NX_SEED_BUDGET: '50000', NX_VERIFY_GAP: '60000', NX_CARD_CAP: '40', NX_CAP_MS: '900' }), // v1.17.31: আমাদের-বীজ+বড়-বেঞ্চ
               stdio: 'ignore',
             });
             c3.on('exit', () => { // v1.15.7 রাউন্ড-৮: respawn-চাইল্ড-মরলেও-আগে-যাচাই — 7137-তে-কেউ-সেবা-দিলে-'off'-বলা-মিথ্যা
