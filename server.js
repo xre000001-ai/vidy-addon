@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.48';
+const VERSION = '1.34.49';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -14589,7 +14589,10 @@ async function vhsServe(req, res, b64) {
 //   (ইউজার: "net speed onek kom") ⇒ ধীর লাইনে সবচেয়ে বড় হাত।
 const VH_PRE = new Map();                       // প্রি-ওয়ার্ম-ইন-ফ্লাইট: url → promise (ক্লিক এলে একই promise-এ যোগ দেয়)
 async function vhGetPlaylist(target) {
-  const hdr = { 'User-Agent': UA, 'Referer': VIDY_REFERER, 'Accept': '*/*', 'Accept-Encoding': 'gzip' };
+  // ★ v1.34.49 (আসল বাগ): 'Accept-Encoding: gzip' পাঠালে proxiedGet-পথে প্লেলিস্ট **gzip-বাইট** হয়ে ফেরে,
+  //   ডিকম্প্রেস হয় না ⇒ #EXTM3U মিলত না ⇒ সফল ফেচও ব্যর্থ ধরা হতো (Miami/Boise-র ওঠানামার মূল কারণ)।
+  //   তাই প্রক্সি-পথে gzip চাই না; _dir (fetch) নিজেই ডিকম্প্রেস করে।
+  const hdr = { 'User-Agent': UA, 'Referer': VIDY_REFERER, 'Accept': '*/*' };
   // ★ v1.34.48: প্রথমে **mint-নোড** (যে নোড এই টাইটেলের sources এনেছে) — প্লেলিস্ট-গেট তাকেই চেনে
   const _mint = (async () => {
     try {
