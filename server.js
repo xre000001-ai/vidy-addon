@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.57';
+const VERSION = '1.34.58';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -10028,14 +10028,13 @@ async function m4uTdResolve(link, needProof) {
       const org = (/^https?:\/\/[^/]+/.exec(link.href) || [])[0] || '';
       if (fid && org) {
         // সরাসরি egress-এ GDFlix 429 দেয় (মাপা) ⇒ প্রক্সি-রোটেশনওয়ালা Smart-রিজলভার
-        const g = await bfResolveGdflixSmart(fid, 0, 6500).catch(() => null);
-        if (g && g.streamUrl && !g.isZip && !g.dead) url = g.streamUrl;
-        if (!url) {   // v1.34.57: MLS resolver (foreground attempt + BG continuation + one cache re-check)
-          let mg = await mlsGd(link.href, 9000).catch(() => null);
-          if (!mg || !mg.ok) { await new Promise(r => setTimeout(r, 5000)); mg = await mlsGd(link.href, 9000).catch(() => null); }
-          if (mg && mg.ok && mg.direct) url = mg.direct;
+        let mg = await mlsGd(link.href, 6000).catch(() => null);   // v1.34.58: MLS first (quick inline/worker routes)
+        if (mg && mg.ok && mg.direct) url = mg.direct;
+        if (!url) {
+          const g = await bfResolveGdflixSmart(fid, 0, 4000).catch(() => null);
+          if (g && g.streamUrl && !g.isZip && !g.dead) url = g.streamUrl;
         }
-        else if (DBG) console.error('[m4utd] gdflix-miss ' + fid + ' zip=' + (g && g.isZip) + ' dead=' + (g && g.dead));
+        if (!url && DBG) console.error('[m4utd] gdflix-miss ' + fid);
       }
     } else if (srv === 'V-Cloud') {   // ★ v1.34.19: পেজের ভিতরের আসল সার্ভারগুলো (নিচে m4uVcloudResolve)
       const vs = await m4uVcloudResolve(link.href).catch(() => []);
@@ -10257,6 +10256,7 @@ async function m4uTdStreams(tmdbId, title, type, s, e, origin, maxh) {
       }));
       await Promise.all(gfs.map(async gf => {   // ★ v1.34.52: Pack GDFlix card (lazy via /m4g/ at click)
         const inf = await m4uGfInfo(gf.href).catch(() => null);
+        try { mlsGd(gf.href, 4000).catch(() => { }); } catch (e) { }   // v1.34.58: warm the resolver in background
         const qq = Number(inf && inf.q) || 0;
         const sz = (inf && inf.size) || '';
         if (!qq && !sz) return;                    // no quality+size-known card
@@ -15924,7 +15924,7 @@ const server = http.createServer((req, res) => {
       e.used = Date.now();
       if (!e.done && !e.err && b >= (e.got || 0)) {
         // ★ v1.34.52: wait (<=22s) for not-yet-pulled bytes => buffering in player, not a hard error
-        const tW = Date.now() + 22000;
+        const tW = Date.now() + 9000;   // v1.34.58: edge cuts ~13s => origin answers (503) first
         while (!e.done && !e.err && b >= (e.got || 0) && Date.now() < tW) await new Promise(r2 => setTimeout(r2, 300));
       }
       if (e.err) { try { res.writeHead(502); } catch { } return res.end(); }
