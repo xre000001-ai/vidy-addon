@@ -28,7 +28,9 @@ import { SITE, UA } from './upstream.js';
 const SRCS = ['https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&proxy_format=protocolipport&format=text',
               'https://raw.githubusercontent.com/TheSpeedX/PROXY-LIST/master/http.txt',
               'https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt',
-              'https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/protocols/http/data.txt']; // proxifly: পৃথক-http-মডিউল, প্রতি-৫মিনিটে-যাচাইকৃত (ইউজার-প্রস্তাব)
+              'https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/protocols/http/data.txt', // proxifly
+              'https://raw.githubusercontent.com/proxmint/free-proxy-list/main/proxies/http.txt',
+              'https://raw.githubusercontent.com/zloi-user/hideip.me/main/http.txt']; // v1.34.68: parent-enrich-e mapa sera list (ip:port format)
 const BENCH_MAX = Math.max(32, Number(process.env.NX_BENCH_MAX || 0) || 128); // v1.17.31: env-টিউনেবল (অ্যাডন ১৬০ পাঠায়)             // v2.10.4 (ইউজার): ক্যাপ-ডাবল ৬৪→১২৮             // r-20261016m (ইউজার: 'ম্যাক্স-পর্যন্ত'): বেঞ্চ-ক্যাপ ৩২→৬৪ — ঝড়ে-অর্ধেক-মরলেও-৩২-থাকে
 const SAMPLE = Math.max(100, Number(process.env.NX_SAMPLE || 0) || 400);               // candidates probed per pass (২০০→৪০০)
 const BOOT_TARGET = Math.max(24, Number(process.env.NX_BOOT_TARGET || 0) || 96);           // v2.10.4 (ইউজার): বুট-টার্গেট-ডাবল ৪৮→৯৬           // boot stops once this many exits are in (২৮→৪৮)
@@ -288,7 +290,7 @@ async function searchVerify(u) {
 
 export async function poolOnce(force = false) {
   if (force) POOL.__passes = 1;                     // boot/fresh-wave
-  if (!force && Date.now() - TS < 90000) return;   // r-20261016a: ১.৫-মিনিট-পুনঃযাচাই (ইউজার-নির্দেশ — fastest-alive bench সতেজ)
+  if (!force && Date.now() - TS < (POOL.length >= 8 ? 240000 : 90000)) return; // v1.34.68: bench sustho (>=8) hole pass 4min-antor — odhora lokkheye jalani na
   if (FETCHING) return;
   FETCHING = true;
   TS = Date.now();
@@ -310,7 +312,7 @@ export async function poolOnce(force = false) {
     let freshCand = [];
     if (POOL.length < BOOT_TARGET) {
       const txts = await Promise.all(SRCS.map(u => undiciFetch(u, { signal: AbortSignal.timeout(20000) }).then(r => r.text()).catch(() => '')));
-      freshCand = [...new Set(txts.join('\n').split('\n').map(x => x.trim()).filter(u => u.startsWith('http://')))];
+      freshCand = [...new Set(txts.join('\n').split('\n').map(x => x.trim()).map(u => /^\d{1,3}(?:\.\d{1,3}){3}:\d{2,5}$/.test(u) ? 'http://' + u : u).filter(u => u.startsWith('http://')))]; // v1.34.68: ip:port list-o grohon
       const have = new Set(seedCand);
       freshCand = freshCand.filter(u => !have.has(u));
       freshCand.sort(() => Math.random() - 0.5);

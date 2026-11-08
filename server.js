@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.67';
+const VERSION = '1.34.68';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -16340,7 +16340,7 @@ function ensureNxChild(nxPort) { // v1.15.8: ৯০সে-অন্তর-7137-�
       if (Date.now() - lastSpawn < 180000) return;
       lastSpawn = Date.now();
       if (DBG) console.error('[nx-embed] ensure: চাইল্ড-নেই — পুনঃস্পন');
-      try { require('child_process').spawn(process.execPath, [path.join(__dirname, 'nethex', 'server.js')], { env: Object.assign({}, process.env, { PORT: String(nxPort), NX_POOL_FILE: MB_POOL_FILE, NX_POOL_OUT: MB_POOL_FILE, NX_BENCH_MAX: '480', NX_BOOT_TARGET: '360', NX_SAMPLE: '720', NX_CONC: '20', NX_SEED_BUDGET: '50000', NX_VERIFY_GAP: '60000', NX_FRESH_SAMPLE: '450', NX_CARD_CAP: '40', NX_CAP_MS: '900' }), stdio: 'ignore' }); } catch (e) {}
+      try { require('child_process').spawn(process.execPath, [path.join(__dirname, 'nethex', 'server.js')], { env: Object.assign({}, process.env, { PORT: String(nxPort), NX_POOL_FILE: MB_POOL_FILE, NX_POOL_OUT: MB_POOL_FILE, NX_BENCH_MAX: '480', NX_BOOT_TARGET: '60', NX_SAMPLE: '720', NX_CONC: '20', NX_SEED_BUDGET: '50000', NX_VERIFY_GAP: '60000', NX_FRESH_SAMPLE: '450', NX_CARD_CAP: '40', NX_CAP_MS: '900' }), stdio: 'ignore' }); } catch (e) {}
     });
     rq.on('timeout', () => { rq.destroy(); });
   }, 90000);
@@ -16385,7 +16385,7 @@ function startEmbeddedNx() {
       if (!fs.existsSync(path.join(__dirname, 'nethex', 'server.js'))) return resolve('');
       const nxPort = Number(process.env.PORT || 7000) + 137;
       const child = require('child_process').spawn(process.execPath, [path.join(__dirname, 'nethex', 'server.js')], {
-        env: Object.assign({}, process.env, { PORT: String(nxPort), NX_POOL_FILE: MB_POOL_FILE, NX_POOL_OUT: MB_POOL_FILE, NX_BENCH_MAX: '480', NX_BOOT_TARGET: '360', NX_SAMPLE: '720', NX_CONC: '20', NX_SEED_BUDGET: '50000', NX_VERIFY_GAP: '60000', NX_CARD_CAP: '40', NX_CAP_MS: '900' }), // v1.17.31: আমাদের-বীজ+বড়-বেঞ্চ
+        env: Object.assign({}, process.env, { PORT: String(nxPort), NX_POOL_FILE: MB_POOL_FILE, NX_POOL_OUT: MB_POOL_FILE, NX_BENCH_MAX: '480', NX_BOOT_TARGET: '60', NX_SAMPLE: '720', NX_CONC: '20', NX_SEED_BUDGET: '50000', NX_VERIFY_GAP: '60000', NX_CARD_CAP: '40', NX_CAP_MS: '900' }), // v1.17.31: আমাদের-বীজ+বড়-বেঞ্চ
         stdio: 'ignore',
       });
       ensureNxChild(nxPort); // v1.15.8: বুট থেকেই-প্রহরী — চাইল্ড-বুটেই-ব্যর্থ-হলেও-৯০সে-অন্তর-যাচাই→পুনঃস্পন (আগে-স্থায়ী-off-হয়ে-যেত)
@@ -16397,7 +16397,7 @@ function startEmbeddedNx() {
         setTimeout(() => {
           try {
             const c3 = require('child_process').spawn(process.execPath, [path.join(__dirname, 'nethex', 'server.js')], {
-              env: Object.assign({}, process.env, { PORT: String(nxPort), NX_POOL_FILE: MB_POOL_FILE, NX_POOL_OUT: MB_POOL_FILE, NX_BENCH_MAX: '480', NX_BOOT_TARGET: '360', NX_SAMPLE: '720', NX_CONC: '20', NX_SEED_BUDGET: '50000', NX_VERIFY_GAP: '60000', NX_CARD_CAP: '40', NX_CAP_MS: '900' }), // v1.17.31: আমাদের-বীজ+বড়-বেঞ্চ
+              env: Object.assign({}, process.env, { PORT: String(nxPort), NX_POOL_FILE: MB_POOL_FILE, NX_POOL_OUT: MB_POOL_FILE, NX_BENCH_MAX: '480', NX_BOOT_TARGET: '60', NX_SAMPLE: '720', NX_CONC: '20', NX_SEED_BUDGET: '50000', NX_VERIFY_GAP: '60000', NX_CARD_CAP: '40', NX_CAP_MS: '900' }), // v1.17.31: আমাদের-বীজ+বড়-বেঞ্চ
               stdio: 'ignore',
             });
             c3.on('exit', () => { // v1.15.7 রাউন্ড-৮: respawn-চাইল্ড-মরলেও-আগে-যাচাই — 7137-তে-কেউ-সেবা-দিলে-'off'-বলা-মিথ্যা
