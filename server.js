@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.35';
+const VERSION = '1.34.36';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -14422,6 +14422,15 @@ function vhRewrite(body, target, origin) {
 const VH_PRE = new Map();                       // প্রি-ওয়ার্ম-ইন-ফ্লাইট: url → promise (ক্লিক এলে একই promise-এ যোগ দেয়)
 async function vhGetPlaylist(target) {
   const hdr = { 'User-Agent': UA, 'Referer': VIDY_REFERER, 'Accept': '*/*', 'Accept-Encoding': 'gzip' };
+  // ★ v1.34.36: সরাসরি-ফেচ ও পুল-রেস **সমান্তরালে** — আগে ক্রমিক ছিল ⇒ ব্যর্থ হোস্টে ১৭সে পর্যন্ত ঝুলত (গেটওয়ে ৫০৪)
+  const _pool = (async () => {
+    try {
+      const x = await racePool(target, 6, 8000, null, b => String(b || '').indexOf('#EXTM3U') >= 0, hdr);
+      const b2 = String((x && x.body) || '');
+      if (b2.indexOf('#EXTM3U') >= 0) return b2;
+    } catch (e) { }
+    return '';
+  })();
   try {
     const r = await fetch(target, { headers: hdr, redirect: 'follow', signal: AbortSignal.timeout(9000) });
     if (r.status === 200) {
@@ -14438,13 +14447,7 @@ async function vhGetPlaylist(target) {
       if (txt && txt.indexOf('#EXTM3U') >= 0) return txt;
     }
   } catch (e) { }
-  try {                                                                        // পুল-ফলব্যাক (ডেটাক-IP-এ ৪০৩ হলে)
-    // ★ v1.34.35: Referer-সহ রেস (আগে হেডার ছাড়া যেত ⇒ goldenkite পুলেও ৪০৩), প্রার্থী ৩→৬
-    const x = await racePool(target, 6, 8000, null, b => String(b || '').indexOf('#EXTM3U') >= 0, hdr);
-    const b2 = String((x && x.body) || '');
-    if (b2.indexOf('#EXTM3U') >= 0) return b2;
-  } catch (e) { }
-  return '';
+  return await _pool;   // v1.34.36: সরাসরি পথ ব্যর্থ হলে পুলের উত্তর (সমান্তরালে চলছিল)
 }
 // ★ v1.28.3-m: **কার্ড-বানানোর সময়ই প্লেলিস্ট প্রি-ওয়ার্ম** — প্রথম ক্লিকের ঠান্ডা-অপেক্ষা মুছে যায়
 //   (মাপা: ঠান্ডা /vh/ ৪.৯৯সে → প্রি-ওয়ার্ম থাকলে ৭ms)। শুধু প্রথম VHPW(৩) কার্ড, ব্যাকগ্রাউন্ডে;
@@ -14481,13 +14484,14 @@ async function vhServe(req, res, b64) {
   const hit = VH_C.get(ck);
   if (hit && Date.now() - hit.ts < VH_TTL) { res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl', 'access-control-allow-origin': '*', 'cache-control': 'no-store' }); return res.end(vuStampPlaylist(hit.v, origin)); }
   const t0 = Date.now();
+  const _left = () => Math.max(300, 9000 - (Date.now() - t0));   // ★ v1.34.36: গেটওয়ে-সীমার (মাপা ~১২সে) ভেতরে উত্তর বাধ্যতামূলক
   const pre = VH_PRE.get(ck);                      // ★ প্রি-ওয়ার্ম চলছে? তার সঙ্গে যোগ দিই (নতুন করে টানি না)
-  if (pre) { try { await pre; } catch (e) { } const h2 = VH_C.get(ck);
+  if (pre) { try { await Promise.race([pre, new Promise(r => setTimeout(r, _left()))]); } catch (e) { } const h2 = VH_C.get(ck);
     if (h2 && Date.now() - h2.ts < VH_TTL) { res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl', 'access-control-allow-origin': '*', 'cache-control': 'no-store' }); return res.end(vuStampPlaylist(h2.v, origin)); } }
   // ★ v1.34.35: সাম্প্রতিক-ব্যর্থতায় সাথে সাথে 302 (প্লেয়ার পুরোনো সরাসরি-পথেই চেষ্টা করুক)
   const _vf = VH_FAIL.get(ck);
   if (_vf && Date.now() - _vf < 5 * 60 * 1000) { try { res.writeHead(302, { location: target, 'cache-control': 'no-store', 'access-control-allow-origin': '*' }); } catch (e) { } return res.end(); }
-  const body = await vhGetPlaylist(target);
+  const body = await Promise.race([vhGetPlaylist(target), new Promise(r => setTimeout(() => r(''), _left()))]);
   if (!body) { VH_FAIL.set(ck, Date.now()); try { res.writeHead(302, { location: target, 'cache-control': 'no-store', 'access-control-allow-origin': '*' }); } catch (e) { } return res.end(); }
   const out = vhRewrite(body, target, origin);
   if (VH_C.size > 800) VH_C.clear();
