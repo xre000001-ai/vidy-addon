@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.58';
+const VERSION = '1.34.59';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -10480,7 +10480,7 @@ function _m4uMerge(a, b) {   // ★ v1.34.18: দুই ডোমেইনের
   }
   return [...seen.values()]
     .sort((x, y) => (Number(y.quality) || 0) - (Number(x.quality) || 0) || rk(x) - rk(y))
-    .slice(0, 16); // ★ v1.34.21 revision: মার্জ-ক্যাপ ১২→১৬ (JW4-এ ১২-তেই কাটা পড়ত — কোয়ালিটি×সার্ভার কম্বো বাদ যেত)
+    .slice(0, 24); // v1.34.59: cap 16->24 (720/480 mirrors were truncated when FSL/Pixel/GD filled higher qualities)
 }
 async function m4uStreams(tmdbId, title, type, s, e, origin, maxh) { // maxh: cfg.m4ur রেজো-ছাঁকনি (0=সব); HLS-সিক-প্রথম + সরাসরি-MKV
   if (!tmdbId) return []; // v1.15.82: মুভি + সিরিজ (আগে type!=='movie'-তে সিরিজ-শূন্য ছিল)
