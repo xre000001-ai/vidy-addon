@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.39';
+const VERSION = '1.34.40';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -9638,6 +9638,7 @@ function m4uHubHost(h) { return /(?:^|\.)hubcloud\.(?:ist|pw|fans|xyz|site|life|
 //   তত ভালো ⇒ প্রাপ্ত r2-লিংক (প্রিসাইন ~৮ঘণ্টা) এখন **ডিস্ক-ক্যাশে** থাকে (৫ঘণ্টা TTL) — রিস্টার্টের পরেও
 //   একই ফাইলের জন্য gamerxyt আর খুলতে হয় না।
 const HUB_R2 = new Map(); let HUB_R2_LOADED = 0, HUB_R2_SAVE_T = null;
+const HUB_DEAD = new Map();   // ★ v1.34.40: drive → ts — presigned proof দুবার ব্যর্থ (মাপা: R2 NotEntitled = অ্যাকাউন্ট-মৃত) ⇒ কার্ডই বাদ
 const hubR2File = () => { try { return require('path').join(__dirname, 'hub_r2_cache.json'); } catch (e) { return ''; } };
 function hubR2Load() {
   if (HUB_R2_LOADED) return; HUB_R2_LOADED = 1;
@@ -9715,6 +9716,8 @@ async function m4uProof(u) {
   } catch (e) { return false; }
 }
 async function m4uHubFinal(drive) {   // serve-পথের জন্য: পুরনো ক্যাশ proof ছাড়া 302 নয়
+  const _hd = HUB_DEAD.get(drive);
+  if (_hd && Date.now() - _hd < 30 * 60e3) return '';   // v1.34.40: মৃত জানা থাকলে সাথে সাথে বাদ
   let f = await m4uHubFsl(drive).catch(() => '');
   if (!f) return '';
   const e = HUB_R2.get(drive);
@@ -9722,8 +9725,9 @@ async function m4uHubFinal(drive) {   // serve-পথের জন্য: পু
     if (await m4uProof(f)) { e.ts = Date.now(); return f; }
     HUB_R2.delete(drive);
     const f2 = await m4uHubFsl(drive, true).catch(() => '');
-    if (f2 && f2 !== f) { if (await m4uProof(f2)) return f2; return f2; }
-    return f2 || '';
+    if (f2 && await m4uProof(f2)) return f2;
+    HUB_DEAD.set(drive, Date.now());   // ★ v1.34.40: তাজা presigned-ও মৃত ⇒ সোর্স-মৃত (R2 NotEntitled) — কার্ড বাদ যাবে
+    return '';
   }
   return f;
 }
@@ -9978,6 +9982,7 @@ async function m4uHubInfo(driveUrl) {
 }
 const M4U_TD_INFO = new Map();       // hubcloud drive-url → {q, name}
 async function m4uHubCard(link, T, Y, isS, s, e, needProof, lazy) {
+  const _hdt2 = HUB_DEAD.get(link.href); if (_hdt2 && Date.now() - _hdt2 < 30 * 60e3) return null;   // v1.34.40
   const inf = await m4uHubInfo(link.href).catch(() => ({}));
   const q = String((inf && inf.q) || '').replace(/[^0-9]/g, '');
   let size = (inf && inf.size) || '';
@@ -10122,7 +10127,9 @@ async function m4uTdStreams(tmdbId, title, type, s, e, origin, maxh) {
       for (const k of order) {
         if (!_bk[k]) continue;
         for (const l of _bk[k].slice(0, (k === 'V-Cloud' ? 1 : 2))) {
-          if (k === 'HubCloud') {   // ★ v1.34.35: FSL কার্ড এখন **লেজি** — gamerxyt-স্ক্র্যাপ (৩ হপ, ~২০সে পর্যন্ত) কার্ড-সময়ে আর নয়; ক্লিকে m4uTdServe hub-শাখা HUB_R2 (৫ঘণ্টা ডিস্ক-ক্যাশ) দিয়ে 302 দেবে। আগে এই স্ক্র্যাপই ৯সে-বাজেট ফাটিয়ে FSL কার্ড হারাত (ইউজার: "fsl card sobsomoy ase na")
+          if (k === 'HubCloud') {   // ★ v1.34.40: মৃত-bucket জানা থাকলে কার্ডই নয়
+            const _hdt = HUB_DEAD.get(l.href); if (_hdt && Date.now() - _hdt < 30 * 60e3) break;
+            // ★ v1.34.35: FSL কার্ড এখন **লেজি** — gamerxyt-স্ক্র্যাপ (৩ হপ, ~২০সে পর্যন্ত) কার্ড-সময়ে আর নয়; ক্লিকে m4uTdServe hub-শাখা HUB_R2 (৫ঘণ্টা ডিস্ক-ক্যাশ) দিয়ে 302 দেবে। আগে এই স্ক্র্যাপই ৯সে-বাজেট ফাটিয়ে FSL কার্ড হারাত (ইউজার: "fsl card sobsomoy ase na")
             r = { url: l.href, srv: 'FSL', lazy: 1 }; break;
           }
           if (k === 'V-Cloud') {   // ★ v1.34.19: এক এন্ট্রি → ভিতরের FSL/Pixeldrain/GDFlix আলাদা কার্ড
