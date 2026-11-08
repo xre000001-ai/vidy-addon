@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.40';
+const VERSION = '1.34.41';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -9500,7 +9500,7 @@ async function m4uTdServe(req, res, target) {
     // ★ (ক০) HubCloud পেজ ⇒ FSL (r2) লিংক ফ্রেশ করে নিয়ে স্ট্রিম (206/রিজিউম অক্ষত)
     if (m4uHubHost(host)) {
       const hc = M4U_TD_USED.get('hub:' + target);
-      let f = (hc && Date.now() - hc.ts < 20 * 60e3) ? hc.final : '';
+      let f = (hc && Date.now() - hc.ts < 4 * 60e3) ? hc.final : '';   // v1.34.41: ৪মিনিটের বেশি পুরনো হলে m4uHubFinal দিয়ে revalidate
       if (!f) { f = await m4uHubFinal(target).catch(() => ''); if (f) M4U_TD_USED.set('hub:' + target, { ts: Date.now(), final: f }); }   // v1.34.38: proof-সহ
       if (!f) return okJson(502, { error: 'hub-no-fsl' });
       if (m4uDirectOk(f)) { res.writeHead(302, { location: f, 'cache-control': 'no-store', 'access-control-allow-origin': '*' }); return res.end(); } // v1.34.31: সরাসরি
@@ -9554,7 +9554,7 @@ async function m4uFinalFor(target) {   // ★ v1.34.35: m4uTdServe-এর রি
   const host = m4uHostOf(target);
   if (m4uHubHost(host)) {
     const hc = M4U_TD_USED.get('hub:' + target);
-    if (hc && Date.now() - hc.ts < 20 * 60e3) return hc.final;
+    if (hc && Date.now() - hc.ts < 4 * 60e3) return hc.final;   // v1.34.41
     const f = await m4uHubFinal(target).catch(() => '');   // v1.34.38: proof-সহ
     if (f) M4U_TD_USED.set('hub:' + target, { ts: Date.now(), final: f });
     return f;
@@ -9721,7 +9721,7 @@ async function m4uHubFinal(drive) {   // serve-পথের জন্য: পু
   let f = await m4uHubFsl(drive).catch(() => '');
   if (!f) return '';
   const e = HUB_R2.get(drive);
-  if (e && Date.now() - e.ts > 20 * 60e3) {
+  if (e && Date.now() - e.ts > 4 * 60e3) {   // v1.34.41: ২০মিনিটে মৃত-লিংক অনেকক্ষণ বেঁচে থাকত ⇒ ৪মিনিটেই proof
     if (await m4uProof(f)) { e.ts = Date.now(); return f; }
     HUB_R2.delete(drive);
     const f2 = await m4uHubFsl(drive, true).catch(() => '');
