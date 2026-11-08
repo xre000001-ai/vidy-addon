@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.38';
+const VERSION = '1.34.39';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -9430,6 +9430,7 @@ const M4U_TD_BASE = process.env.M4UTD || 'https://movies4u.td';
 const M4U_TD_CACHE = new Map();     // post-url → parsed entries (৩০মিন)
 const M4U_TD_NEG = new Map();       // title → ts (৫মিন)
 const M4U_TD_DONE = new Map();    // v1.34.35: title → {ts, cards} পূর্ণ ফল (১০মিন) — ব্যাকগ্রাউন্ডে শেষ হওয়া ফল এখানে জমে, পরের খোলায় সাথে সাথে
+const M4U_TD_BG = new Map();      // v1.34.39: title → পুনঃ-জেনারেশন চেষ্টা-সংখ্যা (Pixeldrain-শূন্য ফলে সর্বোচ্চ ২ বার)
 const M4U_TD_S = new Map();         // search q → posts (৩০মিন, CF-চাপ কমাতে)
 const M4U_TD_LAST = { found: false, ts: 0 };   // .td-এ পোস্ট-মিল পেল কি না (পুরোনো-পথে সময় নষ্ট নয়)
 let M4U_VC_WALL = 0;   // V-Cloud CF-Turnstile দেয়াল (৪০৩) — ৩০মিন পর্যন্ত আর চেষ্টা নয়
@@ -10175,7 +10176,21 @@ async function m4uTdStreams(tmdbId, title, type, s, e, origin, maxh) {
     let live = [];
     let merged = [];   // ★ v1.34.38: দুই প্রার্থী-পোস্টের **union** (আগে প্রথম-জয়ী ⇒ Hindi-পোস্ট জিতলে English-পোস্টের FSL/Pixeldrain হারাত — "sob somoy ase na"-র এক মূল কারণ)
     const srt = a => (a || []).slice().sort((x, y) => (Number(y.quality) || 0) - (Number(x.quality) || 0));
-    const fin = v => { if (!done) { done = true; resolve(v || []); } };
+    const fin = v => { if (!done) { done = true; _schedPd(v); resolve(v || []); } };
+    // ★ v1.34.39 (মাপা): V-Cloud CF-রেস কার্ড-পথে হারলে ব্যাকগ্রাউন্ডে জেতে ও ক্যাশ হয়, কিন্তু TD-ফল আগেই DONE-তে
+    //   জমে যাওয়ায় Pixeldrain পরের ১০মিনিটেও আসত না ("majhe majhe ase")। PD-শূন্য ফলে ৫০সে পর পুনঃ-জেনারেশন
+    //   (VC-ক্যাশ তখন উষ্ণ) — সর্বোচ্চ ২ বার।
+    const _schedPd = v => {
+      try {
+        if (!v || !v.length) return;
+        if (v.some(c => c && (/pixeldrain/i.test(String(c.url || '')) || /Pixeldrain/.test(String(c.title || ''))))) return;
+        const n0 = M4U_TD_BG.get(nk) || 0;
+        if (n0 >= 2) return;
+        M4U_TD_BG.set(nk, n0 + 1);
+        const t = setTimeout(() => { try { M4U_TD_DONE.delete(nk); m4uTdStreams(tmdbId, title, type, s, e, origin, maxh).catch(() => { }); } catch (e) { } }, 50000);
+        if (t.unref) t.unref();
+      } catch (e) { }
+    };
     // ★ v1.34.35: টাইমআউটে [] নয় — তখন পর্যন্ত জমা কার্ডই ফেরত (আংশিক হলেও FSL/Pixeldrain থাকে)
     const guard = setTimeout(() => fin(srt(_m4uMerge(merged, live))), Math.max(1500, budget - (Date.now() - T0))); if (guard.unref) guard.unref();   // v1.34.38: চলমান পোস্টের আংশিকসহ
     // ★ v1.34.18: আগে দুই প্রার্থী **রেস** করত ⇒ মাপা: "John Wick: Chapter 4"-এর জন্য Chapter-2
