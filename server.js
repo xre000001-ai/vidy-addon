@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.52';
+const VERSION = '1.34.53';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -10078,7 +10078,7 @@ async function m4uGfInfo(href) {
   try {
     const r = await mlsGet(href, { ms: 4500 });
     const b = String((r && r.body) || '');
-    const fn = (((/<title>([^<]{5,220})<\/title>/i.exec(b) || [])[1]) || ((/property="og:title" content="([^"]+)"/i.exec(b) || [])[1]) || '').replace(/&amp;/g, '&').replace(/\s*[-|]\s*(gdflix|gdlink).*$/i, '').trim();
+    const fn = (((/<title>([^<]{5,220})<\/title>/i.exec(b) || [])[1]) || ((/property="og:title" content="([^"]+)"/i.exec(b) || [])[1]) || '').replace(/&amp;/g, '&').replace(/^\s*(gdflix|gdlink)[^|]{0,40}\|\s*/i, '').replace(/\s*[-|]\s*(gdflix|gdlink).*$/i, '').trim();   // v1.34.53: 'GDFlix | file.mkv' prefix-strip
     if (fn) {
       out.name = fn;
       out.q = (/\b(2160|1440|1080|720|480|360)p\b/i.exec(fn) || [])[1] || '';
