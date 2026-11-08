@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.41';
+const VERSION = '1.34.42';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -9721,11 +9721,13 @@ async function m4uHubFinal(drive) {   // serve-পথের জন্য: পু
   let f = await m4uHubFsl(drive).catch(() => '');
   if (!f) return '';
   const e = HUB_R2.get(drive);
-  if (e && Date.now() - e.ts > 4 * 60e3) {   // v1.34.41: ২০মিনিটে মৃত-লিংক অনেকক্ষণ বেঁচে থাকত ⇒ ৪মিনিটেই proof
-    if (await m4uProof(f)) { e.ts = Date.now(); return f; }
+  // ★ v1.34.42 (মাপা-ছিদ্র): তাজা scrape-এর ts=এখন ⇒ বয়স-শর্তে proof এড়িয়ে মৃত-bucket-এর তাজা presigned-ও 302 হচ্ছিল।
+  //   এখন proof-সময় (e.pf) আলাদা: proof না-হওয়া/৪মিনিটের পুরনো-proof ⇒ আগে proof, তারপরই 302।
+  if (!e || !e.pf || Date.now() - e.pf > 4 * 60e3) {
+    if (await m4uProof(f)) { if (e) { e.pf = Date.now(); e.ts = Date.now(); } return f; }
     HUB_R2.delete(drive);
     const f2 = await m4uHubFsl(drive, true).catch(() => '');
-    if (f2 && await m4uProof(f2)) return f2;
+    if (f2 && await m4uProof(f2)) { const e2 = HUB_R2.get(drive); if (e2) e2.pf = Date.now(); return f2; }
     HUB_DEAD.set(drive, Date.now());   // ★ v1.34.40: তাজা presigned-ও মৃত ⇒ সোর্স-মৃত (R2 NotEntitled) — কার্ড বাদ যাবে
     return '';
   }
