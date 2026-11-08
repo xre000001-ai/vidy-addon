@@ -9051,7 +9051,7 @@ function m4gPlaylistLive(hi, origin, key, gotB, totalB) {
     L.push('#EXTINF:' + dEach.toFixed(3) + ',');
     L.push((origin || '') + '/m4seg/' + key + '/' + i + '.bin?a=' + a + '&b=' + b);
   }
-  return L.join('\\n') + '\\n';
+  return L.join('\n') + '\n';
 }
 function m4gPlaylist(g, origin, key) {   // ★ v1.34.35: ক্যাশ-ভিত্তিক HLS — সেগমেন্ট আমাদের /m4seg/ (Range-হেডার লাগে না, ?a=&b=)
   const pts = g.pts, n = pts.length, fs2 = g.fileSize;
