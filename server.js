@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.59';
+const VERSION = '1.34.60';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -3601,22 +3601,37 @@ async function mlsGdPost(fileUrl, ms, px) {
 //   আর hdProbe-এর পুল-পথ ওই HTML-কেই "সবুজ" বানিয়ে ভুয়ো কার্ড দিচ্ছিল (ইউজার-শর্ত লঙ্ঘন)।
 //   এখন শুধু সরাসরি ২০৬ (বা ২০০) + media ct/Content-Range হলে তবেই কার্ড।
 async function mlsProve(u, ms) {
+  const evalRes = (st, ct, cr, eu) => {
+    ct = String(ct || '').toLowerCase();
+    const clM = /content-length:\s*(\d+)/i.exec(eu || '');
+    const media = /^video\//i.test(ct)
+      || (/(octet-stream|x-zip|zip|binary)/i.test(ct) && !!cr)
+      || (/\/(mkv|mp4|m4v|avi|webm)$/i.test(String(eu || '').split('?')[0]))
+      || (/\.(mkv|mp4|m4v|avi|webm)/i.test(String(eu || '')) && !!cr);
+    const ok = (st === 206 || st === 200) && !/text\/html/i.test(ct) && media && (!!cr || (clM && +clM[1] > 1000000));
+    const mc = /bytes\s+\d+-\d+\/(\d+)/i.exec(cr || '');
+    return { ok: ok, ct: ct, cr: cr || '', st: st, size: mc ? +mc[1] : 0 };
+  };
   try {
     const r = await fetch(u, { headers: { 'User-Agent': UA, Range: 'bytes=0-1023', 'Referer': MLS_BASE + '/' }, signal: AbortSignal.timeout(Math.max(1200, ms)) });
     const ct = String(r.headers.get('content-type') || '').toLowerCase();
     const cr = String(r.headers.get('content-range') || '');
-    const cl = +(r.headers.get('content-length') || 0);
     try { r.body && r.body.cancel && r.body.cancel(); } catch (e) { }
-    // ★ v1.28.33: gdflix-এর cloud-dl worker ফাইলটিকে `application/x-zip` লেবেলে দেয় (আসলেই .mkv,
-    //   ২০৬ + Content-Range, ৭১২MB — মাপা)। শুধু `video/*`-তে আটকে থাকলে **প্রমাণিত লিংকও বাদ** পড়ত।
-    const media = /^video\//i.test(ct)
-      || (/(octet-stream|x-zip|zip|binary)/i.test(ct) && !!cr)
-      || (/\/(mkv|mp4|m4v|avi|webm)$/i.test((r.url || '').split('?')[0]))
-      || (/\.(mkv|mp4|m4v|avi|webm)/i.test(r.url || '') && !!cr);
-    const ok = (r.status === 206 || r.status === 200) && !/text\/html/i.test(ct) && media && (!!cr || cl > 1000000);
-    const mc = /bytes\s+\d+-\d+\/(\d+)/i.exec(cr);
-    return { ok: ok, ct: ct, cr: cr, st: r.status, size: mc ? +mc[1] : (ok && cl > 1000000 ? cl : 0) };
-  } catch (e) { return { ok: false, ct: '', cr: '', st: 0, size: 0 }; }
+    const out = evalRes(r.status, ct, cr, r.url || u);
+    if (out.ok) return out;
+  } catch (e) { }
+  // ★ v1.34.60: direct-prove ব্যর্থ ⇒ curl (সরাসরি + ১ প্রক্সি) — Beamup-IP-তে workers.dev প্রমাণ
+  //   মরত ⇒ 'inline-unproven' done-বিষে পুরো GDFlix ১৫মিন মৃত থাকত (মাপা)।
+  const tries = [null];
+  try { const pxs = mlsPxFor(mlsHost(u)); if (pxs && pxs[0]) tries.push(pxs[0]); if (pxs && pxs[1]) tries.push(pxs[1]); } catch (e) { }
+  for (const px of tries) {
+    const c = await mlsCurl(u, { ms: Math.max(1800, ms || 3000), range: '0-1023', proxy: px || undefined, referer: MLS_BASE + '/' }).catch(() => null);
+    if (!c) continue;
+    const crM = /content-range:\s*bytes\s+\d+-\d+\/\d+/i.exec(c.hdr || '');
+    const out = evalRes(c.st, c.ct, crM ? crM[0] : '', c.eu || u);
+    if (out.ok) { const mc2 = /\/(\d+)\s*$/i.exec(out.cr); if (mc2) out.size = +mc2[1]; return out; }
+  }
+  return { ok: false, ct: '', cr: '', st: 0, size: 0 };
 }
 
 // ★ v1.28.31 (প্রোডে-মাপা ২৮-১০-২০২৬, হাতে-যাচাই করা পুরো চেইন):
@@ -3699,7 +3714,7 @@ async function mlsGdOnce(fileUrl, ms, resume) {
     || grab(body, /https:\/\/pub-[a-z0-9]+\.r2\.dev\/[^\s"'<>\\]+/i);
   if (direct) {                                    // ইনলাইন-লিংক থাকলে সরাসরি
     const pv = await mlsProve(direct, 2400);
-    return pv && pv.ok ? { ok: true, direct: direct, size: pv.size || 0, ct: pv.ct || '', route: 'inline' } : { ok: false, route: 'inline-unproven', done: true };
+    return pv && pv.ok ? { ok: true, direct: direct, size: pv.size || 0, ct: pv.ct || '', route: 'inline' } : { ok: false, route: 'inline-unproven' };   // v1.34.60: prove-fail != file-death (no done-poison)
   }
   const id = mlsGdId(fileUrl);
   // ★ v1.28.32: `/file/`-পেজ gdflix.com → … → **new7.gdflix.io**-তে রিডাইরেক্ট হয়; পোস্ট **শেষ-হোস্টেই**
