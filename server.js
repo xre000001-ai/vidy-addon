@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.53';
+const VERSION = '1.34.54';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -10165,7 +10165,7 @@ async function m4uTdStreams(tmdbId, title, type, s, e, origin, maxh) {
     //   (১০-মিনিট ক্যাশ) — যেটিতে **HubCloud/FSL** আছে সেটি আগে, তারপর কোয়ালিটি। আগে শুধু প্রথম ৪টি
     //   এন্ট্রি দেখা হত ⇒ FSL-থাকা এন্ট্রি বাদ পড়ে যেত (মাপা)।
     const _lk = new Map();
-    await Promise.all(pick.slice(0, 12).map(async x => { // v1.34.21 revision: হাব-স্ক্যান ১০→১২
+    await Promise.all(pick.slice(0, 20).map(async x => { // v1.34.21 revision: হাব-স্ক্যান ১০→১২   // v1.34.54: DOM-last Pack entry was cut by the 12-cap => pack FSL/GDFlix never scanned
       const c = M4U_TD_LOC.get(x.mdisk);
       if (c && Date.now() - c.ts < 10 * 60e3) { _lk.set(x.mdisk, c.links); return; }
       const l = await m4uTdMdisk(x.mdisk).catch(() => []);
