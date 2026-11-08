@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.42';
+const VERSION = '1.34.43';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -12450,7 +12450,12 @@ async function bfGuServe(req, res, url, start, endQ, base) {
     return res.end();
   }
   // (১) ক্যাশে ফাইল থেকে যতটুকু আছে/আসবে তা-ই দিই — বন্ধ-রেঞ্জ হলে শেষ বাইট আসা পর্যন্ত অপেক্ষা
-  while (endQ >= 0 && !e.done && !e.err && e.got <= endQ && Date.now() - T0 < waitMs) await new Promise(r2 => setTimeout(r2, 100));
+  // ★ v1.34.43 (ইউজার: "seek korle full download suru kore"): আগে অপেক্ষা হতো শুধু closed-range-এ; open-ended seek
+  //   (ExoPlayer `bytes=N-`) ডাউনলোড-সীমা পেরোলে content-length ঋণাত্মক হয়ে writeHead throw ⇒ 502 ⇒ প্লেয়ার গোড়া থেকে
+  //   আবার শুরু করত। এখন seek-এর প্রথম বাইট (বা closed-range-এর শেষ বাইট) না আসা পর্যন্ত অপেক্ষা (≤waitMs),
+  //   তারপর ঠিক ওই পজিশন থেকেই 206 tail-follow — পজিশন কখনো ০-তে ফেরে না।
+  const _needByte = endQ >= 0 ? endQ : start;
+  while (!e.done && !e.err && e.got <= _needByte && Date.now() - T0 < waitMs) await new Promise(r2 => setTimeout(r2, 100));
   const total = e.total || (e.done ? e.got : 0);
   const avail = e.got;
   // ★ v1.34.14: দরকারি বাইট সময়ের ভিতরে না এলে (ক) ৪১৬ দিলে অ্যাপ "play hoi na" দেখায়, (খ) আটকে
@@ -12462,7 +12467,7 @@ async function bfGuServe(req, res, url, start, endQ, base) {
   //   **একটিমাত্র** ক্লায়েন্টকে ০ থেকে ক্রমিক স্ট্রিম দিই (ডেটা বইতেই থাকে, ~৪০সে-তে ফাইল ক্যাশে সম্পূর্ণ,
   //   তারপরের সব সিক তাৎক্ষণিক ২০৬); একই সময়ে দ্বিতীয় কেউ এলে ৫০৩ ⇒ ব্যান্ডউইথ-বন্যা হয় না।
   let _degrade = false;
-  if (endQ >= 0 && avail <= endQ && !e.done) {
+  if (avail <= _needByte && !e.done) {
     // ★ v1.34.33 (ইউজার: "pichone tanleo video sese chole jai"): start>0 রিকোয়েস্টে 200-from-0 পেলে ExoPlayer
     //   পজিশন-হিসাব গুলিয়ে ফেলে ⇒ এখন degrade শুধু start=0-তে; সিকে 503+Retry-After (পুল ব্যাকগ্রাউন্ডে এগোয়)।
     if (start === 0 && BF_GU_DEG < 1) { _degrade = true; BF_GU_DEG++; }
@@ -12472,9 +12477,9 @@ async function bfGuServe(req, res, url, start, endQ, base) {
     }
   }
   if (_degrade) { start = 0; endQ = -1; }
-  const endF = endQ >= 0 ? Math.min(endQ, avail - 1) : (e.done ? avail - 1 : -1);
+  const endF = endQ >= 0 ? Math.min(endQ, avail - 1) : (total ? total - 1 : avail - 1);   // v1.34.43: open-ended-এ total জানা থাকলে শেষ পর্যন্তই (tail-follow)
   const hdr = Object.assign({}, base);
-  if (total) { hdr['content-length'] = String((endF >= 0 ? endF : avail - 1) - start + 1); hdr['content-range'] = 'bytes ' + start + '-' + (endF >= 0 ? endF : (total - 1)) + '/' + total; }
+  if (total) { hdr['content-length'] = String(Math.max(0, (endF >= 0 ? endF : avail - 1) - start + 1)); hdr['content-range'] = 'bytes ' + start + '-' + (endF >= 0 ? endF : (total - 1)) + '/' + total; }
   // content-type ক্যাশ-ফাইলের ম্যাজিক থেকে
   try {
     const fd = fs.openSync(e.f, 'r'); const buf = Buffer.alloc(16); fs.readSync(fd, buf, 0, 16, 0); fs.closeSync(fd);
