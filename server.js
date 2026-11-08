@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.32';
+const VERSION = '1.34.33';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -9790,7 +9790,7 @@ async function m4uTdResolve(link, needProof) {
     }
   } catch (e) { if (DBG) console.error('[m4utd] ' + srv + ' err ' + String(e && e.message).slice(0, 50)); }
   if (!url) return { url: '', srv: srv, why: 'no-link' };
-  if (needProof !== false) {
+  if (needProof !== false || isPresigned(url)) { // v1.34.33: presigned FSL (মেয়াদ-ঝুঁকি) হলে i>0 হলেও proof চাই — মৃত সাইন কার্ডে যাবে না
     let hd = await m4uHReq(url, { method: 'HEAD', ref: link.href, tmo: 5000 });
     if (!(hd.st === 200 || hd.st === 206) || /text\/html/i.test(hd.ct || '')) {
       // ★ v1.34.1: HEAD ব্যর্থ/খালি হলে **এক-বাইট Range-GET** দিয়েই প্রমাণ (মাপা: কিছু নোডে HEAD st=0)
@@ -12237,10 +12237,12 @@ async function bfGuServe(req, res, url, start, endQ, base) {
   //   তারপরের সব সিক তাৎক্ষণিক ২০৬); একই সময়ে দ্বিতীয় কেউ এলে ৫০৩ ⇒ ব্যান্ডউইথ-বন্যা হয় না।
   let _degrade = false;
   if (endQ >= 0 && avail <= endQ && !e.done) {
-    if (BF_GU_DEG < 1) { _degrade = true; BF_GU_DEG++; }
+    // ★ v1.34.33 (ইউজার: "pichone tanleo video sese chole jai"): start>0 রিকোয়েস্টে 200-from-0 পেলে ExoPlayer
+    //   পজিশন-হিসাব গুলিয়ে ফেলে ⇒ এখন degrade শুধু start=0-তে; সিকে 503+Retry-After (পুল ব্যাকগ্রাউন্ডে এগোয়)।
+    if (start === 0 && BF_GU_DEG < 1) { _degrade = true; BF_GU_DEG++; }
     else {
       if (DBG) console.error('[guc] busy need=' + endQ + ' got=' + avail);
-      res.writeHead(503, Object.assign({}, base, { 'retry-after': '8' })); return res.end();
+      res.writeHead(503, Object.assign({}, base, { 'retry-after': '5' })); return res.end();
     }
   }
   if (_degrade) { start = 0; endQ = -1; }
@@ -12388,8 +12390,12 @@ async function bfServeGeneric(req, res, url) {
     //   সেটাই ছিল "seek dile full download"। এখন ওখানে সৎভাবে ৫০২ (প্লেয়ার রিট্রাই করবে), আর
     //   আকার জানা থাকলে ৪১৬ + `content-range: bytes */T` (মানক উত্তর)।
     if (!mCR && rawStart > 32 * 1024 * 1024) {
-      const T = total || await bfUpSize(url).catch(() => 0);
+      // ★ v1.34.33 (ইউজার: GDrive/G-Direct-এ "শেষে টানে না, ভিডিও শেষে চলে যায়"): 416 পেলেই ExoPlayer ফাইল শেষ
+      //   বলে ধরে নেয়। এখন আগে ডিস্ক-ক্যাশ পথ (bfGuServe — যেকোনো Range-না-মানা হোস্টে): পুল এগিয়ে থাকলে সত্যি 206।
       try { if (upFinal.body) await upFinal.body.cancel(); } catch { }
+      const _okg2 = await bfGuServe(req, res, url, rawStart, rawEndQ, base).catch(() => false);
+      if (_okg2 !== false) return;
+      const T = total || await bfUpSize(url).catch(() => 0);
       const h = Object.assign({}, base);
       if (T) { h['content-range'] = 'bytes */' + T; res.writeHead(416, h); }
       else res.writeHead(502, h);
@@ -13368,7 +13374,6 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
       const vkey = 'vj|' + srv + '|' + tmdbId + '|' + type + '|' + (s || '') + '|' + (e || '');
       const vhit = vsjGet(vkey);
       if (vhit) { // v1.18.4: 60s micro-cache (quota-free refresh, same servers)
-        if (vhit._dead) return { srv: srv, empty: true }; // v1.34.31: মৃত-প্রমাণিত সার্ভার ক্যাশ-হিটেও গেট
         if (DBG) console.error('[vmc] ' + srv + ' hit');
         const _q = Array.isArray(cfg && cfg.q) ? cfg.q : qToList(cfg && cfg.q);
         const _p = (vhit.sources || []).filter(x => x.url && /^https?:/.test(x.url) && qPass(x, _q));
@@ -13414,19 +13419,8 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
         if (pr.auds && pr.auds.length) j._audN = pr.auds.join('/'); // সোর্স-ঘোষিত-ভাষা — TMDB-অনুমানকে-হারায়
         const ok = !!pr.ok;
         const soft = !ok; // v1.18.2: probe amader IP-er — 404/timeout = "amra dekhchi na", file mora noy => card-gate noy
-        // ★ v1.34.31 (মাপা: goldenkite-জাতীয় হোস্ট এখন **সব** egress-এ 403, Referer দিয়েও — কার্ড দিলেও কারো প্লেয়ারেই চলে না):
-        //   definitive-মৃত হলেই এই সার্ভারের কার্ড বাদ: (ক) playlist 4xx + pool-দ্বিতীয়-মতও #EXTM3U আনতে ব্যর্থ, বা (খ) segment 4xx।
-        //   timeout/অনির্ণেয় ⇒ আগের soft-আচরণ (কার্ড থাকে) — নেটওয়ার্ক-হিক্কাপে ভালো সার্ভার মরবে না।
-        let vDead = false;
-        try {
-          if (!ok && pr && pr.st >= 400 && pass.length) {
-            const txt2 = await racePool(masterU || pass[0].url, 3, 4000).then(x => String((x && x.body) || '')).catch(() => '');
-            vDead = txt2.indexOf('#EXTM3U') < 0;
-          } else if (ok && pass.length) {
-            vDead = (await vidySegOk(pass[0].url)) === false;
-          }
-        } catch (e) { }
-        if (vDead) { try { j._dead = 1; } catch (e) { } if (DBG) console.error('[t1g] ' + srv + ' DEAD-GATE st=' + (pr && pr.st)); return { srv, empty: true }; }
+        // v1.34.33: v1.34.31-এর DEAD-GATE **বাতিল** (ইউজার: "Miami, Boise ase o na") — প্রোড-egress দিয়েও প্রোব
+        //   অস্থির ⇒ ভালো সার্ভার মারা যাচ্ছিল। আগের soft (non-gating) আচরণই থাকল; কার্ড সবসময় direct CDN।
         if (autoH) j.sources.forEach(x => { if (!/^\d{3,4}$/.test(String(x.quality || '').replace('p', ''))) x.quality = autoH + 'p'; });
         const ns = (j.subtitles || []).length;
         const nfit = decorate(j, type, s, e, title || '', cfg, srv).length; // v1.18.2: probe-nirpekkho
@@ -14274,7 +14268,7 @@ async function vhGetPlaylist(target) {
 function vhPrewarm(rawUrls, origin) {
   // ★ v1.28.3-L3: রিলে বন্ধ থাকলে প্রি-ওয়ার্ম **বৃথা** — কার্ড সরাসরি CDN-এ যায়, আমাদের VH_C কেউ ছোঁয় না
   //   ⇒ শুধু মেমরি (+১৯৩KB × N) নষ্ট। তাই রিলে চালু থাকলেই প্রি-ওয়ার্ম।
-  if (process.env.VHRELAY === '0' || process.env.VHPW === '0' || !origin) return; // v1.34.32: ডিফল্ট-চালু (নিচের নোট)
+  if (process.env.VHRELAY !== '1' || process.env.VHPW === '0' || !origin) return; // v1.34.33: আবার VHRELAY=1-only (নিচের নোট)
   const n = Number(process.env.VHPW || 3);
   let i = 0;
   for (const u of (rawUrls || [])) {
@@ -14580,7 +14574,7 @@ function sendStreams(res, skey, plog, ms, cards, ua, cfg) {
   //   জরুরি হলে `VHRELAY=1` দিয়ে পুরোনো রিলে ফেরানো যাবে।
   // ★ v1.28.3-m: vidy-প্লেলিস্ট প্রি-ওয়ার্ম (কার্ড-বানানোর সময়ই, **কাঁচা URL** দিয়ে — vhFixCards-এর আগে)
   try { if (res && res.req) vhPrewarm((cards || []).filter(c => vhIsVidy(c && c.url, c)).map(c => String(c.url)), originOf(res.req)); } catch (e) { }
-  if (process.env.VHRELAY !== '0') { try { if (res && res.req) vhFixCards(cards, originOf(res.req)); } catch (e) { } } // ★ v1.34.32 (ইউজার: "relay charai, token die dekhaw" + মাপা: goldenkite-প্লেলিস্ট অনেক নেটওয়ার্কে 403, কিন্তু সেগমেন্ট সব জায়গায় 206) — Vidy কার্ড এখন টোকেনাইজড ম্যানিফেস্ট (/vh/, শুধু .m3u8 টেক্সট আমাদের হয়ে আসে; সেগমেন্ট ১০০% সরাসরি CDN)। বন্ধ করতে VHRELAY=0।
+  if (process.env.VHRELAY === '1') { try { if (res && res.req) vhFixCards(cards, originOf(res.req)); } catch (e) { } } // v1.34.33 (ইউজার: "direct user stream ei fix sombob" + Miami/Boise হারিয়ে যাওয়া) — /vh/ টোকেন-ম্যানিফেস্ট বন্ধ; Vidy কার্ড আবার সরাসরি CDN (v1.21.2-ধারায় ফেরত)। জরুরি হলে VHRELAY=1।
   const n = (cards || []).length; // v1.15.8: কোনো-stash-নেই — প্রতি-উত্তর-তাজা
   logReq(plog, ms, n, null, ua);
   const _sk = sresKey(plog, cfg);
