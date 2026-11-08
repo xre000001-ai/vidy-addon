@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.50';
+const VERSION = '1.34.51';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -15134,6 +15134,7 @@ const server = http.createServer((req, res) => {
         const _tgt = (typeof gwGet === 'function') ? gwGet(gwM2[1]) : null;
         if (!_tgt) { res.writeHead(404, { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'cache-control': 'no-store' }); return res.end('{"error":"link expired"}'); }
         p = _tgt; try { req.url = _tgt; } catch (eT) { }   // কুয়েরি (?r=1/?d=1) হ্যান্ডলার req.url-ই পড়ে
+        { const _qi = p.indexOf('?'); if (_qi >= 0) p = p.slice(0, _qi); }   // ★ v1.34.51: internal-এর নিজের query (?vu=…) route-regexের $-এ আটকে GD 404 দিত
         // ★ v1.27.3: টোকেনের ভিতরের পথ /rel/ হলে সরাসরি সেখানেই পাঠাই (রুট-অর্ডারে আগে যায়নি)
         const _rl = p.match(/^\/rel\/([vm])\/([A-Za-z0-9_=-]{8,4000})$/);
         if (_rl) return void relServe(req, res, _rl[1], _rl[2]);
