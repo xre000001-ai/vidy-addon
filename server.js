@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.30';
+const VERSION = '1.34.31';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -682,7 +682,7 @@ async function mmDirectOK(u) {
   if (c && Date.now() - c.ts < 5 * 60e3) return c.ok;
   let ok = false;
   try {
-    const r = await fetch(u, { headers: { 'User-Agent': UA, 'Accept': '*/*', Range: 'bytes=0-1023' }, signal: AbortSignal.timeout(3500) });
+    const r = await fetch(u, { headers: { 'User-Agent': UA, 'Accept': '*/*', Range: 'bytes=0-1023', 'Referer': WO_REF }, signal: AbortSignal.timeout(3500) }); // v1.34.31: Referer ছাড়া প্রোব করায় Referer-গেটেড CDN (videodexvino) সবসময় ফেল → চিরকাল রিলে ছিল; কার্ডে যে Referer যায় তা-ই দিয়ে মাপি
     const ct = String(r.headers.get('content-type') || '');
     ok = (r.status === 206 || r.status === 200) && !/text\/html/i.test(ct) && ct.length > 0;
     try { r.body && r.body.cancel && r.body.cancel(); } catch (e) { }
@@ -9389,6 +9389,7 @@ const m4uIsMediaUrl = u => m4uIsIpLocked(u)
   || /pixeldrain\.(?:dev|com)\/api\/file\//i.test(String(u))
   || /\.(?:mkv|mp4)(?:\?|$)/i.test(String(u));
 const m4uCardUrl = (u, origin) => m4uIsIpLocked(u) ? m4uRelayUrl(u, origin) : String(u);
+const m4uDirectOk = u => /(?:^|\.)r2\.dev$/i.test(m4uHostOf(u)) || /(?:^|\.)r2\.cloudflarestorage\.com$/i.test(m4uHostOf(u)) || /(?:^|\.)fsldownload\.com$/i.test(m4uHostOf(u)) || /pixeldrain\.(?:dev|com)\/api\/file\//i.test(String(u)); // v1.34.31: Range-native হোস্ট ⇒ /m4d/ 302-সরাসরি (স্ট্রিম-রিলে নয়)
 // ★★★ v1.34.5 (মাপা: কার্ড-বানানোর ৩০ মিনিট পরেই GU লিংক **400**) — Google-signed লিংক মিনিটেই মেয়াদোত্তীর্ণ।
 //   তাই কার্ডে রিজলভ-করা লিংক বেক করা যায় না; কার্ড = **লেজি-রুট** `/m4d/<b64>/v.mkv`, ক্লিকের সময়ই
 //   mdrive → সার্ভার → GU আবার রিজলভ হয়ে আমাদের IP থেকেই স্ট্রিম হয় (bfServeGeneric: Range-সংশ্লেষিত)।
@@ -9409,6 +9410,7 @@ async function m4uTdServe(req, res, target) {
       let f = (hc && Date.now() - hc.ts < 20 * 60e3) ? hc.final : '';
       if (!f) { f = await m4uHubFsl(target).catch(() => ''); if (f) M4U_TD_USED.set('hub:' + target, { ts: Date.now(), final: f }); }
       if (!f) return okJson(502, { error: 'hub-no-fsl' });
+      if (m4uDirectOk(f)) { res.writeHead(302, { location: f, 'cache-control': 'no-store', 'access-control-allow-origin': '*' }); return res.end(); } // v1.34.31: সরাসরি
       return await bfServeGeneric(req, res, f);
     }
     // (ক) পুরোনো চেইন-পেজ (nexdrive/fast-dl) ⇒ সেখান থেকেই রিজলভ
@@ -9445,6 +9447,7 @@ async function m4uTdServe(req, res, target) {
     }
     fin = finPref || fin;
     if (!fin) return okJson(502, { error: 'no-source' });
+    if (m4uDirectOk(fin)) { res.writeHead(302, { location: fin, 'cache-control': 'no-store', 'access-control-allow-origin': '*' }); return res.end(); } // v1.34.31: Range-native হলে রিলে-স্ট্রিম নয়, সরাসরি পাঠাই
     M4U_TD_USED.set(target, { ts: Date.now(), final: fin });
     if (M4U_TD_USED.size > 300) M4U_TD_USED.clear();
     return await bfServeGeneric(req, res, fin);
@@ -13298,6 +13301,36 @@ function playable(u, hop) {
     req.on('error', () => resolve(false));
   });
 }
+async function vidySegOk(u) { // v1.34.31: variant-playlist → প্রথম সেগমেন্ট কার্ড-হেডারে Range-প্রোব; true=চলে, false=4xx-মৃত, null=অনির্ণেয় (গেট নয়)
+  const get = (url, range) => new Promise(resolve => {
+    try {
+      const mod = url.indexOf('http:') === 0 ? http : https;
+      const req = mod.get(url, { headers: { 'User-Agent': UA, 'Accept': '*/*', 'Referer': VIDY_REFERER, 'Connection': 'close', ...(range ? { Range: 'bytes=0-1023' } : {}) }, timeout: 1800 }, res => {
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) { res.resume(); return resolve(get(new URL(res.headers.location, url).toString(), range)); }
+        const st = res.statusCode;
+        if (range) { res.resume(); return resolve(st); }
+        const ch = []; let len = 0;
+        res.on('data', d => { if (len < 65536) { ch.push(d); len += d.length; } });
+        res.on('end', () => resolve({ st, body: Buffer.concat(ch).toString('latin1') }));
+        res.on('error', () => resolve(null));
+      });
+      req.on('timeout', () => { req.destroy(); resolve(null); });
+      req.on('error', () => resolve(null));
+    } catch (e) { resolve(null); }
+  });
+  try {
+    const pl = await get(u, false);
+    if (!pl) return null;
+    if (pl.st >= 400) return false;
+    if (pl.st !== 200 || !pl.body) return null;
+    const seg = pl.body.split('\n').map(x => x.trim()).find(x => x && x[0] !== '#');
+    if (!seg) return null;
+    const st = await get(new URL(seg, u).toString(), true);
+    if (st === 200 || st === 206) return true;
+    if (typeof st === 'number' && st >= 400) return false;
+    return null;
+  } catch (e) { return null; }
+}
 function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টাইটেলের-প্রমিস — sources-সমান্তরালে-ছোটা-হয়
   const qsig = (Array.isArray(cfg && cfg.q) ? cfg.q.slice().sort((a, b) => a - b).join('.') : String((cfg && cfg.q) || '')) + ':' + ((cfg && cfg.sub) === 0 ? 0 : 1) + ':' + ((cfg && Array.isArray(cfg.srv) && cfg.srv.length) ? cfg.srv.slice().sort().join('.') : '');
   const key = ['src', VERSION, tmdbId, type, s || '', e || '', qsig].join('|'); // VERSION+cfg-ভার্সনড — ভিন্ন-ফিল্টার-ভিন্ন-ক্যাশ
@@ -13331,6 +13364,7 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
       const vkey = 'vj|' + srv + '|' + tmdbId + '|' + type + '|' + (s || '') + '|' + (e || '');
       const vhit = vsjGet(vkey);
       if (vhit) { // v1.18.4: 60s micro-cache (quota-free refresh, same servers)
+        if (vhit._dead) return { srv: srv, empty: true }; // v1.34.31: মৃত-প্রমাণিত সার্ভার ক্যাশ-হিটেও গেট
         if (DBG) console.error('[vmc] ' + srv + ' hit');
         const _q = Array.isArray(cfg && cfg.q) ? cfg.q : qToList(cfg && cfg.q);
         const _p = (vhit.sources || []).filter(x => x.url && /^https?:/.test(x.url) && qPass(x, _q));
@@ -13376,6 +13410,19 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
         if (pr.auds && pr.auds.length) j._audN = pr.auds.join('/'); // সোর্স-ঘোষিত-ভাষা — TMDB-অনুমানকে-হারায়
         const ok = !!pr.ok;
         const soft = !ok; // v1.18.2: probe amader IP-er — 404/timeout = "amra dekhchi na", file mora noy => card-gate noy
+        // ★ v1.34.31 (মাপা: goldenkite-জাতীয় হোস্ট এখন **সব** egress-এ 403, Referer দিয়েও — কার্ড দিলেও কারো প্লেয়ারেই চলে না):
+        //   definitive-মৃত হলেই এই সার্ভারের কার্ড বাদ: (ক) playlist 4xx + pool-দ্বিতীয়-মতও #EXTM3U আনতে ব্যর্থ, বা (খ) segment 4xx।
+        //   timeout/অনির্ণেয় ⇒ আগের soft-আচরণ (কার্ড থাকে) — নেটওয়ার্ক-হিক্কাপে ভালো সার্ভার মরবে না।
+        let vDead = false;
+        try {
+          if (!ok && pr && pr.st >= 400 && pass.length) {
+            const txt2 = await racePool(masterU || pass[0].url, 3, 4000).then(x => String((x && x.body) || '')).catch(() => '');
+            vDead = txt2.indexOf('#EXTM3U') < 0;
+          } else if (ok && pass.length) {
+            vDead = (await vidySegOk(pass[0].url)) === false;
+          }
+        } catch (e) { }
+        if (vDead) { try { j._dead = 1; } catch (e) { } if (DBG) console.error('[t1g] ' + srv + ' DEAD-GATE st=' + (pr && pr.st)); return { srv, empty: true }; }
         if (autoH) j.sources.forEach(x => { if (!/^\d{3,4}$/.test(String(x.quality || '').replace('p', ''))) x.quality = autoH + 'p'; });
         const ns = (j.subtitles || []).length;
         const nfit = decorate(j, type, s, e, title || '', cfg, srv).length; // v1.18.2: probe-nirpekkho
@@ -14306,7 +14353,8 @@ function gwRewriteBody(body, origin) {
     if (!Array.isArray(arr) || !arr.length) return body;
     let n = 0;
     for (const c of arr) {
-      const u = String((c && c.url) || '');
+      let u = String((c && c.url) || '');
+      if (/^https?:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?\//i.test(u)) { u = u.replace(/^https?:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?/i, origin); c.url = u; n++; } // v1.34.31: bg-fetch-এ internal origin (127.0.0.1:6089) দিয়ে বানানো কার্ড user-origin-এ ফেরত (মাপা লিক: /dh/, /vsp/)
       if (u.indexOf(origin + '/') !== 0) continue;
       let rest = u.slice(origin.length);             // '/mm/..../mini.m3u8?r=1' বা পুরোনো '/t/<tok>/x.m3u8'
       // ★ v1.27.1: আগেই-টোকেন-করা লিংক (ক্যাপচার-রিপ্লে / জমা-বডি) হলেও **নতুন** টোকেন পাবে
