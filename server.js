@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.46';
+const VERSION = '1.34.47';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -14521,11 +14521,31 @@ function vhIsVidy(u, c) {
 }
 function vhRelay(u, origin) { return origin + '/vh/' + Buffer.from(String(u)).toString('base64url') + '/p.m3u8'; }
 function vhSegRelay(u, origin) { return origin + '/vhs/' + Buffer.from(String(u)).toString('base64url') + '/s.bin'; }
-function vhRewrite(body, target, origin) {
-  // ★ v1.34.46: vividstone-সেগমেন্টও Referer-গেটে বাঁধা (মাপা: referer ছাড়া ৪০৩, সহ ২০০) আর প্লেয়ার
-  //   প্লেলিস্টের ভেতরের লাইনে হেডার পাঠায় না ⇒ vividstone হলে সেগমেন্ট/init /vhs/ দিয়ে (Referer-সহ পাইপ)।
-  //   goldenkite-সেগমেন্ট (rapidbrook) direct ২০৬ মাপা ⇒ আগের মতোই সরাসরি ডিভাইসে।
-  const segRelay = /(?:^|\.)vividstone\.top$/i.test((String(target || '').match(/^https?:\/\/([^/]+)/i) || [])[1] || '');
+const VH_SEGPROBE = new Map();   // playlist-url → {relay:bool, ts} (৩০মিন)
+async function vhSegNeedsRelay(target, body) {
+  // vividstone: প্রমাণিত গেট ⇒ সবসময় রিলে। goldenkite: প্রথম সেগমেন্ট referer-ছাড়া প্রোব —
+  //   ২xx হলে সরাসরি (ইউজার-নীতি), ৪০৩ হলে এই প্লেলিস্টের সব সেগমেন্ট /vhs/ (মাপা: rendition-ভেদে গেট!)
+  const host = (String(target || '').match(/^https?:\/\/([^/]+)/i) || [])[1] || '';
+  if (/(?:^|\.)vividstone\.top$/i.test(host)) return true;
+  if (!/(?:^|\.)goldenkite\.top$/i.test(host)) return false;
+  const hit = VH_SEGPROBE.get(target);
+  if (hit && Date.now() - hit.ts < 30 * 60 * 1000) return hit.relay;
+  let seg = '';
+  for (const ln of String(body || '').split('\n')) { const t = ln.trim(); if (t && t.charAt(0) !== '#') { try { seg = new URL(t, target).toString(); } catch (e) { } break; } }
+  let relay = true;
+  if (seg) {
+    try {
+      const r = await fetch(seg, { headers: { 'User-Agent': UA, 'Range': 'bytes=0-0', 'Accept': '*/*' }, redirect: 'follow', signal: AbortSignal.timeout(6000) });
+      relay = !(r.status >= 200 && r.status < 300);
+      try { r.body.cancel(); } catch (e) { }
+    } catch (e) { relay = true; }
+  }
+  if (VH_SEGPROBE.size > 400) VH_SEGPROBE.clear();
+  VH_SEGPROBE.set(target, { relay: relay, ts: Date.now() });
+  return relay;
+}
+async function vhRewrite(body, target, origin) {
+  const segRelay = await vhSegNeedsRelay(target, body);
   return String(body || '').split('\n').map(line => {
     const raw = line.trim();
     if (!raw) return line;
@@ -14578,28 +14598,32 @@ async function vhGetPlaylist(target) {
   // ★★ v1.34.45: **সেশন-নোড** ফেচ — প্লেলিস্ট-গেট = সাম্প্রতিক vidy-API-সেশন-IP (হাতে-মাপা: একই নোডে ২০০,
   //   অন্য সব ৪০৩)। 'vidy:<srv>'-কীতে প্রমাণিত নোড মানেই সদ্য-সেশন-করা নোড ⇒ ওরাই প্রথম পছন্দ।
   const _aff = (async () => {
-    // goldenkite: নিজের সার্ভারের সেশন-নোড আগে, তারপর অন্যটা (ঢেউ)। vividstone-জাতীয়: হাব URL-দেখে সার্ভার
-    //   বোঝা যায় না ⇒ সব vidy-কী **সমান্তরালে** (যে হাবের সেশন-নোড, সেই জেতে)।
+    // ★ v1.34.47: pxsGet (spool+exploration-মিশ্র) নয় — **শুধু ওই সার্ভারে সেশন-প্রমাণিত নোড** (pxsRank),
+    //   কারণ প্লেলিস্ট-গেট চেনে শুধু সেশন-করা IP-কেই; অচেনা নোড মিশলে আসল নোড কাটা পড়ে যেত।
+    const viaKey = async k => {
+      const nodes = pxsRank(k).slice(0, 6);
+      if (!nodes.length) return '';
+      return await new Promise(res => {
+        let left = nodes.length, done = false;
+        nodes.forEach(px => proxiedGet(px, target, 6500, hdr).then(b => {
+          if (done) return;
+          const b2 = String(b || '');
+          if (b2.indexOf('#EXTM3U') >= 0) { done = true; res(b2); } else if (--left <= 0) res('');
+        }).catch(() => { if (!done && --left <= 0) res(''); }));
+      });
+    };
     const isGk = /(?:^|\.)goldenkite\.top$/i.test((String(target).match(/^https?:\/\/([^/]+)/i) || [])[1] || '');
     if (isGk) {
-      const k1 = /\/vdb\//.test(target) ? 'vidy:boise' : 'vidy:miami';
-      const k2 = /\/vdb\//.test(target) ? 'vidy:miami' : 'vidy:boise';
-      for (const k of [k1, k2]) {
-        try {
-          const b = await pxsGet(target, { key: k, n: 5, tmo: 5500, headers: hdr });
-          const b2 = String(b || '');
-          if (b2.indexOf('#EXTM3U') >= 0) return b2;
-        } catch (e) { }
-      }
-      return '';
+      const b1 = await viaKey(/\/vdb\//.test(target) ? 'vidy:boise' : 'vidy:miami');
+      if (b1) return b1;
+      return await viaKey(/\/vdb\//.test(target) ? 'vidy:miami' : 'vidy:boise');
     }
     const ks = ['vidy:atlanta', 'vidy:phoenix', 'vidy:delhi', 'vidy:miami', 'vidy:boise'];
     return await new Promise(res => {
       let left = ks.length, done = false;
-      ks.forEach(k => pxsGet(target, { key: k, n: 4, tmo: 7000, headers: hdr }).then(b => {
+      ks.forEach(k => viaKey(k).then(b => {
         if (done) return;
-        const b2 = String(b || '');
-        if (b2.indexOf('#EXTM3U') >= 0) { done = true; res(b2); } else if (--left <= 0) res('');
+        if (b) { done = true; res(b); } else if (--left <= 0) res('');
       }).catch(() => { if (!done && --left <= 0) res(''); }));
     });
     })();
@@ -14645,10 +14669,10 @@ function vhPrewarm(rawUrls, origin) {
     if (VH_C.has(u) && Date.now() - VH_C.get(u).ts < VH_TTL) continue;
     if (VH_PRE.has(u)) continue;
     i++;
-    const pr = Promise.resolve(vhGetPlaylist(u)).then(body => {
+    const pr = Promise.resolve(vhGetPlaylist(u)).then(async body => {
       if (!body) return;
       try {
-        const out = vhRewrite(body, u, origin);
+        const out = await vhRewrite(body, u, origin);
         if (VH_C.size > 800) VH_C.clear();
         VH_C.set(u, { ts: Date.now(), v: out });
         if (process.env.VDBG) console.log('[vhpw] ok ' + String(u).slice(0, 58) + ' ' + body.length + 'B');
@@ -14674,7 +14698,7 @@ async function vhServe(req, res, b64) {
   if (_vf && Date.now() - _vf < 60 * 1000) { try { res.writeHead(302, { location: target, 'cache-control': 'no-store', 'access-control-allow-origin': '*' }); } catch (e) { } return res.end(); }
   const body = await Promise.race([vhGetPlaylist(target), new Promise(r => setTimeout(() => r(''), _left()))]);
   if (!body) { VH_FAIL.set(ck, Date.now()); try { res.writeHead(302, { location: target, 'cache-control': 'no-store', 'access-control-allow-origin': '*' }); } catch (e) { } return res.end(); }
-  const out = vhRewrite(body, target, origin);
+  const out = await vhRewrite(body, target, origin);
   if (VH_C.size > 800) VH_C.clear();
   VH_C.set(ck, { ts: Date.now(), v: out });     // ★ ক্যাশে **কাঁচা** (স্ট্যাম্প-ছাড়া) থাকে
   if (process.env.VDBG) console.log('[vh] cold ' + (Date.now() - t0) + 'ms ' + body.length + 'B');
