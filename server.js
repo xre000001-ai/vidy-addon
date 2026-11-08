@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.61';
+const VERSION = '1.34.62';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -3663,12 +3663,12 @@ async function mlsGdPoll(tokUrl, cloud, ms) {
       const direct = grab(/https:\/\/cloud-dl\.[a-z0-9]+\.workers\.dev\/[^\s"'<>\\]+/i)
         || grab(/https:\/\/pub-[a-z0-9]+\.r2\.dev\/[^\s"'<>\\]+/i)
         || grab(/https:\/\/instant\.[a-z0-9.]+\/[^\s"'<>\\]+/i);
-      if (!direct) return { ok: false, route: 'nodirect', done: true };
+      if (!direct) return { ok: false, route: 'nodirect' };   // v1.34.62: transient (final-page shape/session) -- NOT done-poison
       const pv = await mlsProve(direct, 2600);
       if (DBG) console.error('[mlsd] gd-fin direct=' + String(direct).slice(0, 90) + ' pv=' + JSON.stringify(pv).slice(0, 120));
-      return pv && pv.ok ? { ok: true, direct: direct, size: pv.size || 0, ct: pv.ct || '', route: 'cloud' } : { ok: false, route: 'unproven', done: true };
+      return pv && pv.ok ? { ok: true, direct: direct, size: pv.size || 0, ct: pv.ct || '', route: 'cloud' } : { ok: false, route: 'unproven' };   // v1.34.62: prove-fail is transient (Beamup-edge flake), no done
     }
-    if (pj && pj.done && !pj.redirect) return { ok: false, route: 'done-noredirect', done: true };
+    if (pj && pj.done && !pj.redirect) return { ok: false, route: 'done-noredirect' };   // v1.34.62: session quirk, retry later -- no done-poison
     await new Promise(r => setTimeout(r, 1000));
   }
   return { ok: false, route: 'queued', tokUrl: tokUrl, cloud: cloud };
