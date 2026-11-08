@@ -14551,12 +14551,16 @@ async function vhGetPlaylist(target) {
   // ★★ v1.34.45: **সেশন-নোড** ফেচ — প্লেলিস্ট-গেট = সাম্প্রতিক vidy-API-সেশন-IP (হাতে-মাপা: একই নোডে ২০০,
   //   অন্য সব ৪০৩)। 'vidy:<srv>'-কীতে প্রমাণিত নোড মানেই সদ্য-সেশন-করা নোড ⇒ ওরাই প্রথম পছন্দ।
   const _aff = (async () => {
-    try {
-      const k = /\/vdb\//.test(target) ? 'vidy:boise' : 'vidy:miami';
-      const b = await pxsGet(target, { key: k, n: 5, tmo: 8000, headers: hdr });
-      const b2 = String(b || '');
-      if (b2.indexOf('#EXTM3U') >= 0) return b2;
-    } catch (e) { }
+    // দুই ঢেউ: নিজের সার্ভারের সেশন-নোড, তারপর অন্য সার্ভারের (হোয়াইটলিস্ট IP-ভিত্তিক — যেকোনো সদ্য-সেশন-নোডেই চলার কথা)
+    const k1 = /\/vdb\//.test(target) ? 'vidy:boise' : 'vidy:miami';
+    const k2 = /\/vdb\//.test(target) ? 'vidy:miami' : 'vidy:boise';
+    for (const k of [k1, k2]) {
+      try {
+        const b = await pxsGet(target, { key: k, n: 5, tmo: 5500, headers: hdr });
+        const b2 = String(b || '');
+        if (b2.indexOf('#EXTM3U') >= 0) return b2;
+      } catch (e) { }
+    }
     return '';
   })();
   const _dir = (async () => {
@@ -14593,7 +14597,7 @@ function vhPrewarm(rawUrls, origin) {
   // ★ v1.28.3-L3: রিলে বন্ধ থাকলে প্রি-ওয়ার্ম **বৃথা** — কার্ড সরাসরি CDN-এ যায়, আমাদের VH_C কেউ ছোঁয় না
   //   ⇒ শুধু মেমরি (+১৯৩KB × N) নষ্ট। তাই রিলে চালু থাকলেই প্রি-ওয়ার্ম।
   if (process.env.VHRELAY === '0' || process.env.VHPW === '0' || !origin) return; // v1.34.35: রিলে আবার ডিফল্ট-চালু (নিচের নোট)
-  const n = Number(process.env.VHPW || 3);
+  const n = Number(process.env.VHPW || 10);
   let i = 0;
   for (const u of (rawUrls || [])) {
     if (i >= n) break;
@@ -14627,7 +14631,7 @@ async function vhServe(req, res, b64) {
     if (h2 && Date.now() - h2.ts < VH_TTL) { res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl', 'access-control-allow-origin': '*', 'cache-control': 'no-store' }); return res.end(vuStampPlaylist(h2.v, origin)); } }
   // ★ v1.34.35: সাম্প্রতিক-ব্যর্থতায় সাথে সাথে 302 (প্লেয়ার পুরোনো সরাসরি-পথেই চেষ্টা করুক)
   const _vf = VH_FAIL.get(ck);
-  if (_vf && Date.now() - _vf < 5 * 60 * 1000) { try { res.writeHead(302, { location: target, 'cache-control': 'no-store', 'access-control-allow-origin': '*' }); } catch (e) { } return res.end(); }
+  if (_vf && Date.now() - _vf < 60 * 1000) { try { res.writeHead(302, { location: target, 'cache-control': 'no-store', 'access-control-allow-origin': '*' }); } catch (e) { } return res.end(); }
   const body = await Promise.race([vhGetPlaylist(target), new Promise(r => setTimeout(() => r(''), _left()))]);
   if (!body) { VH_FAIL.set(ck, Date.now()); try { res.writeHead(302, { location: target, 'cache-control': 'no-store', 'access-control-allow-origin': '*' }); } catch (e) { } return res.end(); }
   const out = vhRewrite(body, target, origin);
