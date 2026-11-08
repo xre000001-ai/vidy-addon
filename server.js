@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.54';
+const VERSION = '1.34.56';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -8842,7 +8842,7 @@ function m4pAnalyze(head) { // হেডার-বাফার → জ্যা�
     if (t.id === M4P_ID_CUES && !cuesNode) cuesNode = t;
   }
   if (firstClusterOff < 0) return { need: head.length, segContentStart: segContentStart, tops: tops.length };
-  let cuesOff = -1, cuesSize = 0;
+  let cuesOff = -1, cuesSize = 0, shOff = -1;
   if (shNode && !shNode.raw) {
     for (const sk of m4pParse(head, shNode.hdr, shNode.end)) {
       if (sk.id !== M4P_ID_SEEK || sk.raw) continue;
@@ -8853,15 +8853,36 @@ function m4pAnalyze(head) { // হেডার-বাফার → জ্যা�
         if (f.id === M4P_ID_SEEKPOS) { spos = 0; for (let i = f.hdr; i < f.end; i++) spos = spos * 256 + head[i]; }
       }
       if (sid === M4P_ID_CUES && spos != null) cuesOff = segContentStart + spos; // SeekPosition = সেগমেন্ট-আপেক্ষিক
+      if (sid === M4P_ID_SH && spos != null) shOff = segContentStart + spos; // v1.34.55: front SeekHead may only point to a trailing SeekHead
     }
   }
   if (cuesNode && cuesOff < 0) cuesOff = cuesNode.start; // SeekHead-এ নেই কিন্তু হেডারেই আছে
   return {
     segOff: segOff, segSizeKnown: !szv.allFF, segSize: szv.v, segSizeLen: szv.len,
     segSizeOff: segOff + 4, segContentStart: segContentStart,
-    firstClusterOff: firstClusterOff, cuesOff: cuesOff, cuesSize: cuesSize,
+    firstClusterOff: firstClusterOff, cuesOff: cuesOff, cuesSize: cuesSize, shOff: shOff,
     tops: tops.length, inHeader: !!(cuesNode && cuesNode.start < firstClusterOff)
   };
+}
+function m4pSeekScan(buf, segContentStart) {   // v1.34.56: SeekHead buffer -> {cues, sh} absolute offsets (-1 = absent)
+  let off = -1;
+  for (let q = 0; q + 4 <= Math.min(buf.length, 8192); q++) { if (buf.readUInt32BE(q) === M4P_ID_SH) { off = q; break; } }
+  if (off < 0) return { cues: -1, sh: -1 };
+  const sh = m4pParse(buf, off, buf.length).filter(t => t.id === M4P_ID_SH)[0];
+  if (!sh || sh.raw) return { cues: -1, sh: -1 };
+  let cues = -1, sh2 = -1;
+  for (const sk of m4pParse(buf, sh.hdr, sh.end)) {
+    if (sk.id !== M4P_ID_SEEK || sk.raw) continue;
+    let sid = null, spos = null;
+    for (const f of m4pParse(buf, sk.hdr, sk.end)) {
+      if (f.raw) continue;
+      if (f.id === M4P_ID_SEEKID) { sid = buf[f.hdr]; for (let i2 = f.hdr + 1; i2 < f.end; i2++) sid = sid * 256 + buf[i2]; }
+      if (f.id === M4P_ID_SEEKPOS) { spos = 0; for (let i2 = f.hdr; i2 < f.end; i2++) spos = spos * 256 + buf[i2]; }
+    }
+    if (sid === M4P_ID_CUES && spos != null) cues = segContentStart + spos;
+    if (sid === M4P_ID_SH && spos != null) sh2 = segContentStart + spos;
+  }
+  return { cues: cues, sh: sh2 };
 }
 async function m4pFetchRange(u, hd, a, b) { // [a,b] সহ — বাফার ফেরত
   const r = await fetch(u, { headers: Object.assign({}, hd, { Range: 'bytes=' + a + '-' + b }), signal: AbortSignal.timeout(60000) });
@@ -8970,7 +8991,18 @@ async function m4hGeoFile(f, total) {   // ★ v1.34.35: GU ডিস্ক-ক�
     want *= 4; if (want > M4P_HEADCAP) break; an = null;
   }
   if (!an || !an.firstClusterOff || an.firstClusterOff > (headBuf ? headBuf.length : 0)) return null;
-  if (!(an.cuesOff > 0)) return null;
+  if (!(an.cuesOff > 0)) {   // v1.34.56: follow SeekHead chain (front -> trailing -> middle) up to 3 hops
+    let shAt = an.shOff, co2 = -1;
+    for (let hop = 0; hop < 3 && !(co2 > 0) && shAt > 0; hop++) {
+      let shb = null;
+      try { shb = await readRange(shAt, Math.min(fileSize - 1, shAt + 128 * 1024 - 1)); } catch (e) { return null; }
+      const sc = m4pSeekScan(shb, an.segContentStart);
+      if (sc.cues > 0) co2 = sc.cues;
+      else if (sc.sh > 0 && sc.sh !== shAt) shAt = sc.sh; else break;
+    }
+    if (!(co2 > 0)) return null;
+    an = Object.assign({}, an, { cuesOff: co2 });
+  }
   if (an.inHeader) return null;
   const cut = an.firstClusterOff, segContent = an.segContentStart;
   let tscale = 1000000;
@@ -9114,7 +9146,18 @@ async function m4hGeo(u) {
     want *= 4; if (want > M4P_HEADCAP) break; an = null;
   }
   if (!an || !an.firstClusterOff || an.firstClusterOff > (headBuf ? headBuf.length : 0)) return null;
-  if (!(an.cuesOff > 0)) return null;   // Cues নেই → এই পথে সিক-সূচকই নেই
+  if (!(an.cuesOff > 0)) {   // v1.34.56: SeekHead chain (see m4hGeoFile)
+    let shAt = an.shOff, co2 = -1;
+    for (let hop = 0; hop < 3 && !(co2 > 0) && shAt > 0; hop++) {
+      let shb = null;
+      try { shb = await m4pFetchRange(u, hd, shAt, Math.min(fileSize - 1, shAt + 128 * 1024 - 1)); } catch { return null; }
+      const sc = m4pSeekScan(shb, an.segContentStart);
+      if (sc.cues > 0) co2 = sc.cues;
+      else if (sc.sh > 0 && sc.sh !== shAt) shAt = sc.sh; else break;
+    }
+    if (!(co2 > 0)) return null;
+    an = Object.assign({}, an, { cuesOff: co2 });
+  }
   if (an.inHeader) return null;         // Cues আগেই সামনে → সরাসরি CDN-ই ঠিক
   const cut = an.firstClusterOff, segContent = an.segContentStart;
   let tscale = 1000000; // CueTime → সেকেন্ড (Info/TimestampScale; ডিফল্ট ১ ms)
@@ -9987,6 +10030,7 @@ async function m4uTdResolve(link, needProof) {
         // সরাসরি egress-এ GDFlix 429 দেয় (মাপা) ⇒ প্রক্সি-রোটেশনওয়ালা Smart-রিজলভার
         const g = await bfResolveGdflixSmart(fid, 0, 6500).catch(() => null);
         if (g && g.streamUrl && !g.isZip && !g.dead) url = g.streamUrl;
+        if (!url) { const mp = await mlsGdPost(link.href, 7000).catch(() => null); if (mp && mp.ok && mp.direct) url = mp.direct; }   // v1.34.55: MLS-chain fallback (BF H2 pool dead in prod)
         else if (DBG) console.error('[m4utd] gdflix-miss ' + fid + ' zip=' + (g && g.isZip) + ' dead=' + (g && g.dead));
       }
     } else if (srv === 'V-Cloud') {   // ★ v1.34.19: পেজের ভিতরের আসল সার্ভারগুলো (নিচে m4uVcloudResolve)
