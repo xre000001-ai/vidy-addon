@@ -482,7 +482,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
   var SUBS=[[1,'On'],[0,'No subs']];
 
   /* ─────────── state (server-contract keys) ─────────── */
-  var st={v:1,q:[],sub:1,srv:SRVS.map(function(x){return x[0];}),nx:1,nxq:[],nxl:[],rt:1,rtl:[],rtq:[],tw:1,twq:[],twl:[],mm:1,mmr:0,mmq:[],mml:[],m4u:1,m4ur:0,m4uq:[],m4ul:[],sky:1,skyr:0,hm:1,hmr:0,skyq:[],hmq:[],skyl:[],hml:[],hd:1,hdr:0,hdq:[],hdl:[],vsp:1,vspq:[],vspl:[],ott:1,ottq:[],ottl:[],az:1,azq:[],azl:[],mlb:1,mlbr:0,mls:1,mlsr:0,rtsrv:[]}; /* rtsrv: খালি=MQ+Pixeldrain-দুটোই (সার্ভার-চুক্তি: খালি=সব) */
+  var st={v:1,q:[],sub:1,srv:SRVS.map(function(x){return x[0];}),nx:1,nxq:[],nxl:[],rt:1,rtl:[],rtq:[],tw:1,twq:[],twl:[],mm:1,mmr:0,mmq:[],mml:[],m4u:1,m4ur:0,m4uq:[],m4ul:[],sky:1,skyr:0,hm:1,hmr:0,skyq:[],hmq:[],skyl:[],hml:[],hd:1,hdr:0,hdq:[],hdl:[],vsp:1,vspq:[],vspl:[],ott:1,ottq:[],ottl:[],az:1,azq:[],azl:[],mlb:1,mlbr:0,mls:1,mlsr:0,dt:1,rtsrv:[]}; /* rtsrv: খালি=MQ+Pixeldrain-দুটোই (সার্ভার-চুক্তি: খালি=সব) */
 
   /* source definitions: [key, tile, tileBg, tileFg, name, badge, badgeCls, blurb, hasTune] */
   var SRC=[
@@ -499,7 +499,8 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     ['ott','AT','linear-gradient(135deg,#102a26,#0b1d1a)','#7fe0cc','AsianTV','HLS · K/C/J/Thai','', 'Dramas & movies · embedded subs',1],
     ['az','AZ','linear-gradient(135deg,#221a33,#171122)','#c9b8ff','AniZone','HLS · Anime','new','Anime series & movies · multi-language subs',1],
     ['mlb','MLB','linear-gradient(135deg,#0e1d2b,#0a1520)','#8fd6ff','MovieLinkBD','MKV · FSL/HubCloud','','Bilingual DDL · all Range-proven mirrors · every seekable server',1],
-    ['mls','MLS','linear-gradient(135deg,#2b1220,#1a0b13)','#ff9fb8','MLSBD','MKV · gdflix/Watch','new','mlsbd.co → savelinks → gdflix + Watch-Online · Range-206 proof only',1]
+    ['mls','MLS','linear-gradient(135deg,#2b1220,#1a0b13)','#ff9fb8','MLSBD','MKV · gdflix/Watch','new','mlsbd.co → savelinks → gdflix + Watch-Online · Range-206 proof only',1],
+    ['dt','DT','linear-gradient(135deg,#12202b,#0b131a)','#9fd0ff','Deadtoons','HLS · anime/cartoon','new','api.deadbase.host → watch server → EarnVids embed unpack → master.m3u8 (m3u8-200 proof)',1]
   ];
 
   /* ─────────── utils ─────────── */
@@ -860,7 +861,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     var h=$('tuneHost'),o;
     /* Vidy — fleet-wide cap + subtitle gate */
     o=tuneCard('tune-v','v','Vidy — global','Quality cap and subtitle gate for the whole 16-server fleet');h.appendChild(o.card);
-    chipsInto(o.zone,'Quality cap',st.q,RES,rebuild,'empty = all',1);
+    chipsInto(o.zone,'Resolutions',st.q,RES,rebuild,'empty = all',1); // ★ v1.34.25: cap নয় — শুধু-টিক-দেওয়া-রেজোই আসবে (সব-সোর্সে এক নিয়ম)
     singleInto(o.zone,'Subtitles','sub',SUBS,rebuild);
     /* MovieBox */
     o=tuneCard('tune-nx','nx','MovieBox','HLS · huge catalog — own chips below');h.appendChild(o.card);
@@ -994,10 +995,10 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
       if(x[0]==='sky'&&!ql.length&&st.skyr)ql=[st.skyr];
       if(x[0]==='hm'&&!ql.length&&st.hmr)ql=[st.hmr];
       if(x[0]==='mlb'&&!ql.length&&st.mlbr)ql=[st.mlbr];   // .mlbr = MovieLinkBD-cap
-      if(ql.length)s.appendChild(el('div','chip',x[4]+' ≤'+Math.max.apply(null,ql)+'p'));
+      if(ql.length){var _isCap=!((st[QK[x[0]]]||[]).length);s.appendChild(el('div','chip',x[4]+' '+(_isCap?'≤'+ql[0]+'p':ql.slice().sort(function(a,b){return b-a;}).join('/')+'p only')));} // ★ v1.34.25: exact-set হলে 'only', একক-cap হলে '≤'
       if(ll.length)s.appendChild(el('div','chip',x[4]+' '+ll.slice(0,2).join('/')+(ll.length>2?'+'+ll.length:'')));
     });
-    if(st.v===1){if(st.q.length)s.appendChild(el('div','chip','fleet ≤ '+Math.max.apply(null,st.q)+'p'));if(st.sub===0)s.appendChild(el('div','chip','no subs'));if(st.srv.length&&st.srv.length!==SRVS.length)s.appendChild(el('div','chip',st.srv.length+' servers'));}
+    if(st.v===1){if(st.q.length)s.appendChild(el('div','chip','fleet '+st.q.slice().sort(function(a,b){return b-a;}).join('/')+'p only')); // ★ v1.34.25if(st.sub===0)s.appendChild(el('div','chip','no subs'));if(st.srv.length&&st.srv.length!==SRVS.length)s.appendChild(el('div','chip',st.srv.length+' servers'));}
     if(st.rt===1&&st.rtsrv.length)s.appendChild(el('div','chip','RareToons '+(st.rtsrv.length>=2?'— no server':(st.rtsrv.indexOf('mq')>=0?'Pixeldrain only':'MQ only')))); /* v1.15.81 */
   }
 
