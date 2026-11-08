@@ -482,7 +482,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
   var SUBS=[[1,'On'],[0,'No subs']];
 
   /* ─────────── state (server-contract keys) ─────────── */
-  var st={v:1,q:[],sub:1,srv:SRVS.map(function(x){return x[0];}),nx:1,nxq:[],nxl:[],rt:1,rtl:[],rtq:[],tw:1,twq:[],twl:[],mm:1,mmr:0,mmq:[],mml:[],m4u:1,m4ur:0,m4uq:[],m4ul:[],sky:1,skyr:0,hm:1,hmr:0,skyq:[],hmq:[],skyl:[],hml:[],hd:1,hdr:0,hdq:[],hdl:[],vsp:1,vspq:[],vspl:[],ott:1,ottq:[],ottl:[],az:1,azq:[],azl:[],mlb:1,mlbr:0,mls:1,mlsr:0,dt:1,rtsrv:[]}; /* rtsrv: খালি=MQ+Pixeldrain-দুটোই (সার্ভার-চুক্তি: খালি=সব) */
+  var st={v:1,q:[],sub:1,srv:SRVS.map(function(x){return x[0];}),nx:1,nxq:[],nxl:[],rt:1,rtl:[],rtq:[],tw:1,twq:[],twl:[],mm:1,mmr:0,mmq:[],mml:[],m4u:1,m4ur:0,m4uq:[],m4ul:[],sky:1,skyr:0,hm:1,hmr:0,skyq:[],hmq:[],skyl:[],hml:[],hd:1,hdr:0,hdq:[],hdl:[],vsp:1,vspq:[],vspl:[],ott:1,ottq:[],ottl:[],az:1,azq:[],azl:[],mlb:1,mlbr:0,mls:1,mlsr:0,rtsrv:[]}; /* rtsrv: খালি=MQ+Pixeldrain-দুটোই (সার্ভার-চুক্তি: খালি=সব) */
 
   /* source definitions: [key, tile, tileBg, tileFg, name, badge, badgeCls, blurb, hasTune] */
   var SRC=[
@@ -499,8 +499,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     ['ott','AT','linear-gradient(135deg,#102a26,#0b1d1a)','#7fe0cc','AsianTV','HLS · K/C/J/Thai','', 'Dramas & movies · embedded subs',1],
     ['az','AZ','linear-gradient(135deg,#221a33,#171122)','#c9b8ff','AniZone','HLS · Anime','new','Anime series & movies · multi-language subs',1],
     ['mlb','MLB','linear-gradient(135deg,#0e1d2b,#0a1520)','#8fd6ff','MovieLinkBD','MKV · FSL/HubCloud','','Bilingual DDL · all Range-proven mirrors · every seekable server',1],
-    ['mls','MLS','linear-gradient(135deg,#2b1220,#1a0b13)','#ff9fb8','MLSBD','MKV · gdflix/Watch','new','mlsbd.co → savelinks → gdflix + Watch-Online · Range-206 proof only',1],
-    ['dt','DT','linear-gradient(135deg,#12202b,#0b131a)','#9fd0ff','Deadtoons','HLS · anime/cartoon','new','api.deadbase.host → watch server → EarnVids embed unpack → master.m3u8 (m3u8-200 proof)',0]
+    ['mls','MLS','linear-gradient(135deg,#2b1220,#1a0b13)','#ff9fb8','MLSBD','MKV · gdflix/Watch','new','mlsbd.co → savelinks → gdflix + Watch-Online · Range-206 proof only',1]
   ];
 
   /* ─────────── utils ─────────── */
@@ -549,14 +548,6 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
       if(o.skyr)st.skyr=({2160:2160,1080:1080,720:720,480:480})[o.skyr]||0;
       if(o.skyq)st.skyq=numL(o.skyq,[2160,1080,720,480]);
       if(o.skyl)st.skyl=strL(o.skyl,LK);
-      if(o.hm===0)st.hm=0;
-      if(o.hmr)st.hmr=({2160:2160,1080:1080,720:720,480:480})[o.hmr]||0;
-      if(o.hmq)st.hmq=numL(o.hmq,[2160,1080,720,480]);
-      if(o.hml)st.hml=strL(o.hml,LK);
-      if(o.hd===0)st.hd=0;
-      if(o.hdr)st.hdr=({2160:2160,1080:1080,720:720,480:480})[o.hdr]||0;
-      if(o.hdq)st.hdq=numL(o.hdq,[2160,1080,720,480]);
-      if(o.hdl)st.hdl=strL(o.hdl,LK);   /* v1.34.63: hm/hd hydrate was missing (reopen silently dropped their filters) */
       /* v1.17.48: BollyFlix (bf) বাদ — পুরোনো কনফিগে bf-কী থাকলেও উপেক্ষা হবে (পুরোনো-লিংক-ভাঙে-না) */
 
       if(o.vsp===0)st.vsp=0;
@@ -568,7 +559,6 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
       if(o.mlb===1)st.mlb=1; else if(o.mlb===0)st.mlb=0;
       if([0,480,720,1080,2160].indexOf(o.mlbr)>=0)st.mlbr=o.mlbr;
       if(o.mls===1)st.mls=1; else if(o.mls===0)st.mls=0;
-      if(o.dt===0)st.dt=0;
       if([0,480,720,1080,2160].indexOf(o.mlsr)>=0)st.mlsr=o.mlsr;
       if(o.az===0)st.az=0;
       if(o.azq)st.azq=numL(o.azq,[2160,1080,720,480,360]);
@@ -656,7 +646,6 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     // ★ v1.28.5: MLSBD — আলাদা সোর্স (MovieLinkBD নয়)
     if(st.mls===0)c.mls=0;
     else if(st.mlsr)c.mlsr=st.mlsr;
-    if(st.dt===0)c.dt=0;   // v1.34.63: Deadtoons master (was never emitted)
     var u=base()+(Object.keys(c).length?'/cfg/'+b64u(c):'')+'/manifest.json';
     $('url').value=u;
     $('inst').href='stremio://'+u.replace(/^https?:\/\//,'');
@@ -871,7 +860,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     var h=$('tuneHost'),o;
     /* Vidy — fleet-wide cap + subtitle gate */
     o=tuneCard('tune-v','v','Vidy — global','Quality cap and subtitle gate for the whole 16-server fleet');h.appendChild(o.card);
-    chipsInto(o.zone,'Resolutions',st.q,RES,rebuild,'empty = all',1); // ★ v1.34.25: cap নয় — শুধু-টিক-দেওয়া-রেজোই আসবে (সব-সোর্সে এক নিয়ম)
+    chipsInto(o.zone,'Quality cap',st.q,RES,rebuild,'empty = all',1);
     singleInto(o.zone,'Subtitles','sub',SUBS,rebuild);
     /* MovieBox */
     o=tuneCard('tune-nx','nx','MovieBox','HLS · huge catalog — own chips below');h.appendChild(o.card);
@@ -954,7 +943,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     pvCard('pvV',vOn,top,{title:'Queen of Tears | 2024 |',ep:'S1E1 \u2022 Episode Title',src:vOn?cap1(st.srv[0]||'Miami'):'Miami',audio:st.sub===1?'Korean':'Korean',note:qsel(st.q)});
     var nq=st.nxq.length?Math.max.apply(null,st.nxq):1080;
     pvCard('pvN',!!st.nx,nq,{title:'Demon Slayer | 2019 |',ep:'S1E5 \u2022 Episode Title',src:'MovieBox',audio:audioLabel(st.nxl)||'All audio',note:qsel(st.nxq)});
-    pvCard('pvR',!!(st.rt&&st.rtsrv.length<2),1080,{title:'Demon Slayer | 2019 |',ep:'S1E5 \u2022 Episode Title',src:'RareToons',audio:st.rtl.length?audioLabel(st.rtl):'All dubs',srv:'Pixeldrain',note:st.rtl.length?(cap1(st.rtl[0])+(st.rtl.length>1?' +'+(st.rtl.length-1):'')):(st.rtq.length?('\u2264'+Math.max.apply(null,st.rtq)+'p'):'All')});   /* v1.34.63: RT preview badge = language summary (Tamil +2), resolution when no language picked */
+    pvCard('pvR',!!(st.rt&&st.rtsrv.length<2),1080,{title:'Demon Slayer | 2019 |',ep:'S1E5 \u2022 Episode Title',src:'RareToons',audio:st.rtl.length?audioLabel(st.rtl):'All dubs',srv:'Pixeldrain',note:st.rtq.length?('\u2264'+Math.max.apply(null,st.rtq)+'p'):'All'});
     pvCard('pvT',!!st.tw,st.twq.length?Math.max.apply(null,st.twq):1080,{title:'Scarlet | 2025 |',src:'ToonWorld',audio:audioLabel(st.twl)||'Multi Audio',note:qsel(st.twq)});
     pvCard('pvM',!!st.mm,1080,{title:'Scarlet | 2025 |',src:'Multimovies',audio:audioLabel(st.mml)||'Bengali',note:st.mmq.length?('\u2264'+Math.max.apply(null,st.mmq)+'p'):(st.mmr?('cap '+st.mmr+'p'):'All')});
     pvCard('pv4',!!st.m4u,(st.m4uq.length?Math.max.apply(null,st.m4uq):(st.m4ur||2160)),{title:'Deadpool & Wolverine | 2024 |',src:'Movies4u',audio:audioLabel(st.m4ul)||'Multi Audio',srv:'FSL',note:st.m4uq.length?('\u2264'+Math.max.apply(null,st.m4uq)+'p'):(st.m4ur?('cap '+st.m4ur+'p'):'All')});
@@ -985,7 +974,6 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     if(st.hm===1&&(st.hmq.length||st.hml.length||st.hmr))f++;
     if(st.hd===1&&(st.hdq.length||st.hdl.length||st.hdr))f++;
     if(st.mlb===1&&(st.mlbr))f++;
-    if(st.mls===1&&st.mlsr)f++;
     /* v1.17.48: bf (BollyFlix) বাদ — গণনা থেকে-ও সরানো */
     if(st.vsp===1&&(st.vspq.length||st.vspl.length))f++;
     if(st.ott===1&&(st.ottq.length||st.ottl.length))f++;
@@ -1006,10 +994,10 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
       if(x[0]==='sky'&&!ql.length&&st.skyr)ql=[st.skyr];
       if(x[0]==='hm'&&!ql.length&&st.hmr)ql=[st.hmr];
       if(x[0]==='mlb'&&!ql.length&&st.mlbr)ql=[st.mlbr];   // .mlbr = MovieLinkBD-cap
-      if(ql.length){var _isCap=!((st[QK[x[0]]]||[]).length);s.appendChild(el('div','chip',x[4]+' '+(_isCap?'≤'+ql[0]+'p':ql.slice().sort(function(a,b){return b-a;}).join('/')+'p only')));} // ★ v1.34.25: exact-set হলে 'only', একক-cap হলে '≤'
+      if(ql.length)s.appendChild(el('div','chip',x[4]+' ≤'+Math.max.apply(null,ql)+'p'));
       if(ll.length)s.appendChild(el('div','chip',x[4]+' '+ll.slice(0,2).join('/')+(ll.length>2?'+'+ll.length:'')));
     });
-    if(st.v===1){if(st.q.length)s.appendChild(el('div','chip','fleet '+st.q.slice().sort(function(a,b){return b-a;}).join('/')+'p only')); if(st.sub===0)s.appendChild(el('div','chip','no subs')); if(st.srv.length&&st.srv.length!==SRVS.length)s.appendChild(el('div','chip',st.srv.length+' servers'));}
+    if(st.v===1){if(st.q.length)s.appendChild(el('div','chip','fleet ≤ '+Math.max.apply(null,st.q)+'p'));if(st.sub===0)s.appendChild(el('div','chip','no subs'));if(st.srv.length&&st.srv.length!==SRVS.length)s.appendChild(el('div','chip',st.srv.length+' servers'));}
     if(st.rt===1&&st.rtsrv.length)s.appendChild(el('div','chip','RareToons '+(st.rtsrv.length>=2?'— no server':(st.rtsrv.indexOf('mq')>=0?'Pixeldrain only':'MQ only')))); /* v1.15.81 */
   }
 

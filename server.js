@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.63';
+const VERSION = '1.34.64';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -265,7 +265,7 @@ async function pxCheckerWave() {
     })));
     const t2 = Date.now();
     let cut = 0;
-    for (let i = POOL.length - 1; i >= 0 && POOL.length > 40; i--) { // v1.15.68: ফ্লোর ২× ২০→৪০
+    for (let i = POOL.length - 1; i >= 0 && POOL.length > 120; i--) { // v1.34.64: floor 3x (40->120)
       if (t2 - (PX_LASTOK.get(POOL[i].px) || t2) > 600000) { const g = POOL.splice(i, 1)[0]; PX_RUN.delete(g.px); PX_LASTOK.delete(g.px); PX_COOL.delete(g.px); PX_SITE.delete(g.px); PX_MISS.delete(g.px); cut++; }
     }
     if (cut) { try { fs.promises.writeFile(POOL_FILE, JSON.stringify(POOL)).catch(() => {}); } catch (e) {} setTimeout(enrichPool, 1500).unref(); }
@@ -273,7 +273,7 @@ async function pxCheckerWave() {
     try { global.__benchN = benchN; } catch (e) { }
     // ★★ v1.26.9 (ইউজার: "node, benched proxy eigula onek baraw"): বেঞ্চ-লক্ষ্য ৪৮ → PXBMIN(২৪০)।
     //   স্ক্যানের গতি (PXSCAN সমান্তরালতা) অপরিবর্তিত — শুধু **কত নোড জমা রাখা হবে** তার ছাদ বেড়েছে।
-    if (benchN < Number(process.env.PXBMIN || 240)) { setTimeout(enrichPool, 2000).unref(); if (PXCHK % 10 === 1) console.log('[pxbench-keeper] bench=' + benchN + ' < ' + Number(process.env.PXBMIN || 240) + ' → এনরিচ-ফসল-তাৎক্ষণিক'); }
+    if (benchN < Number(process.env.PXBMIN || 720)) { setTimeout(enrichPool, 2000).unref(); if (PXCHK % 10 === 1) console.log('[pxbench-keeper] bench=' + benchN + ' < 720 -> enrich now'); } // v1.34.64: bench target 3x
     if (cut || PXCHK % 15 === 1 || process.env.VPCHK) console.log('[pxchk] wave=' + wave.length + ' site=' + cok + ' spare=' + cspare + ' dead=' + cdead + ' pool=' + POOL.length + ' bench=' + benchN + ' cut=' + cut); // VPCHK=1: প্রতি-ঢেউয়ে-লগ (ডিবাগ)
   } finally { pxChkBusy = false; }
 }
@@ -368,7 +368,7 @@ function bfBenchStart() {
 // Multimovies' OWN pool, the vidy-pool model exactly: the same harvest feeds both, but this
 // pool's bench criterion is vidbolt.xyz reachability (the multimovies CDN condition). Fully
 // parallel maps + own file — nothing here touches the vidy pool.
-const MM_CAP = 1540, MM_FILE = path.join(__dirname, 'vidy_mm_pool.json'); // v1.15.68: ২× (১৫৪→৩০৮)
+const MM_CAP = 4620, MM_FILE = path.join(__dirname, 'vidy_mm_pool.json'); // v1.34.64: MM pool space 3x (1540->4620)
 let MM_POOL = []; try { for (const c of JSON.parse(fs.readFileSync(MM_FILE, 'utf8'))) if (c && c.px) MM_POOL.push({ px: c.px, ms: Number(c.ms) || 2000 }); } catch (e) { }
 const MM_RUN = new Map(), MM_LASTOK = new Map(), MM_COOL = new Map(), MM_SITE = new Set(), MM_MISS = new Map();
 const VB_REF = 'https://vidbolt.xyz/';
@@ -765,7 +765,7 @@ async function mmCheckerWave() { // pxCheckerWave's twin — bench = vidbolt rea
     })));
     const t2 = Date.now();
     let cutN = 0;
-    for (let i = MM_POOL.length - 1; i >= 0 && MM_POOL.length > 200; i--) // v1.15.68: ফ্লোর ২× if (t2 - (MM_LASTOK.get(MM_POOL[i].px) || t2) > 600000) { const g = MM_POOL.splice(i, 1)[0]; cutN++; MM_RUN.delete(g.px); MM_LASTOK.delete(g.px); MM_COOL.delete(g.px); MM_SITE.delete(g.px); MM_MISS.delete(g.px); }
+    for (let i = MM_POOL.length - 1; i >= 0 && MM_POOL.length > 600; i--) if (t2 - (MM_LASTOK.get(MM_POOL[i].px) || t2) > 600000) { const g = MM_POOL.splice(i, 1)[0]; cutN++; MM_RUN.delete(g.px); MM_LASTOK.delete(g.px); MM_COOL.delete(g.px); MM_SITE.delete(g.px); MM_MISS.delete(g.px); } // v1.34.64: floor 3x
     if (cutN) mmSave(); // v1.15.29 revise: write only when members were cut (no idle disk churn)
     if (DBG) console.error('[mmchk] pool=' + MM_POOL.length + ' bench=' + MM_POOL.filter(c => MM_SITE.has(c.px)).length);
   } finally { mmChkBusy = false; }
@@ -800,7 +800,7 @@ function mmRacePool(url, n, timeoutMs) { // racePool's twin over the multimovies
 }
 // v1.15.4 পুল-ট্রেইনার (enrich): পাবলিক-তালিকা → নমুনা-১২০ → সমান্তরাল-২০৪-যাচাই → দ্রুততম(<১.৮সে)-যোগ;
 // মূল-১৭-অক্ষত-প্রথমে, ক্যাপ-৭৭, জেতা-প্রক্সি-ফাইলেও-লেখা (রিস্টার্টে-উষ্ণ); PX_ENRICH=0 দিলে-বন্ধ
-const PX_BASE_N = 34, PX_CAP = Number(process.env.PXCAP || 2400), POOL_FILE = path.join(__dirname, 'vidy_proxy_pool.json');
+const PX_BASE_N = 34, PX_CAP = Number(process.env.PXCAP || 7200), POOL_FILE = path.join(__dirname, 'vidy_proxy_pool.json'); // v1.34.64: generic pool space 3x (2400->7200)
 // ★ v1.17.56: vidy-প্রশিক্ষণের কাঁচা-সরবরাহ — enrich-এর প্রতিটি *নতুন* প্রার্থী এখানে জমে,
 //   vidySweep শুধু POOL (≈১৯০) নয়, এই তাজা-তালিকাও সেশন-যাচাই করে ⇒ verified আর স্যাচুরেট করে না।
 const PX_RAW = []; const PX_RAW_SEEN = new Set(); const PX_RAW_CAP = Number(process.env.PXRAWCAP || 100000);
@@ -813,7 +813,7 @@ async function enrichPool() {
   if (process.uptime() < Number(process.env.PXBOOT || 75)) return; // ★ v1.24.1: বুট-ঝড় রোধ (ডিপ্লয়ের পর ৭৫সে শান্ত)
   // ★ v1.17.56: verified-pool পূর্ণ না হওয়া পর্যন্ত এনরিচ ছোট-বিরতিতে (৯০সে→৩০সে) — POOL-ই
   //   vidy-verified-এর কাঁচামাল; POOL না-বাড়লে verified স্যাচুরেট করে (মাপা: ৩.৫ মিনিটে ৭৩→৮০ থেমে যেত)।
-  const _gap = (VIDY_OK.size < Number(process.env.VPXMAX || 2000)) ? Number(process.env.PXGAP || 30000) : 90000;   // ★ v1.26.9: দুটি ভিন্ন-লক্ষ্য(১৫০০/২৫০০) এক করা হলো
+  const _gap = (VIDY_OK.size < Number(process.env.VPXMAX || 6000)) ? Number(process.env.PXGAP || 30000) : 90000;   // ★ v1.26.9: দুটি ভিন্ন-লক্ষ্য(১৫০০/২৫০০) এক করা হলো
   if (POOL.length >= 180 && Date.now() - _lastEnrich < _gap) return; // v1.15.98: প্রতি ১৮ সেকেন্ডে এনরিচ-ঝড় রোধ (কমপক্ষে ৯০সে বিরতি)
   _training = true; _lastEnrich = Date.now();
   try {
@@ -1237,7 +1237,7 @@ async function tunWarm(n) { // টানেল-ব্যাংক ভরা — 
     if (process.uptime() < Number(process.env.PXTWBOOT || 20)) return;
     // v1.25.4: ইউজার-রিকোয়েস্ট চলাকালীন ১.৫সে থামি — স্ক্যান গতি অপরিবর্তিত, শুধু সার্ভিং-কে অগ্রাধিকার
     if (Date.now() - LAST_STREAM_AT < 1500) return;
-    const cap = Number(process.env.PXTWN || 192);   // v1.25.1: 24 -> 192 warm tunnels (8x)
+    const cap = Number(process.env.PXTWN || 576);   // v1.25.1: 24 -> 192 warm tunnels (8x)
     let live = 0; for (const px of PTUN.keys()) if (ptunLive(px)) live++;
     const need = Math.min(n || 14, Math.max(0, cap - live));
     if (need <= 0) return;
@@ -1364,7 +1364,7 @@ if (pxsWarmTimer.unref) pxsWarmTimer.unref();
 let LAST_SRC = null;   // ★ v1.22.2: শেষ অনুরোধে প্রতি-সোর্স ফল (prod-ডায়াগনস্টিক)
 const SPOOL = new Map();          // srcKey -> Map(px -> {ms, ok, fail, ts, ban})
 const SPOOL_FILE = require('path').join(__dirname, 'src_pools.json');
-const SPOOL_TGT = Number(process.env.SPTGT || 72);   // v1.25.1 (user: 'bakigula 8x') 9 -> 72 per source   // v1.23.0: প্রতি সোর্সে ৯টি তাজা-যাচাই নোড (ইউজার: ৮-১০)   // প্রতি সোর্সে লক্ষ্য-ভেরিফায়েড নোড
+const SPOOL_TGT = Number(process.env.SPTGT || 216); // v1.34.64: per-source target 3x (72->216)   // v1.25.1 (user: 'bakigula 8x') 9 -> 72 per source   // v1.23.0: প্রতি সোর্সে ৯টি তাজা-যাচাই নোড (ইউজার: ৮-১০)   // প্রতি সোর্সে লক্ষ্য-ভেরিফায়েড নোড
 const SPOOL_TRIED = new Map();    // `${srcKey}|${px}` -> ts (ব্যর্থ-কুলডাউন ২০মিন)
 /* ★ v1.28.1: **প্রোব-ভার্সন** — কোনো সোর্সের যাচাই-মার্কার কড়া/বদলালে পুরোনো নোডগুলো আর 'প্রমাণিত' নয়
    (মাপা: az-এর নরম মার্কার `/anizone|anime|href/` ৪০০-বাইট প্রক্সি-এরর-পাতাকেও পাস করিয়ে দিয়েছিল)।
@@ -1397,7 +1397,7 @@ function spoolSave() {
         for (const px of Object.keys(cur[k] || {})) if ((cur[k][px].v || 1) === probeVer(k)) bucket[px] = { ms: cur[k][px].ms || 3000, v: probeVer(k) };
       }
       const ks = Object.keys(bucket);   // ★ ক্যাপ: প্রতি-সোর্সে সেরা 150 (ms-ক্রম) — ফাইল আর ফুলবে না
-      if (ks.length > 150) { ks.sort((a, b) => (bucket[a].ms || 9999) - (bucket[b].ms || 9999)); for (const px of ks.slice(150)) delete bucket[px]; }
+      if (ks.length > 450) { ks.sort((a, b) => (bucket[a].ms || 9999) - (bucket[b].ms || 9999)); for (const px of ks.slice(450)) delete bucket[px]; } // v1.34.64: spool save trim 3x
       o[k] = bucket;
     }
     fs.writeFileSync(SPOOL_FILE, JSON.stringify(o));
@@ -1425,7 +1425,7 @@ function spoolRec(key, px, ok, ms) {
   if (ok) { e.ok = (e.ok || 0) + 1; e.fail = 0; e.ms = e.ms ? Math.round(e.ms * 0.6 + (ms || e.ms) * 0.4) : (ms || 3000); e.ts = now; e.ban = 0; }
   else { e.fail = (e.fail || 0) + 1; if (e.fail >= 2) e.ban = now + 120000; SPOOL_TRIED.set(key + '|' + px, now); }
   m.set(px, e);
-  if (m.size > 120) { const old = [...m.entries()].sort((a, b) => (a[1].ts || 0) - (b[1].ts || 0)).slice(0, m.size - 120); for (const [k] of old) m.delete(k); }
+  if (m.size > 360) { const old = [...m.entries()].sort((a, b) => (a[1].ts || 0) - (b[1].ts || 0)).slice(0, m.size - 360); for (const [k] of old) m.delete(k); } // v1.34.64: spool runtime cap 3x (120->360)
 }
 // pxsGet-এর কী → সোর্স-পুলের নাম (একই সোর্সের সব হোস্ট এক পুলে)
 function srcKeyFor(pxKey) {
@@ -1488,7 +1488,7 @@ async function spoolTrain() {
     for (const k of (_serving ? [] : Object.keys(SRC_PROBE))) {
       const m = srcPool(k);
       const fresh = [...m.values()].filter(e => spoolFresh(e)).length;
-      if (fresh >= Number(process.env.SPMIN || 96)) continue;
+      if (fresh >= Number(process.env.SPMIN || 216)) continue;
       const cands = [];
       for (const px of VIDY_OK.keys()) if (!m.has(px)) cands.push(px);                          // (ক) vidy-প্রমাণিত নোড
       for (const c of POOL.filter(c => PX_SITE.has(c.px))) if (!m.has(c.px) && cands.indexOf(c.px) < 0) cands.push(c.px); // (খ) site-proven
@@ -1645,7 +1645,7 @@ function vidyVSave() {
       o[k] = { ms: v.ms, ts: v.ts || 0, ok: v.ok || 0, att: v.att || 0 };
     }
     let ks = Object.keys(o);
-    const cap = Number(process.env.VPXMAX || 1500);
+    const cap = Number(process.env.VPXMAX || 6000);
     if (ks.length > cap) { const keep = {}; for (const k of ks.slice(-cap)) keep[k] = o[k]; o = keep; ks = Object.keys(o); }
     require('fs').writeFileSync(vidyVPath(), JSON.stringify(o));
   } catch (e) { }
@@ -1974,7 +1974,7 @@ function vidySweepNext(ms) { if (vidySweepTimer) clearTimeout(vidySweepTimer); v
 setTimeout(() => vidySweep(Number(process.env.VPXW || 720)), 2500);
 // ★ v1.25.0: টানেল-ব্যাংক রক্ষণাবেক্ষণ (vidy-কোটা শূন্য) — প্রতি PXTWMS-এ ভরা, প্রতি ১০সে-এ বাসি বাদ
 const tunTimer = setInterval(() => { try { tunWarm(); } catch (e) { } }, Number(process.env.PXTWMS || 3000));   // v1.25.3: 8s -> 3s if (tunTimer.unref) tunTimer.unref();
-const tunPrune = setInterval(() => { for (const px of [...PTUN.keys()]) { const t = PTUN.get(px); if (t && !t.busy && (!t.s || t.s.destroyed || Date.now() - t.ts > Number(process.env.PXTTL || 45000))) ptunDrop(px); } if (PTUN.size > Number(process.env.PXTWMAX || 320)) { const ks = [...PTUN.keys()].slice(0, PTUN.size - Number(process.env.PXTWMAX || 320)); for (const k of ks) if (!PTUN.get(k).busy) ptunDrop(k); } }, 10000); if (tunPrune.unref) tunPrune.unref();
+const tunPrune = setInterval(() => { for (const px of [...PTUN.keys()]) { const t = PTUN.get(px); if (t && !t.busy && (!t.s || t.s.destroyed || Date.now() - t.ts > Number(process.env.PXTTL || 45000))) ptunDrop(px); } if (PTUN.size > Number(process.env.PXTWMAX || 960)) { const ks = [...PTUN.keys()].slice(0, PTUN.size - Number(process.env.PXTWMAX || 960)); for (const k of ks) if (!PTUN.get(k).busy) ptunDrop(k); } }, 10000); if (tunPrune.unref) tunPrune.unref();
 setTimeout(() => { try { tunWarm(); } catch (e) { } }, Number(process.env.PXTWBOOT || 20) * 1000).unref?.();
 // ★ v1.17.56: **প্রশিক্ষিত নোড-স্কোর** — শুধু-একবার-যাচাই-করা তালিকা দ্রুত বাসি হয় (মাপা: তালিকার
 //   ৪০% ২০ মিনিট পরও পাস করে, ৬০% শুধু `timeout`)। এখন প্রতিটি সেশন-ফল নোডে জমা হয় ⇒ যেটা এইমাত্র
@@ -2088,29 +2088,29 @@ function vsrvKey(o) { return o.srv + ':' + ((o.q && o.q.mediaType) || 'any'); }
 // প্রতিটি কন্টেইনার আলাদা পুল দিয়ে চলে — তাই ভরার হিসাব পুল-ধরন অনুযায়ী:
 //   vidy (verified) · warm tunnel bank · generic POOL · ৬টি spool-সোর্স (SRC_PROBE) + bf · mm-এর নিজের পুল
 function poolsFull() {
-  if (VIDY_OK.size < Number(process.env.VPXMAX || 2000)) return false;   // ★ v1.26.9: verified-লক্ষ্য ১৫০০ → ২০০০
+  if (VIDY_OK.size < Number(process.env.VPXMAX || 6000)) return false;   // ★ v1.26.9: verified-লক্ষ্য ১৫০০ → ২০০০
   // (টানেল-ব্যাংক ইচ্ছাকৃতভাবে বাদ — ওটা ফ্রি-বোনাস, প্রক্সি-মৃত্যুতে ওঠানামা করে; ভরার শর্ত নয়)
   if (POOL.length < Math.floor(PX_CAP * 0.8)) return false;
   try {
     const keys = Object.keys(SRC_PROBE); if (SPOOL.has('bf')) keys.push('bf');
     for (const k of keys) {
       const fresh = [...srcPool(k).values()].filter(e => spoolFresh(e)).length;
-      if (fresh < Number(process.env.SPMIN || 96)) return false;
+      if (fresh < Number(process.env.SPMIN || 216)) return false;
     }
-    if (typeof MM_POOL !== 'undefined' && MM_POOL.length < Number(process.env.MMTGT || 96)) return false;
+    if (typeof MM_POOL !== 'undefined' && MM_POOL.length < Number(process.env.MMTGT || 288)) return false;
   } catch (e) { }
   return true;
 }
 // কত ভরা — রিপোর্টের জন্য (percent per container)
 function poolsFill() {
   const out = {};
-  out.vidy = [VIDY_OK.size, Number(process.env.VPXMAX || 1500)];
-  out.tunnels = [PTUN.size, Number(process.env.PXTWN || 192)];
+  out.vidy = [VIDY_OK.size, Number(process.env.VPXMAX || 6000)];
+  out.tunnels = [PTUN.size, Number(process.env.PXTWN || 576)];
   out.generic = [POOL.length, Math.floor(PX_CAP * 0.8)];
   try {
     const keys = Object.keys(SRC_PROBE); if (SPOOL.has('bf')) keys.push('bf');
-    for (const k of keys) out[k] = [[...srcPool(k).values()].filter(e => spoolFresh(e)).length, Number(process.env.SPMIN || 96)];
-    if (typeof MM_POOL !== 'undefined') out.mm = [MM_POOL.length, Number(process.env.MMTGT || 96)];
+    for (const k of keys) out[k] = [[...srcPool(k).values()].filter(e => spoolFresh(e)).length, Number(process.env.SPMIN || 216)];
+    if (typeof MM_POOL !== 'undefined') out.mm = [MM_POOL.length, Number(process.env.MMTGT || 288)];
   } catch (e) { }
   return out;
 }
@@ -3049,7 +3049,7 @@ function mlsPxSave(force) {
   try {
     const arr = [...MLS_PX_OK.entries()].filter(([, e]) => e.ok > 0)
       .map(([px, e]) => ({ px: px, ms: e.ms || 3000, bd: MLS_PX_BD_SET.has(px) ? 1 : 0 }))
-      .sort((a, b) => a.ms - b.ms).slice(0, 200);
+      .sort((a, b) => a.ms - b.ms).slice(0, 600); // v1.34.64: learned save 3x
     require('fs').writeFileSync(require('path').join(__dirname, 'mls_px_learned.json'), JSON.stringify({ ts: Date.now(), good: arr }));
   } catch (e) { }
 }
@@ -3072,7 +3072,7 @@ const MLS_PX_CANDS = (() => {
   }
   // ★ মেমরি-সীমা (ইউজার-শর্ত \"memory 15%\"): ১ লক্ষ প্রার্থী ধরে রাখলে ~১০MB স্থায়ী হয় —
   //   স্ক্যানার ঘুরিয়ে চলে, তাই ২০,০০০ই যথেষ্ট (সিডগুলো তালিকার শুরুতে, কখনো বাদ পড়ে না)।
-  return out.slice(0, Number(process.env.MLSPXCAP || 20000));
+  return out.slice(0, Number(process.env.MLSPXCAP || 60000)); // v1.34.64: candidate cap 3x
 })();
 const MLS_PX_SOCKS = /:(?:1080|1088|9050|4145|10808|9813|8569|22222|40001|11200)$/;
 const mlsPxSchemes = px => /^(?:socks4|socks5|http):\/\//.test(px) ? [px] : (MLS_PX_SOCKS.test(px) ? ['http://' + px, 'socks5h://' + px] : ['http://' + px]);
@@ -3093,7 +3093,7 @@ async function mlsPxTrain() {
   try {
     if (process.uptime() < 12) return;
     if (Date.now() - LAST_STREAM_AT < 1500) return;                                  // সার্ভিং চললে ব্যাকগ্রাউন্ড-চাপ নয়
-    if (mlsPxBest(99, false).length >= Number(process.env.MLSPXTGT || 14)) return;    // যথেষ্ট শিক্ষিত নোড আছে
+    if (mlsPxBest(99, false).length >= Number(process.env.MLSPXTGT || 42)) return;    // v1.34.64: learned target 3x (14->42)
     const N = Number(process.env.MLSPXSCAN || 24);
     const batch = [];
     for (let i = 0; i < N && MLS_PX_CANDS.length; i++) {
@@ -6771,7 +6771,7 @@ async function mmStreams(tmdbId, title, type, s, e, origin, maxh, rel) { // v1.1
 // ---------- v1.15.71: Vidsrc (EasyPlay-apk রেসিপি) — vidsrc.ir → vs_src → player(apiToken এমবেডেড) → api&stream_urls (ChaCha20-WASM প্রতি-৫মিনিট) → /pl-হোস্টগুলো; সব-হপ IP-বাউন্ড → নিজস্ব /24-পিনড-প্রক্সি-পুল + পূর্ণ-রিলে (/vsp/t|c|s) ----------
 const VSP_FILE = path.join(__dirname, 'vidy_vsp_pool.json');
 let VSP_POOL = []; try { for (const c of JSON.parse(fs.readFileSync(VSP_FILE, 'utf8'))) if (c && c.px) VSP_POOL.push({ px: c.px, ms: Number(c.ms) || 2000 }); } catch (e) {}
-const VSP_CAP = 385; const VSP_BAD = new Map();
+const VSP_CAP = 1155; const VSP_BAD = new Map(); // v1.34.64: 3x (385->1155)
 function vspSave() { try { fs.writeFileSync(VSP_FILE, JSON.stringify(VSP_POOL)); } catch (e) {} }
 function vspSubnet(px) { const h = String(px).split(':')[0].split('.'); return h.length >= 3 ? h.slice(0, 3).join('.') : String(px); }
 function vspPick(ent) { // /24-সামঞ্জস্য-নির্বাচন: একই-সাবনেটের-সদস্য-ঘোরে (টোকা-সিদ্ধি অটুট); সরাসরি-ব্যর্থ-হলেই-পুল
@@ -16310,7 +16310,7 @@ function ensureNxChild(nxPort) { // v1.15.8: ৯০সে-অন্তর-7137-�
       if (Date.now() - lastSpawn < 180000) return;
       lastSpawn = Date.now();
       if (DBG) console.error('[nx-embed] ensure: চাইল্ড-নেই — পুনঃস্পন');
-      try { require('child_process').spawn(process.execPath, [path.join(__dirname, 'nethex', 'server.js')], { env: Object.assign({}, process.env, { PORT: String(nxPort), NX_POOL_FILE: MB_POOL_FILE, NX_POOL_OUT: MB_POOL_FILE, NX_BENCH_MAX: '160', NX_BOOT_TARGET: '120', NX_SAMPLE: '240', NX_CONC: '20', NX_SEED_BUDGET: '25000', NX_VERIFY_GAP: '60000', NX_FRESH_SAMPLE: '150', NX_CARD_CAP: '40', NX_CAP_MS: '900' }), stdio: 'ignore' }); } catch (e) {}
+      try { require('child_process').spawn(process.execPath, [path.join(__dirname, 'nethex', 'server.js')], { env: Object.assign({}, process.env, { PORT: String(nxPort), NX_POOL_FILE: MB_POOL_FILE, NX_POOL_OUT: MB_POOL_FILE, NX_BENCH_MAX: '480', NX_BOOT_TARGET: '360', NX_SAMPLE: '720', NX_CONC: '20', NX_SEED_BUDGET: '25000', NX_VERIFY_GAP: '60000', NX_FRESH_SAMPLE: '150', NX_CARD_CAP: '40', NX_CAP_MS: '900' }), stdio: 'ignore' }); } catch (e) {}
     });
     rq.on('timeout', () => { rq.destroy(); });
   }, 90000);
@@ -16337,9 +16337,9 @@ function mbPoolSync() {
     // আমাদের প্রমাণিত (wx/px)-তালিকা: দ্রুততম আগে
     const ours = (Array.isArray(POOL) ? POOL : []).filter(c => c && c.px && /^[\w.-]+:\d{2,5}$/.test(c.px))
       .map(c => ({ px: c.px, ms: Number(c.ms) || 1200 }))
-      .sort((a, b) => a.ms - b.ms).slice(0, 90);
+      .sort((a, b) => a.ms - b.ms).slice(0, 270); // v1.34.64: 3x
     for (const o of ours) if (!merged.has(o.px)) merged.set(o.px, o);
-    const out = [...merged.values()].sort((a, b) => a.ms - b.ms).slice(0, 160); // v1.17.35: child-এর ক্যাপের সাথে মিল
+    const out = [...merged.values()].sort((a, b) => a.ms - b.ms).slice(0, 480); // v1.34.64: 3x // v1.17.35: child-এর ক্যাপের সাথে মিল
     fs.writeFileSync(MB_POOL_FILE, JSON.stringify(out));
     if (DBG) console.error('[mbpool] seed=' + out.length + ' (ours=' + ours.length + ')');
   } catch (e) { if (DBG) console.error('[mbpool] sync failed ' + String(e && e.message).slice(0, 60)); }
@@ -16350,7 +16350,7 @@ function startEmbeddedNx() {
       if (!fs.existsSync(path.join(__dirname, 'nethex', 'server.js'))) return resolve('');
       const nxPort = Number(process.env.PORT || 7000) + 137;
       const child = require('child_process').spawn(process.execPath, [path.join(__dirname, 'nethex', 'server.js')], {
-        env: Object.assign({}, process.env, { PORT: String(nxPort), NX_POOL_FILE: MB_POOL_FILE, NX_POOL_OUT: MB_POOL_FILE, NX_BENCH_MAX: '160', NX_BOOT_TARGET: '120', NX_SAMPLE: '240', NX_CONC: '20', NX_SEED_BUDGET: '25000', NX_VERIFY_GAP: '60000', NX_CARD_CAP: '40', NX_CAP_MS: '900' }), // v1.17.31: আমাদের-বীজ+বড়-বেঞ্চ
+        env: Object.assign({}, process.env, { PORT: String(nxPort), NX_POOL_FILE: MB_POOL_FILE, NX_POOL_OUT: MB_POOL_FILE, NX_BENCH_MAX: '480', NX_BOOT_TARGET: '360', NX_SAMPLE: '720', NX_CONC: '20', NX_SEED_BUDGET: '25000', NX_VERIFY_GAP: '60000', NX_CARD_CAP: '40', NX_CAP_MS: '900' }), // v1.17.31: আমাদের-বীজ+বড়-বেঞ্চ
         stdio: 'ignore',
       });
       ensureNxChild(nxPort); // v1.15.8: বুট থেকেই-প্রহরী — চাইল্ড-বুটেই-ব্যর্থ-হলেও-৯০সে-অন্তর-যাচাই→পুনঃস্পন (আগে-স্থায়ী-off-হয়ে-যেত)
@@ -16362,7 +16362,7 @@ function startEmbeddedNx() {
         setTimeout(() => {
           try {
             const c3 = require('child_process').spawn(process.execPath, [path.join(__dirname, 'nethex', 'server.js')], {
-              env: Object.assign({}, process.env, { PORT: String(nxPort), NX_POOL_FILE: MB_POOL_FILE, NX_POOL_OUT: MB_POOL_FILE, NX_BENCH_MAX: '160', NX_BOOT_TARGET: '120', NX_SAMPLE: '240', NX_CONC: '20', NX_SEED_BUDGET: '25000', NX_VERIFY_GAP: '60000', NX_CARD_CAP: '40', NX_CAP_MS: '900' }), // v1.17.31: আমাদের-বীজ+বড়-বেঞ্চ
+              env: Object.assign({}, process.env, { PORT: String(nxPort), NX_POOL_FILE: MB_POOL_FILE, NX_POOL_OUT: MB_POOL_FILE, NX_BENCH_MAX: '480', NX_BOOT_TARGET: '360', NX_SAMPLE: '720', NX_CONC: '20', NX_SEED_BUDGET: '25000', NX_VERIFY_GAP: '60000', NX_CARD_CAP: '40', NX_CAP_MS: '900' }), // v1.17.31: আমাদের-বীজ+বড়-বেঞ্চ
               stdio: 'ignore',
             });
             c3.on('exit', () => { // v1.15.7 রাউন্ড-৮: respawn-চাইল্ড-মরলেও-আগে-যাচাই — 7137-তে-কেউ-সেবা-দিলে-'off'-বলা-মিথ্যা
