@@ -16,9 +16,11 @@ setTimeout(()=>{try{
   let c,o;
   /* সোর্স */
   // v1.15.86+: Pengu-সোর্স সম্পূর্ণ সরানো, Sky Movies ও BollyFlix নিজস্ব সোর্স ⇒ মোট ১১ কার্ড
-  c=d.querySelectorAll('#srcGrid .card').length===11;A('সোর্স-কার্ড ১১টি (Pengu সরানো, Sky + BollyFlix যোগ)',c);
+  c=d.querySelectorAll('#srcGrid .card').length===15;A('সোর্স-কার্ড ১৫টি (v/nx/rt/tw/mm/m4u/sky/hm/hd/vsp/ott/az/mlb/mls/dt)',c);
   c=!!d.getElementById('card-sky')&&d.getElementById('card-sky').textContent.indexOf('Sky Movies')>=0;A('সোর্স-কার্ড: Sky Movies (নিজস্ব)',c);
-  c=!!d.getElementById('card-bf')&&d.getElementById('card-bf').textContent.indexOf('BollyFlix')>=0;A('সোর্স-কার্ড: BollyFlix (নিজস্ব)',c);
+  c=!!d.getElementById('card-dt')&&d.getElementById('card-dt').textContent.indexOf('Deadtoons')>=0;A('সোর্স-কার্ড: Deadtoons (নিজস্ব)',c);
+  c=!!d.getElementById('card-mls')&&d.getElementById('card-mls').textContent.indexOf('MLSBD')>=0;A('সোর্স-কার্ড: MLSBD (নিজস্ব)',c);
+  c=!d.getElementById('card-bf');A('সোর্স-কার্ড: BollyFlix আর নেই (BF_ENABLED=false)',c);
   c=!d.getElementById('card-peng');A('সোর্স-কার্ড: Pengu আর নেই',c);
   /* MovieBox: রেজো ৪+All, ভাষা ১৭+All (Multi+Tagalog সহ) */
   const nxR=chips('tune-nx')[0],nxL=chips('tune-nx')[1];
@@ -44,9 +46,11 @@ setTimeout(()=>{try{
   /* Sky Movies: নিজস্ব-রেজো+ভাষা */
   byTxt(chips('tune-sky')[0],'4K').click();byTxt(chips('tune-sky')[1],'Hindi').click();
   c=JSON.stringify(C.st.skyq)==='[2160]'&&JSON.stringify(C.st.skyl)==='["hindi"]';A('skyq [2160]+skyl ["hindi"]',c);
-  /* BollyFlix: নিজস্ব-রেজো+ভাষা */
-  byTxt(chips('tune-bf')[0],'1080p').click();byTxt(chips('tune-bf')[1],'Hindi').click();
-  c=JSON.stringify(C.st.bfq)==='[1080]'&&JSON.stringify(C.st.bfl)==='["hindi"]';A('bfq [1080]+bfl ["hindi"]',c);
+  /* HindMovie + HDHub4u: নিজস্ব-রেজো+ভাষা (BollyFlix সোর্স বাদ — v1.17.44) */
+  byTxt(chips('tune-hm')[0],'1080p').click();byTxt(chips('tune-hm')[1],'Hindi').click();
+  c=JSON.stringify(C.st.hmq)==='[1080]'&&JSON.stringify(C.st.hml)==='["hindi"]';A('hmq [1080]+hml ["hindi"]',c);
+  byTxt(chips('tune-hd')[0],'720p').click();byTxt(chips('tune-hd')[1],'Hindi').click();
+  c=JSON.stringify(C.st.hdq)==='[720]'&&JSON.stringify(C.st.hdl)==='["hindi"]';A('hdq [720]+hdl ["hindi"]',c);
   /* লুকানো-ফিল্টার: fzone-ডিফল্টে-লুকানো, Filters-বাটনে-খোলে */
   const disp=e=>w.getComputedStyle(e).display;
   const op=e=>{const v=w.getComputedStyle(e).opacity;return v===''?null:v;};
@@ -76,12 +80,12 @@ setTimeout(()=>{try{
   c=C.st.v===1&&C.st.nx===1;A('দুটোই-আবার-চালু',c);
   /* সব-উৎস-বন্ধ → ব্লক-নয়, শুধু-সতর্কতা */
   var _sv=[];
-  ['v','nx','rt','tw','mm','m4u','sky','bf','vsp','ott','az'].forEach(function(k){if(C.st[k]===1){var sw=d.getElementById('sw-'+k);if(sw)sw.click();_sv.push(k);}});
-  var allOff=['v','nx','rt','tw','mm','m4u','sky','bf','vsp','ott','az'].every(function(k){return C.st[k]===0;});
+  ['v','nx','rt','tw','mm','m4u','sky','hm','hd','vsp','ott','az','mlb','mls','dt'].forEach(function(k){if(C.st[k]===1){var sw=d.getElementById('sw-'+k);if(sw)sw.click();_sv.push(k);}});
+  var allOff=['v','nx','rt','tw','mm','m4u','sky','hm','hd','vsp','ott','az','mlb','mls','dt'].every(function(k){return C.st[k]===0;});
   c=allOff;A('সব-উৎস-বন্ধ-করা-গেল (ব্লক-নেই)',c);
   c=d.getElementById('toast').textContent.indexOf('All sources off')>=0;A('সব-বন্ধে-সতর্কতা-টোস্ট',c);
   _sv.forEach(function(k){var sw=d.getElementById('sw-'+k);if(sw&&C.st[k]===0)sw.click();});
-  c=['v','nx','rt','tw','mm','m4u','sky','bf','vsp','ott','az'].every(function(k){return C.st[k]===1;});A('সব-উৎস-আবার-চালু',c);
+  c=['v','nx','rt','tw','mm','m4u','sky','hm','hd','vsp','ott','az','mlb','mls','dt'].every(function(k){return C.st[k]===1;});A('সব-উৎস-আবার-চালু',c);
   d.getElementById('srvPri').click();c=C.st.srv.length===3;A('srvPri → ৩',c);
   d.getElementById('srvAll').click();c=C.st.srv.length===16;A('srvAll → ১৬',c);
   /* v1.15.81: বুটে-সার্ভার-টাইল-রিড্র (আগে প্রথম-লোডে কোনো-টাইলেই .on থাকত-না) */
@@ -125,7 +129,7 @@ setTimeout(()=>{try{
   c=d.getElementById('pvPq').textContent==='All'&&d.getElementById('pvPh').textContent.indexOf('2160')>0;A('Sky-প্রিভিউ m4ur-মুক্ত (All/2160): '+d.getElementById('pvPq').textContent+' / '+d.getElementById('pvPh').textContent,c);
   C.st.m4ur=0;
   /* rebuild-চুক্তি */
-  const rst=()=>{C.st.q=[];C.st.sub=1;C.st.srv=[];C.st.az=1;C.st.azq=[];C.st.azl=[];C.st.nx=1;C.st.nxq=[];C.st.nxl=[];C.st.rt=1;C.st.rtl=[];C.st.rtq=[];C.st.tw=1;C.st.twq=[];C.st.twl=[];C.st.mm=1;C.st.mmr=0;C.st.mmq=[];C.st.mml=[];C.st.m4u=1;C.st.m4ur=0;C.st.m4uq=[];C.st.m4ul=[];C.st.sky=1;C.st.skyq=[];C.st.skyl=[];C.st.bf=1;C.st.bfr=0;C.st.bfq=[];C.st.bfl=[];C.st.vsp=1;C.st.vspq=[];C.st.vspl=[];C.st.ott=1;C.st.ottq=[];C.st.ottl=[];};
+  const rst=()=>{C.st.q=[];C.st.sub=1;C.st.srv=[];C.st.az=1;C.st.azq=[];C.st.azl=[];C.st.nx=1;C.st.nxq=[];C.st.nxl=[];C.st.rt=1;C.st.rtl=[];C.st.rtq=[];C.st.tw=1;C.st.twq=[];C.st.twl=[];C.st.mm=1;C.st.mmr=0;C.st.mmq=[];C.st.mml=[];C.st.m4u=1;C.st.m4ur=0;C.st.m4uq=[];C.st.m4ul=[];C.st.sky=1;C.st.skyq=[];C.st.skyl=[];C.st.hm=1;C.st.hmr=0;C.st.hmq=[];C.st.hml=[];C.st.hd=1;C.st.hdr=0;C.st.hdq=[];C.st.hdl=[];C.st.mlb=1;C.st.mlbr=0;C.st.mls=1;C.st.mlsr=0;C.st.dt=1;C.st.vsp=1;C.st.vspq=[];C.st.vspl=[];C.st.ott=1;C.st.ottq=[];C.st.ottl=[];};
   rst();C.rebuild();
   c=!/\/cfg\//.test(out());A('সব-ডিফল্ট → ব্লব-বিহীন',c);
   C.st.az=0;C.rebuild();o=dec(out());
@@ -134,8 +138,10 @@ setTimeout(()=>{try{
   c=!!o&&JSON.stringify(o.mmq)==='[2160,720]'&&JSON.stringify(o.twq)==='[480]';A('mmq-desc+twq-সহাবস্থান: '+JSON.stringify(o),c);
   C.st.sky=1;C.st.skyq=[2160];C.st.skyl=['hindi'];C.rebuild();o=dec(out());
   c=!!o&&JSON.stringify(o.skyq)==='[2160]'&&JSON.stringify(o.skyl)==='["hindi"]';A('skyq+skyl-নির্গমন: '+JSON.stringify(o),c);
-  C.st.bf=1;C.st.bfq=[1080];C.st.bfl=['hindi'];C.rebuild();o=dec(out());
-  c=!!o&&JSON.stringify(o.bfq)==='[1080]'&&JSON.stringify(o.bfl)==='["hindi"]';A('bfq+bfl-নির্গমন: '+JSON.stringify(o),c);
+  C.st.hm=1;C.st.hmq=[1080];C.st.hml=['hindi'];C.rebuild();o=dec(out());
+  c=!!o&&JSON.stringify(o.hmq)==='[1080]'&&JSON.stringify(o.hml)==='["hindi"]';A('hmq+hml-নির্গমন: '+JSON.stringify(o),c);
+  C.st.dt=0;C.st.mls=0;C.rebuild();o=dec(out());
+  c=!!o&&o.dt===0&&o.mls===0;A('dt=0+mls=0-নির্গমন (v1.34.63): '+JSON.stringify(o),c);C.st.dt=1;C.st.mls=1;
   C.st.srv=C.SRVS.map(s=>s[0]);C.rebuild();o=dec(out());
   c=!!o&&!('srv'in o);A('srv-সব → বাদ',c);
   /* preview-সততা */
@@ -145,7 +151,7 @@ setTimeout(()=>{try{
   c=d.getElementById('pvTh').textContent.indexOf('2160')>=0;A('pvTh 2160',c);
   c=d.getElementById('pvAt').textContent.indexOf('Hindi')>=0;A('pvAt Hindi: '+d.getElementById('pvAt').textContent.split('\n')[2],c);
   c=d.getElementById('pvP').style.display!=='none'&&d.getElementById('pvPt').textContent.indexOf('Sky Movies')>=0;A('pvP Sky Movies-দৃশ্যমান',c);
-  c=d.getElementById('pvB').style.display!=='none'&&d.getElementById('pvBt').textContent.indexOf('BollyFlix')>=0;A('pvB BollyFlix-দৃশ্যমান',c);
+  c=d.getElementById('pvH').style.display!=='none'&&d.getElementById('pvHt').textContent.indexOf('HindMovie')>=0;A('pvH HindMovie-দৃশ্যমান',c);
   C.st.rtl=['tamil','hindi','telugu'];C.st.rtq=[];C.rebuild();
   c=d.getElementById('pvRh').textContent==='\u25a5 1080 \u25a5';A('pvRh-হেডার ▥ 1080 ▥ (Auto-বাদ): '+d.getElementById('pvRh').textContent,c);
   c=d.getElementById('pvRq').textContent==='Tamil +2';A('pvRq-সংক্ষিপ্ত (Tamil +2): '+d.getElementById('pvRq').textContent,c);

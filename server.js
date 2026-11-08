@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.62';
+const VERSION = '1.34.63';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -3007,6 +3007,8 @@ function mlsPxFor(host) {
     if (bd && out.indexOf(bd) < 0) out.push(bd);
     if (out.length) return out;
   }
+  const learned = mlsPxBest(3, false);   // v1.34.63: learned pool first for ALL hosts (gdflix fell back to a stale static list; mls_gd_px.json is empty)
+  if (learned.length) return learned;
   const list = /gdflix|ddflix|gdlink/i.test(host) ? (MLS_PXG.length ? MLS_PXG : MLS_PXA) : MLS_PXA;
   if (!list.length) return [];
   const out = [];
@@ -14096,7 +14098,7 @@ function qToList(q) { // মাল্টি-রেজোলিউশন: অ্�
   const n = Math.min(2160, Math.max(0, Number(q) || 0));
   return n ? QH.filter(h => h <= n) : [];
 }
-const DEFAULT_CFG = { q: 0, sub: 1, cat: 'kd,mv', lang: '', sort: 'pop', era: '', g: [], srv: [], v: 1, nx: 1, nxq: 0, nxl: [], tw: 1, rt: 1, twq: [], rtl: [], mmr: 0, m4u: 1, m4ur: 0, sky: 1, skyr: 0, hm: 1, hmr: 0, hd: 1, hdr: 0, bf: 1, bfr: 0, mm: 1, mmrelay: 0, mmdirect: 0, vsp: 1, vspq: 0, ott: 1, ottq: 0, az: 1, azq: 0, mlb: 1, mlbr: 0, rtsrv: [], rtq: [], mmq: [], m4uq: [], skyq: [], bfq: [], twl: [], mml: [], m4ul: [], skyl: [], bfl: [], vspl: [], ottl: [], azl: [] } // v1.15.80-wip: সর্ব-উৎস-রেজো-সাদৃশ্য (rtq/mmq/m4uq/skyq/bfq) + সর্ব-উৎস-ভাষা-সাদৃশ্য (twl…azl); // v1.15.71: vsp=Vidsrc-মাস্টার-সুইচ, vspq=Vidsrc-নিজের-মান-ছাঁকনি (0=সব) // v1.15.54: mmrelay=1 → MM-মিনি-মিডিয়া-আমাদের-সার্ভার-রিলে (ব্যবহারকারীর-IP-CDN-আটকালে) // mmr = Multimovies-রেজোলিউশন-ছাঁকনি (0=সব) // v/nx/tw/rt/mm/m4u/sky/bf = per-source master switches
+const DEFAULT_CFG = { q: 0, sub: 1, cat: 'kd,mv', lang: '', sort: 'pop', era: '', g: [], srv: [], v: 1, nx: 1, nxq: 0, nxl: [], tw: 1, rt: 1, twq: [], rtl: [], mmr: 0, m4u: 1, m4ur: 0, sky: 1, skyr: 0, hm: 1, hmr: 0, hd: 1, hdr: 0, bf: 1, bfr: 0, mm: 1, mmrelay: 0, mmdirect: 0, vsp: 1, vspq: 0, ott: 1, ottq: 0, az: 1, azq: 0, mlb: 1, mlbr: 0, mls: 1, mlsr: 0, dt: 1, hdq: [], hdl: [], rtsrv: [], rtq: [], mmq: [], m4uq: [], skyq: [], bfq: [], twl: [], mml: [], m4ul: [], skyl: [], bfl: [], vspl: [], ottl: [], azl: [] } // v1.15.80-wip: সর্ব-উৎস-রেজো-সাদৃশ্য (rtq/mmq/m4uq/skyq/bfq) + সর্ব-উৎস-ভাষা-সাদৃশ্য (twl…azl); // v1.15.71: vsp=Vidsrc-মাস্টার-সুইচ, vspq=Vidsrc-নিজের-মান-ছাঁকনি (0=সব) // v1.15.54: mmrelay=1 → MM-মিনি-মিডিয়া-আমাদের-সার্ভার-রিলে (ব্যবহারকারীর-IP-CDN-আটকালে) // mmr = Multimovies-রেজোলিউশন-ছাঁকনি (0=সব) // v/nx/tw/rt/mm/m4u/sky/bf = per-source master switches
 function parseCfgFromObj(o) {
   const c = Object.assign({}, DEFAULT_CFG, { g: [] });
   if (o) {
@@ -14150,6 +14152,9 @@ function parseCfgFromObj(o) {
     if (o.mlb === 1 || o.mlb === '1' || o.mlb === true) c.mlb = 1;
     else if (o.mlb === 0 || o.mlb === '0' || o.mlb === false) c.mlb = 0;
     if (o.mlbr !== undefined && o.mlbr !== null && o.mlbr !== '') { const mv = parseInt(o.mlbr, 10) || 0; if ([0, 480, 720, 1080, 2160].indexOf(mv) >= 0) c.mlbr = mv; }
+    if (o.mls === 0 || o.mls === '0') c.mls = 0; // v1.34.63: MLSBD master (UI emitted it, parser dropped it)
+    if (o.mlsr !== undefined && o.mlsr !== null && o.mlsr !== '') { const msv = parseInt(o.mlsr, 10) || 0; if ([0, 480, 720, 1080, 2160].indexOf(msv) >= 0) c.mlsr = msv; }
+    if (o.dt === 0 || o.dt === '0') c.dt = 0; // v1.34.63: Deadtoons master
   }
   return c;
 }
@@ -15243,7 +15248,7 @@ const server = http.createServer((req, res) => {
       //   parseCfgFromObj ঐগুলো চিনেনা, কিন্তু এই তালিকায় আর-পাঠানো-হয় নি (মাপা: hm=0 দিয়েও HindMovie-কার্ড আসত)।
       hm: qs.get('hm') === '0' ? 0 : undefined, hmr: qs.get('hmr') || undefined, hmq: qs.get('hmq') || undefined, hml: qs.get('hml') ? qs.get('hml').split(',') : undefined, hdl: qs.get('hdl') ? qs.get('hdl').split(',') : undefined,
       hd: qs.get('hd') === '0' ? 0 : undefined, hdr: qs.get('hdr') || undefined, hdq: qs.get('hdq') || undefined,
-      mlb: qs.get('mlb') === '0' ? 0 : undefined, mlbr: qs.get('mlbr') || undefined,
+      mlb: qs.get('mlb') === '0' ? 0 : undefined, mlbr: qs.get('mlbr') || undefined, mls: qs.get('mls') === '0' ? 0 : undefined, mlsr: qs.get('mlsr') || undefined, dt: qs.get('dt') === '0' ? 0 : undefined,
       mmr: qs.get('mmr') || undefined, rtsrv: qs.get('rtsrv') ? qs.get('rtsrv').split(',') : undefined, rt: qs.get('rt') === '0' ? 0 : undefined, m4u: qs.get('m4u') === '0' ? 0 : undefined, m4ur: qs.get('m4ur') || undefined, sky: qs.get('sky') === '0' ? 0 : undefined, skyr: qs.get('skyr') || undefined, bf: qs.get('bf') === '0' ? 0 : undefined, bfr: qs.get('bfr') || undefined, mm: qs.get('mm') === '0' ? 0 : undefined, mmrelay: qs.get('mmrelay') === '1' ? 1 : undefined, mmdirect: qs.get('mmdirect') === '1' ? 1 : undefined, vsp: qs.get('vsp') === '0' ? 0 : undefined, vspq: qs.get('vspq') || undefined, ott: qs.get('ott') === '0' ? 0 : undefined, ottq: qs.get('ottq') || undefined, az: qs.get('az') === '0' ? 0 : undefined, azq: qs.get('azq') || undefined, rtl: qs.get('rtl') ? qs.get('rtl').split(',') : undefined, nxq: qs.get('nxq') || undefined, nxl: qs.get('nxl') ? qs.get('nxl').split(',') : undefined, rtq: qs.get('rtq') || undefined, mmq: qs.get('mmq') || undefined, m4uq: qs.get('m4uq') || undefined, skyq: qs.get('skyq') || undefined, bfq: qs.get('bfq') || undefined, twl: qs.get('twl') ? qs.get('twl').split(',') : undefined, mml: qs.get('mml') ? qs.get('mml').split(',') : undefined, m4ul: qs.get('m4ul') ? qs.get('m4ul').split(',') : undefined, skyl: qs.get('skyl') ? qs.get('skyl').split(',') : undefined, bfl: qs.get('bfl') ? qs.get('bfl').split(',') : undefined, vspl: qs.get('vspl') ? qs.get('vspl').split(',') : undefined, ottl: qs.get('ottl') ? qs.get('ottl').split(',') : undefined, azl: qs.get('azl') ? qs.get('azl').split(',') : undefined });
     }
     if (!cfg) cfg = Object.assign({}, DEFAULT_CFG, { g: [], srv: [] });
