@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.33';
+const VERSION = '1.34.34';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -12122,7 +12122,7 @@ function bfSniffCt(buf) {                     // ফাইলের আসল �
 //   তারপর যেকোনো Range ক্যাশ-ফাইল থেকে সত্যিকারের ২০৬ (সিক/রিজিউম তাৎক্ষণিক, Google-এ বারবার চাপ নেই)।
 const BF_GUC = new Map();                       // url → {f, got, total, done, err, ts, used}
 const BF_GU_DIR = process.env.GUCACHE_DIR || '/var/tmp/vidy-gu';
-const BF_GU_MAX = Number(process.env.GUCACHE_MAX || 2.4e9);
+const BF_GU_MAX = Number(process.env.GUCACHE_MAX || 12e9); // v1.34.34: 2.4e9 ছিল একটা বড় ফাইলের (3.6GB) চেয়েও ছোট ⇒ done ফাইল অন্য পুলে evict হয়ে সিক ভাঙত (প্রোডে মাপা)
 let BF_GU_BYTES = 0, BF_GU_READY = null, BF_GU_OFF = 0, BF_GU_DEG = 0;   // BF_GU_DEG: একসাথে সর্বোচ্চ ১টি ক্রমিক-স্ট্রিম
 const BF_GU_LOG = [];   // v1.34.13: শেষ কয়েকটা সার্ভের ফেজ-টাইমিং (প্রোড-নিদান)
 const bfGuLog = o => { try { BF_GU_LOG.push(o); if (BF_GU_LOG.length > 12) BF_GU_LOG.shift(); } catch (e) { } };   // BF_GU_OFF: জায়গা-সংকটে ১০ মিনিট ক্যাশ-বিরতি
@@ -12155,41 +12155,72 @@ const bfGuEvict = (keep) => {                   // পুরোনো-শেষ 
     BF_GU_BYTES -= (e.total || e.got || 0); BF_GUC.delete(u);
   }
 };
+function bfGuAdoptStream(key, url, body) { // v1.34.34: হাতে-থাকা লাইভ 200-স্ট্রিমটাই ডিস্ক-পুলে খাওয়াই (আলাদা পুল-ফেচ যেসব মিররে 403 খায়, সেখানেও ক্যাশ গরম হয়)
+  try {
+    const ex = BF_GUC.get(key);
+    if (ex && (ex.got > 0 || (!ex.err && !ex.done))) return false;
+    if (ex) BF_GUC.delete(key);
+    const d = bfGuDir(); if (!d || !body) return false;
+    const e = { f: d + '/' + require('crypto').createHash('sha1').update(key).digest('hex').slice(0, 22) + '.bin', src: url, got: 0, total: 0, done: false, err: '', ts: Date.now(), used: Date.now() };
+    BF_GUC.set(key, e);
+    (async () => {
+      const ws = fs.createWriteStream(e.f);
+      const rd = body.getReader();
+      ws.on('error', er2 => { e.err = 'werr:' + String((er2 && er2.code) || '').slice(0, 12); try { rd.cancel(); } catch (x) { } }); // v1.34.34
+      try {
+        for (;;) { const { done, value } = await rd.read(); if (done) break; const b = Buffer.from(value); e.got += b.length; BF_GU_BYTES += b.length; if (!ws.write(b)) await new Promise(r2 => ws.once('drain', r2)); if (BF_GU_BYTES > BF_GU_MAX) bfGuEvict(url); }
+        await new Promise(r2 => ws.end(r2));
+        e.done = true;
+        try { fs.writeFileSync(e.f + '.meta', JSON.stringify({ k: key, t: e.got })); } catch (er) { }
+        if (DBG) console.error('[guc] adopt-done ' + (e.got / 1048576).toFixed(0) + 'MB');
+      } catch (er) { try { ws.destroy(); } catch (x) { } e.err = 'adopt'; }
+    })();
+    return true;
+  } catch (e) { return false; }
+}
 function bfGuStart(key, url) {
   const d = bfGuDir();
   if (!d) return null;
   const e = { f: d + '/' + require('crypto').createHash('sha1').update(key).digest('hex').slice(0, 22) + '.bin', src: url, got: 0, total: 0, done: false, err: '', ts: Date.now(), used: Date.now() };
   BF_GUC.set(key, e);
   (async () => {
-    const r = await fetch(url, { headers: { 'User-Agent': UA, Accept: '*/*' }, signal: AbortSignal.timeout(20 * 60e3) }).catch(() => null);
-    if (!r || !r.ok || !r.body) { e.err = 'up' + (r ? r.status : 0); return; }
-    e.total = Number(r.headers.get('content-length') || 0);
-    // ★ জায়গা-গার্ড: কনটেইনার-ডিস্ক ভরে গেলে পুরো অ্যাডনই মরে যেত ⇒ জায়গা না থাকলে ক্যাশ বাদ,
-    //   পুরোনো "০ থেকে পড়ে বাদ" পথে চলে যাই (ধীর, কিন্তু ভাঙে না)
-    try {
-      const stt = fs.statfsSync(bfGuDir());
-      const free = Number(stt.bavail) * Number(stt.bsize);
-      if (free < (e.total || 0) + 300 * 1048576) { e.err = 'nospace'; BF_GU_OFF = Date.now(); return; }
-    } catch (er) { }
-    const ws = fs.createWriteStream(e.f);
-    const rd = r.body.getReader();
-    try {
-      for (;;) {
-        const { done, value } = await rd.read();
-        if (done) break;
-        const b = Buffer.from(value);
-        e.got += b.length; BF_GU_BYTES += b.length;
-        if (!ws.write(b)) await new Promise(r2 => ws.once('drain', r2));
-        if (BF_GU_BYTES > BF_GU_MAX) bfGuEvict(url);
+    // ★ v1.34.34: পুল মাঝপথে ভাঙলে (প্রোডে বারবার মাপা) **নিজে থেকেই** আবার টানে (সর্বোচ্চ ৬ বার) —
+    //   আগে এক ভাঙনেই পুল মরত, পরের রিকোয়েস্টে এন্ট্রি বদলে ফাইল গোড়া থেকে শুরু হতো ⇒ ৩.৬GB কখনো শেষ হতো না।
+    //   টোকেন-মৃত্যু (403/410) হলে err — তখনই কেবল নতুন রিজলভের লিংক এন্ট্রি বদলায়।
+    for (let att = 0; att < 6 && !e.done; att++) {
+      if (att) await new Promise(r2 => setTimeout(r2, 1500));
+      if (e.done) break;
+      const r = await fetch(url, { headers: { 'User-Agent': UA, Accept: '*/*', Referer: (() => { try { return new URL(url).origin + '/'; } catch (e) { return ''; } })() }, signal: AbortSignal.timeout(20 * 60e3) }).catch(() => null); // v1.34.34: self-Referer (কিছু মিরর Referer ছাড়া পুল-ফেচ 403 দেয়; GU উপেক্ষা করে)
+      if (!r || !r.ok || !r.body) { const st = r ? r.status : 0; if (st === 403 || st === 410 || att === 5) { e.err = 'up' + st; return; } continue; }
+      e.total = Number(r.headers.get('content-length') || 0) || e.total;
+      try {
+        const stt = fs.statfsSync(bfGuDir());
+        const free = Number(stt.bavail) * Number(stt.bsize);
+        if (free < (e.total || 0) + 300 * 1048576) { try { await r.body.cancel(); } catch (er) { } e.err = 'nospace'; if (free < 150 * 1048576) BF_GU_OFF = Date.now(); return; }
+      } catch (er) { }
+      BF_GU_BYTES -= e.got; e.got = 0;
+      const ws = fs.createWriteStream(e.f);
+      const rd = r.body.getReader();
+      ws.on('error', er2 => { e.err = 'werr:' + String((er2 && er2.code) || '').slice(0, 12); try { rd.cancel(); } catch (x) { } }); // v1.34.34: ENOSPC-তে প্রসেস-ক্র্যাশ নয়
+      try {
+        for (;;) {
+          const { done, value } = await rd.read();
+          if (done) break;
+          const b = Buffer.from(value);
+          e.got += b.length; BF_GU_BYTES += b.length;
+          if (!ws.write(b)) await new Promise(r2 => ws.once('drain', r2));
+          if (BF_GU_BYTES > BF_GU_MAX) bfGuEvict(url);
+        }
+        await new Promise(r2 => ws.end(r2));
+        if (e.total && e.got < e.total) throw new Error('short ' + e.got + '/' + e.total); // মাঝপথে কাটা ⇒ আবার
+        e.done = true;
+        try { fs.writeFileSync(e.f + '.meta', JSON.stringify({ k: key, t: e.got })); } catch (er) { }   // v1.34.14
+        if (DBG) console.error('[guc] done ' + (e.got / 1048576).toFixed(0) + 'MB ' + String(url).slice(-24));
+      } catch (er) {
+        try { ws.destroy(); } catch (x) { }
+        if (att === 5) { e.err = String((er && er.message) || er).slice(0, 40); if (DBG) console.error('[guc] err ' + e.err + ' got=' + e.got); }
+        else if (DBG) console.error('[guc] pull-retry ' + (att + 1) + ' got=' + e.got + ' ' + String((er && er.message) || er).slice(0, 30));
       }
-      await new Promise(r2 => ws.end(r2));
-      e.done = true;
-      try { fs.writeFileSync(e.f + '.meta', JSON.stringify({ k: key, t: e.got })); } catch (er) { }   // v1.34.14
-      if (DBG) console.error('[guc] done ' + (e.got / 1048576).toFixed(0) + 'MB ' + String(url).slice(-24));
-    } catch (er) {
-      try { ws.destroy(); } catch (x) { }
-      e.err = String((er && er.message) || er).slice(0, 40);
-      if (DBG) console.error('[guc] err ' + e.err + ' got=' + e.got);
     }
   })();
   return e;
@@ -12389,17 +12420,25 @@ async function bfServeGeneric(req, res, url) {
     // ★ v1.34.8: ফাইলের গভীরে (৩২MB+) সিক চাইলে ০ থেকে পড়ে বাদ দেওয়া মানে **পুরো ফাইল টেনে নেওয়া** ⇒
     //   সেটাই ছিল "seek dile full download"। এখন ওখানে সৎভাবে ৫০২ (প্লেয়ার রিট্রাই করবে), আর
     //   আকার জানা থাকলে ৪১৬ + `content-range: bytes */T` (মানক উত্তর)।
-    if (!mCR && rawStart > 32 * 1024 * 1024) {
-      // ★ v1.34.33 (ইউজার: GDrive/G-Direct-এ "শেষে টানে না, ভিডিও শেষে চলে যায়"): 416 পেলেই ExoPlayer ফাইল শেষ
-      //   বলে ধরে নেয়। এখন আগে ডিস্ক-ক্যাশ পথ (bfGuServe — যেকোনো Range-না-মানা হোস্টে): পুল এগিয়ে থাকলে সত্যি 206।
-      try { if (upFinal.body) await upFinal.body.cancel(); } catch { }
+    if (rawStart > 32 * 1024 * 1024) {
+      // ★ v1.34.33+34 (ইউজার: GDrive/G-Direct-এ "শেষে টানে না, ভিডিও শেষে চলে যায়"): 416 পেলেই ExoPlayer ফাইল শেষ
+      //   বলে ধরে নেয়। এখন আগে ডিস্ক-ক্যাশ পথ (bfGuServe — যেকোনো Range-না-মানা/ভুল-206 হোস্টে): পুল এগিয়ে থাকলে সত্যি 206।
       const _okg2 = await bfGuServe(req, res, url, rawStart, rawEndQ, base).catch(() => false);
-      if (_okg2 !== false) return;
-      const T = total || await bfUpSize(url).catch(() => 0);
-      const h = Object.assign({}, base);
-      if (T) { h['content-range'] = 'bytes */' + T; res.writeHead(416, h); }
-      else res.writeHead(502, h);
-      return res.end();
+      if (_okg2 !== false) { try { if (upFinal.body) await upFinal.body.cancel(); } catch { } return; }
+      if (!mCR) {
+        // ★ v1.34.34: লাইভ স্ট্রিমটা পুলে খাইয়ে 503 দিই (416 নয়) — পুল শেষ হলে পরের সিক সত্যি 206
+        const key2 = (/^\/m4d\/([A-Za-z0-9_\-]+)/.exec(String(req.url || '')) || [])[1];
+        const primed = !!(key2 && upFinal.body && bfGuAdoptStream(key2, url, upFinal.body));
+        if (!primed) { try { if (upFinal.body) await upFinal.body.cancel(); } catch { } }
+        const h = Object.assign({}, base);
+        if (primed) { h['retry-after'] = '5'; res.writeHead(503, h); }
+        else {
+          const T = total || await bfUpSize(url).catch(() => 0);
+          if (T) { h['content-range'] = 'bytes */' + T; res.writeHead(416, h); }
+          else res.writeHead(502, h);
+        }
+        return res.end();
+      }
     }
     const endFinal = total ? ((rawEndQ >= 0) ? Math.min(rawEndQ, total - 1) : total - 1) : -1;
     const want = total ? (endFinal - rawStart + 1) : 0;
