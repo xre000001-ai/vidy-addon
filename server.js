@@ -9038,7 +9038,8 @@ async function m4gHeadInfo(f, upto) {
 //   আকার-আনুপাতিক (VBR-এ ছোটখাটো অমিল থাকতে পারে; pull শেষে একই URL-ই আসল Cues-প্লেলিস্টে বদলে যায়)।
 function m4gPlaylistLive(hi, origin, key, gotB, totalB) {
   const SEG = 4 * 1024 * 1024;
-  const n = Math.floor((gotB || 0) / SEG);
+  const base = Math.max(0, (hi && hi.cut) || 0);   // হেড বাদে ক্লাস্টার-এলাকা থেকে ব্লক (init আলাদা আসে)
+  const n = Math.floor(((gotB || 0) - base) / SEG);
   if (!n || !(totalB > 0)) return null;
   const dEach = (hi && hi.dur > 0) ? (hi.dur * SEG / totalB) : 8;
   const L = ['#EXTM3U', '#EXT-X-VERSION:6', '#EXT-X-PLAYLIST-TYPE:EVENT', '#EXT-X-MEDIA-SEQUENCE:0',
@@ -9046,7 +9047,7 @@ function m4gPlaylistLive(hi, origin, key, gotB, totalB) {
     '#EXT-X-START:TIME-OFFSET=0',
     '#EXT-X-MAP:URI=\"' + (origin || '') + '/m4gi/' + key + '/init.bin\"'];
   for (let i = 0; i < n; i++) {
-    const a = i * SEG, b = a + SEG - 1;
+    const a = base + i * SEG, b = a + SEG - 1;
     L.push('#EXTINF:' + dEach.toFixed(3) + ',');
     L.push((origin || '') + '/m4seg/' + key + '/' + i + '.bin?a=' + a + '&b=' + b);
   }
