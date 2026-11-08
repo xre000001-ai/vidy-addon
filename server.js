@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.47';
+const VERSION = '1.34.48';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -13679,7 +13679,10 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
         // প্রথম-সফল-টা-জেতে, হেরে-যাওয়া-টা-বাদ। প্রতি-সার্ভার-এখনো-এক-স্ক্যান-ফল-দেয়।
         const vr = await vidyFetch({ srv: srv, tmdbId: tmdbId, q: q, sc: sc }); // ★ v1.17.54: নোড-সেশন রেস (seed+sources একই IP)
         const ct = vr.ct; // v1.17.39: ১২.৫সে হার্ড-ডেডলাইন ছিল নিছক সকেট-দখল (কাট সবসময় ≤৪.২সে)
-        const j = JSON.parse(vidyDecrypt(ct, vr.seed, tmdbId)); // ★ সেশন-সিড দিয়েই ডিক্রিপ্ট (ভিন্ন-নোড-ডিক্রিপ্ট-ত্রুটি শেষ)
+        const j = JSON.parse(vidyDecrypt(ct, vr.seed, tmdbId)); // ★ সেশন-সিড দিয়েই ডিক্রিপ্ট (ভিন্ন-নোড-ডিক্রিপ্ট-ত
+        // ★ v1.34.48: জয়ী নোডটা প্রতিটা প্লেলিস্ট-URL-এর সাথে বেঁধে রাখি — ক্লিকের সময় /vh/ প্রথমে **সেই নোড** দিয়েই
+        //   প্লেলিস্ট আনবে (মাপা: প্লেলিস্ট-গেট = যে IP এই টাইটেলের sources এনেছে; অন্য সেশন-নোডও অনেক সময় ৪০৩)
+        try { if (vr && vr.px) { for (const _s of (j.sources || [])) if (_s && _s.url) VH_MINT.set(String(_s.url), { px: vr.px, ts: Date.now() }); if (VH_MINT.size > 2000) { const _k = VH_MINT.keys().next().value; VH_MINT.delete(_k); } } } catch (e) { }
         vsjPut(vkey, j); // v1.18.4: মাইক্রো-ক্যাশ-রাখা
         if (DBG) console.error('[t1g] ' + srv + ' fetch=' + (Date.now() - tS) + 'ms n=' + (j.sources || []).length + ' | jkeys=' + Object.keys(j).join(',') + ' | s0=' + JSON.stringify((j.sources || [])[0] || {}).slice(0, 220) + (j.audios ? ' | audios=' + JSON.stringify(j.audios).slice(0, 200) : '') + (j.audio ? ' | audio=' + JSON.stringify(j.audio).slice(0, 120) : ''));
         if (DBG && j.playlist) console.error('[t1g] ' + srv + ' PLAYLIST=' + JSON.stringify(j.playlist).slice(0, 500));
@@ -14501,6 +14504,7 @@ async function dhServe(req, res, b64) {
 //   কিন্তু সেগমেন্ট/init রেফারার ছাড়াই ২০৬ দেয় (মাপা) ⇒ শুধু **প্লেলিস্ট** রিলে করলেই যথেষ্ট,
 //   মিডিয়া ইউজারের ডিভাইস সরাসরি CDN থেকে টানে (ব্যবহারকারীর নীতি: proxy শুধু টোকেন/ম্যানিফেস্ট)।
 const VH_TTL = 30 * 60 * 1000;
+const VH_MINT = new Map();   // ★ v1.34.48: playlist-url → {px, ts} — যে নোড sources এনেছে (প্লেলিস্ট-গেট শুধু তাকেই চেনে)
 const VH_C = new Map();
 const VH_FAIL = new Map(); // v1.34.35: url → শেষ-ব্যর্থতা (৫মিন) — ব্যর্থ রিলে প্লেয়ারকে আটকে রাখবে না
 // vidy-কার্ড চেনা: (ক) হাব-পাথ /vd/ /vdb/ (খ) decorate()-এর বসানো Referer=vidy.st — paleoak/krico/workers-হোস্টও ধরা পড়ে
@@ -14586,6 +14590,18 @@ async function vhsServe(req, res, b64) {
 const VH_PRE = new Map();                       // প্রি-ওয়ার্ম-ইন-ফ্লাইট: url → promise (ক্লিক এলে একই promise-এ যোগ দেয়)
 async function vhGetPlaylist(target) {
   const hdr = { 'User-Agent': UA, 'Referer': VIDY_REFERER, 'Accept': '*/*', 'Accept-Encoding': 'gzip' };
+  // ★ v1.34.48: প্রথমে **mint-নোড** (যে নোড এই টাইটেলের sources এনেছে) — প্লেলিস্ট-গেট তাকেই চেনে
+  const _mint = (async () => {
+    try {
+      const m = VH_MINT.get(target);
+      if (m && m.px && Date.now() - m.ts < 15 * 60 * 1000) {
+        const b = await proxiedGet(m.px, target, 7000, hdr);
+        const b2 = String(b || '');
+        if (b2.indexOf('#EXTM3U') >= 0) return b2;
+      }
+    } catch (e) { }
+    return '';
+  })();
   // ★ v1.34.36: সরাসরি-ফেচ ও পুল-রেস **সমান্তরালে** — আগে ক্রমিক ছিল ⇒ ব্যর্থ হোস্টে ১৭সে পুড়ত
   const _pool = (async () => {
     try {
@@ -14647,8 +14663,8 @@ async function vhGetPlaylist(target) {
   })();
   // প্রথম **সফল** (#EXTM3U-সহ) উত্তর জেতে; সব ব্যর্থ হলে ''
   return await new Promise(res => {
-    let left = 3, done = false;
-    [_aff, _pool, _dir].forEach(p => Promise.resolve(p).then(v => {
+    let left = 4, done = false;
+    [_mint, _aff, _pool, _dir].forEach(p => Promise.resolve(p).then(v => {
       if (done) return;
       if (v) { done = true; res(v); } else if (--left <= 0) res('');
     }).catch(() => { if (!done && --left <= 0) res(''); }));
