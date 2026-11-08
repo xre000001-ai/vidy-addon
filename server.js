@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.65';
+const VERSION = '1.34.66';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -1828,7 +1828,9 @@ async function vidySweep(n) {
   }
 }
 vidyVLoad();
-// v1.34.65: dedicated VIDY_OK freshness trainer — boro sweep-er opekkha na kore proti 15s-e purono 60 node reverify
+// v1.34.66: dedicated VIDY_OK freshness trainer — proti 15s-e purono 60 node reverify.
+//   gate-full (vySlot timeout) node-er dosh na — bad-mark hobe na, slot-o free hobe na.
+//   session-pass korle PX_SITE-eo othe (POOL-e thakle), fail korle bench theke name.
 setInterval(async () => {
   try {
     if (Date.now() < MMR_ACTIVE_UNTIL) return;
@@ -1837,9 +1839,15 @@ setInterval(async () => {
     for (let i = 0; i < stale.length; i += 20) {
       await Promise.all(stale.slice(i, i + 20).map(async ([px]) => {
         if (!vpxTake(px)) return;
-        try { await vySlot(1500); const ms = await vidyPing(px); vidyNodeOk(px, ms); }
-        catch (e) { vidyNodeBad(px); }
-        finally { try { vyFree(); } catch (e2) { } vpxFree(px); }
+        let slot = false;
+        try {
+          await vySlot(1500); slot = true;
+          const ms = await vidyPing(px);
+          vidyNodeOk(px, ms);
+          if (POOL.some(c => c.px === px)) PX_SITE.add(px);
+        } catch (e) {
+          if (slot) { vidyNodeBad(px); PX_SITE.delete(px); }
+        } finally { if (slot) { try { vyFree(); } catch (e2) { } } vpxFree(px); }
       }));
     }
   } catch (e) { }

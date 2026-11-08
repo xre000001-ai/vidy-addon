@@ -323,17 +323,18 @@ export async function poolOnce(force = false) {
     // ★ v1.17.36: **বীজ-আগে** — seeded (আমাদের-প্রমাণিত) exit-গুলো সরাসরি token-যাচাই দিয়ে
     //   শুরু (probe বাদ — এক ধাপ কম), দ্রুততম আগে; তারপরই কেবল পাবলিক-স্ক্র্যাপের প্রার্থীরা।
     //   পুরোটা `runLimited`-এ ⇒ একসাথে সর্বোচ্চ CONC (২০) ডাক।
-    const seedList = sample;
-    const scrapeList = freshCand;
+    const _notBanned = u => { const bb = BAD.get(u); return !bb || bb <= Date.now(); };
+    const seedList = sample.filter(_notBanned); // v1.34.66: banned seed ei pass-e noy
+    const scrapeList = freshCand.filter(_notBanned);
     const verifyOne = async (u, fast) => {
       if (fast) {                                   // বীজ: token-যাচাই-ই যথেষ্ট (probe বাদ)
         const t0 = Date.now();
-        if (!(await searchVerify(u))) return null;
+        if (!(await searchVerify(u))) { noteFail(u, 'dead'); return null; } // v1.34.66: negative memory
         noteGood(u, Date.now() - t0);
       } else {
         const p0 = await probe(u);
-        if (!p0) return null;
-        if (!(await searchVerify(u))) return null;
+        if (!p0) { noteFail(u, 'dead'); return null; } // v1.34.66
+        if (!(await searchVerify(u))) { noteFail(u, 'block'); return null; } // v1.34.66
         noteGood(u, p0[0]);
       }
       if (!POOL.includes(u) && POOL.length < BENCH_MAX) POOL.push(u);
@@ -462,7 +463,7 @@ export function benchSave(force = false) {
       const old = merged.get(r.px);
       if (!old || r.ms < old.ms) merged.set(r.px, r);
     }
-    const rows = [...merged.values()].sort((a, b) => a.ms - b.ms).slice(0, 160);
+    const rows = [...merged.values()].sort((a, b) => a.ms - b.ms).slice(0, BENCH_MAX); // v1.34.66: age 160-te kata porto
     fs.writeFileSync(out, JSON.stringify(rows));
   } catch { }
 }
