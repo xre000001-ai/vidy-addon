@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.43';
+const VERSION = '1.34.44';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -9002,6 +9002,56 @@ async function m4hGeoFile(f, total) {   // ★ v1.34.35: GU ডিস্ক-ক�
   M4H_GEO.set(ck, g);
   return g;
 }
+// ★ v1.34.44: pull চলাকালীন হেড-তথ্য (শুধু EBML-হেড: cut + আসল Duration) — cues লাগে না, ক্যাশে দূষণ নেই
+async function m4gHeadInfo(f, upto) {
+  if (!f || !(upto > 0)) return null;
+  const fs = require('fs');
+  const readRange = async (a, b) => {
+    const fh = await fs.promises.open(f, 'r');
+    try { const len = Math.max(0, b - a + 1); const buf = Buffer.alloc(len); const r = await fh.read(buf, 0, len, a); return buf.slice(0, r.bytesRead); }
+    finally { try { await fh.close(); } catch (e) { } }
+  };
+  let want = Math.min(upto, 1024 * 1024), headBuf = null, an = null;
+  for (let round = 0; round < 5; round++) {
+    try { headBuf = await readRange(0, want - 1); } catch (e) { return null; }
+    an = m4pAnalyze(headBuf);
+    if (an && an.firstClusterOff > 0 && an.firstClusterOff <= headBuf.length) break;
+    want *= 4; if (want > Math.min(upto, M4P_HEADCAP)) { an = null; break; }
+  }
+  if (!an || !an.firstClusterOff || an.firstClusterOff > (headBuf ? headBuf.length : 0)) return null;
+  let tscale = 1000000, dur = 0;
+  try {
+    for (const t of m4pParse(headBuf, an.segContentStart, headBuf.length)) {
+      if (t.id === 0x1549A966 && !t.raw) {
+        for (const c of m4pParse(headBuf, t.hdr, t.end)) {
+          if (c.id === M4H_ID_TSCALE) { const v = m4hFindUints(headBuf, t, [M4H_ID_TSCALE]); if (v[M4H_ID_TSCALE]) tscale = v[M4H_ID_TSCALE]; }
+          if (c.id === 0x4489) { const ln = c.end - c.hdr; if (ln === 4) dur = headBuf.readFloatBE(c.hdr); else if (ln === 8) dur = headBuf.readDoubleBE(c.hdr); }
+        }
+        break;
+      }
+    }
+  } catch (e) { }
+  return { cut: an.firstClusterOff, segContent: an.segContentStart, tscale: tscale, dur: (dur > 0 ? (dur * tscale) / 1e9 : 0) };
+}
+// ★ v1.34.44: pull চলাকালীন EVENT-প্লেলিস্ট — ডাউনলোড-হওয়া অংশটুকুতে **আসল সিক** (সেগমেন্ট-GET, Range-হেডার লাগে
+//   না ⇒ প্রান্তিক-প্রক্সির Range-খাওয়া আর গোড়া-থেকে-ডাউনলোড নয়)। অভিন্ন 4MB ব্লক; EXTINF = আসল Duration থেকে
+//   আকার-আনুপাতিক (VBR-এ ছোটখাটো অমিল থাকতে পারে; pull শেষে একই URL-ই আসল Cues-প্লেলিস্টে বদলে যায়)।
+function m4gPlaylistLive(hi, origin, key, gotB, totalB) {
+  const SEG = 4 * 1024 * 1024;
+  const n = Math.floor((gotB || 0) / SEG);
+  if (!n || !(totalB > 0)) return null;
+  const dEach = (hi && hi.dur > 0) ? (hi.dur * SEG / totalB) : 8;
+  const L = ['#EXTM3U', '#EXT-X-VERSION:6', '#EXT-X-PLAYLIST-TYPE:EVENT', '#EXT-X-MEDIA-SEQUENCE:0',
+    '#EXT-X-INDEPENDENT-SEGMENTS', '#EXT-X-TARGETDURATION:' + Math.max(1, Math.ceil(dEach)),
+    '#EXT-X-START:TIME-OFFSET=0',
+    '#EXT-X-MAP:URI=\"' + (origin || '') + '/m4gi/' + key + '/init.bin\"'];
+  for (let i = 0; i < n; i++) {
+    const a = i * SEG, b = a + SEG - 1;
+    L.push('#EXTINF:' + dEach.toFixed(3) + ',');
+    L.push((origin || '') + '/m4seg/' + key + '/' + i + '.bin?a=' + a + '&b=' + b);
+  }
+  return L.join('\\n') + '\\n';
+}
 function m4gPlaylist(g, origin, key) {   // ★ v1.34.35: ক্যাশ-ভিত্তিক HLS — সেগমেন্ট আমাদের /m4seg/ (Range-হেডার লাগে না, ?a=&b=)
   const pts = g.pts, n = pts.length, fs2 = g.fileSize;
   const MERGE = 6;
@@ -15565,7 +15615,21 @@ const server = http.createServer((req, res) => {
       let e = BF_GUC.get(key);
       if (e && e.src && e.src !== fin && !e.done && (e.err || !e.got)) { BF_GUC.delete(key); e = null; }
       if (!e) e = bfGuAdopt(key) || bfGuStart(key, fin);   // রিস্টার্টের পর সম্পূর্ণ ফাইল থাকলে আবার টানব না
-      if (!e || !e.done) { try { res.writeHead(302, { location: origin + '/m4d/' + key + '/v.mkv', 'cache-control': 'no-store' }); } catch { } return res.end(); }
+      if (!e || !e.done) {
+        // ★ v1.34.44: pull চলছে কিন্তু যথেষ্ট নামলে EVENT-HLS দাও (সিকে গোড়া-থেকে ডাউনলোড নয়);
+        //   প্রথম ব্লকগুলোর জন্য সর্বোচ্চ ~6s অপেক্ষা, না নামলে আগের /m4d/ প্রগ্রেসিভই।
+        let livePl = null;
+        if (e && !e.err && e.f) {
+          const tEnd = Date.now() + 6000;
+          while (!e.done && !e.err && (e.got || 0) < 8 * 1024 * 1024 && Date.now() < tEnd) await new Promise(r2 => setTimeout(r2, 250));
+          if (!e.done && !e.err && (e.got || 0) >= 4 * 1024 * 1024) {
+            const hi = await m4gHeadInfo(e.f, e.got).catch(() => null);
+            if (hi) livePl = m4gPlaylistLive(hi, origin, key, e.got || 0, e.total || 0);
+          }
+        }
+        if (livePl) { try { res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl', 'cache-control': 'no-store', 'access-control-allow-origin': '*' }); } catch { } return res.end(livePl); }
+        try { res.writeHead(302, { location: origin + '/m4d/' + key + '/v.mkv', 'cache-control': 'no-store' }); } catch { } return res.end();
+      }
       const g = await m4hGeoFile(e.f, e.total || e.got).catch(() => null);
       if (!g) { try { res.writeHead(302, { location: origin + '/m4d/' + key + '/v.mkv', 'cache-control': 'no-store' }); } catch { } return res.end(); }
       res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl', 'cache-control': 'no-store', 'access-control-allow-origin': '*' });
@@ -15575,9 +15639,19 @@ const server = http.createServer((req, res) => {
     const m4giR = p.match(/^\/m4gi\/([A-Za-z0-9_=-]{8,2400})\/init\.bin$/);
     if (m4giR) return (async () => {
       const e = BF_GUC.get(m4giR[1]);
-      if (!e || !e.done) { try { res.writeHead(503, { 'retry-after': '5' }); } catch { } return res.end(); }
-      const g = await m4hGeoFile(e.f, e.total || e.got).catch(() => null);
-      if (!g) { try { res.writeHead(502); } catch { } return res.end(); }
+      if (!e || !e.f || !(e.got > 0)) { try { res.writeHead(503, { 'retry-after': '5' }); } catch { } return res.end(); }
+      const g = e.done ? await m4hGeoFile(e.f, e.total || e.got).catch(() => null) : null;
+      if (e.done && !g) { try { res.writeHead(502); } catch { } return res.end(); }
+      if (!g) {   // ★ v1.34.44: pull চলছে — cues-ছাড়া হেড-init (হেড পুরোটা নামলেই মিলবে)
+        const hi = await m4gHeadInfo(e.f, e.got).catch(() => null);
+        if (!hi || (e.got || 0) < hi.cut) { try { res.writeHead(503, { 'retry-after': '3' }); } catch { } return res.end(); }
+        try {
+          const fh2 = await require('fs').promises.open(e.f, 'r');
+          const hb = Buffer.alloc(hi.cut); const rr3 = await fh2.read(hb, 0, hi.cut, 0); try { await fh2.close(); } catch { }
+          res.writeHead(200, { 'content-type': 'video/x-matroska', 'content-length': String(rr3.bytesRead), 'cache-control': 'no-store', 'access-control-allow-origin': '*' });
+          return res.end(hb.slice(0, rr3.bytesRead));
+        } catch { try { res.writeHead(502); } catch { } return res.end(); }
+      }
       try {
         const fh = await require('fs').promises.open(e.f, 'r');
         const head = Buffer.alloc(g.cut); const rr2 = await fh.read(head, 0, g.cut, 0); try { await fh.close(); } catch { }
