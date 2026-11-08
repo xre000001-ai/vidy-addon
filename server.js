@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.49';
+const VERSION = '1.34.50';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -14633,9 +14633,16 @@ async function vhGetPlaylist(target) {
     };
     const isGk = /(?:^|\.)goldenkite\.top$/i.test((String(target).match(/^https?:\/\/([^/]+)/i) || [])[1] || '');
     if (isGk) {
-      const b1 = await viaKey(/\/vdb\//.test(target) ? 'vidy:boise' : 'vidy:miami');
-      if (b1) return b1;
-      return await viaKey(/\/vdb\//.test(target) ? 'vidy:miami' : 'vidy:boise');
+      // ★ v1.34.50: দুই কী সমান্তরালে (আগে ক্রমিক ছিল ⇒ ধীর প্রথম ঢেউ ৯সে-বাজেট খেয়ে ফেলত)
+      const ka = /\/vdb\//.test(target) ? 'vidy:boise' : 'vidy:miami';
+      const kb = /\/vdb\//.test(target) ? 'vidy:miami' : 'vidy:boise';
+      return await new Promise(res => {
+        let left = 2, done = false;
+        [ka, kb].forEach(k => viaKey(k).then(b => {
+          if (done) return;
+          if (b) { done = true; res(b); } else if (--left <= 0) res('');
+        }).catch(() => { if (!done && --left <= 0) res(''); }));
+      });
     }
     const ks = ['vidy:atlanta', 'vidy:phoenix', 'vidy:delhi', 'vidy:miami', 'vidy:boise'];
     return await new Promise(res => {
@@ -14708,14 +14715,15 @@ async function vhServe(req, res, b64) {
   const hit = VH_C.get(ck);
   if (hit && Date.now() - hit.ts < VH_TTL) { res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl', 'access-control-allow-origin': '*', 'cache-control': 'no-store' }); return res.end(vuStampPlaylist(hit.v, origin)); }
   const t0 = Date.now();
-  const _left = () => Math.max(300, 9000 - (Date.now() - t0));   // ★ v1.34.36: গেটওয়ে-সীমার (মাপা ~১২সে) ভেতরে উত্তর বাধ্যতামূলক
+  const _left = () => Math.max(300, 10800 - (Date.now() - t0));   // ★ v1.34.50: ৯→১০.৮সে (গেটওয়ে ~১২সে-র ভেতরে)ামূলক
   const pre = VH_PRE.get(ck);                      // ★ প্রি-ওয়ার্ম চলছে? তার সঙ্গে যোগ দিই (নতুন করে টানি না)
   if (pre) { try { await Promise.race([pre, new Promise(r => setTimeout(r, _left()))]); } catch (e) { } const h2 = VH_C.get(ck);
     if (h2 && Date.now() - h2.ts < VH_TTL) { res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl', 'access-control-allow-origin': '*', 'cache-control': 'no-store' }); return res.end(vuStampPlaylist(h2.v, origin)); } }
   // ★ v1.34.35: সাম্প্রতিক-ব্যর্থতায় সাথে সাথে 302 (প্লেয়ার পুরোনো সরাসরি-পথেই চেষ্টা করুক)
   const _vf = VH_FAIL.get(ck);
   if (_vf && Date.now() - _vf < 60 * 1000) { try { res.writeHead(302, { location: target, 'cache-control': 'no-store', 'access-control-allow-origin': '*' }); } catch (e) { } return res.end(); }
-  const body = await Promise.race([vhGetPlaylist(target), new Promise(r => setTimeout(() => r(''), _left()))]);
+  let body = await Promise.race([vhGetPlaylist(target), new Promise(r => setTimeout(() => r(''), _left()))]);
+  if (!body) body = await Promise.race([vhGetPlaylist(target), new Promise(r => setTimeout(() => r(''), _left()))]).catch(() => '');   // ★ v1.34.50: একবার রিট্রাই (নোড ঘোরে)
   if (!body) { VH_FAIL.set(ck, Date.now()); try { res.writeHead(302, { location: target, 'cache-control': 'no-store', 'access-control-allow-origin': '*' }); } catch (e) { } return res.end(); }
   const out = await vhRewrite(body, target, origin);
   if (VH_C.size > 800) VH_C.clear();
