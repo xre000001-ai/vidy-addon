@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.37';
+const VERSION = '1.34.38';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -1482,9 +1482,10 @@ async function spoolTrain() {
     // ★ v1.24.1 (মাপা: ডিপ্লয়ের পর প্রথম ~২ মিনিটে gateway 504 / ১৭সে উত্তর — বুট-ঝড়):
     //   বুটের প্রথম ৯০সে কোনো ব্যাকগ্রাউন্ড ট্রেইনিং নয়।
     if (process.uptime() < Number(process.env.SPBOOT || 30)) return;
-    if (Date.now() - LAST_STREAM_AT < 3000) { if (DBG) console.error('[spool] সার্ভিং চলছে — এই চক্র বাদ'); return; }
+    const _serving = Date.now() - LAST_STREAM_AT < 3000;   // ★ v1.34.38: আগে ব্যস্ত থাকলেই পুরো চক্র বাদ ⇒ ট্র্যাফিকের সময় পুল কখনোই তাজা হতো না (মাপা fresh: hd=1, m4u=0)
+    // serving চললে নতুন-প্রার্থী যাচাই বাদ (phase-১ skip), কিন্তু reverify ছোট আকারে চলুক
     // ১) তাজা-নোড কম হলে নতুন প্রার্থী **সমান্তরালে** যাচাই (লক্ষ্য ৯ নোড/সোর্স)
-    for (const k of Object.keys(SRC_PROBE)) {
+    for (const k of (_serving ? [] : Object.keys(SRC_PROBE))) {
       const m = srcPool(k);
       const fresh = [...m.values()].filter(e => spoolFresh(e)).length;
       if (fresh >= Number(process.env.SPMIN || 96)) continue;
@@ -1505,7 +1506,7 @@ async function spoolTrain() {
       const arr = [...m.entries()].filter(([, e]) => !(e.ban > Date.now())).sort((a, b) => (a[1].ts || 0) - (b[1].ts || 0));
       for (const [px] of arr.slice(0, 2)) oldest.push([k, px]);
     }
-    await Promise.all(oldest.slice(0, Number(process.env.SPREV || 96)).map(([k, px]) => spoolCheck(k, px)));
+    await Promise.all(oldest.slice(0, _serving ? Number(process.env.SPREVS || 16) : Number(process.env.SPREV || 96)).map(([k, px]) => spoolCheck(k, px)));   // v1.34.38: serving-এ ছোট reverify
     spoolSave();
   } finally { spoolBusy = false; }
 }
@@ -1814,7 +1815,9 @@ async function vidySweep(n) {
       vidySweepBusy = false;
       const full = poolsFull();   // v1.25.3: every container full?
       // v1.25.3 (user: 'always on until every container is full'): while ANY pool is below target the cadence is 1.5s
-      vidySweepNext(full ? Number(process.env.VPXNIF || 25000) : Number(process.env.VPXNI || 1500));
+      // ★ v1.34.38: পুল সুস্থ (verified≥৩২০ + generic≥২৪০) থাকলে cadence ৮সে — নইলে আগের ১.৫সে-ঝড়ে ২০মিনিটে ~৩৪হাজার সকেট (গেটে ৫৪হাজার drop) জমত
+      const _calm = VIDY_OK.size >= 320 && POOL.length >= 240;
+      vidySweepNext(full ? Number(process.env.VPXNIF || 25000) : (_calm ? Number(process.env.VPXNIC || 8000) : Number(process.env.VPXNI || 1500)));
     }, 1200);
   }
 }
@@ -9497,7 +9500,7 @@ async function m4uTdServe(req, res, target) {
     if (m4uHubHost(host)) {
       const hc = M4U_TD_USED.get('hub:' + target);
       let f = (hc && Date.now() - hc.ts < 20 * 60e3) ? hc.final : '';
-      if (!f) { f = await m4uHubFsl(target).catch(() => ''); if (f) M4U_TD_USED.set('hub:' + target, { ts: Date.now(), final: f }); }
+      if (!f) { f = await m4uHubFinal(target).catch(() => ''); if (f) M4U_TD_USED.set('hub:' + target, { ts: Date.now(), final: f }); }   // v1.34.38: proof-সহ
       if (!f) return okJson(502, { error: 'hub-no-fsl' });
       if (m4uDirectOk(f)) { res.writeHead(302, { location: f, 'cache-control': 'no-store', 'access-control-allow-origin': '*' }); return res.end(); } // v1.34.31: সরাসরি
       return await bfServeGeneric(req, res, f);
@@ -9551,7 +9554,7 @@ async function m4uFinalFor(target) {   // ★ v1.34.35: m4uTdServe-এর রি
   if (m4uHubHost(host)) {
     const hc = M4U_TD_USED.get('hub:' + target);
     if (hc && Date.now() - hc.ts < 20 * 60e3) return hc.final;
-    const f = await m4uHubFsl(target).catch(() => '');
+    const f = await m4uHubFinal(target).catch(() => '');   // v1.34.38: proof-সহ
     if (f) M4U_TD_USED.set('hub:' + target, { ts: Date.now(), final: f });
     return f;
   }
@@ -9655,10 +9658,10 @@ function hubR2Save() {
     } catch (e) { }
   }, 4000);
 }
-async function m4uHubFsl(drive) {
+async function m4uHubFsl(drive, force) {
   hubR2Load();
   const _hc = HUB_R2.get(drive);
-  if (_hc && _hc.u && Date.now() - _hc.ts < 5 * 3600e3) return _hc.u;   // ★ ক্যাশে থাকলে gamerxyt ছোঁয়াই হয় না
+  if (!force && _hc && _hc.u && Date.now() - _hc.ts < 5 * 3600e3) return _hc.u;   // ★ ক্যাশে থাকলে gamerxyt ছোঁয়াই হয় না
   const cp = require('child_process'), fs = require('fs');
   const jar = '/tmp/hubj_' + process.pid + '_' + Math.random().toString(36).slice(2, 8) + '.txt';
   const clean = () => { try { fs.unlink(jar, () => { }); } catch (e) { } };
@@ -9700,6 +9703,28 @@ async function m4uHubFsl(drive) {
     return '';
   } catch (e) { if (DBG) console.error('[hubfsl] err ' + String(e && e.message).slice(0, 50)); return ''; }
   finally { clean(); }
+}
+// ★ v1.34.38: presigned আসলেই বেঁচে আছে কিনা (1-বাইট Range) — মাপা: ৫ঘণ্টা-ক্যাশের presigned মরে 403 XML দিচ্ছিল (17GB FSL কার্ড)
+async function m4uProof(u) {
+  try {
+    const r = await fetch(u, { headers: { 'User-Agent': UA, Range: 'bytes=0-0' }, signal: AbortSignal.timeout(3500) });
+    const ct = String(r.headers.get('content-type') || '');
+    try { if (r.body && r.body.cancel) r.body.cancel(); } catch (e) { }
+    return (r.status === 200 || r.status === 206) && !/xml|text\/html/i.test(ct);
+  } catch (e) { return false; }
+}
+async function m4uHubFinal(drive) {   // serve-পথের জন্য: পুরনো ক্যাশ proof ছাড়া 302 নয়
+  let f = await m4uHubFsl(drive).catch(() => '');
+  if (!f) return '';
+  const e = HUB_R2.get(drive);
+  if (e && Date.now() - e.ts > 20 * 60e3) {
+    if (await m4uProof(f)) { e.ts = Date.now(); return f; }
+    HUB_R2.delete(drive);
+    const f2 = await m4uHubFsl(drive, true).catch(() => '');
+    if (f2 && f2 !== f) { if (await m4uProof(f2)) return f2; return f2; }
+    return f2 || '';
+  }
+  return f;
 }
 // চেইন-শেষ: যেকোনো সার্ভার-পেজ → আসল ফাইল-URL (প্রমাণ-সহ)
 
@@ -10148,28 +10173,33 @@ async function m4uTdStreams(tmdbId, title, type, s, e, origin, maxh) {
   return await new Promise(resolve => {
     let done = false;
     let live = [];
+    let merged = [];   // ★ v1.34.38: দুই প্রার্থী-পোস্টের **union** (আগে প্রথম-জয়ী ⇒ Hindi-পোস্ট জিতলে English-পোস্টের FSL/Pixeldrain হারাত — "sob somoy ase na"-র এক মূল কারণ)
     const srt = a => (a || []).slice().sort((x, y) => (Number(y.quality) || 0) - (Number(x.quality) || 0));
     const fin = v => { if (!done) { done = true; resolve(v || []); } };
     // ★ v1.34.35: টাইমআউটে [] নয় — তখন পর্যন্ত জমা কার্ডই ফেরত (আংশিক হলেও FSL/Pixeldrain থাকে)
-    const guard = setTimeout(() => fin(srt(live)), Math.max(1500, budget - (Date.now() - T0))); if (guard.unref) guard.unref();
+    const guard = setTimeout(() => fin(srt(_m4uMerge(merged, live))), Math.max(1500, budget - (Date.now() - T0))); if (guard.unref) guard.unref();   // v1.34.38: চলমান পোস্টের আংশিকসহ
     // ★ v1.34.18: আগে দুই প্রার্থী **রেস** করত ⇒ মাপা: "John Wick: Chapter 4"-এর জন্য Chapter-2
     //   পোস্টের কার্ড আগে শেষ হয়ে জিতে যেত (ভুল ফাইল!)। এখন স্কোর-ক্রমে: প্রথম পোস্ট কার্ড দিলেই শেষ।
     (async () => {
-      for (const h of cands) {
+      for (let ci = 0; ci < cands.length; ci++) {
+        const h = cands[ci];
+        if (ci > 0 && Y) {   // ★ v1.34.38: দ্বিতীয় পোস্ট শুধু বছর-মিললে (রিমেক/সিকোয়েলের কার্ড যেন না ঢোকে)
+          const yrs = (String(h.slug || '').match(/\b(19\d{2}|20\d{2})\b/g) || []).map(Number);
+          if (yrs.length && yrs.indexOf(Y) < 0 && yrs.indexOf(Y - 1) < 0 && yrs.indexOf(Y + 1) < 0) continue;
+        }
         try {
           live = [];
           const c = await one(h, live);
-          if (c && c.length) {   // ★ v1.34.35: টাইমআউট হয়ে গেলেও পূর্ণ ফল ক্যাশে জমা (পরের খোলায় সাথে সাথে সব)
+          if (c && c.length) {   // ★ v1.34.35: টাইমআউট হয়ে গেলেও পূর্ণ ফল ক্যাশে জমা (পরের খোলায় সাথে সাথে)
+            merged = _m4uMerge(merged, c);
             if (M4U_TD_DONE.size > 60) M4U_TD_DONE.clear();
-            M4U_TD_DONE.set(nk, { ts: Date.now(), cards: c });
-            fin(c); return;
+            M4U_TD_DONE.set(nk, { ts: Date.now(), cards: merged });
+            fin(merged);   // প্রথম পোস্টেই উত্তর (গতি আগের মতো); দ্বিতীয় পোস্ট চলতে থাকে ⇒ DONE-তে union জমে
           }
-          if (done) return;
-          if (DBG) console.error('[m4utd] one-empty ' + h.slug.slice(0, 30));
+          if (DBG && !(c && c.length)) console.error('[m4utd] one-empty ' + h.slug.slice(0, 30));
         } catch (e) { if (DBG) console.error('[m4utd] one-err ' + String(e && e.message).slice(0, 80)); }
-        if (done) return;
       }
-      fin([]);
+      fin(srt(merged));
     })();
   });
 }
