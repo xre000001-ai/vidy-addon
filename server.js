@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.36';
+const VERSION = '1.34.37';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -14397,10 +14397,13 @@ const VH_FAIL = new Map(); // v1.34.35: url → শেষ-ব্যর্থত�
 function vhIsVidy(u, c) {
   const p0 = String(u || '').split('?')[0];
   if (!/\.m3u8$/i.test(p0)) return false;                      // শুধু প্লেলিস্ট-রিলে (সেগমেন্ট/ফাইল সরাসরি CDN)
-  if (/\/vd[b]?\//.test(p0)) return true;
+  // ★★ v1.34.37 (ইউজার: "direct user stream ei eta fix sombob"): goldenkite (/vd/ Miami, /vdb/ Boise) প্লেলিস্ট-হোস্ট সার্ভার-এগ্রেস
+  //   থেকে পাওয়া যায় না (মাপা ৪০৩; কোডের নিজের নোট: "CDN-আমাদের-IP-ব্লক — ইউজারের DEVICE-এ চলে") ⇒ ওই কার্ড **হুবহু direct**
+  //   থাকে (ডিভাইস হেডারসহ সরাসরি টানবে)। /vh/ রইল শুধু vividstone (Atlanta)-এর জন্য — সার্ভার-ফেচ প্রমাণিত (২০০, <১সে), সেগমেন্ট direct।
+  if (/\/vd[b]?\//.test(p0)) return false;
   // ★ v1.34.35: vividstone (Atlanta)-ও একই Referer-দেয়াল (মাপা: প্রোড /vh/ দিয়ে ২০০, সরাসরি ৪০৩)
   if (/(?:^|\.)vividstone\.top$/i.test((p0.match(/^https?:\/\/([^/]+)/i) || [])[1] || '')) return true;
-  return !!(c && c.headers && String(c.headers.Referer || '') === VIDY_REFERER);
+  return false;
 }
 function vhRelay(u, origin) { return origin + '/vh/' + Buffer.from(String(u)).toString('base64url') + '/p.m3u8'; }
 function vhRewrite(body, target, origin) {
@@ -14676,6 +14679,8 @@ function relWrapBody(body, origin) {
       let kind = '';
       if (isPresigned(u)) continue;                       // ★ প্রি-সাইনড ⇒ অপরিবর্তিত
       if (/\.m3u8(\?|$)/i.test(u) && process.env.RELHLS !== '1') {
+        // ★ v1.34.37: কার্ড-URL-এ mint-`vu=` (ভ্যারিয়েন্ট-নির্বাচক) আগেই থাকলে দ্বিতীয় vu= নয় — CDN শেষটা নিলে ভুল ভ্যারিয়েন্ট হতে পারে
+        if (/[?&]vu=/.test(u)) continue;
         const vq = (process.env.VUQ === '0') ? '' : ('vu=' + RELVU.randomBytes(6).toString('base64url'));
         if (vq) {
           const nu = u + (u.indexOf('?') >= 0 ? '&' : '?') + vq;
