@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.29';
+const VERSION = '1.34.30';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -7590,6 +7590,7 @@ async function mlbdOne(base, fileUrl, dl, labQ, labTxt) {
   const size = ((H.match(/fa-database[^>]*><\/i>\s*([^<]+)/) || [])[1] || '').trim();
   const hub = (H.match(/https:\/\/hubcloud\.[a-z.]+\/drive\/[A-Za-z0-9]+/) || [])[0] || '';
   const nested = (H.match(/href="(\/file\/[A-Za-z0-9_-]{40,})"/) || [])[1] || '';
+  const nested2 = [...new Set([...H.matchAll(/href="(\/file\/[A-Za-z0-9_-]{40,})"/g)].map(z => z[1]))].filter(z => z && z !== nested).slice(0, 1); // v1.34.30: দ্বিতীয় সার্ভার-পেজ (MP4/FSL দুটো বোতামই থাকে)
   const ic = (H.match(/https:\/\/instantcloud\.org\/file\/[A-Za-z0-9]+/) || [])[0] || '';
   // एक मिरर प्रमाण: ২০৬ ⇒ নাও; প্রোব-ব্যর্থ হলেও trust-হোস্ট হলে নাও
   const seenM = new Set();
@@ -7604,9 +7605,14 @@ async function mlbdOne(base, fileUrl, dl, labQ, labTxt) {
     const out = [];
     if (!nested || left() < 1500) return out;
     try {
-      const p2 = await mlbdGet(base + nested, { ms: Math.min(4200, left()) });
-      const fsl = (String(p2.body).match(/https:\/\/fsldownload\.com\/d\/[A-Za-z0-9._-]+/) || [])[0] || '';
-      await pick(fsl, 'FSL', out);
+      for (const nx of [nested].concat(nested2)) { // v1.34.30: প্রথম nested-এ মিরর না পেলে দ্বিতীয়টাও দেখি
+        if (!nx || left() < 1500 || out.length) break;
+        const p2 = await mlbdGet(base + nx, { ms: Math.min(4200, left()) });
+        const b2 = String(p2.body || '').replace(/&amp;/g, '&');
+        const fsl = (b2.match(/https:\/\/fsldownload\.com\/d\/[A-Za-z0-9._-]+/) || [])[0]
+          || (b2.match(/https:\/\/[a-z0-9]+\.r2\.cloudflarestorage\.com\/[^"'\s<>]+/) || [])[0] || ''; // v1.34.30: সাইট এখন প্রিসাইনড-R2 দেয় (মাপা: Odyssey nested → stream.mp4)
+        await pick(fsl, 'FSL', out);
+      }
     } catch (e) { }
     return out;
   };
@@ -9378,6 +9384,7 @@ function m4uRelayUrl(u, origin) {
 // শুধু **আসল মিডিয়া** URL কার্ড হবে (পেজ/HTML নয়) — vegadrive.me/d/… জাতীয় পেজ বাদ
 const m4uIsMediaUrl = u => m4uIsIpLocked(u)
   || /(?:^|\.)r2\.cloudflarestorage\.com$/i.test(m4uHostOf(u))
+  || /(?:^|\.)r2\.dev$/i.test(m4uHostOf(u)) // v1.34.30: pub-*.r2.dev FSL (extension-বিহীন — নইলে V-Cloud-এর FSL ফল ফেলে G-Direct/GU-তে পড়ত)
   || /(?:^|\.)fsldownload\.com$/i.test(m4uHostOf(u))
   || /pixeldrain\.(?:dev|com)\/api\/file\//i.test(String(u))
   || /\.(?:mkv|mp4)(?:\?|$)/i.test(String(u));
@@ -9676,7 +9683,7 @@ async function m4uVcloudResolve(href, bg) {
     const tx = m[2].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
     if (/10\s*gbps|not\s*resumable/i.test(tx + ' ' + u)) continue;
     if (/signup|login|register|create an account|telegram|bit\.ly/i.test(u + ' ' + tx)) continue;
-    if (/r2\.cloudflarestorage\.com/i.test(u)) push('FSL', u);
+    if (/(?:r2\.cloudflarestorage\.com|[a-z0-9-]+\.r2\.dev)/i.test(u)) push('FSL', u); // v1.34.30: FSL এখন pub-*.r2.dev-তেও (মাপা: vcloud page-2)
     else if (/pixeldrain\.(?:dev|com)\/u\/([A-Za-z0-9]+)/i.test(u)) push('Pixeldrain', 'https://pixeldrain.dev/api/file/' + (/pixeldrain\.(?:dev|com)\/u\/([A-Za-z0-9]+)/i.exec(u) || [])[1]);
     else if (/gdflix|gdlink/i.test(u)) push('GDFlixPage', u);
     else if (/hubcloud\.[a-z.]+\/(?:drive|video)\//i.test(u)) push('HubPage', u);
@@ -9686,7 +9693,7 @@ async function m4uVcloudResolve(href, bg) {
   //   আর প্রথম বোতামটা মৃত-ছোট-আইডি হতে পারে — প্রুফ-লুপ প্রতিটা চেষ্টা করে)
   for (const m of html.matchAll(/https?:\/\/[^\s"'<>]+/g)) {
     const u = m[0].replace(/[),.]+$/, '');
-    if (/r2\.cloudflarestorage\.com/i.test(u)) push('FSL', u);
+    if (/(?:r2\.cloudflarestorage\.com|[a-z0-9-]+\.r2\.dev)/i.test(u)) push('FSL', u); // v1.34.30: FSL এখন pub-*.r2.dev-তেও (মাপা: vcloud page-2)
     else if (/pixeldrain\.(?:dev|com)\/u\/([A-Za-z0-9]+)/i.test(u)) push('Pixeldrain', 'https://pixeldrain.dev/api/file/' + (/pixeldrain\.(?:dev|com)\/u\/([A-Za-z0-9]+)/i.exec(u) || [])[1]);
     else if (/gdflix|gdlink/i.test(u) && /\/file\/[A-Za-z0-9]+/.test(u)) push('GDFlixPage', u);
   }
