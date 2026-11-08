@@ -14708,7 +14708,7 @@ function gwRewriteBody(body, origin) {
       if (u.indexOf(origin + '/') !== 0) continue;
       let rest = u.slice(origin.length);             // '/mm/..../mini.m3u8?r=1' বা পুরোনো '/t/<tok>/x.m3u8'
       // ★ v1.27.1: আগেই-টোকেন-করা লিংক (ক্যাপচার-রিপ্লে / জমা-বডি) হলেও **নতুন** টোকেন পাবে
-      const tm2 = /^\/t\/([A-Za-z0-9_~-]{6,1400})(?:\/[^\/]*)?$/.exec(rest.split('?')[0]);
+      const tm2 = /^\/t\/([A-Za-z0-9_~-]{6,6000})(?:\/[^\/]*)?$/.exec(rest.split('?')[0]);
       if (tm2) { const inner = gwGet(tm2[1]); if (!inner) continue; rest = inner; }
       let hit = false; for (const pr of GW_PRE) if (rest.indexOf(pr) === 0) { hit = true; break; }
       if (!hit) continue;
@@ -15034,7 +15034,7 @@ const server = http.createServer((req, res) => {
     { const rlM = p.match(/^\/rel\/([vm])\/([A-Za-z0-9_=-]{8,4000})$/);
       if (rlM) return void relServe(req, res, rlM[1], rlM[2]); }
     // ★ v1.27.0: প্রতি-রিকোয়েস্ট প্লেব্যাক-টোকেন (`/t/<tok>/x.m3u8`) ⇒ ভিতরের আসল পথে রিভার্স
-    { const gwM2 = p.match(/^\/t\/([A-Za-z0-9_~-]{6,1400})(?:\/[^\/]*)?$/);
+    { const gwM2 = p.match(/^\/t\/([A-Za-z0-9_~-]{6,6000})(?:\/[^\/]*)?$/);
       if (gwM2) {
         const _tgt = (typeof gwGet === 'function') ? gwGet(gwM2[1]) : null;
         if (!_tgt) { res.writeHead(404, { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'cache-control': 'no-store' }); return res.end('{"error":"link expired"}'); }
