@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.45';
+const VERSION = '1.34.46';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -14520,19 +14520,46 @@ function vhIsVidy(u, c) {
   return false;
 }
 function vhRelay(u, origin) { return origin + '/vh/' + Buffer.from(String(u)).toString('base64url') + '/p.m3u8'; }
+function vhSegRelay(u, origin) { return origin + '/vhs/' + Buffer.from(String(u)).toString('base64url') + '/s.bin'; }
 function vhRewrite(body, target, origin) {
+  // ★ v1.34.46: vividstone-সেগমেন্টও Referer-গেটে বাঁধা (মাপা: referer ছাড়া ৪০৩, সহ ২০০) আর প্লেয়ার
+  //   প্লেলিস্টের ভেতরের লাইনে হেডার পাঠায় না ⇒ vividstone হলে সেগমেন্ট/init /vhs/ দিয়ে (Referer-সহ পাইপ)।
+  //   goldenkite-সেগমেন্ট (rapidbrook) direct ২০৬ মাপা ⇒ আগের মতোই সরাসরি ডিভাইসে।
+  const segRelay = /(?:^|\.)vividstone\.top$/i.test((String(target || '').match(/^https?:\/\/([^/]+)/i) || [])[1] || '');
   return String(body || '').split('\n').map(line => {
     const raw = line.trim();
     if (!raw) return line;
     if (raw.charAt(0) === '#') { // ট্যাগ-লাইন: URI="..." (EXT-X-MEDIA / EXT-X-MAP / EXT-X-KEY)
       return line.replace(/URI="([^"]+)"/g, (m0, u1) => {
         let abs = u1; try { abs = new URL(u1, target).toString(); } catch (e) { }
-        return /\.m3u8(\?|$)/i.test(abs) ? 'URI="' + vhRelay(abs, origin) + '"' : 'URI="' + abs + '"';
+        if (/\.m3u8(\?|$)/i.test(abs)) return 'URI="' + vhRelay(abs, origin) + '"';
+        return 'URI="' + (segRelay ? vhSegRelay(abs, origin) : abs) + '"';
       });
     }
     let abs = raw; try { abs = new URL(raw, target).toString(); } catch (e) { }
-    return /\.m3u8(\?|$)/i.test(abs) ? vhRelay(abs, origin) : abs; // ভ্যারিয়েন্ট-প্লেলিস্টও রিলে; সেগমেন্ট/init সরাসরি
+    if (/\.m3u8(\?|$)/i.test(abs)) return vhRelay(abs, origin); // ভ্যারিয়েন্ট-প্লেলিস্টও রিলে
+    return segRelay ? vhSegRelay(abs, origin) : abs;
   }).join('\n');
+}
+// ★ v1.34.46: vividstone-সেগমেন্ট পাইপ — আপস্ট্রিমে Referer দিয়ে টেনে হুবহু পাইপ (ডিস্ক/বাফার নেই)
+async function vhsServe(req, res, b64) {
+  let target = ''; try { target = Buffer.from(b64, 'base64url').toString('utf8'); } catch (e) { }
+  if (!/^https?:\/\//.test(target)) { res.writeHead(400); return res.end('bad'); }
+  const hdr = { 'User-Agent': UA, 'Referer': VIDY_REFERER, 'Accept': '*/*' };
+  if (req.headers && req.headers.range) hdr['Range'] = req.headers.range;
+  const ac = new AbortController();
+  if (req.on) req.on('close', () => { try { ac.abort(); } catch (e) { } });
+  try {
+    const r = await fetch(target, { headers: hdr, redirect: 'follow', signal: ac.signal });
+    if (!(r.status >= 200 && r.status < 300) || !r.body) { try { res.writeHead(502); } catch (e) { } return res.end(); }
+    const h = { 'content-type': r.headers.get('content-type') || 'video/mp2t', 'access-control-allow-origin': '*', 'cache-control': 'no-store' };
+    const cl = r.headers.get('content-length'); if (cl) h['content-length'] = cl;
+    const cr = r.headers.get('content-range'); if (cr) h['content-range'] = cr;
+    res.writeHead(r.status, h);
+    if (req.method === 'HEAD') return res.end();
+    const { Readable } = require('stream');
+    return void Readable.fromWeb(r.body).on('error', () => { try { res.end(); } catch (e) { } }).pipe(res);
+  } catch (e) { try { res.writeHead(502); } catch (e2) { } return res.end(); }
 }
 // ★ v1.28.3-l: প্লেলিস্ট-আনা (gzip-সহ) — v1.28.2-এ ১৯৩KB প্লেইন ঠান্ডায় ৪.৯৯সে নিত; gzip-এ wire ~৫KB
 //   (ইউজার: "net speed onek kom") ⇒ ধীর লাইনে সবচেয়ে বড় হাত।
@@ -14551,18 +14578,31 @@ async function vhGetPlaylist(target) {
   // ★★ v1.34.45: **সেশন-নোড** ফেচ — প্লেলিস্ট-গেট = সাম্প্রতিক vidy-API-সেশন-IP (হাতে-মাপা: একই নোডে ২০০,
   //   অন্য সব ৪০৩)। 'vidy:<srv>'-কীতে প্রমাণিত নোড মানেই সদ্য-সেশন-করা নোড ⇒ ওরাই প্রথম পছন্দ।
   const _aff = (async () => {
-    // দুই ঢেউ: নিজের সার্ভারের সেশন-নোড, তারপর অন্য সার্ভারের (হোয়াইটলিস্ট IP-ভিত্তিক — যেকোনো সদ্য-সেশন-নোডেই চলার কথা)
-    const k1 = /\/vdb\//.test(target) ? 'vidy:boise' : 'vidy:miami';
-    const k2 = /\/vdb\//.test(target) ? 'vidy:miami' : 'vidy:boise';
-    for (const k of [k1, k2]) {
-      try {
-        const b = await pxsGet(target, { key: k, n: 5, tmo: 5500, headers: hdr });
-        const b2 = String(b || '');
-        if (b2.indexOf('#EXTM3U') >= 0) return b2;
-      } catch (e) { }
+    // goldenkite: নিজের সার্ভারের সেশন-নোড আগে, তারপর অন্যটা (ঢেউ)। vividstone-জাতীয়: হাব URL-দেখে সার্ভার
+    //   বোঝা যায় না ⇒ সব vidy-কী **সমান্তরালে** (যে হাবের সেশন-নোড, সেই জেতে)।
+    const isGk = /(?:^|\.)goldenkite\.top$/i.test((String(target).match(/^https?:\/\/([^/]+)/i) || [])[1] || '');
+    if (isGk) {
+      const k1 = /\/vdb\//.test(target) ? 'vidy:boise' : 'vidy:miami';
+      const k2 = /\/vdb\//.test(target) ? 'vidy:miami' : 'vidy:boise';
+      for (const k of [k1, k2]) {
+        try {
+          const b = await pxsGet(target, { key: k, n: 5, tmo: 5500, headers: hdr });
+          const b2 = String(b || '');
+          if (b2.indexOf('#EXTM3U') >= 0) return b2;
+        } catch (e) { }
+      }
+      return '';
     }
-    return '';
-  })();
+    const ks = ['vidy:atlanta', 'vidy:phoenix', 'vidy:delhi', 'vidy:miami', 'vidy:boise'];
+    return await new Promise(res => {
+      let left = ks.length, done = false;
+      ks.forEach(k => pxsGet(target, { key: k, n: 4, tmo: 7000, headers: hdr }).then(b => {
+        if (done) return;
+        const b2 = String(b || '');
+        if (b2.indexOf('#EXTM3U') >= 0) { done = true; res(b2); } else if (--left <= 0) res('');
+      }).catch(() => { if (!done && --left <= 0) res(''); }));
+    });
+    })();
   const _dir = (async () => {
     try {
       const r = await fetch(target, { headers: hdr, redirect: 'follow', signal: AbortSignal.timeout(9000) });
@@ -14664,7 +14704,7 @@ const GW_ON = process.env.GW !== '0';
 //   ২০,০০০-এ নামানো হলো — ৬ঘণ্টা TTL-এও বাস্তবে কখনো ২০k ছুঁয়েছে কি না সন্দেহ; মেমরির ছাদ নামল।
 const GW_TTL = Number(process.env.GWTTL || 6 * 3600e3), GW_MAX = Number(process.env.GWMAX || 20000);
 const GW = new Map();
-const GW_PRE = ['/mm/', '/mma/', '/mmr/', '/bfz/', '/m4d/', '/m4g/', '/vsp/', '/vh/', '/m4u/', '/m4h/', '/m4i/', '/fod/', '/rel/'];
+const GW_PRE = ['/mm/', '/mma/', '/mmr/', '/bfz/', '/m4d/', '/m4g/', '/vsp/', '/vh/', '/vhs/', '/m4u/', '/m4h/', '/m4i/', '/fod/', '/rel/'];
 // ★ v1.34.45: **stateless টোকেন** — payload (exp.nonce.internal) HMAC-সই করে টোকেনেই; সার্ভার-ম্যাপ লাগে না
 //   ⇒ কন্টেইনার-রিস্টার্টেও কার্ড মরে না (আগে রিস্টার্ট মানেই সব /t/ 'link expired' — ইউজারের পাঠানো ২ লিংকই তাই)।
 //   পুরোনো ম্যাপ-টোকেনও পড়া যায় (একই প্রসেস-জীবনে তৈরি কার্ড বাঁচে)।
@@ -15496,6 +15536,8 @@ const server = http.createServer((req, res) => {
     })();
     // ★ v1.17.50: vidy-প্লেলিস্ট-রিলে — /vh/<b64url(প্লেলিস্ট)>/p.m3u8 (রেফারার-লক-ভাঙা; সেগমেন্ট সরাসরি CDN)
     const vhR = p.match(/^\/vh\/([A-Za-z0-9_=-]{8,2400})\/p\.m3u8$/);
+    const vhsR = p.match(/^\/vhs\/([A-Za-z0-9_=-]{8,4000})\/s\.bin$/);
+    if (vhsR) return vhsServe(req, res, vhsR[1]);
     if (vhR) return vhServe(req, res, vhR[1]);
     const dhR = p.match(/^\/dh\/([A-Za-z0-9_=-]{8,3000})\/(?:p\.m3u8|s)$/);   // v1.30.0: Deadtoons রিলে
     if (dhR) return dhServe(req, res, dhR[1]);
