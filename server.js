@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.68';
+const VERSION = '1.34.69';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -4609,8 +4609,34 @@ async function dtTask(nameP, infoP, type, s, e, origin) {
     const TTL0 = (det.anime_name || used.anime_name || name);
     const YR0 = year || (det.release_date ? parseInt(String(det.release_date).slice(0, 4), 10) || 0 : 0);
     if (DBG) console.error('[dt] hit slug=' + used.slug + ' sv=' + svs.length + ' links=' + links.length + ' @' + (Date.now() - T0) + 'ms');
-    // (৩) প্রতি watch-server ⇒ resolve ⇒ embed ⇒ unpack ⇒ HLS-প্রমাণ (সমান্তরাল)
     const cards = [];
+    // (৩) v1.34.69: **ডাউনলোড-কার্ড আগে** — unlock-cache thakle proof druto (1-4s); age watch/HLS-poth (EarnVids CDN 502 hole 6-9s kheye) seshe check hoto bole thanda title-e 12s cap-e DL-card kata porto (prod-e mapa: prothom kholay DT=0).
+    //     ১৫সে-গেট পেরিয়ে ক্যাশে (পরের খোলায় কার্ড)। প্রমাণ (Range ২০৬ + video/*) ছাড়া কার্ড নয়।
+    const mkDlCard = (cand, pr) => {
+      const qq = cand.q || mlsQ(cand.quality) || 0;
+      const size = mlsMB(pr.size || 0) || cand.size;
+      const audio = dtAudio(titleTxt + ' ' + (pr.name || '') + ' ' + (cand.quality || ''));
+      const srvTxt = cand.srv === 'hubcloud' && /pixeldrain/i.test(pr.direct) ? 'hubcloud→pixel' : cand.srv;
+      const lines = '⊞ Deadtoons ◧ ' + srvTxt + (audio ? ' ⌗ ' + audio : '') + (size ? ' · ' + size : '');
+      const txt = '⧉ ' + TTL0 + (YR0 ? ' | ' + YR0 + ' |' : ' |') + '\n'
+        + (type === 'series' && SE > 0 ? '⬡ S' + SE + 'E' + EP : '⬡ Movie') + (size ? ' · ' + size : '') + '\n' + lines;
+      return {
+        name: '⫥ ' + (qq || 'Auto') + ' ⫥', title: txt, description: txt, quality: String(qq || ''),
+        url: pr.direct, _srv: 'deadtoons·' + srvTxt.replace('→', '-'), _direct: pr.direct, _dl: 1,
+        behaviorHints: { notWebReady: false, isBingeable: true, filename: (pr.name || ('deadtoons-' + (qq || 'auto') + '.mkv')).trim() },
+        bingeGroup: 'dtd|' + mlsNorm(TTL0) + '::' + (type === 'series' && SE > 0 ? 'S' + SE + 'E' + EP : 'm')
+      };
+    };
+    const dlReady = dlCands.filter(c => DT_UNLOCK.has(String(c.id)));
+    if (dlReady.length) {
+      const prs = await Promise.all(dlReady.map(c => dtFileProof(DT_UNLOCK.get(String(c.id)).url, 4500)));
+      prs.forEach((pr, i) => {
+        if (!pr) { DT_UNLOCK.delete(String(dlReady[i].id)); return; }
+        cards.push(mkDlCard(dlReady[i], pr));
+        if (DBG) console.error('[dt] file-card ' + dlReady[i].q + 'p ' + dlReady[i].srv + ' ' + mlsMB(pr.size) + ' @' + (Date.now() - T0) + 'ms');
+      });
+    }
+    // (৪) প্রতি watch-server ⇒ resolve ⇒ embed ⇒ unpack ⇒ HLS-প্রমাণ (সমান্তরাল) — baki somoye
     await Promise.all(svs.map(async sv => {
       try {
         const left = CAP - (Date.now() - T0) - 300;
@@ -4647,32 +4673,6 @@ async function dtTask(nameP, infoP, type, s, e, origin) {
         }
       } catch (err) { }
     }));
-    // (৪) v1.31.0: **ডাউনলোড-কার্ড** (Pixeldrain/HubCloud) — ক্যাশে থাকলে এখনই, নইলে ব্যাকগ্রাউন্ডে
-    //     ১৫সে-গেট পেরিয়ে ক্যাশে (পরের খোলায় কার্ড)। প্রমাণ (Range ২০৬ + video/*) ছাড়া কার্ড নয়।
-    const mkDlCard = (cand, pr) => {
-      const qq = cand.q || mlsQ(cand.quality) || 0;
-      const size = mlsMB(pr.size || 0) || cand.size;
-      const audio = dtAudio(titleTxt + ' ' + (pr.name || '') + ' ' + (cand.quality || ''));
-      const srvTxt = cand.srv === 'hubcloud' && /pixeldrain/i.test(pr.direct) ? 'hubcloud→pixel' : cand.srv;
-      const lines = '⊞ Deadtoons ◧ ' + srvTxt + (audio ? ' ⌗ ' + audio : '') + (size ? ' · ' + size : '');
-      const txt = '⧉ ' + TTL0 + (YR0 ? ' | ' + YR0 + ' |' : ' |') + '\n'
-        + (type === 'series' && SE > 0 ? '⬡ S' + SE + 'E' + EP : '⬡ Movie') + (size ? ' · ' + size : '') + '\n' + lines;
-      return {
-        name: '⫥ ' + (qq || 'Auto') + ' ⫥', title: txt, description: txt, quality: String(qq || ''),
-        url: pr.direct, _srv: 'deadtoons·' + srvTxt.replace('→', '-'), _direct: pr.direct, _dl: 1,
-        behaviorHints: { notWebReady: false, isBingeable: true, filename: (pr.name || ('deadtoons-' + (qq || 'auto') + '.mkv')).trim() },
-        bingeGroup: 'dtd|' + mlsNorm(TTL0) + '::' + (type === 'series' && SE > 0 ? 'S' + SE + 'E' + EP : 'm')
-      };
-    };
-    const dlReady = dlCands.filter(c => DT_UNLOCK.has(String(c.id)));
-    if (dlReady.length) {
-      const prs = await Promise.all(dlReady.map(c => dtFileProof(DT_UNLOCK.get(String(c.id)).url, 4500)));
-      prs.forEach((pr, i) => {
-        if (!pr) { DT_UNLOCK.delete(String(dlReady[i].id)); return; }
-        cards.push(mkDlCard(dlReady[i], pr));
-        if (DBG) console.error('[dt] file-card ' + dlReady[i].q + 'p ' + dlReady[i].srv + ' ' + mlsMB(pr.size) + ' @' + (Date.now() - T0) + 'ms');
-      });
-    }
     const dlBg = dlCands.filter(c => !DT_UNLOCK.has(String(c.id))).slice(0, 6);   // ৪টিই সমান্তরাল (১৭সে একবারই)
     // ★★ v1.34.22 (ইউজার: "Deadtoons Kono fsl, pixel or hub cloud theke Kono stream dei na"): আনলক (~১৭সে)
     //   ব্যাকগ্রাউন্ডেই শেষ হয়, অথচ উত্তরটা আগে **full** ক্যাশ (১০মিন) হয়ে যেত ⇒ ডাউনলোড-কার্ড
