@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.60';
+const VERSION = '1.34.61';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -15879,6 +15879,7 @@ const server = http.createServer((req, res) => {
       const origin = originOf(req);
       const fin = await m4uFinalFor(tgt).catch(() => '');
       if (!fin) { try { res.writeHead(502, { 'content-type': 'text/plain' }); } catch { } return res.end('no-final'); }
+      if (/\.zip(\?|$)/i.test(String(fin).split('#')[0])) { try { res.writeHead(302, { location: origin + '/bfz/' + Buffer.from(fin).toString('base64url') + '/v.mkv', 'cache-control': 'no-store' }); } catch { } return res.end(); }   // v1.34.61: stored-zip worker final -> /bfz/ deframe (player cannot play .zip)
       if (!m4uIsIpLocked(fin)) { try { res.writeHead(302, { location: origin + '/m4h/' + Buffer.from(fin).toString('base64url') + '/index.m3u8', 'cache-control': 'no-store' }); } catch { } return res.end(); }
       const key = m4gR[1];
       let e = BF_GUC.get(key);
