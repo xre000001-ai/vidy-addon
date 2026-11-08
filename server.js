@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.31';
+const VERSION = '1.34.32';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -9415,9 +9415,13 @@ async function m4uTdServe(req, res, target) {
     }
     // (ক) পুরোনো চেইন-পেজ (nexdrive/fast-dl) ⇒ সেখান থেকেই রিজলভ
     if (!/mdrive\.cloud$/.test(host)) {
-      const r = await m4uHFast(target, true).catch(() => null);
-      if (!r || !r.url) return okJson(502, { error: 'no-file' });
-      return await bfServeGeneric(req, res, r.url);
+      // ★ v1.34.32 (মাপা-বাগ: m4uHFast প্রতি রিকোয়েস্টে **আলাদা সাইজের** final দিত ⇒ প্লেয়ারের সিক অন্য ফাইলে গিয়ে 416 "শেষে টানে না"। ২০মি পিন করলাম)
+      const hc2 = M4U_TD_USED.get('hf:' + target);
+      let furl = (hc2 && Date.now() - hc2.ts < 20 * 60e3) ? hc2.final : '';
+      if (!furl) { const r = await m4uHFast(target, true).catch(() => null); furl = (r && r.url) || ''; if (furl) M4U_TD_USED.set('hf:' + target, { ts: Date.now(), final: furl }); }
+      if (!furl) return okJson(502, { error: 'no-file' });
+      if (m4uDirectOk(furl)) { res.writeHead(302, { location: furl, 'cache-control': 'no-store', 'access-control-allow-origin': '*' }); return res.end(); }
+      return await bfServeGeneric(req, res, furl);
     }
     // (খ) নতুন: mdrive হাব → সার্ভার লিংক (১০-মিনিট ক্যাশ) → ফ্রেশ ফাইল-URL (৯০সে ক্যাশ)
     let ent = M4U_TD_LOC.get(target);
@@ -14270,7 +14274,7 @@ async function vhGetPlaylist(target) {
 function vhPrewarm(rawUrls, origin) {
   // ★ v1.28.3-L3: রিলে বন্ধ থাকলে প্রি-ওয়ার্ম **বৃথা** — কার্ড সরাসরি CDN-এ যায়, আমাদের VH_C কেউ ছোঁয় না
   //   ⇒ শুধু মেমরি (+১৯৩KB × N) নষ্ট। তাই রিলে চালু থাকলেই প্রি-ওয়ার্ম।
-  if (process.env.VHRELAY !== '1' || process.env.VHPW === '0' || !origin) return;
+  if (process.env.VHRELAY === '0' || process.env.VHPW === '0' || !origin) return; // v1.34.32: ডিফল্ট-চালু (নিচের নোট)
   const n = Number(process.env.VHPW || 3);
   let i = 0;
   for (const u of (rawUrls || [])) {
@@ -14576,7 +14580,7 @@ function sendStreams(res, skey, plog, ms, cards, ua, cfg) {
   //   জরুরি হলে `VHRELAY=1` দিয়ে পুরোনো রিলে ফেরানো যাবে।
   // ★ v1.28.3-m: vidy-প্লেলিস্ট প্রি-ওয়ার্ম (কার্ড-বানানোর সময়ই, **কাঁচা URL** দিয়ে — vhFixCards-এর আগে)
   try { if (res && res.req) vhPrewarm((cards || []).filter(c => vhIsVidy(c && c.url, c)).map(c => String(c.url)), originOf(res.req)); } catch (e) { }
-  if (process.env.VHRELAY === '1') { try { if (res && res.req) vhFixCards(cards, originOf(res.req)); } catch (e) { } }
+  if (process.env.VHRELAY !== '0') { try { if (res && res.req) vhFixCards(cards, originOf(res.req)); } catch (e) { } } // ★ v1.34.32 (ইউজার: "relay charai, token die dekhaw" + মাপা: goldenkite-প্লেলিস্ট অনেক নেটওয়ার্কে 403, কিন্তু সেগমেন্ট সব জায়গায় 206) — Vidy কার্ড এখন টোকেনাইজড ম্যানিফেস্ট (/vh/, শুধু .m3u8 টেক্সট আমাদের হয়ে আসে; সেগমেন্ট ১০০% সরাসরি CDN)। বন্ধ করতে VHRELAY=0।
   const n = (cards || []).length; // v1.15.8: কোনো-stash-নেই — প্রতি-উত্তর-তাজা
   logReq(plog, ms, n, null, ua);
   const _sk = sresKey(plog, cfg);
