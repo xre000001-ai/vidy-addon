@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.44';
+const VERSION = '1.34.45';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -14510,9 +14510,13 @@ function vhIsVidy(u, c) {
   // ★★ v1.34.37 (ইউজার: "direct user stream ei eta fix sombob"): goldenkite (/vd/ Miami, /vdb/ Boise) প্লেলিস্ট-হোস্ট সার্ভার-এগ্রেস
   //   থেকে পাওয়া যায় না (মাপা ৪০৩; কোডের নিজের নোট: "CDN-আমাদের-IP-ব্লক — ইউজারের DEVICE-এ চলে") ⇒ ওই কার্ড **হুবহু direct**
   //   থাকে (ডিভাইস হেডারসহ সরাসরি টানবে)। /vh/ রইল শুধু vividstone (Atlanta)-এর জন্য — সার্ভার-ফেচ প্রমাণিত (২০০, <১সে), সেগমেন্ট direct।
-  if (/\/vd[b]?\//.test(p0)) return false;
-  // ★ v1.34.35: vividstone (Atlanta)-ও একই Referer-দেয়াল (মাপা: প্রোড /vh/ দিয়ে ২০০, সরাসরি ৪০৩)
-  if (/(?:^|\.)vividstone\.top$/i.test((p0.match(/^https?:\/\/([^/]+)/i) || [])[1] || '')) return true;
+  // ★★ v1.34.45 (স্যান্ডবক্সে হাতে-মাপা): goldenkite প্লেলিস্ট **শুধু সাম্প্রতিক vidy-সেশন-IP থেকেই ২০০** —
+  //   একই নোডে seed+sources করার পর ২০০ (১৮১KB), অন্য নোড/direct/BD-residential সবার ৪০৩ ⇒ ডিভাইস সরাসরি
+  //   কোনদিনই পাবে না (প্লেয়ার headers পাঠালেও নয়)। তাই প্লেলিস্ট /vh/ দিয়ে সেশন-নোডে আনতেই হবে;
+  //   সেগমেন্ট (rapidbrook) direct ২০৬ মাপা ⇒ মিডিয়া আগের মতোই সরাসরি ডিভাইসে (ব্যান্ডউইথ ~০)।
+  if (/\/vd[b]?\//.test(p0)) return true;
+  if (/(?:^|\.)(?:vividstone|goldenkite)\.top$/i.test((p0.match(/^https?:\/\/([^/]+)/i) || [])[1] || '')) return true;
+  if (c && c.headers && /vidy\.st/.test(String(c.headers.Referer || ''))) return true;   // decorate-চিহ্নিত বাকি vidy-হাব (phoenix/delhi…)
   return false;
 }
 function vhRelay(u, origin) { return origin + '/vh/' + Buffer.from(String(u)).toString('base64url') + '/p.m3u8'; }
@@ -14535,7 +14539,7 @@ function vhRewrite(body, target, origin) {
 const VH_PRE = new Map();                       // প্রি-ওয়ার্ম-ইন-ফ্লাইট: url → promise (ক্লিক এলে একই promise-এ যোগ দেয়)
 async function vhGetPlaylist(target) {
   const hdr = { 'User-Agent': UA, 'Referer': VIDY_REFERER, 'Accept': '*/*', 'Accept-Encoding': 'gzip' };
-  // ★ v1.34.36: সরাসরি-ফেচ ও পুল-রেস **সমান্তরালে** — আগে ক্রমিক ছিল ⇒ ব্যর্থ হোস্টে ১৭সে পর্যন্ত ঝুলত (গেটওয়ে ৫০৪)
+  // ★ v1.34.36: সরাসরি-ফেচ ও পুল-রেস **সমান্তরালে** — আগে ক্রমিক ছিল ⇒ ব্যর্থ হোস্টে ১৭সে পুড়ত
   const _pool = (async () => {
     try {
       const x = await racePool(target, 6, 8000, null, b => String(b || '').indexOf('#EXTM3U') >= 0, hdr);
@@ -14544,23 +14548,43 @@ async function vhGetPlaylist(target) {
     } catch (e) { }
     return '';
   })();
-  try {
-    const r = await fetch(target, { headers: hdr, redirect: 'follow', signal: AbortSignal.timeout(9000) });
-    if (r.status === 200) {
-      const enc = String(r.headers.get('content-encoding') || '').toLowerCase();
-      const buf = Buffer.from(await r.arrayBuffer());          // ★ একবারই পড়ি (body-used বাগ ঠেকাতে)
-      let txt = buf.toString('utf8');
-      const magic = buf.length > 2 && buf[0] === 0x1f && buf[1] === 0x8b;   // gzip-ম্যাজিক = এখনো কম্প্রেসড
-      if (magic || txt.trim().charAt(0) !== '#') {
-        if (magic || enc.indexOf('gzip') >= 0) { try { txt = require('zlib').gunzipSync(buf).toString('utf8'); } catch (e) { } }
-        else if (enc.indexOf('br') >= 0) { try { txt = require('zlib').brotliDecompressSync(buf).toString('utf8'); } catch (e) { } }
-        else if (enc.indexOf('deflate') >= 0) { try { txt = require('zlib').inflateSync(buf).toString('utf8'); } catch (e) { } }
+  // ★★ v1.34.45: **সেশন-নোড** ফেচ — প্লেলিস্ট-গেট = সাম্প্রতিক vidy-API-সেশন-IP (হাতে-মাপা: একই নোডে ২০০,
+  //   অন্য সব ৪০৩)। 'vidy:<srv>'-কীতে প্রমাণিত নোড মানেই সদ্য-সেশন-করা নোড ⇒ ওরাই প্রথম পছন্দ।
+  const _aff = (async () => {
+    try {
+      const k = /\/vdb\//.test(target) ? 'vidy:boise' : 'vidy:miami';
+      const b = await pxsGet(target, { key: k, n: 5, tmo: 8000, headers: hdr });
+      const b2 = String(b || '');
+      if (b2.indexOf('#EXTM3U') >= 0) return b2;
+    } catch (e) { }
+    return '';
+  })();
+  const _dir = (async () => {
+    try {
+      const r = await fetch(target, { headers: hdr, redirect: 'follow', signal: AbortSignal.timeout(9000) });
+      if (r.status === 200) {
+        const enc = String(r.headers.get('content-encoding') || '').toLowerCase();
+        const buf = Buffer.from(await r.arrayBuffer());
+        let txt = buf.toString('utf8');
+        const magic = buf.length > 2 && buf[0] === 0x1f && buf[1] === 0x8b;
+        if (magic || txt.trim().charAt(0) !== '#') {
+          if (magic || enc.indexOf('gzip') >= 0) { try { txt = require('zlib').gunzipSync(buf).toString('utf8'); } catch (e) { } }
+          else if (enc.indexOf('br') >= 0) { try { txt = require('zlib').brotliDecompressSync(buf).toString('utf8'); } catch (e) { } }
+          else if (enc.indexOf('deflate') >= 0) { try { txt = require('zlib').inflateSync(buf).toString('utf8'); } catch (e) { } }
+        }
+        if (txt && txt.indexOf('#EXTM3U') >= 0) return txt;
       }
-      // ★ v1.28.3-n: **প্লেলিস্ট-যাচাই** — ২৯৮ বাইটের ৪০৩-HTML বা ভুল-বডি আর কখনো প্লেলিস্ট বলে চলে যাবে না
-      if (txt && txt.indexOf('#EXTM3U') >= 0) return txt;
-    }
-  } catch (e) { }
-  return await _pool;   // v1.34.36: সরাসরি পথ ব্যর্থ হলে পুলের উত্তর (সমান্তরালে চলছিল)
+    } catch (e) { }
+    return '';
+  })();
+  // প্রথম **সফল** (#EXTM3U-সহ) উত্তর জেতে; সব ব্যর্থ হলে ''
+  return await new Promise(res => {
+    let left = 3, done = false;
+    [_aff, _pool, _dir].forEach(p => Promise.resolve(p).then(v => {
+      if (done) return;
+      if (v) { done = true; res(v); } else if (--left <= 0) res('');
+    }).catch(() => { if (!done && --left <= 0) res(''); }));
+  });
 }
 // ★ v1.28.3-m: **কার্ড-বানানোর সময়ই প্লেলিস্ট প্রি-ওয়ার্ম** — প্রথম ক্লিকের ঠান্ডা-অপেক্ষা মুছে যায়
 //   (মাপা: ঠান্ডা /vh/ ৪.৯৯সে → প্রি-ওয়ার্ম থাকলে ৭ms)। শুধু প্রথম VHPW(৩) কার্ড, ব্যাকগ্রাউন্ডে;
@@ -14637,7 +14661,18 @@ const GW_ON = process.env.GW !== '0';
 const GW_TTL = Number(process.env.GWTTL || 6 * 3600e3), GW_MAX = Number(process.env.GWMAX || 20000);
 const GW = new Map();
 const GW_PRE = ['/mm/', '/mma/', '/mmr/', '/bfz/', '/m4d/', '/m4g/', '/vsp/', '/vh/', '/m4u/', '/m4h/', '/m4i/', '/fod/', '/rel/'];
+// ★ v1.34.45: **stateless টোকেন** — payload (exp.nonce.internal) HMAC-সই করে টোকেনেই; সার্ভার-ম্যাপ লাগে না
+//   ⇒ কন্টেইনার-রিস্টার্টেও কার্ড মরে না (আগে রিস্টার্ট মানেই সব /t/ 'link expired' — ইউজারের পাঠানো ২ লিংকই তাই)।
+//   পুরোনো ম্যাপ-টোকেনও পড়া যায় (একই প্রসেস-জীবনে তৈরি কার্ড বাঁচে)।
+const GW_KEY = (() => { try { return require('crypto').createHash('sha256').update('vidy-gw|' + (process.env.GWKEY || 'gw-v13445')).digest(); } catch (e) { return null; } })();
 function gwMint(internal) {
+  try {
+    if (GW_KEY) {
+      const payload = (Date.now() + GW_TTL) + '.' + require('crypto').randomBytes(6).toString('base64url') + '.' + String(internal);
+      const sig = require('crypto').createHmac('sha256', GW_KEY).update(payload).digest('base64url').slice(0, 22);
+      return Buffer.from(payload, 'utf8').toString('base64url') + '~' + sig;
+    }
+  } catch (e) { }
   const t = require('crypto').randomBytes(9).toString('base64url');
   GW.set(t, { u: internal, ts: Date.now() });
   if (GW.size > GW_MAX) {
@@ -14647,7 +14682,20 @@ function gwMint(internal) {
   }
   return t;
 }
-function gwGet(t) { const e = GW.get(t); if (!e) return null; if (Date.now() - e.ts > GW_TTL) { GW.delete(t); return null; } return e.u; }
+function gwGet(t) {
+  try {
+    const s = String(t || ''), i = s.lastIndexOf('~');
+    if (i > 0 && GW_KEY) {
+      const payload = Buffer.from(s.slice(0, i), 'base64url').toString('utf8');
+      const sig = require('crypto').createHmac('sha256', GW_KEY).update(payload).digest('base64url').slice(0, 22);
+      if (sig !== s.slice(i + 1)) return null;
+      const p1 = payload.indexOf('.'), p2 = payload.indexOf('.', p1 + 1);
+      if (p1 > 0 && p2 > p1 && Date.now() < Number(payload.slice(0, p1))) return payload.slice(p2 + 1);
+      return null;
+    }
+  } catch (e) { }
+  const e = GW.get(t); if (!e) return null; if (Date.now() - e.ts > GW_TTL) { GW.delete(t); return null; } return e.u;
+}
 function gwRewriteBody(body, origin) {
   if (!GW_ON || !origin || !body || body.length < 40) return body;
   try {
@@ -14660,7 +14708,7 @@ function gwRewriteBody(body, origin) {
       if (u.indexOf(origin + '/') !== 0) continue;
       let rest = u.slice(origin.length);             // '/mm/..../mini.m3u8?r=1' বা পুরোনো '/t/<tok>/x.m3u8'
       // ★ v1.27.1: আগেই-টোকেন-করা লিংক (ক্যাপচার-রিপ্লে / জমা-বডি) হলেও **নতুন** টোকেন পাবে
-      const tm2 = /^\/t\/([A-Za-z0-9_-]{6,80})(?:\/[^\/]*)?$/.exec(rest.split('?')[0]);
+      const tm2 = /^\/t\/([A-Za-z0-9_~-]{6,1400})(?:\/[^\/]*)?$/.exec(rest.split('?')[0]);
       if (tm2) { const inner = gwGet(tm2[1]); if (!inner) continue; rest = inner; }
       let hit = false; for (const pr of GW_PRE) if (rest.indexOf(pr) === 0) { hit = true; break; }
       if (!hit) continue;
@@ -14986,7 +15034,7 @@ const server = http.createServer((req, res) => {
     { const rlM = p.match(/^\/rel\/([vm])\/([A-Za-z0-9_=-]{8,4000})$/);
       if (rlM) return void relServe(req, res, rlM[1], rlM[2]); }
     // ★ v1.27.0: প্রতি-রিকোয়েস্ট প্লেব্যাক-টোকেন (`/t/<tok>/x.m3u8`) ⇒ ভিতরের আসল পথে রিভার্স
-    { const gwM2 = p.match(/^\/t\/([A-Za-z0-9_-]{6,80})(?:\/[^\/]*)?$/);
+    { const gwM2 = p.match(/^\/t\/([A-Za-z0-9_~-]{6,1400})(?:\/[^\/]*)?$/);
       if (gwM2) {
         const _tgt = (typeof gwGet === 'function') ? gwGet(gwM2[1]) : null;
         if (!_tgt) { res.writeHead(404, { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'cache-control': 'no-store' }); return res.end('{"error":"link expired"}'); }
