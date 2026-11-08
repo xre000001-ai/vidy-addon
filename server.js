@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.56';
+const VERSION = '1.34.57';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -10030,7 +10030,11 @@ async function m4uTdResolve(link, needProof) {
         // সরাসরি egress-এ GDFlix 429 দেয় (মাপা) ⇒ প্রক্সি-রোটেশনওয়ালা Smart-রিজলভার
         const g = await bfResolveGdflixSmart(fid, 0, 6500).catch(() => null);
         if (g && g.streamUrl && !g.isZip && !g.dead) url = g.streamUrl;
-        if (!url) { const mp = await mlsGdPost(link.href, 7000).catch(() => null); if (mp && mp.ok && mp.direct) url = mp.direct; }   // v1.34.55: MLS-chain fallback (BF H2 pool dead in prod)
+        if (!url) {   // v1.34.57: MLS resolver (foreground attempt + BG continuation + one cache re-check)
+          let mg = await mlsGd(link.href, 9000).catch(() => null);
+          if (!mg || !mg.ok) { await new Promise(r => setTimeout(r, 5000)); mg = await mlsGd(link.href, 9000).catch(() => null); }
+          if (mg && mg.ok && mg.direct) url = mg.direct;
+        }
         else if (DBG) console.error('[m4utd] gdflix-miss ' + fid + ' zip=' + (g && g.isZip) + ' dead=' + (g && g.dead));
       }
     } else if (srv === 'V-Cloud') {   // ★ v1.34.19: পেজের ভিতরের আসল সার্ভারগুলো (নিচে m4uVcloudResolve)
