@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.88';
+const VERSION = '1.34.89';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -9719,7 +9719,16 @@ async function m4uTdServe(req, res, target) {
     return await bfServeGeneric(req, res, fin);
   } catch (e) { return okJson(502, { error: 'serve-fail' }); }
 }
-async function m4uFinalFor(target) {   // ★ v1.34.35: m4uTdServe-এর রিজলভ-অর্ধেক (সার্ভ না করে শুধু ফাইনাল-URL) — /m4g/ ব্যবহার করে
+const M4U_FIN_FLIGHT = new Map();   // v1.34.89: choloman resolve-e click join kore (duibar kaj noy)
+async function m4uFinalFor(target) {
+  const _fk = String(target);
+  const _fp = M4U_FIN_FLIGHT.get(_fk);
+  if (_fp) return _fp;
+  const _run = m4uFinalForInner(target);
+  M4U_FIN_FLIGHT.set(_fk, _run);
+  try { return await _run; } finally { M4U_FIN_FLIGHT.delete(_fk); }
+}
+async function m4uFinalForInner(target) {   // ★ v1.34.35: m4uTdServe-এর রিজলভ-অর্ধেক (সার্ভ না করে শুধু ফাইনাল-URL) — /m4g/ ব্যবহার করে
   const host = m4uHostOf(target);
   if (/gdflix\.|gdlink\.dev/i.test(host)) {   // ★ v1.34.52: GDFlix file-page -> fresh final (GU/r2/pixeldrain)
     const gc = M4U_TD_USED.get('gf:' + target);
@@ -12729,7 +12738,7 @@ function bfGuAdoptStream(key, url, body) { // v1.34.34: হাতে-থাক�
   } catch (e) { return false; }
 }
 let BF_GU_PULLN = 0; const BF_GU_PULLQ = [];
-function bfGuSlotWait() { return new Promise(res => { if (BF_GU_PULLN < 2) { BF_GU_PULLN++; res(); } else BF_GU_PULLQ.push(res); }); }
+function bfGuSlotWait(prio) { return new Promise(res => { if (BF_GU_PULLN < 2) { BF_GU_PULLN++; res(); } else if (prio) BF_GU_PULLQ.unshift(res); else BF_GU_PULLQ.push(res); }); } // v1.34.89: click-pull queue-te age
 function bfGuSlotFree() { BF_GU_PULLN = Math.max(0, BF_GU_PULLN - 1); const n = BF_GU_PULLQ.shift(); if (n) { BF_GU_PULLN++; n(); } }
 function bfGuReserved(excl) { let s = 0; try { for (const e2 of BF_GUC.values()) if (e2 !== excl && !e2.done && !e2.err && e2.total) s += Math.max(0, e2.total - (e2.got || 0)); } catch (e) { } return s; }
 function bfGuStart(key, url, opts) {
@@ -12739,7 +12748,7 @@ function bfGuStart(key, url, opts) {
   if (opts && opts.warm) e._warm = true;   // v1.34.88: warm-pull (fail-fast, OFF trip noy)
   BF_GUC.set(key, e);
   (async () => {
-    await bfGuSlotWait();   // ★ v1.34.87: একসাথে সর্বোচ্চ ২টি pull (storm-রোধ)
+    await bfGuSlotWait(!!(opts && opts.prio));   // ★ v1.34.87: একসাথে সর্বোচ্চ ২টি pull (storm-রোধ)
     try {
     // ★ v1.34.34: পুল মাঝপথে ভাঙলে (প্রোডে বারবার মাপা) **নিজে থেকেই** আবার টানে (সর্বোচ্চ ৬ বার) —
     //   আগে এক ভাঙনেই পুল মরত, পরের রিকোয়েস্টে এন্ট্রি বদলে ফাইল গোড়া থেকে শুরু হতো ⇒ ৩.৬GB কখনো শেষ হতো না।
@@ -12883,7 +12892,7 @@ async function bfGuServe(req, res, url, start, endQ, base) {
     try { fs.unlink(e.f, () => { }); } catch (er) { }
     BF_GUC.delete(key); e = null;
   }
-  if (!e || (e.err && !e.got)) e = bfGuStart(key, url);
+  if (!e || (e.err && !e.got)) e = bfGuStart(key, url, { prio: true }); // v1.34.89: click
   if (!e || (e.err && !e.got)) return false;
   e.used = Date.now();
   const waitMs = Number(process.env.GUWAIT_MS || 32000);   // v1.34.74: 25->32s (pull ~51MB/s mapa => ek wait-e ~1.6GB egoy; platform ~40s kate, tar niche)   // ★ প্ল্যাটফর্ম ~৪০সে-তে কানেকশন কাটে (মাপা)
@@ -14106,7 +14115,7 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
         const j = JSON.parse(vidyDecrypt(ct, vr.seed, tmdbId)); // ★ সেশন-সিড দিয়েই ডিক্রিপ্ট (ভিন্ন-নোড-ডিক্রিপ্ট-ত
         // ★ v1.34.48: জয়ী নোডটা প্রতিটা প্লেলিস্ট-URL-এর সাথে বেঁধে রাখি — ক্লিকের সময় /vh/ প্রথমে **সেই নোড** দিয়েই
         //   প্লেলিস্ট আনবে (মাপা: প্লেলিস্ট-গেট = যে IP এই টাইটেলের sources এনেছে; অন্য সেশন-নোডও অনেক সময় ৪০৩)
-        try { if (vr && vr.px) { for (const _s of (j.sources || [])) if (_s && _s.url) VH_MINT.set(String(_s.url), { px: vr.px, ts: Date.now() }); if (VH_MINT.size > 2000) { const _k = VH_MINT.keys().next().value; VH_MINT.delete(_k); } } } catch (e) { }
+        try { if (vr && vr.px) { for (const _s of (j.sources || [])) if (_s && _s.url) VH_MINT.set(String(_s.url), { px: vr.px, ts: Date.now(), ctx: { srv: srv, tmdbId: tmdbId, type: type, s: s || '', e: e || '', title: title || '' } }); if (VH_MINT.size > 2000) { const _k = VH_MINT.keys().next().value; VH_MINT.delete(_k); } } } catch (e) { } // v1.34.89: ctx = remint-er jonno
         vsjPut(vkey, j); // v1.18.4: মাইক্রো-ক্যাশ-রাখা
         if (DBG) console.error('[t1g] ' + srv + ' fetch=' + (Date.now() - tS) + 'ms n=' + (j.sources || []).length + ' | jkeys=' + Object.keys(j).join(',') + ' | s0=' + JSON.stringify((j.sources || [])[0] || {}).slice(0, 220) + (j.audios ? ' | audios=' + JSON.stringify(j.audios).slice(0, 200) : '') + (j.audio ? ' | audio=' + JSON.stringify(j.audio).slice(0, 120) : ''));
         if (DBG && j.playlist) console.error('[t1g] ' + srv + ' PLAYLIST=' + JSON.stringify(j.playlist).slice(0, 500));
@@ -15144,6 +15153,46 @@ function vhPrewarm(rawUrls, origin) {
     VH_PRE.set(u, pr);
   }
 }
+// ★ v1.34.89: **re-mint** — playlist-gate session-IP chay; proxy-IP ghure gele/
+//   node chole gele purono mint more jay (prod-mapa: sob node 403). Tokhon
+//   notun vidy-session (seed+sources, current node diye) kore SEI node diyei
+//   playlist ani — gate-er nijer niyom. (srv|title)-proti 45s-e max 1, dedup.
+const VH_REMINT_AT = new Map(); const VH_REMINTING = new Map();
+async function vhRemint(target) {
+  const m = VH_MINT.get(target);
+  const ctx = m && m.ctx;
+  if (!ctx || !ctx.srv) return null;
+  const gk = ctx.srv + '|' + ctx.tmdbId;
+  if (VH_REMINTING.has(gk)) return VH_REMINTING.get(gk);
+  if (Date.now() - (VH_REMINT_AT.get(gk) || 0) < 45000) return null;
+  VH_REMINT_AT.set(gk, Date.now());
+  if (VH_REMINT_AT.size > 500) VH_REMINT_AT.clear();
+  const job = (async () => {
+    try {
+      const q = { mediaType: ctx.type, tmdbId: String(ctx.tmdbId), enc: '2', title: ctx.title || '' };
+      if (ctx.type === 'tv') { q.seasonId = String(ctx.s || 1); q.episodeId = String(ctx.e || 1); }
+      const vr = await vidyFetch({ srv: ctx.srv, tmdbId: ctx.tmdbId, q: q, sc: null }).catch(() => null);
+      if (!vr || !vr.ct || !vr.px) return null;
+      let j = null;
+      try { j = JSON.parse(vidyDecrypt(vr.ct, vr.seed, ctx.tmdbId)); } catch (e) { return null; }
+      const srcs = ((j && j.sources) || []).filter(x => x && x.url && /^https?:/.test(x.url));
+      if (!srcs.length) return null;
+      for (const s2 of srcs) VH_MINT.set(String(s2.url), { px: vr.px, ts: Date.now(), ctx: ctx });
+      const sig = u => { const mm = String(u || '').match(/index-([^/?]+)\.m3u8/i); return mm ? mm[1].toLowerCase() : ''; };
+      const want = sig(target);
+      let cand = (want && srcs.find(x => sig(x.url) === want)) || null;
+      if (!cand) { const qm = String(target).match(/(2160|1440|1080|720|480|360)/); cand = (qm && srcs.find(x => String(x.quality || '').indexOf(qm[1]) >= 0)) || srcs[0]; }
+      if (!cand) return null;
+      const hdr = { 'User-Agent': UA, 'Referer': VIDY_REFERER, 'Accept': '*/*' };
+      const b2 = String(await proxiedGet(vr.px, cand.url, 8000, hdr).catch(() => '') || '');
+      if (b2.indexOf('#EXTM3U') < 0) return null;
+      if (DBG) console.error('[vh] remint ok ' + ctx.srv + ' via ' + vr.px);
+      return { body: b2, target: cand.url };
+    } catch (e) { return null; }
+  })();
+  VH_REMINTING.set(gk, job);
+  try { return await job; } finally { VH_REMINTING.delete(gk); }
+}
 async function vhServe(req, res, b64) {
   let target = ''; try { target = Buffer.from(b64, 'base64url').toString('utf8'); } catch (e) { }
   if (!/^https?:\/\//.test(target)) { res.writeHead(400); return res.end('bad'); }
@@ -15158,11 +15207,16 @@ async function vhServe(req, res, b64) {
     if (h2 && Date.now() - h2.ts < VH_TTL) { res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl', 'access-control-allow-origin': '*', 'cache-control': 'no-store' }); return res.end(vuStampPlaylist(h2.v, origin)); } }
   // ★ v1.34.35: সাম্প্রতিক-ব্যর্থতায় সাথে সাথে 302 (প্লেয়ার পুরোনো সরাসরি-পথেই চেষ্টা করুক)
   const _vf = VH_FAIL.get(ck);
-  if (_vf && Date.now() - _vf < 60 * 1000) { try { res.writeHead(302, { location: target, 'cache-control': 'no-store', 'access-control-allow-origin': '*' }); } catch (e) { } return res.end(); }
-  let body = await Promise.race([vhGetPlaylist(target), new Promise(r => setTimeout(() => r(''), _left()))]);
+  if (_vf && Date.now() - _vf < 15 * 1000) { try { res.writeHead(302, { location: target, 'cache-control': 'no-store', 'access-control-allow-origin': '*' }); } catch (e) { } return res.end(); } // v1.34.89: 60s -> 15s (remint-e retry sere uthte pare)
+  let body = await Promise.race([vhGetPlaylist(target), new Promise(r => setTimeout(() => r(''), 7500))]).catch(() => '');
+  let rwBase = target;
+  if (!body) {   // ★ v1.34.89: sob node 403 = session more geche ⇒ re-mint
+    const rm = await vhRemint(target).catch(() => null);
+    if (rm && rm.body) { body = rm.body; rwBase = rm.target || target; }
+  }
   if (!body) body = await Promise.race([vhGetPlaylist(target), new Promise(r => setTimeout(() => r(''), _left()))]).catch(() => '');   // ★ v1.34.50: একবার রিট্রাই (নোড ঘোরে)
   if (!body) { VH_FAIL.set(ck, Date.now()); try { res.writeHead(302, { location: target, 'cache-control': 'no-store', 'access-control-allow-origin': '*' }); } catch (e) { } return res.end(); }
-  const out = await vhRewrite(body, target, origin);
+  const out = await vhRewrite(body, rwBase, origin);
   if (VH_C.size > 800) VH_C.clear();
   VH_C.set(ck, { ts: Date.now(), v: out });     // ★ ক্যাশে **কাঁচা** (স্ট্যাম্প-ছাড়া) থাকে
   if (process.env.VDBG) console.log('[vh] cold ' + (Date.now() - t0) + 'ms ' + body.length + 'B');
@@ -16203,7 +16257,7 @@ const server = http.createServer((req, res) => {
       let e = BF_GUC.get(key);
       if (e && e.src && e.src !== fin && !e.done && (e.err || !e.got)) { BF_GUC.delete(key); e = null; }
       if (e && e.err && !e.done) { BF_GUC.delete(key); e = null; }   // v1.34.76: dead pull (token died mid-pull) -> restart on the fresh final; previously the player got bounced to progressive /m4d/ and lost seek entirely
-      if (!e) e = bfGuAdopt(key) || bfGuStart(key, fin);   // রিস্টার্টের পর সম্পূর্ণ ফাইল থাকলে আবার টানব না
+      if (!e) e = bfGuAdopt(key) || bfGuStart(key, fin, { prio: true });   // রিস্টার্টের পর সম্পূর্ণ ফাইল থাকলে আবার টানব না // v1.34.89: click-prio
       if (!e || !e.done) {
         // ★ v1.34.44: pull চলছে কিন্তু যথেষ্ট নামলে EVENT-HLS দাও (সিকে গোড়া-থেকে ডাউনলোড নয়);
         //   প্রথম ব্লকগুলোর জন্য সর্বোচ্চ ~6s অপেক্ষা, না নামলে আগের /m4d/ প্রগ্রেসিভই।
@@ -16258,7 +16312,7 @@ const server = http.createServer((req, res) => {
       if (e && e.err && !e.done) {
         const _tgt76 = (() => { try { return Buffer.from(m4segR[1], 'base64url').toString('utf8'); } catch (er) { return ''; } })();
         const _fin76 = _tgt76 ? await m4uFinalFor(_tgt76).catch(() => '') : '';
-        if (_fin76) { BF_GUC.delete(m4segR[1]); const _ne = bfGuStart(m4segR[1], _fin76); if (_ne) e = _ne; }
+        if (_fin76) { BF_GUC.delete(m4segR[1]); const _ne = bfGuStart(m4segR[1], _fin76, { prio: true }); if (_ne) e = _ne; } // v1.34.89: click-prio
       }
       let a = 0, b = -1;
       try { const q = new URL(String(req.url || ''), 'http://x').searchParams; a = Number(q.get('a') || 0); b = Number(q.get('b') || -1); } catch { }
