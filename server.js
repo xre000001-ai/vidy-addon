@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.73';
+const VERSION = '1.34.74';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -9636,7 +9636,7 @@ const m4uIsMediaUrl = u => m4uIsIpLocked(u)
   || /\.(?:mkv|mp4)(?:\?|$)/i.test(String(u));
 const m4uCardUrl = (u, origin) => m4uIsIpLocked(u) ? m4uRelayUrl(u, origin) : String(u);
 const _fnOf = u => { try { return decodeURIComponent(String(u || '').split('?')[0].split('/').pop() || ''); } catch (e) { return ''; } };   // v1.34.52: filename from final URL (audio-label source)
-const m4uDirectOk = u => /(?:^|\.)r2\.dev$/i.test(m4uHostOf(u)) || /(?:^|\.)r2\.cloudflarestorage\.com$/i.test(m4uHostOf(u)) || /(?:^|\.)fsldownload\.com$/i.test(m4uHostOf(u)) || /pixeldrain\.(?:dev|com)\/api\/file\//i.test(String(u)) || /(?:^|\.)googleusercontent\.com$/i.test(m4uHostOf(u)); // v1.34.31: Range-native হোস্ট ⇒ /m4d/ 302-সরাসরি (স্ট্রিম-রিলে নয়) // v1.34.73: GU-o click-time direct (age bfGuServe pull-relay ExoPlayer-er Cues-probe ঝুলিয়ে 'play hoy na' korto; GU link click-e fresh mint hoy bole TTL-bake somossa nei)
+const m4uDirectOk = u => /(?:^|\.)r2\.dev$/i.test(m4uHostOf(u)) || /(?:^|\.)r2\.cloudflarestorage\.com$/i.test(m4uHostOf(u)) || /(?:^|\.)fsldownload\.com$/i.test(m4uHostOf(u)) || /pixeldrain\.(?:dev|com)\/api\/file\//i.test(String(u)); // v1.34.31: Range-native হোস্ট ⇒ /m4d/ 302-সরাসরি (স্ট্রিম-রিলে নয়) // v1.34.74: GU abar BAD — .73-er 'Range-native' dharona bhul chhilo (punoh-mapa: bytes=0-, mid closed/open, suffix, Exo-UA — sob 200+full-length, content-range nei => device-direct mane seek nei; user-o 'non seekable' report koreche). GU ekhon bfServeGeneric=>bfGuServe disk-cache diyei jabe (prokito 206); list-time pre-warm (m4uPostCards) + first-byte gate (.73) mile start-o druto.
 // ★★★ v1.34.5 (মাপা: কার্ড-বানানোর ৩০ মিনিট পরেই GU লিংক **400**) — Google-signed লিংক মিনিটেই মেয়াদোত্তীর্ণ।
 //   তাই কার্ডে রিজলভ-করা লিংক বেক করা যায় না; কার্ড = **লেজি-রুট** `/m4d/<b64>/v.mkv`, ক্লিকের সময়ই
 //   mdrive → সার্ভার → GU আবার রিজলভ হয়ে আমাদের IP থেকেই স্ট্রিম হয় (bfServeGeneric: Range-সংশ্লেষিত)।
@@ -10507,9 +10507,18 @@ async function m4uPostCards(hit, T, Y, isS, s, e, maxh, T0, maxN, origin) {
   const res = await Promise.all(pick.map((x, i) => m4uHFast(x.href, i === 0).catch(() => null)));
   if (DBG) console.error('[m4u2] heap@resolved ' + Math.round(process.memoryUsage().heapUsed / 1048576) + 'MB');
   const cards = [];
+  let _guWarmed = false;   // v1.34.74: proti post-e sorbochcho 1ti GU pre-warm
   res.forEach((r, i) => {
     const x = pick[i];
     if (!r || !r.url) return;
+    // ★ v1.34.74: GD (GU) card — click-er AGEI pull suru (BG). Karon: GU Range mane na, seek
+    //   mane bfGuServe-r disk-cache; pull ~51MB/s-e chole bole list dekhar 10-60s-ei koyek GB
+    //   kache thake => click-e start tatkkhonik, Cues-probe/seek-o pull-reach-e. Key = card-er
+    //   /m4d/<b64(x.href)> (bfGuServe req.url theke ei key-i ney). Done/adoptable thakle chhobo na.
+    if (!_guWarmed && m4uIsIpLocked(r.url) && (!r.cl || Number(r.cl) <= 6e9)) {
+      _guWarmed = true;
+      try { const _wk = Buffer.from(String(x.href)).toString('base64url'); if (!BF_GUC.get(_wk) && !bfGuAdopt(_wk)) bfGuStart(_wk, r.url); } catch (e) { }
+    }
     const qq = Number(x.q) || 0;
     const size = mlsMB(r.cl || 0) || x.size;
     const ept = isS ? ('E' + (x.epA && x.epB ? x.epA + '-' + x.epB : (x.ep || 1))) : '';
@@ -12655,7 +12664,7 @@ async function bfGuServe(req, res, url, start, endQ, base) {
   if (!e || (e.err && !e.got)) e = bfGuStart(key, url);
   if (!e || (e.err && !e.got)) return false;
   e.used = Date.now();
-  const waitMs = Number(process.env.GUWAIT_MS || 25000);   // ★ প্ল্যাটফর্ম ~৪০সে-তে কানেকশন কাটে (মাপা)
+  const waitMs = Number(process.env.GUWAIT_MS || 32000);   // v1.34.74: 25->32s (pull ~51MB/s mapa => ek wait-e ~1.6GB egoy; platform ~40s kate, tar niche)   // ★ প্ল্যাটফর্ম ~৪০সে-তে কানেকশন কাটে (মাপা)
   if (req.method === 'HEAD') {                      // HEAD-এ আকার জানা দরকার (প্লেয়ার আগে এটাই চায়)
     const hd0 = Date.now();
     while (!e.total && !e.done && !e.err && Date.now() - hd0 < 12000) await new Promise(r2 => setTimeout(r2, 100));
