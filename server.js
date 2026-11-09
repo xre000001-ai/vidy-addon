@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.85';
+const VERSION = '1.34.86';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -12640,6 +12640,24 @@ function bfGuAdopt(key) {          // v1.34.14: রিস্টার্টে�
     return e;
   } catch (e) { return null; }
 }
+let BF_GU_ADOPTALL_AT = 0;
+function bfGuAdoptAll() {          // ★ v1.34.86: restart-er por disk-e thaka sob done cache map-e ano
+  const d = bfGuDir(); if (!d) return;
+  if (Date.now() - BF_GU_ADOPTALL_AT < 60e3) return; BF_GU_ADOPTALL_AT = Date.now();
+  try {
+    for (const fn of fs.readdirSync(d)) {
+      if (!/\.bin$/.test(fn)) continue;
+      const f = d + '/' + fn;
+      try {
+        const meta = JSON.parse(fs.readFileSync(f + '.meta', 'utf8'));
+        if (!meta || !meta.k || BF_GUC.has(meta.k)) continue;
+        const st = fs.statSync(f); if (!st || !st.size) continue;
+        BF_GUC.set(meta.k, { f: f, src: '', got: st.size, total: meta.t || st.size, done: true, err: '', ts: st.mtimeMs || Date.now(), used: st.mtimeMs || Date.now() });
+        BF_GU_BYTES += st.size;
+      } catch (e) { }
+    }
+  } catch (e) { }
+}
 const bfGuDir = () => {
   if (BF_GU_READY !== null) return BF_GU_READY;
   try { fs.mkdirSync(BF_GU_DIR, { recursive: true }); BF_GU_READY = BF_GU_DIR; }
@@ -12661,6 +12679,7 @@ const bfGuFreeUp = (needBytes, keepKey) => {
   try {
     const free = () => { const s = fs.statfsSync(bfGuDir()); return Number(s.bavail) * Number(s.bsize); };
     if (free() >= needBytes) return true;
+    try { bfGuAdoptAll(); } catch (e) { } // v1.34.86: disk-er orphan-done file-o eviction-er chokhe poruk
     const arr = [...BF_GUC.entries()].filter(([u, e]) => u !== keepKey && (e.done || e.err)).sort((a, b) => (a[1].used || a[1].ts || 0) - (b[1].used || b[1].ts || 0));
     for (const [u, e] of arr) {
       if (free() >= needBytes) break;
@@ -12779,7 +12798,13 @@ function gdWarm(tgt, key) {
 }
 async function bfGuServe(req, res, url, start, endQ, base) {
   const T0 = Date.now();
-  if (BF_GU_OFF && Date.now() - BF_GU_OFF < 10 * 60e3) return false;   // ক্যাশ বন্ধ ⇒ সাধারণ পথ
+  if (BF_GU_OFF && Date.now() - BF_GU_OFF < 10 * 60e3) {   // ক্যাশ বন্ধ ⇒ সাধারণ পথ
+    // ★ v1.34.86: jayga asolei fire ele 10min opekkha noy — OFF ekhon-i othbe
+    let _freeOk = false;
+    try { const s = fs.statfsSync(bfGuDir()); _freeOk = Number(s.bavail) * Number(s.bsize) > 600 * 1048576; } catch (e) { }
+    if (!_freeOk) return false;
+    BF_GU_OFF = 0;
+  }
   // ★ ক্যাশ-কী = **স্থির পরিচয়** (আমাদের `/m4d/<b64 source>`), সই-করা GU টোকেন নয় —
   //   মাপা: প্রতি রিজলভে GU টোকেন বদলায় (`ADGPM2nz9…` → `ADGPM2mbV…`), তাই URL-কী হলে প্রতিবার
   //   নতুন করে ৭৫০MB নামত (প্রোডে ২৯সে-এর কারণ এটাই ছিল)।
@@ -14872,13 +14897,18 @@ async function vhSegNeedsRelay(target, body) {
   if (/(?:^|\.)vividstone\.top$/i.test(host)) return true;
   if (!/(?:^|\.)goldenkite\.top$/i.test(host)) return false;
   const hit = VH_SEGPROBE.get(target);
-  if (hit && Date.now() - hit.ts < 30 * 60 * 1000) return hit.relay;
-  let seg = '';
-  for (const ln of String(body || '').split('\n')) { const t = ln.trim(); if (t && t.charAt(0) !== '#') { try { seg = new URL(t, target).toString(); } catch (e) { } break; } }
+  if (hit && Date.now() - hit.ts < 5 * 60 * 1000) return hit.relay; // v1.34.86: 30min -> 5min (vul ray taratari sere jay)
+  // ★ v1.34.86 (prod-mapa): asol MEDIA segment prob koro — variant (.m3u8) line ba
+  //   EXT-X-MAP-init prob korle vul ray ashe (playlist-gate 403 != segment-gate), ar
+  //   ekbar relay=true hole sob segment ek egress-IP diye trickle (2160p-te 0.35Mbps
+  //   mapa) — direct no-Referer-e kintu 206 druto. Tai media-line bachai:
+  const _ml = [];
+  for (const ln of String(body || '').split('\n')) { const t = ln.trim(); if (t && t.charAt(0) !== '#') { try { const u2 = new URL(t, target).toString(); if (!/\.m3u8(\?|$)/i.test(u2)) _ml.push(u2); } catch (e) { } } }
+  const seg = _ml.length > 1 && String(body || '').indexOf('#EXT-X-MAP') >= 0 ? _ml[1] : (_ml[0] || '');
   let relay = true;
   if (seg) {
     try {
-      const r = await fetch(seg, { headers: { 'User-Agent': UA, 'Range': 'bytes=0-0', 'Accept': '*/*' }, redirect: 'follow', signal: AbortSignal.timeout(6000) });
+      const r = await fetch(seg, { headers: { 'User-Agent': UA, 'Range': 'bytes=0-1023', 'Accept': '*/*' }, redirect: 'follow', signal: AbortSignal.timeout(6000) });
       relay = !(r.status >= 200 && r.status < 300);
       try { r.body.cancel(); } catch (e) { }
     } catch (e) { relay = true; }
