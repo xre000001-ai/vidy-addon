@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.80';
+const VERSION = '1.34.81';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -9864,13 +9864,14 @@ async function m4uHubFsl(drive, force) {
       p1 = await run(drive, 'https://hubcloud.pw/', 7000);
       gx = (p1.body.match(/https:\/\/gamerxyt\.com\/hubcloud\.php\?[^"'\s<]+/) || [])[0] || '';
     }
-    if (!gx) { if (DBG) console.error('[hubfsl] no-gamerxyt st=' + p1.st); try { diag('hub', 'no-gx st=' + p1.st + ' len=' + (p1.body || '').length + ' eu=' + String(p1.eu || '').slice(0, 64) + ' drv=' + String(drive).slice(-22)); } catch (e) { } if (p1.st === 200) { HUB_GX_DEAD = Date.now() + 10 * 60e3; try { diag('hub', 'gx-nogx-200-10m'); } catch (e) { } } return ''; } // v1.34.80: page 200 kintu gamerxyt link nei => lazy card click-e morbe, tai suppression
+    if (!gx) { if (DBG) console.error('[hubfsl] no-gamerxyt st=' + p1.st); try { diag('hub', 'no-gx st=' + p1.st + ' len=' + (p1.body || '').length + ' eu=' + String(p1.eu || '').slice(0, 64) + ' drv=' + String(drive).slice(-22)); } catch (e) { } if (p1.st === 200) { HUB_DEAD.set(drive, Date.now()); try { diag('hub', 'gx-nogx-drive drv=' + String(drive).slice(-22)); } catch (e) { } } return ''; } // v1.34.81: per-drive suppression (global noy)
     gx = gx.replace(/&amp;/g, '&');
     let p2 = null;
     for (let t = 0; t < 2; t++) {
       if (t) await new Promise(r => setTimeout(r, 900));          // ★ "একটু wait" — দ্বিতীয় চেষ্টা
       p2 = await run(gx, p1.eu || 'https://hubcloud.pw/', 7000);
-      const m = /https:\/[a-z0-9]+\.r2\.cloudflarestorage\.com\/hub\d*\/[^"'\s<]+/i.exec(p2.body) || /https:\/[a-z0-9]+\.r2\.cloudflarestorage\.com\/[^"'\s<]+/i.exec(p2.body); // v1.34.80: gamerxyt bucket /hub/ -> /hub2/ migrate (prod-mapa m=NONE x97; hub2 presign 206+EBML jibito)
+      const gxR2 = b => { const s = String(b || ''); const u = s.replace(/\\\//g, '/'); return /https:\/\/[a-z0-9]+\.r2\.cloudflarestorage\.com\/hub\d*\/[^"'\s<]+/i.exec(s) || /https:\/\/[a-z0-9]+\.r2\.cloudflarestorage\.com\/[^"'\s<]+/i.exec(s) || /https:\/\/[a-z0-9]+\.r2\.cloudflarestorage\.com\/hub\d*\/[^"'\s<]+/i.exec(u) || /https:\/\/[a-z0-9]+\.r2\.cloudflarestorage\.com\/[^"'\s<]+/i.exec(u); }; // v1.34.81: hubN + generic + \/-escaped variant
+      const m = gxR2(p2.body);
       try { diag('hub', 'gx' + t + ' st=' + p2.st + ' len=' + (p2.body || '').length + ' m=' + (m ? m[0].split('?')[0].slice(0, 84) : 'NONE')); } catch (e) { }
       if (m) {
         HUB_GX_DEAD = 0; // v1.34.80: bucket abar jibito
@@ -9881,10 +9882,31 @@ async function m4uHubFsl(drive, force) {
       }
       if (DBG) console.error('[hubfsl] try' + (t + 1) + ' st=' + p2.st + ' len=' + p2.body.length);
     }
-    // v1.34.80: gx page 200 elo kintu R2 link nei (bucket-migration/page-bodol) => lazy FSL card
-    //   10min bondho (click-e 502 'serve-no-fsl' khawar cheye TD-direct/V-Cloud/GDFlix card bhalo);
-    //   porer successful scrape nijei flag clear kore (upore).
-    if (p2 && p2.st === 200) { HUB_GX_DEAD = Date.now() + 10 * 60e3; try { diag('hub', 'gx-scrape-empty-10m'); } catch (e) { } }
+    // ★ v1.34.81 (prod-mapa): direct scrape 200 kintu R2 link nei — eki curl-shape-e sandbox-e
+    //   hub2 link mile, prod-egress IP-ke gamerxyt alada (link-hin) page dey. Tai verified-pool
+    //   node diye gx page ene abar extraction; tao na hole suppression **per-drive** (HUB_DEAD,
+    //   30min gate age thekei ache) — .80-er global flag ekta odd drive-e sob lazy card mute
+    //   kore dite parto. Pool diye link pelei normal cache-path.
+    if (p2 && p2.st === 200) {
+      try { const b0 = String(p2.body || ''); diag('hub', 'gx-marks r2=' + ((b0.match(/cloudflarestorage/g) || []).length) + ' pd=' + ((b0.match(/pixeldrain/g) || []).length) + ' wk=' + ((b0.match(/workers\.dev/g) || []).length) + ' gpdl=' + ((b0.match(/gpdl/g) || []).length)); } catch (e) { }
+      try {
+        const pool = vidyVerifiedPick(4, 0) || [];
+        for (const px of pool.slice(0, 2)) {
+          const pb = await proxiedGet(px, gx, 4500, { 'Referer': p1.eu || 'https://hubcloud.pw/', 'Accept-Language': 'en-US,en;q=0.9' }).catch(() => '');
+          if (!pb) continue;
+          const m2 = gxR2(pb);
+          try { diag('hub', 'gx-pool px=' + String(px).slice(0, 20) + ' len=' + String(pb).length + ' m=' + (m2 ? m2[0].split('?')[0].slice(0, 84) : 'NONE')); } catch (e) { }
+          if (m2) {
+            HUB_GX_DEAD = 0;
+            const u2 = m2[0].replace(/&amp;/g, '&');
+            if (HUB_R2.size > 300) HUB_R2.clear();
+            HUB_R2.set(drive, { ts: Date.now(), u: u2 }); hubR2Save();
+            return u2;
+          }
+        }
+      } catch (e) { }
+      HUB_DEAD.set(drive, Date.now()); try { diag('hub', 'gx-scrape-empty-drive drv=' + String(drive).slice(-22)); } catch (e) { }
+    }
     return '';
   } catch (e) { if (DBG) console.error('[hubfsl] err ' + String(e && e.message).slice(0, 50)); return ''; }
   finally { clean(); }
