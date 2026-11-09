@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.86';
+const VERSION = '1.34.87';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -10593,7 +10593,7 @@ async function m4uPostCards(hit, T, Y, isS, s, e, maxh, T0, maxN, origin) {
     //   /m4d/<b64(x.href)> (bfGuServe req.url theke ei key-i ney). Done/adoptable thakle chhobo na.
     if (!_guWarmed && m4uIsIpLocked(r.url) && (!r.cl || Number(r.cl) <= 6e9)) {
       _guWarmed = true;
-      try { const _wk = Buffer.from(String(x.href)).toString('base64url'); if (!BF_GUC.get(_wk) && !bfGuAdopt(_wk)) bfGuStart(_wk, r.url); } catch (e) { }
+      try { const _wk = Buffer.from(String(x.href)).toString('base64url'); if (!BF_GUC.get(_wk) && !bfGuAdopt(_wk) && BF_GU_PULLN < 1) bfGuStart(_wk, r.url); } catch (e) { } // v1.34.87: onno pull cholle listing-warm noy
     }
     const qq = Number(x.q) || 0;
     const size = mlsMB(r.cl || 0) || x.size;
@@ -12641,11 +12641,24 @@ function bfGuAdopt(key) {          // v1.34.14: রিস্টার্টে�
   } catch (e) { return null; }
 }
 let BF_GU_ADOPTALL_AT = 0;
+let BF_GU_CLEANED = false;
 function bfGuAdoptAll() {          // ★ v1.34.86: restart-er por disk-e thaka sob done cache map-e ano
   const d = bfGuDir(); if (!d) return;
   if (Date.now() - BF_GU_ADOPTALL_AT < 60e3) return; BF_GU_ADOPTALL_AT = Date.now();
   try {
-    for (const fn of fs.readdirSync(d)) {
+    const _files = fs.readdirSync(d);
+    if (!BF_GU_CLEANED) {   // ★ v1.34.87: ager process-er fele-jaoa partial (.meta-nei, boot-er ager) porishkar
+      BF_GU_CLEANED = true;
+      const _boot = Date.now() - Math.floor(process.uptime() * 1000) - 2000;
+      const _live = new Set(); try { for (const e2 of BF_GUC.values()) if (e2 && e2.f) _live.add(e2.f); } catch (e) { }
+      for (const fn of _files) {
+        if (!/\.bin$/.test(fn)) continue;
+        const f = d + '/' + fn;
+        if (_live.has(f) || fs.existsSync(f + '.meta')) continue;
+        try { const st = fs.statSync(f); if (st && st.mtimeMs < _boot) { fs.unlinkSync(f); if (DBG) console.error('[guc] orphan-clean ' + Math.round(st.size / 1048576) + 'MB'); } } catch (e) { }
+      }
+    }
+    for (const fn of _files) {
       if (!/\.bin$/.test(fn)) continue;
       const f = d + '/' + fn;
       try {
@@ -12715,12 +12728,18 @@ function bfGuAdoptStream(key, url, body) { // v1.34.34: হাতে-থাক�
     return true;
   } catch (e) { return false; }
 }
+let BF_GU_PULLN = 0; const BF_GU_PULLQ = [];
+function bfGuSlotWait() { return new Promise(res => { if (BF_GU_PULLN < 2) { BF_GU_PULLN++; res(); } else BF_GU_PULLQ.push(res); }); }
+function bfGuSlotFree() { BF_GU_PULLN = Math.max(0, BF_GU_PULLN - 1); const n = BF_GU_PULLQ.shift(); if (n) { BF_GU_PULLN++; n(); } }
+function bfGuReserved(excl) { let s = 0; try { for (const e2 of BF_GUC.values()) if (e2 !== excl && !e2.done && !e2.err && e2.total) s += Math.max(0, e2.total - (e2.got || 0)); } catch (e) { } return s; }
 function bfGuStart(key, url) {
   const d = bfGuDir();
   if (!d) return null;
   const e = { f: d + '/' + require('crypto').createHash('sha1').update(key).digest('hex').slice(0, 22) + '.bin', src: url, got: 0, pts: Date.now(), total: 0, done: false, err: '', ts: Date.now(), used: Date.now() };
   BF_GUC.set(key, e);
   (async () => {
+    await bfGuSlotWait();   // ★ v1.34.87: একসাথে সর্বোচ্চ ২টি pull (storm-রোধ)
+    try {
     // ★ v1.34.34: পুল মাঝপথে ভাঙলে (প্রোডে বারবার মাপা) **নিজে থেকেই** আবার টানে (সর্বোচ্চ ৬ বার) —
     //   আগে এক ভাঙনেই পুল মরত, পরের রিকোয়েস্টে এন্ট্রি বদলে ফাইল গোড়া থেকে শুরু হতো ⇒ ৩.৬GB কখনো শেষ হতো না।
     //   টোকেন-মৃত্যু (403/410) হলে err — তখনই কেবল নতুন রিজলভের লিংক এন্ট্রি বদলায়।
@@ -12731,11 +12750,19 @@ function bfGuStart(key, url) {
       if (!r || !r.ok || !r.body) { const st = r ? r.status : 0; if (st === 403 || st === 410 || att === 5) { e.err = 'up' + st; return; } continue; }
       e.total = Number(r.headers.get('content-length') || 0) || e.total;
       try {
-        const stt = fs.statfsSync(bfGuDir());
-        let free = Number(stt.bavail) * Number(stt.bsize);
+        // ★ v1.34.87: jaygar jonno sorbochcho 60s opekkha (3s por por done-cache
+        //   evict kore abar mapa); onno pull-er baki ongsho reserved dhora hoy —
+        //   age sob pull eki free-space dekhe eksathe dhuke disk 0 kore felto.
         const _need = (e.total || 0) + 300 * 1048576;
-        if (free < _need) { // v1.34.80: age nijer purono cache muche jayga ber kori, tarpor-e nospace
-          try { bfGuFreeUp(_need, key); const st2 = fs.statfsSync(bfGuDir()); free = Number(st2.bavail) * Number(st2.bsize); } catch (er) { }
+        let free = 0;
+        const _admT0 = Date.now();
+        for (;;) {
+          try { bfGuFreeUp(_need + bfGuReserved(e), key); } catch (er) { }
+          const stt = fs.statfsSync(bfGuDir());
+          free = Number(stt.bavail) * Number(stt.bsize) - bfGuReserved(e);
+          if (free >= _need) break;
+          if (Date.now() - _admT0 > 60000) break;
+          await new Promise(r2 => setTimeout(r2, 3000));
         }
         if (free < _need) { try { await r.body.cancel(); } catch (er) { } e.err = 'nospace'; if (free < 150 * 1048576) BF_GU_OFF = Date.now(); return; }
       } catch (er) { }
@@ -12766,6 +12793,7 @@ function bfGuStart(key, url) {
         else if (DBG) console.error('[guc] pull-retry ' + (att + 1) + ' got=' + e.got + ' ' + String((er && er.message) || er).slice(0, 30));
       }
     }
+    } finally { bfGuSlotFree(); }
   })();
   return e;
 }
@@ -12791,8 +12819,10 @@ function gdWarm(tgt, key) {
       const fin = await m4uFinalFor(tgt).catch(() => '');
       if (!fin || /\.zip(\?|$)/i.test(String(fin).split('#')[0])) return;
       if (!m4uIsIpLocked(fin)) { gdWarmGeo(fin); return; }
-      const k = key || Buffer.from(String(tgt)).toString('base64url');
-      if (!BF_GUC.get(k) && !bfGuAdopt(k)) bfGuStart(k, fin);
+      // ★ v1.34.87: IP-locked-e warm ekhon full-pull suru kore NA (prod-mapa:
+      //   browsing-ei proti card/post theke GB-pull uthe disk 0MB hoye sob GD
+      //   morto, box-saturation-e Vidy playlist-o timeout khaito). Sudhu resolve
+      //   gorom thaklo; pull asol click-ei suru (bfGuServe 1MB thekei live-serve).
     })().catch(() => { });
   } catch (e) { }
 }
