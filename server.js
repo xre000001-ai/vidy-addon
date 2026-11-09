@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.72';
+const VERSION = '1.34.73';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -9636,7 +9636,7 @@ const m4uIsMediaUrl = u => m4uIsIpLocked(u)
   || /\.(?:mkv|mp4)(?:\?|$)/i.test(String(u));
 const m4uCardUrl = (u, origin) => m4uIsIpLocked(u) ? m4uRelayUrl(u, origin) : String(u);
 const _fnOf = u => { try { return decodeURIComponent(String(u || '').split('?')[0].split('/').pop() || ''); } catch (e) { return ''; } };   // v1.34.52: filename from final URL (audio-label source)
-const m4uDirectOk = u => /(?:^|\.)r2\.dev$/i.test(m4uHostOf(u)) || /(?:^|\.)r2\.cloudflarestorage\.com$/i.test(m4uHostOf(u)) || /(?:^|\.)fsldownload\.com$/i.test(m4uHostOf(u)) || /pixeldrain\.(?:dev|com)\/api\/file\//i.test(String(u)); // v1.34.31: Range-native হোস্ট ⇒ /m4d/ 302-সরাসরি (স্ট্রিম-রিলে নয়)
+const m4uDirectOk = u => /(?:^|\.)r2\.dev$/i.test(m4uHostOf(u)) || /(?:^|\.)r2\.cloudflarestorage\.com$/i.test(m4uHostOf(u)) || /(?:^|\.)fsldownload\.com$/i.test(m4uHostOf(u)) || /pixeldrain\.(?:dev|com)\/api\/file\//i.test(String(u)) || /(?:^|\.)googleusercontent\.com$/i.test(m4uHostOf(u)); // v1.34.31: Range-native হোস্ট ⇒ /m4d/ 302-সরাসরি (স্ট্রিম-রিলে নয়) // v1.34.73: GU-o click-time direct (age bfGuServe pull-relay ExoPlayer-er Cues-probe ঝুলিয়ে 'play hoy na' korto; GU link click-e fresh mint hoy bole TTL-bake somossa nei)
 // ★★★ v1.34.5 (মাপা: কার্ড-বানানোর ৩০ মিনিট পরেই GU লিংক **400**) — Google-signed লিংক মিনিটেই মেয়াদোত্তীর্ণ।
 //   তাই কার্ডে রিজলভ-করা লিংক বেক করা যায় না; কার্ড = **লেজি-রুট** `/m4d/<b64>/v.mkv`, ক্লিকের সময়ই
 //   mdrive → সার্ভার → GU আবার রিজলভ হয়ে আমাদের IP থেকেই স্ট্রিম হয় (bfServeGeneric: Range-সংশ্লেষিত)।
@@ -12674,7 +12674,8 @@ async function bfGuServe(req, res, url, start, endQ, base) {
   //   আবার শুরু করত। এখন seek-এর প্রথম বাইট (বা closed-range-এর শেষ বাইট) না আসা পর্যন্ত অপেক্ষা (≤waitMs),
   //   তারপর ঠিক ওই পজিশন থেকেই 206 tail-follow — পজিশন কখনো ০-তে ফেরে না।
   const _needByte = endQ >= 0 ? endQ : start;
-  while (!e.done && !e.err && e.got <= _needByte && Date.now() - T0 < waitMs) await new Promise(r2 => setTimeout(r2, 100));
+  const _waitByte = start === 0 ? start : _needByte;   // v1.34.73: play-start-e first-byte gate (endQ-gate-e ExoPlayer TTFB timeout kheye 'play hoy na' hoto); seek (start>0) ager moto needByte-i wait kore
+  while (!e.done && !e.err && e.got <= _waitByte && Date.now() - T0 < waitMs) await new Promise(r2 => setTimeout(r2, 100));
   const total = e.total || (e.done ? e.got : 0);
   const avail = e.got;
   // ★ v1.34.14: দরকারি বাইট সময়ের ভিতরে না এলে (ক) ৪১৬ দিলে অ্যাপ "play hoi na" দেখায়, (খ) আটকে
