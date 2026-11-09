@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.74';
+const VERSION = '1.34.75';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -9139,12 +9139,11 @@ function m4gPlaylistLive(hi, origin, key, gotB, totalB) {
   }
   const L = ['#EXTM3U', '#EXT-X-VERSION:6', '#EXT-X-PLAYLIST-TYPE:EVENT', '#EXT-X-MEDIA-SEQUENCE:0',
     '#EXT-X-INDEPENDENT-SEGMENTS', '#EXT-X-TARGETDURATION:' + td,
-    '#EXT-X-START:TIME-OFFSET=0',
-    '#EXT-X-MAP:URI=\"' + (origin || '') + '/m4gi/' + key + '/init.bin\"'];
+    '#EXT-X-START:TIME-OFFSET=0'];   // v1.34.75: MAP bad — MAP thaklei ExoPlayer/ffmpeg fMP4 vebe MKV-init reject kore; ekhon seg0-tei header
   for (let i = 0; i < n; i++) {
-    const a = base + i * SEG, b = Math.min(a + SEG - 1, totalB - 1);
+    const a = i === 0 ? 0 : base + i * SEG, b = Math.min(base + (i + 1) * SEG - 1, totalB - 1);   // v1.34.75: seg0 = header+1st block
     L.push('#EXTINF:' + durs(i).toFixed(3) + ',');
-    L.push((origin || '') + '/m4seg/' + key + '/' + i + '.bin?a=' + a + '&b=' + b);
+    L.push((origin || '') + '/m4seg/' + key + '/' + i + '.mkv?a=' + a + '&b=' + b);
   }
   return L.join('\n') + '\n';
 }
@@ -9167,12 +9166,12 @@ function m4gPlaylist(g, origin, key) {   // ★ v1.34.35: ক্যাশ-ভি
     if (d > maxd) maxd = d;
     segs.push({ len: len, off: start, dur: d });
   }
+  if (segs.length) { segs[0].len += segs[0].off; segs[0].off = 0; }   // v1.34.75: seg0 = header+clusters (MAP-less)
   const L = ['#EXTM3U', '#EXT-X-VERSION:6', '#EXT-X-PLAYLIST-TYPE:VOD', '#EXT-X-MEDIA-SEQUENCE:0',
-    '#EXT-X-INDEPENDENT-SEGMENTS', '#EXT-X-TARGETDURATION:' + Math.ceil(maxd),
-    '#EXT-X-MAP:URI="' + (origin || '') + '/m4gi/' + key + '/init.bin"'];
+    '#EXT-X-INDEPENDENT-SEGMENTS', '#EXT-X-TARGETDURATION:' + Math.ceil(maxd)];   // v1.34.75: MAP bad — MAP thaklei ExoPlayer/ffmpeg fMP4 vebe MKV-init reject kore; ekhon seg0-tei header
   segs.forEach((sg, k) => {
     L.push('#EXTINF:' + sg.dur.toFixed(3) + ',');
-    L.push((origin || '') + '/m4seg/' + key + '/' + k + '.bin?a=' + sg.off + '&b=' + (sg.off + sg.len - 1));
+    L.push((origin || '') + '/m4seg/' + key + '/' + k + '.mkv?a=' + sg.off + '&b=' + (sg.off + sg.len - 1));
   });
   L.push('#EXT-X-ENDLIST');
   return L.join('\n') + '\n';
@@ -10328,7 +10327,7 @@ async function m4uTdStreams(tmdbId, title, type, s, e, origin, maxh) {
           + '\u229e Movies4u' + (audioG ? ' \u2317 ' + audioG : '') + (sz ? ' \u00b7 ' + sz : '');
         cards.push({
           name: '\u25a5 ' + (qq || 'Auto') + ' \u25a5', title: txtG, description: txtG, quality: String(qq || ''),
-          url: m4uLazyUrl(gf.href, origin), _src: 'Movies4u', _srv: 'GDFlix', _direct: '',
+          url: m4uSeekUrl(gf.href, origin), _src: 'Movies4u', _srv: 'GDFlix', _direct: '',
           behaviorHints: { notWebReady: false, isBingeable: true, filename: (inf && inf.name) || ('movies4u-' + (qq || 'auto') + '.mkv') },
           bingeGroup: 'm4u|' + mlsNorm(T) + '::' + (isS ? 'S' + (s || 1) + 'E' + (e || 1) : 'm')
         });
@@ -10373,7 +10372,7 @@ async function m4uTdStreams(tmdbId, title, type, s, e, origin, maxh) {
             + '\u229e Movies4u' + (audioM ? ' \u2317 ' + audioM : '') + (sizeM ? ' \u00b7 ' + sizeM : '');
           cards.push({
             name: '\u25a5 ' + (x.q || 'Auto') + ' \u25a5', title: txtM, description: txtM, quality: String(x.q || ''),
-            url: ((v.srv === 'FSL' || v.srv === 'Pixeldrain' || (v.srv === 'GDFlix' && !/googleusercontent/i.test(v.url))) ? m4uCardUrl(v.url, origin) : m4uLazyUrl(x.mdisk + '#vc' + v.srv, origin)), _src: 'Movies4u', _srv: v.srv, _direct: v.url,
+            url: ((v.srv === 'FSL' || v.srv === 'Pixeldrain' || (v.srv === 'GDFlix' && !/googleusercontent/i.test(v.url))) ? m4uCardUrl(v.url, origin) : m4uSeekUrl(x.mdisk + '#vc' + v.srv, origin)), _src: 'Movies4u', _srv: v.srv, _direct: v.url,
             behaviorHints: { notWebReady: false, isBingeable: true, filename: 'movies4u-' + (x.q || 'auto') + '.mkv' },
             bingeGroup: 'm4u|' + mlsNorm(T) + '::' + (isS ? 'S' + (s || 1) + 'E' + (e || 1) : 'm')
           });
@@ -10389,7 +10388,7 @@ async function m4uTdStreams(tmdbId, title, type, s, e, origin, maxh) {
         + '\u229e Movies4u' + (audio ? ' \u2317 ' + audio : '') + (size ? ' \u00b7 ' + size : '');
       cards.push({
         name: '\u25a5 ' + (x.q || 'Auto') + ' \u25a5', title: txt, description: txt, quality: String(x.q || ''),
-        url: (r.lazy ? m4uLazyUrl(r.url, origin) : (r.srv === 'FSL' ? m4uCardUrl(r.url, origin) : m4uLazyUrl(x.mdisk, origin))), _src: 'Movies4u', _srv: r.srv || 'Google Drive', _direct: r.lazy ? '' : r.url,
+        url: (r.lazy ? m4uLazyUrl(r.url, origin) : (r.srv === 'FSL' ? m4uCardUrl(r.url, origin) : m4uSeekUrl(x.mdisk, origin))), _src: 'Movies4u', _srv: r.srv || 'Google Drive', _direct: r.lazy ? '' : r.url,
         behaviorHints: { notWebReady: false, isBingeable: true, filename: 'movies4u-' + (x.q || 'auto') + '.mkv' },
         bingeGroup: 'm4u|' + mlsNorm(T) + '::' + (isS ? 'S' + (s || 1) + 'E' + (e || 1) : 'm')
       });
@@ -10528,7 +10527,7 @@ async function m4uPostCards(hit, T, Y, isS, s, e, maxh, T0, maxN, origin) {
       + (isS ? ('\u29e0 S' + (s || 1) + ept + (x.pack && !ept ? ' Pack' : '')) : '\u29e0 Movie') + '\n' + lines;
     cards.push({
       name: '⫥ ' + (qq || 'Auto') + ' ⫥', title: txt, description: txt, quality: String(qq || ''),
-      url: (origin ? m4uLazyUrl(x.href, origin) : m4uCardUrl(r.url, origin)), _srv: 'Google Drive', _src: 'Movies4u', _direct: r.url,
+      url: (origin ? m4uSeekUrl(x.href, origin) : m4uCardUrl(r.url, origin)), _srv: 'Google Drive', _src: 'Movies4u', _direct: r.url,
       behaviorHints: { notWebReady: false, isBingeable: true, filename: 'movies4u-' + (qq || 'auto') + '.mkv' },
       bingeGroup: 'm4u|' + mlsNorm(T) + '::' + (isS ? 'S' + (s || 1) + 'E' + (e || 1) : 'm')
     });
@@ -15990,7 +15989,7 @@ const server = http.createServer((req, res) => {
       } catch { try { res.writeHead(502); } catch { } return res.end(); }
     })();
     // সেগমেন্ট (ক্যাশ-ফাইল থেকে বাইট-স্লাইস) — /m4seg/<key>/<i>.bin?a=<off>&b=<end>
-    const m4segR = p.match(/^\/m4seg\/([A-Za-z0-9_=-]{8,2400})\/(\d+)\.bin$/);
+    const m4segR = p.match(/^\/m4seg\/([A-Za-z0-9_=-]{8,2400})\/(\d+)\.(?:bin|mkv)$/);
     if (m4segR) return (async () => {
       let e = BF_GUC.get(m4segR[1]); if (!e) { try { e = bfGuAdopt(m4segR[1]); } catch { } }
       let a = 0, b = -1;
