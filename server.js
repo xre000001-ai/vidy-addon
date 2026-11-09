@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.83';
+const VERSION = '1.34.84';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -12748,6 +12748,33 @@ function bfGuStart(key, url) {
   })();
   return e;
 }
+// ★ v1.34.84 (ইউজার: "GD card chole but onek somoy pore giye"): click-er somoy fresh-resolve
+//   + cold m4hGeo probe (~5s mapa) + cold GU pull — tintei list-time-ei jana jay. Tai stream-
+//   response sajanor somoy prottek /m4g/ o /m4h/ card pichhone warm kori (10min dedup);
+//   user click-e sob cache gorom => playlist pray songe songe.
+const GD_WARM = new Map(); // key -> ts
+function gdWarmGeo(fin) {
+  try {
+    const k = 'geo:' + fin, last = GD_WARM.get(k) || 0;
+    if (Date.now() - last < 10 * 60e3) return;
+    GD_WARM.set(k, Date.now()); if (GD_WARM.size > 400) GD_WARM.clear();
+    m4hGeo(fin).catch(() => null);
+  } catch (e) { }
+}
+function gdWarm(tgt, key) {
+  try {
+    const last = GD_WARM.get(tgt) || 0;
+    if (Date.now() - last < 10 * 60e3) return;
+    GD_WARM.set(tgt, Date.now()); if (GD_WARM.size > 400) GD_WARM.clear();
+    (async () => {
+      const fin = await m4uFinalFor(tgt).catch(() => '');
+      if (!fin || /\.zip(\?|$)/i.test(String(fin).split('#')[0])) return;
+      if (!m4uIsIpLocked(fin)) { gdWarmGeo(fin); return; }
+      const k = key || Buffer.from(String(tgt)).toString('base64url');
+      if (!BF_GUC.get(k) && !bfGuAdopt(k)) bfGuStart(k, fin);
+    })().catch(() => { });
+  } catch (e) { }
+}
 async function bfGuServe(req, res, url, start, endQ, base) {
   const T0 = Date.now();
   if (BF_GU_OFF && Date.now() - BF_GU_OFF < 10 * 60e3) return false;   // ক্যাশ বন্ধ ⇒ সাধারণ পথ
@@ -15121,6 +15148,9 @@ function gwRewriteBody(body, origin) {
       const ext = (rest.indexOf('/rel/v/') === 0) ? 'x.m3u8'
         : (rest.indexOf('/rel/m/') === 0) ? 'v.mp4'
         : (/\.m3u8(\?|$)/i.test(rest) ? 'x.m3u8' : (/\.mp4(\?|$)/i.test(rest) ? 'v.mp4' : 'v.mkv'));
+      // ★ v1.34.84: GD//m4h card dekhlei click-er dam list-timei pichhone porishodh
+      if (rest.indexOf('/m4g/') === 0) { try { const seg = rest.split('/')[2] || ''; const tgt = Buffer.from(seg, 'base64url').toString('utf8'); if (/^https?:\/\//i.test(tgt)) gdWarm(tgt, seg); } catch (e) { } }
+      else if (rest.indexOf('/m4h/') === 0) { try { const seg2 = rest.split('/')[2] || ''; const fin2 = Buffer.from(seg2, 'base64url').toString('utf8'); if (/^https?:\/\//i.test(fin2)) gdWarmGeo(fin2); } catch (e) { } }
       c.url = origin + '/t/' + gwMint(rest) + '/' + ext; n++;
     }
     return n ? JSON.stringify(j) : body;
@@ -16081,7 +16111,7 @@ const server = http.createServer((req, res) => {
         if (e && !e.err && e.f) {
           const tEnd = Date.now() + 6000;
           while (!e.done && !e.err && (e.got || 0) < 8 * 1024 * 1024 && Date.now() < tEnd) await new Promise(r2 => setTimeout(r2, 250));
-          if (!e.done && !e.err && (e.got || 0) >= 4 * 1024 * 1024) {
+          if (!e.done && !e.err && (e.got || 0) >= 1 * 1024 * 1024) { // v1.34.84: 4MB -> 1MB (head/first-cluster pelei live playlist; baki segment pull-er goti-te asbe)
             const hi = await m4gHeadInfo(e.f, e.got).catch(() => null);
             if (hi) livePl = m4gPlaylistLive(hi, origin, key, e.got || 0, e.total || 0);
           }
