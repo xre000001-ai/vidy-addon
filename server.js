@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.75';
+const VERSION = '1.34.76';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -10296,23 +10296,32 @@ async function m4uTdStreams(tmdbId, title, type, s, e, origin, maxh) {
         const qq = Number(r.q) || 0;
         if (!qq && !r.size) return;                     // ★ অচেনা কোয়ালিটি + সাইজহীন কার্ড নয় (মিরর-সন্দেহ)
         if (maxh && qq && qq > maxh) return;
-        const _k2 = String(qq || 'auto'), _pv = _pk.get(_k2);
+        const _k2 = String(qq || 'auto');
         const _bytes = Number(String(r.size || '0').replace(/[^\d.]/g, '')) * (/GB/i.test(r.size || '') ? 1e3 : 1);
-        if (_pv && _pv.b >= _bytes) return;
-        _pk.set(_k2, { b: _bytes, fsl: r, hc: hc, info: r });
         const audio = dtAudio(String(hit.slug).replace(/-/g, ' ') + ' ' + String((r && r.name) || '') + ' ' + String(o.x.title || '')) || '';   // v1.34.52: dual-audio label from filename/entry-title
         const txt = '\u29c9 ' + T + (Y ? ' | ' + Y + ' |' : ' |') + '\n'
           + (isS ? ('\u29e0 S' + (s || 1) + 'E' + (e || 1)) : '\u29e0 Movie') + '\n'
           + '\u229e Movies4u' + (audio ? ' \u2317 ' + audio : '') + (r.size ? ' \u00b7 ' + r.size : '');
-        const _old = cards.findIndex(c => c._packq === String(qq || 'auto'));
-        if (_old >= 0) cards.splice(_old, 1);
-        cards.push({
+        const _pcard = {
           _packq: String(qq || 'auto'),
           name: '\u25a5 ' + (qq || 'Auto') + ' \u25a5', title: txt, description: txt, quality: String(qq || ''),
           url: r.url, _src: 'Movies4u', _srv: 'FSL', _direct: origin ? '' : r.url,
           behaviorHints: { notWebReady: false, isBingeable: true, filename: r.name || ('movies4u-' + (qq || 'auto') + '.mkv') },
           bingeGroup: 'm4u|' + mlsNorm(T) + '::' + (isS ? 'S' + (s || 1) + 'E' + (e || 1) : 'm')
-        });
+        };
+        // v1.34.76 (user: "fsl cards number is too low than the GDrive cards"): was ONE FSL
+        //   per quality (largest size won). Now keep the best TWO distinct sizes per quality.
+        const _arr76 = _pk.get(_k2) || [];
+        if (_arr76.length < 2) { _arr76.push({ b: _bytes, card: _pcard }); cards.push(_pcard); }
+        else {
+          _arr76.sort((a2, b2) => a2.b - b2.b);
+          if (_bytes > _arr76[0].b) {
+            const _rm = _arr76.shift(); const _ri = cards.indexOf(_rm.card);
+            if (_ri >= 0) cards.splice(_ri, 1);
+            _arr76.push({ b: _bytes, card: _pcard }); cards.push(_pcard);
+          }
+        }
+        _pk.set(_k2, _arr76);
       }));
       await Promise.all(gfs.map(async gf => {   // ★ v1.34.52: Pack GDFlix card (lazy via /m4d/ at click — v1.34.72: /m4g/ MKV-slice HLS ExoPlayer-e cholto na)
         const inf = await m4uGfInfo(gf.href).catch(() => null);
@@ -10402,6 +10411,7 @@ async function m4uTdStreams(tmdbId, title, type, s, e, origin, maxh) {
     let done = false;
     let live = [];
     let merged = [];   // ★ v1.34.38: দুই প্রার্থী-পোস্টের **union** (আগে প্রথম-জয়ী ⇒ Hindi-পোস্ট জিতলে English-পোস্টের FSL/Pixeldrain হারাত — "sob somoy ase na"-র এক মূল কারণ)
+    let _firstOk = 0;   // v1.34.76: first-post success marker for the grace-window below
     const srt = a => (a || []).slice().sort((x, y) => (Number(y.quality) || 0) - (Number(x.quality) || 0));
     const fin = v => { if (!done) { done = true; _schedPd(v); resolve(v || []); } };
     // ★ v1.34.39 (মাপা): V-Cloud CF-রেস কার্ড-পথে হারলে ব্যাকগ্রাউন্ডে জেতে ও ক্যাশ হয়, কিন্তু TD-ফল আগেই DONE-তে
@@ -10436,11 +10446,20 @@ async function m4uTdStreams(tmdbId, title, type, s, e, origin, maxh) {
             merged = _m4uMerge(merged, c);
             if (M4U_TD_DONE.size > 60) M4U_TD_DONE.clear();
             M4U_TD_DONE.set(nk, { ts: Date.now(), cards: merged });
-            fin(merged);   // প্রথম পোস্টেই উত্তর (গতি আগের মতো); দ্বিতীয় পোস্ট চলতে থাকে ⇒ DONE-তে union জমে
+            _firstOk = 1;   // v1.34.76: fin now happens in the grace-window (post-2 union included)   // প্রথম পোস্টেই উত্তর (গতি আগের মতো); দ্বিতীয় পোস্ট চলতে থাকে ⇒ DONE-তে union জমে
           }
           if (DBG && !(c && c.length)) console.error('[m4utd] one-empty ' + h.slug.slice(0, 30));
         } catch (e) { if (DBG) console.error('[m4utd] one-err ' + String(e && e.message).slice(0, 80)); }
       }
+      fin(srt(merged));
+    })();
+    // v1.34.76 (user: "fsl isn't showing in 1st click", "fsl cards too low"): previously the
+    //   FIRST successful post fin()-ed immediately, so post-2's FSL/Pixeldrain only landed in
+    //   the DONE cache -> visible on the 2nd click. Now: after the first success, wait up to
+    //   ~2.8s (hard cap T0+9.4s) so the two-post union ships in the FIRST response.
+    (async () => {
+      while (!_firstOk && Date.now() - T0 < 9400) await new Promise(r => setTimeout(r, 120));
+      if (_firstOk) { const w = Math.min(2800, T0 + 9400 - Date.now()); if (w > 0) await new Promise(r => setTimeout(r, w)); }
       fin(srt(merged));
     })();
   });
@@ -12603,7 +12622,7 @@ function bfGuAdoptStream(key, url, body) { // v1.34.34: হাতে-থাক�
 function bfGuStart(key, url) {
   const d = bfGuDir();
   if (!d) return null;
-  const e = { f: d + '/' + require('crypto').createHash('sha1').update(key).digest('hex').slice(0, 22) + '.bin', src: url, got: 0, total: 0, done: false, err: '', ts: Date.now(), used: Date.now() };
+  const e = { f: d + '/' + require('crypto').createHash('sha1').update(key).digest('hex').slice(0, 22) + '.bin', src: url, got: 0, pts: Date.now(), total: 0, done: false, err: '', ts: Date.now(), used: Date.now() };
   BF_GUC.set(key, e);
   (async () => {
     // ★ v1.34.34: পুল মাঝপথে ভাঙলে (প্রোডে বারবার মাপা) **নিজে থেকেই** আবার টানে (সর্বোচ্চ ৬ বার) —
@@ -12623,22 +12642,25 @@ function bfGuStart(key, url) {
       BF_GU_BYTES -= e.got; e.got = 0;
       const ws = fs.createWriteStream(e.f);
       const rd = r.body.getReader();
+      const _wd = setInterval(() => { if (Date.now() - (e.pts || e.ts) > 45000) { try { rd.cancel(); } catch (x) { } } }, 5000); if (_wd.unref) _wd.unref();   // v1.34.76: 45s no-progress => cancel => short => self-retry (was: hang up to 20min)
       ws.on('error', er2 => { e.err = 'werr:' + String((er2 && er2.code) || '').slice(0, 12); try { rd.cancel(); } catch (x) { } }); // v1.34.34: ENOSPC-তে প্রসেস-ক্র্যাশ নয়
       try {
         for (;;) {
           const { done, value } = await rd.read();
           if (done) break;
           const b = Buffer.from(value);
-          e.got += b.length; BF_GU_BYTES += b.length;
+          e.got += b.length; e.pts = Date.now(); BF_GU_BYTES += b.length;
           if (!ws.write(b)) await new Promise(r2 => ws.once('drain', r2));
           if (BF_GU_BYTES > BF_GU_MAX) bfGuEvict(url);
         }
+        clearInterval(_wd);
         await new Promise(r2 => ws.end(r2));
         if (e.total && e.got < e.total) throw new Error('short ' + e.got + '/' + e.total); // মাঝপথে কাটা ⇒ আবার
         e.done = true;
         try { fs.writeFileSync(e.f + '.meta', JSON.stringify({ k: key, t: e.got })); } catch (er) { }   // v1.34.14
         if (DBG) console.error('[guc] done ' + (e.got / 1048576).toFixed(0) + 'MB ' + String(url).slice(-24));
       } catch (er) {
+        clearInterval(_wd);
         try { ws.destroy(); } catch (x) { }
         if (att === 5) { e.err = String((er && er.message) || er).slice(0, 40); if (DBG) console.error('[guc] err ' + e.err + ' got=' + e.got); }
         else if (DBG) console.error('[guc] pull-retry ' + (att + 1) + ' got=' + e.got + ' ' + String((er && er.message) || er).slice(0, 30));
@@ -15942,6 +15964,7 @@ const server = http.createServer((req, res) => {
       const key = m4gR[1];
       let e = BF_GUC.get(key);
       if (e && e.src && e.src !== fin && !e.done && (e.err || !e.got)) { BF_GUC.delete(key); e = null; }
+      if (e && e.err && !e.done) { BF_GUC.delete(key); e = null; }   // v1.34.76: dead pull (token died mid-pull) -> restart on the fresh final; previously the player got bounced to progressive /m4d/ and lost seek entirely
       if (!e) e = bfGuAdopt(key) || bfGuStart(key, fin);   // রিস্টার্টের পর সম্পূর্ণ ফাইল থাকলে আবার টানব না
       if (!e || !e.done) {
         // ★ v1.34.44: pull চলছে কিন্তু যথেষ্ট নামলে EVENT-HLS দাও (সিকে গোড়া-থেকে ডাউনলোড নয়);
@@ -15992,6 +16015,13 @@ const server = http.createServer((req, res) => {
     const m4segR = p.match(/^\/m4seg\/([A-Za-z0-9_=-]{8,2400})\/(\d+)\.(?:bin|mkv)$/);
     if (m4segR) return (async () => {
       let e = BF_GUC.get(m4segR[1]); if (!e) { try { e = bfGuAdopt(m4segR[1]); } catch { } }
+      // v1.34.76 (user: "seek sometimes not working"): a dead pull made every segment 502
+      //   forever. Now re-resolve fresh once and restart the pull, then fall into the wait.
+      if (e && e.err && !e.done) {
+        const _tgt76 = (() => { try { return Buffer.from(m4segR[1], 'base64url').toString('utf8'); } catch (er) { return ''; } })();
+        const _fin76 = _tgt76 ? await m4uFinalFor(_tgt76).catch(() => '') : '';
+        if (_fin76) { BF_GUC.delete(m4segR[1]); const _ne = bfGuStart(m4segR[1], _fin76); if (_ne) e = _ne; }
+      }
       let a = 0, b = -1;
       try { const q = new URL(String(req.url || ''), 'http://x').searchParams; a = Number(q.get('a') || 0); b = Number(q.get('b') || -1); } catch { }
       if (!e || !e.f || !(b >= a) || a < 0) { try { res.writeHead(400); } catch { } return res.end(); }
@@ -16002,7 +16032,7 @@ const server = http.createServer((req, res) => {
         while (!e.done && !e.err && b >= (e.got || 0) && Date.now() < tW) await new Promise(r2 => setTimeout(r2, 300));
       }
       if (e.err) { try { res.writeHead(502); } catch { } return res.end(); }
-      if (!e.done && b >= (e.got || 0)) { try { res.writeHead(503, { 'retry-after': '3' }); } catch { } return res.end(); }
+      if (!e.done && b >= (e.got || 0)) { try { res.writeHead(503, { 'retry-after': '2' }); } catch { } return res.end(); }
       const tot = e.total || e.got || 0;
       const bb = tot ? Math.min(b, tot - 1) : b;
       if (bb < a) { try { res.writeHead(416); } catch { } return res.end(); }
