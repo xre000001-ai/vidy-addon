@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.92';
+const VERSION = '1.34.93';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -9129,10 +9129,17 @@ function m4gPlaylistLive(hi, origin, key, gotB, totalB) {
   //   wait in /m4seg/ instead of 503. Without duration info, fall back to pulled-only blocks.
   let n = have, durs = null, td = 8;
   if (hi && hi.dur > 0) {
-    n = Math.max(1, Math.ceil((totalB - base) / SEG));
-    const dEach = hi.dur / n;
+    const totBlk = Math.max(1, Math.ceil((totalB - base) / SEG));
+    // ★ v1.34.93 (user: GD 2-5min lege jai): age FULL list jeto — player EVENT-ke
+    //   live dhore live-edge (ses) theke suru kore, ses-er segment tokhon pull-i
+    //   hoyni => 503-wait ghure pull sesh (2-5min) na howa porjonto spinner
+    //   (prod-sim-e promanito: 628 seg @63MB, LAST seg 503@9.8s). Ekhon kebol
+    //   pull-howa block + 2 lookahead; reload-e list bare, pull seshe ek-i URL
+    //   VOD (ENDLIST) hoy. EXTINF full-timeline-i thake (abosthan sore na).
+    n = Math.min(totBlk, have + 2);
+    const dEach = hi.dur / totBlk;
     td = Math.max(1, Math.ceil(dEach));
-    durs = ix => (ix === n - 1 ? Math.max(0.1, hi.dur - dEach * (n - 1)) : dEach);
+    durs = ix => (n === totBlk && ix === n - 1 ? Math.max(0.1, hi.dur - dEach * (n - 1)) : dEach);
   } else {
     if (!have) return null;
     durs = () => 8;
