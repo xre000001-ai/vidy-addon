@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.82';
+const VERSION = '1.34.83';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -9814,6 +9814,17 @@ function m4uHubHost(h) { return /(?:^|\.)hubcloud\.(?:ist|pw|fans|xyz|site|life|
 //   একই ফাইলের জন্য gamerxyt আর খুলতে হয় না।
 const HUB_R2 = new Map(); let HUB_R2_LOADED = 0, HUB_R2_SAVE_T = null;
 const HUB_DEAD = new Map();
+const HUB_BG = new Map(); // v1.34.83: drive -> last BG warm ts (lazy-card proof warming)
+function hubLazyOk(drive) { // ★ v1.34.83: lazy card shudhu proof-fresh drive-e; na hole BG warm
+  try {
+    hubR2Load();
+    const e = HUB_R2.get(drive);
+    if (e && e.pf && Date.now() - e.pf < 30 * 60e3) return true;
+    const last = HUB_BG.get(drive) || 0;
+    if (Date.now() - last > 90e3) { HUB_BG.set(drive, Date.now()); if (HUB_BG.size > 400) HUB_BG.clear(); m4uHubFinal(drive).catch(() => { }); }
+  } catch (e) { }
+  return false;
+}
 let HUB_GX_DEAD = 0, HUB_GX_PROBED = 0;   // v1.34.78: gamerxyt R2-account dead-until ts / last BG bucket-probe ts   // ★ v1.34.40: drive → ts — presigned proof দুবার ব্যর্থ (মাপা: R2 NotEntitled = অ্যাকাউন্ট-মৃত) ⇒ কার্ডই বাদ
 const hubR2File = () => { try { return require('path').join(__dirname, 'hub_r2_cache.json'); } catch (e) { return ''; } };
 function hubR2Load() {
@@ -10205,6 +10216,7 @@ const M4U_TD_INFO = new Map();       // hubcloud drive-url → {q, name}
 async function m4uHubCard(link, T, Y, isS, s, e, needProof, lazy) {
   const _hdt2 = HUB_DEAD.get(link.href); if (_hdt2 && Date.now() - _hdt2 < 30 * 60e3) return null;
   if (HUB_GX_DEAD > Date.now()) return null;   // v1.34.78: gamerxyt bucket account-dead — pack-eo FSL card noy   // v1.34.40
+  if (lazy && !hubLazyOk(link.href)) return null; // ★ v1.34.83: proof-hin drive-er lazy card noy (BG warm hoye geche — porer list-e asbe)
   const inf = await m4uHubInfo(link.href).catch(() => ({}));
   const q = String((inf && inf.q) || '').replace(/[^0-9]/g, '');
   let size = (inf && inf.size) || '';
@@ -10432,6 +10444,7 @@ async function m4uTdStreams(tmdbId, title, type, s, e, origin, maxh) {
         return;
       }
       if (!r || !r.url) return;
+      if (r.lazy && !hubLazyOk(r.url)) return; // ★ v1.34.83: proof-hin lazy card noy (BG warm cholche)
       if (!r.lazy && !m4uIsMediaUrl(r.url)) { if (DBG) console.error('[m4utd] not-media ' + String(r.url).slice(0, 60)); return; }
       const audio = dtAudio(String(hit.slug).replace(/-/g, ' ') + ' ' + String(x.title || '') + ' ' + _fnOf(r && r.url)) || '';   // v1.34.52
       const size = x.size || (r.cl ? mlsMB(r.cl) : '');
