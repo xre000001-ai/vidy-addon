@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.89';
+const VERSION = '1.34.90';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -15142,9 +15142,11 @@ function vhPrewarm(rawUrls, origin) {
     if (VH_PRE.has(u)) continue;
     i++;
     const pr = Promise.resolve(vhGetPlaylist(u)).then(async body => {
+      let rwB = u;
+      if (!body) { const rm = await vhRemint(u).catch(() => null); if (rm && rm.body) { body = rm.body; rwB = rm.target || u; } }   // ★ v1.34.90: session mrito hole list-timei remint (click-e 13s-edge chap ney)
       if (!body) return;
       try {
-        const out = await vhRewrite(body, u, origin);
+        const out = await vhRewrite(body, rwB, origin);
         if (VH_C.size > 800) VH_C.clear();
         VH_C.set(u, { ts: Date.now(), v: out });
         if (process.env.VDBG) console.log('[vhpw] ok ' + String(u).slice(0, 58) + ' ' + body.length + 'B');
@@ -15208,14 +15210,14 @@ async function vhServe(req, res, b64) {
   // ★ v1.34.35: সাম্প্রতিক-ব্যর্থতায় সাথে সাথে 302 (প্লেয়ার পুরোনো সরাসরি-পথেই চেষ্টা করুক)
   const _vf = VH_FAIL.get(ck);
   if (_vf && Date.now() - _vf < 15 * 1000) { try { res.writeHead(302, { location: target, 'cache-control': 'no-store', 'access-control-allow-origin': '*' }); } catch (e) { } return res.end(); } // v1.34.89: 60s -> 15s (remint-e retry sere uthte pare)
-  let body = await Promise.race([vhGetPlaylist(target), new Promise(r => setTimeout(() => r(''), 7500))]).catch(() => '');
+  let body = await Promise.race([vhGetPlaylist(target), new Promise(r => setTimeout(() => r(''), 6000))]).catch(() => ''); // v1.34.90: edge ~13s — remint-er jayga rakhi
   let rwBase = target;
   if (!body) {   // ★ v1.34.89: sob node 403 = session more geche ⇒ re-mint
     const rm = await vhRemint(target).catch(() => null);
     if (rm && rm.body) { body = rm.body; rwBase = rm.target || target; }
   }
-  if (!body) body = await Promise.race([vhGetPlaylist(target), new Promise(r => setTimeout(() => r(''), _left()))]).catch(() => '');   // ★ v1.34.50: একবার রিট্রাই (নোড ঘোরে)
-  if (!body) { VH_FAIL.set(ck, Date.now()); try { res.writeHead(302, { location: target, 'cache-control': 'no-store', 'access-control-allow-origin': '*' }); } catch (e) { } return res.end(); }
+  if (!body) body = await Promise.race([vhGetPlaylist(target), new Promise(r => setTimeout(() => r(''), 4500))]).catch(() => '');   // ★ v1.34.50: একবার রিট্রাই (নোড ঘোরে) // v1.34.90: 4.5s cap
+  if (!body) { VH_FAIL.set(ck, Date.now()); try { vhPrewarm([target], origin); } catch (e) { } try { res.writeHead(302, { location: target, 'cache-control': 'no-store', 'access-control-allow-origin': '*' }); } catch (e) { } return res.end(); } // v1.34.90: pichhone repair (prewarm+remint) — porer tap-e VH_C gorom
   const out = await vhRewrite(body, rwBase, origin);
   if (VH_C.size > 800) VH_C.clear();
   VH_C.set(ck, { ts: Date.now(), v: out });     // ★ ক্যাশে **কাঁচা** (স্ট্যাম্প-ছাড়া) থাকে
