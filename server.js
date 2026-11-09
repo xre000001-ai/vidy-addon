@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.90';
+const VERSION = '1.34.91';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -15160,11 +15160,26 @@ function vhPrewarm(rawUrls, origin) {
 //   notun vidy-session (seed+sources, current node diye) kore SEI node diyei
 //   playlist ani — gate-er nijer niyom. (srv|title)-proti 45s-e max 1, dedup.
 const VH_REMINT_AT = new Map(); const VH_REMINTING = new Map();
+const VH_FRESHSET = new Map();   // ★ v1.34.91: (srv|tmdb|s|e) -> {ts, px, bySig, first} — ek remint-e sob quality bache
+function vhSig(u) { const mm = String(u || '').match(/index-([^/?]+)\.m3u8/i); return mm ? mm[1].toLowerCase() : ''; }
 async function vhRemint(target) {
   const m = VH_MINT.get(target);
   const ctx = m && m.ctx;
   if (!ctx || !ctx.srv) return null;
-  const gk = ctx.srv + '|' + ctx.tmdbId;
+  const gk = ctx.srv + '|' + ctx.tmdbId + '|' + (ctx.s || '') + '|' + (ctx.e || '');
+  // ★ v1.34.91: ei title+server kichukhon agei re-mint hoyeche? tahole API-quota
+  //   na puriye fresh node diye notun URL-tai ani (sibling quality-o bache).
+  try {
+    const fsx = VH_FRESHSET.get(gk);
+    if (fsx && Date.now() - fsx.ts < 10 * 60e3) {
+      const nu = fsx.bySig[vhSig(target)] || fsx.first;
+      if (nu && nu !== target) {
+        const hdr2 = { 'User-Agent': UA, 'Referer': VIDY_REFERER, 'Accept': '*/*' };
+        const bb = String(await proxiedGet(fsx.px, nu, 8000, hdr2).catch(() => '') || '');
+        if (bb.indexOf('#EXTM3U') >= 0) return { body: bb, target: nu };
+      }
+    }
+  } catch (e) { }
   if (VH_REMINTING.has(gk)) return VH_REMINTING.get(gk);
   if (Date.now() - (VH_REMINT_AT.get(gk) || 0) < 45000) return null;
   VH_REMINT_AT.set(gk, Date.now());
@@ -15180,7 +15195,8 @@ async function vhRemint(target) {
       const srcs = ((j && j.sources) || []).filter(x => x && x.url && /^https?:/.test(x.url));
       if (!srcs.length) return null;
       for (const s2 of srcs) VH_MINT.set(String(s2.url), { px: vr.px, ts: Date.now(), ctx: ctx });
-      const sig = u => { const mm = String(u || '').match(/index-([^/?]+)\.m3u8/i); return mm ? mm[1].toLowerCase() : ''; };
+      try { const bySig = {}; for (const s2 of srcs) { const sg2 = vhSig(s2.url); if (sg2 && !bySig[sg2]) bySig[sg2] = String(s2.url); } VH_FRESHSET.set(gk, { ts: Date.now(), px: vr.px, bySig: bySig, first: String(srcs[0].url) }); if (VH_FRESHSET.size > 300) VH_FRESHSET.delete(VH_FRESHSET.keys().next().value); } catch (e) { } // v1.34.91
+      const sig = vhSig;
       const want = sig(target);
       let cand = (want && srcs.find(x => sig(x.url) === want)) || null;
       if (!cand) { const qm = String(target).match(/(2160|1440|1080|720|480|360)/); cand = (qm && srcs.find(x => String(x.quality || '').indexOf(qm[1]) >= 0)) || srcs[0]; }
