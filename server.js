@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.79';
+const VERSION = '1.34.80';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -9864,14 +9864,16 @@ async function m4uHubFsl(drive, force) {
       p1 = await run(drive, 'https://hubcloud.pw/', 7000);
       gx = (p1.body.match(/https:\/\/gamerxyt\.com\/hubcloud\.php\?[^"'\s<]+/) || [])[0] || '';
     }
-    if (!gx) { if (DBG) console.error('[hubfsl] no-gamerxyt st=' + p1.st); try { diag('hub', 'no-gx st=' + p1.st + ' len=' + (p1.body || '').length + ' eu=' + String(p1.eu || '').slice(0, 64) + ' drv=' + String(drive).slice(-22)); } catch (e) { } return ''; }
+    if (!gx) { if (DBG) console.error('[hubfsl] no-gamerxyt st=' + p1.st); try { diag('hub', 'no-gx st=' + p1.st + ' len=' + (p1.body || '').length + ' eu=' + String(p1.eu || '').slice(0, 64) + ' drv=' + String(drive).slice(-22)); } catch (e) { } if (p1.st === 200) { HUB_GX_DEAD = Date.now() + 10 * 60e3; try { diag('hub', 'gx-nogx-200-10m'); } catch (e) { } } return ''; } // v1.34.80: page 200 kintu gamerxyt link nei => lazy card click-e morbe, tai suppression
     gx = gx.replace(/&amp;/g, '&');
+    let p2 = null;
     for (let t = 0; t < 2; t++) {
       if (t) await new Promise(r => setTimeout(r, 900));          // ★ "একটু wait" — দ্বিতীয় চেষ্টা
-      const p2 = await run(gx, p1.eu || 'https://hubcloud.pw/', 7000);
-      const m = /https:\/\/[a-z0-9]+\.r2\.cloudflarestorage\.com\/hub\/[^"'\s<]+/i.exec(p2.body);
+      p2 = await run(gx, p1.eu || 'https://hubcloud.pw/', 7000);
+      const m = /https:\/[a-z0-9]+\.r2\.cloudflarestorage\.com\/hub\d*\/[^"'\s<]+/i.exec(p2.body) || /https:\/[a-z0-9]+\.r2\.cloudflarestorage\.com\/[^"'\s<]+/i.exec(p2.body); // v1.34.80: gamerxyt bucket /hub/ -> /hub2/ migrate (prod-mapa m=NONE x97; hub2 presign 206+EBML jibito)
       try { diag('hub', 'gx' + t + ' st=' + p2.st + ' len=' + (p2.body || '').length + ' m=' + (m ? m[0].split('?')[0].slice(0, 84) : 'NONE')); } catch (e) { }
       if (m) {
+        HUB_GX_DEAD = 0; // v1.34.80: bucket abar jibito
         const u2 = m[0].replace(/&amp;/g, '&');
         if (HUB_R2.size > 300) HUB_R2.clear();
         HUB_R2.set(drive, { ts: Date.now(), u: u2 }); hubR2Save();   // ★ v1.34.17: ৫ঘণ্টা ক্যাশ (ডিস্ক-স্থায়ী)
@@ -9879,6 +9881,10 @@ async function m4uHubFsl(drive, force) {
       }
       if (DBG) console.error('[hubfsl] try' + (t + 1) + ' st=' + p2.st + ' len=' + p2.body.length);
     }
+    // v1.34.80: gx page 200 elo kintu R2 link nei (bucket-migration/page-bodol) => lazy FSL card
+    //   10min bondho (click-e 502 'serve-no-fsl' khawar cheye TD-direct/V-Cloud/GDFlix card bhalo);
+    //   porer successful scrape nijei flag clear kore (upore).
+    if (p2 && p2.st === 200) { HUB_GX_DEAD = Date.now() + 10 * 60e3; try { diag('hub', 'gx-scrape-empty-10m'); } catch (e) { } }
     return '';
   } catch (e) { if (DBG) console.error('[hubfsl] err ' + String(e && e.message).slice(0, 50)); return ''; }
   finally { clean(); }
@@ -12611,6 +12617,25 @@ const bfGuEvict = (keep) => {                   // পুরোনো-শেষ 
     BF_GU_BYTES -= (e.total || e.got || 0); BF_GUC.delete(u);
   }
 };
+// ★ v1.34.80 (prod-mapa): shared volume onnoder dokhole free ~90-300MB-e neme jay => GU pull
+//   'nospace'-e atke GD card /m4d/-te degrade hoto. Amader nijosso cache (done/err entry,
+//   2.3GB porjonto) LRU-muche jayga ber kori — sync unlink, tai statfs-e songe songe protifolon.
+const bfGuFreeUp = (needBytes, keepKey) => {
+  try {
+    const free = () => { const s = fs.statfsSync(bfGuDir()); return Number(s.bavail) * Number(s.bsize); };
+    if (free() >= needBytes) return true;
+    const arr = [...BF_GUC.entries()].filter(([u, e]) => u !== keepKey && (e.done || e.err)).sort((a, b) => (a[1].used || a[1].ts || 0) - (b[1].used || b[1].ts || 0));
+    for (const [u, e] of arr) {
+      if (free() >= needBytes) break;
+      try { fs.unlinkSync(e.f); } catch (er) { }
+      try { fs.unlinkSync(e.f + '.meta'); } catch (er) { }
+      BF_GU_BYTES -= (e.total || e.got || 0); if (BF_GU_BYTES < 0) BF_GU_BYTES = 0;
+      BF_GUC.delete(u);
+      if (DBG) console.error('[guc] freeup evict ' + Math.round((e.total || e.got || 0) / 1048576) + 'MB');
+    }
+    return free() >= needBytes;
+  } catch (e) { return false; }
+};
 function bfGuAdoptStream(key, url, body) { // v1.34.34: হাতে-থাকা লাইভ 200-স্ট্রিমটাই ডিস্ক-পুলে খাওয়াই (আলাদা পুল-ফেচ যেসব মিররে 403 খায়, সেখানেও ক্যাশ গরম হয়)
   try {
     const ex = BF_GUC.get(key);
@@ -12651,8 +12676,12 @@ function bfGuStart(key, url) {
       e.total = Number(r.headers.get('content-length') || 0) || e.total;
       try {
         const stt = fs.statfsSync(bfGuDir());
-        const free = Number(stt.bavail) * Number(stt.bsize);
-        if (free < (e.total || 0) + 300 * 1048576) { try { await r.body.cancel(); } catch (er) { } e.err = 'nospace'; if (free < 150 * 1048576) BF_GU_OFF = Date.now(); return; }
+        let free = Number(stt.bavail) * Number(stt.bsize);
+        const _need = (e.total || 0) + 300 * 1048576;
+        if (free < _need) { // v1.34.80: age nijer purono cache muche jayga ber kori, tarpor-e nospace
+          try { bfGuFreeUp(_need, key); const st2 = fs.statfsSync(bfGuDir()); free = Number(st2.bavail) * Number(st2.bsize); } catch (er) { }
+        }
+        if (free < _need) { try { await r.body.cancel(); } catch (er) { } e.err = 'nospace'; if (free < 150 * 1048576) BF_GU_OFF = Date.now(); return; }
       } catch (er) { }
       BF_GU_BYTES -= e.got; e.got = 0;
       const ws = fs.createWriteStream(e.f);
@@ -13740,12 +13769,21 @@ function srvBump(srv, d) {
 }
 // ★ v1.18.3 (ইউজার: "Miami, Boise, Phoenix, Atlanta, Delhi ei 5 ta server rakho"): শুধু এই ৫টি সার্ভার।
 //   ৫ সার্ভার = ৫×(seed+sources) ≈ ১০ কল ⇒ মাত্র ৩–৪টি নোডেই সবগুলো চলে ⇒ ভাগ্য-নির্ভরতা প্রায় শেষ।
-const SRV_KEEP = (process.env.VSRV || 'miami,boise,phoenix,atlanta,delhi,reno,paris,oakland').split(',').map(x => x.trim()).filter(Boolean);
+const SRV_KEEP = (process.env.VSRV || 'miami,boise,phoenix,atlanta,delhi,reno,paris,oakland,munich,vegas').split(',').map(x => x.trim()).filter(Boolean); // v1.34.80: munich+vegas jog (historic score 14/16; play-dead gate thakay mrito hole card-i asbe na)
 // v1.34.79 (user: "Delhi, Reno, Paris, Oakland add koro, performance drop jate na hoi"): the three were
 //   already in SERVERS (historic scores paris 20, reno 20, oakland 5) — now kept. All servers fetch in
 //   parallel under the same VPICK(9s)/tighten cuts, so wall-clock is unchanged; delhi keeps its 2.6s
 //   budget + partial-exemption (still upstream-500, near-zero cost).
 const SERVERS_ON = SERVERS.filter(x => SRV_KEEP.indexOf(x) >= 0);
+// ★ v1.34.80 (prod-mapa): Paris-er playlist vidy-r nijer CF-worker (white-tooth...workers.dev)
+//   diye ase — worker-ti upstream-ei mrito (451 + body 'error code: 1026', prod /vh/-fetch-eo
+//   eki, header jai hok). API-'ok' (paris:movie 55/0) shotteo card konodin play hoy na =>
+//   ইউজার: "new server kaj korche na". Tai CF-worker-mrityu-sOi (451/5xx + 'error code: NNNN'
+//   body) pele sei server-er card 10min bondho; nijei sere uthle abar asbe. Shudhu ei sOi-i
+//   gate — sadharon CDN 403/426 (IP-block class) ager motoi soft (v1.34.33-er shikkha).
+const VPLAY_DEAD = new Map(); // srv -> until(ms)
+const vplayDead = srv => { const u = VPLAY_DEAD.get(srv); return !!(u && u > Date.now()); };
+const vplayKill = srv => { VPLAY_DEAD.set(srv, Date.now() + 10 * 60e3); if (DBG) console.error('[vsrv] play-dead 10m: ' + srv); };
 // ★★★ v1.26.2 (ইউজার: "Vidy er Miami, Boise ei duita server e gurutto besi thakbe"):
 //   (ক) **ক্রম**: miami, boise সবার আগে (তারপর স্কোর-অনুযায়ী বাকিরা) — vidy-ঢেউয়ের প্রথম স্লট ওরা পায়;
 //   (খ) **বাজেট**: PRI সার্ভার ৭.৬সে (বাকিরা ৫.২সে, delhi ২.৬সে) ⇒ দেরিতে-ফেরা Miami/Boise কাটা পড়ে না;
@@ -13764,8 +13802,18 @@ function probePlaylist(u, hop) { // Auto-HLS-master পড়ে-সর্বো
     const req = mod2.get(u, { headers: { 'User-Agent': UA, 'Accept': '*/*', 'Referer': VIDY_REFERER, 'Connection': 'close' }, timeout: 1800, agent: u.indexOf('http:') === 0 ? HAGENTP : SAGENTP }, res => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location && (hop || 0) < 2) { res.resume(); return resolve(probePlaylist(new URL(res.headers.location, u).toString(), (hop || 0) + 1)); }
       if (res.statusCode !== 200) { // v1.17.39: 403/426/429 = CDN-আমাদের-IP-ব্লক (ইউজারের-DEVICE-এ চলে) ⇒ মৃত-নয়
-        const blk = [401, 403, 405, 406, 426, 429, 451, 503].indexOf(res.statusCode) >= 0;
-        res.resume(); return resolve({ ok: false, h: 0, blk, st: res.statusCode }); }
+        const st0 = res.statusCode;
+        const blk = [401, 403, 405, 406, 426, 429, 451, 503].indexOf(st0) >= 0;
+        if (st0 === 451 || st0 >= 500) { // ★ v1.34.80: body-te CF-worker sOi thakle seta IP-block noy — worker-i mrito (paris)
+          const ch2 = []; let n2 = 0, fin = false;
+          const fin2 = dead => { if (fin) return; fin = true; resolve({ ok: false, h: 0, blk: blk && !dead, dead: !!dead, st: st0 }); };
+          res.on('data', d => { n2 += d.length; if (n2 <= 320) ch2.push(d); });
+          res.on('end', () => fin2(/error code: \d{3,4}/.test(Buffer.concat(ch2).toString('latin1'))));
+          res.on('error', () => fin2(false));
+          res.on('close', () => fin2(/error code: \d{3,4}/.test(Buffer.concat(ch2).toString('latin1'))));
+          return;
+        }
+        res.resume(); return resolve({ ok: false, h: 0, blk, st: st0 }); }
       const ch = []; let n = 0;
       res.on('data', d => { n += d.length; if (n <= 131072) ch.push(d); });
       res.on('end', () => {
@@ -13882,6 +13930,7 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
       const vkey = 'vj|' + srv + '|' + tmdbId + '|' + type + '|' + (s || '') + '|' + (e || '');
       const vhit = vsjGet(vkey);
       if (vhit) { // v1.18.4: 60s micro-cache (quota-free refresh, same servers)
+        if (vplayDead(srv)) return { srv, dead: true }; // v1.34.80: play-mrito server cache thekeo card noy
         if (DBG) console.error('[vmc] ' + srv + ' hit');
         const _q = Array.isArray(cfg && cfg.q) ? cfg.q : qToList(cfg && cfg.q);
         const _p = (vhit.sources || []).filter(x => x.url && /^https?:/.test(x.url) && qPass(x, _q));
@@ -13928,6 +13977,10 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
         }
         autoH = pr.h || 0;
         if (pr.auds && pr.auds.length) j._audN = pr.auds.join('/'); // সোর্স-ঘোষিত-ভাষা — TMDB-অনুমানকে-হারায়
+        // ★ v1.34.80: master/source-probe CF-worker-mrityu sOi pele ei server-er card-i noy
+        //   (paris: API-ok shotteo playlist 451 'error code: 1026' — device-eo eki hobe).
+        if (pr && pr.dead) { vplayKill(srv); srvBump(srv, -3); if (DBG) console.error('[t1g] ' + srv + ' PLAY-DEAD st=' + pr.st); return { srv, dead: true }; }
+        if (pr && !pr.ok && !(pr.to || pr.blk) && pass.length) { const pd2 = await probePlaylist(pass[0].url).catch(() => null); if (pd2 && pd2.dead) { vplayKill(srv); srvBump(srv, -3); if (DBG) console.error('[t1g] ' + srv + ' PLAY-DEAD(src) st=' + pd2.st); return { srv, dead: true }; } }
         const ok = !!pr.ok;
         const soft = !ok; // v1.18.2: probe amader IP-er — 404/timeout = "amra dekhchi na", file mora noy => card-gate noy
         // v1.34.33: v1.34.31-এর DEAD-GATE **বাতিল** (ইউজার: "Miami, Boise ase o na") — প্রোড-egress দিয়েও প্রোব
@@ -13946,6 +13999,7 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
     const absorb = r => {
       if (r.late) return; // v1.14.2 early-harvest-কাট — দোষ-নেই, শাস্তি/নেগ-নয় (পেছনে-ক্যাশে-জমবে)
       if (r.neg) return; // নেগেটিভ-হিট — স্কোর-আর-শাস্তি-নয়
+      if (r.dead) return; // v1.34.80: play-mrito — score one()-ei kata hoyeche, deadJ-rescue-o noy
       if (r.err) { srvBump(r.srv, -1); lastErr = r.err; return; }
       if (r.empty) { srvBump(r.srv, 0); return; }
       if (r.ok) {
@@ -14090,7 +14144,7 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
     // ★ v1.21.5 (মাপা): `delhi` upstream-এই ভাঙা — `/delhi/sources` = **500** (সব মিডিয়ায়), তাই ওটা
     //   "বাদ-পড়া" হিসেবে ক্যাশ আটকাবে না (নইলে প্রতিটা উত্তর partial হয়ে ক্যাশই না হতো)।
     const VYOPT = String(process.env.VYOPT || 'delhi').split(',').map(x => x.trim()).filter(Boolean);
-    const _miss = rs.filter(r => !r.ok && VYOPT.indexOf(r.srv) < 0).map(r => r.srv);
+    const _miss = rs.filter(r => !r.ok && !r.dead && !vplayDead(r.srv) && VYOPT.indexOf(r.srv) < 0).map(r => r.srv); // v1.34.80: play-dead (paris) partial-banabe na
     const _pend = Math.max(0, allow.length - rs.length); // VPICK-কাটে এখনো-চলমান সার্ভার
     if ((_miss.length || _pend) && out.length) {
       out.$partial = true; out.$miss = _miss;
