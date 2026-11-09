@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.77';
+const VERSION = '1.34.78';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -9813,7 +9813,8 @@ function m4uHubHost(h) { return /(?:^|\.)hubcloud\.(?:ist|pw|fans|xyz|site|life|
 //   তত ভালো ⇒ প্রাপ্ত r2-লিংক (প্রিসাইন ~৮ঘণ্টা) এখন **ডিস্ক-ক্যাশে** থাকে (৫ঘণ্টা TTL) — রিস্টার্টের পরেও
 //   একই ফাইলের জন্য gamerxyt আর খুলতে হয় না।
 const HUB_R2 = new Map(); let HUB_R2_LOADED = 0, HUB_R2_SAVE_T = null;
-const HUB_DEAD = new Map();   // ★ v1.34.40: drive → ts — presigned proof দুবার ব্যর্থ (মাপা: R2 NotEntitled = অ্যাকাউন্ট-মৃত) ⇒ কার্ডই বাদ
+const HUB_DEAD = new Map();
+let HUB_GX_DEAD = 0, HUB_GX_PROBED = 0;   // v1.34.78: gamerxyt R2-account dead-until ts / last BG bucket-probe ts   // ★ v1.34.40: drive → ts — presigned proof দুবার ব্যর্থ (মাপা: R2 NotEntitled = অ্যাকাউন্ট-মৃত) ⇒ কার্ডই বাদ
 const hubR2File = () => { try { return require('path').join(__dirname, 'hub_r2_cache.json'); } catch (e) { return ''; } };
 function hubR2Load() {
   if (HUB_R2_LOADED) return; HUB_R2_LOADED = 1;
@@ -9902,10 +9903,18 @@ async function m4uHubFinal(drive) {   // serve-পথের জন্য: পু
   // ★ v1.34.42 (মাপা-ছিদ্র): তাজা scrape-এর ts=এখন ⇒ বয়স-শর্তে proof এড়িয়ে মৃত-bucket-এর তাজা presigned-ও 302 হচ্ছিল।
   //   এখন proof-সময় (e.pf) আলাদা: proof না-হওয়া/৪মিনিটের পুরনো-proof ⇒ আগে proof, তারপরই 302।
   if (!e || !e.pf || Date.now() - e.pf > 4 * 60e3) {
-    if (await m4uProof(f)) { if (e) { e.pf = Date.now(); e.ts = Date.now(); } return f; }
+    if (await m4uProof(f)) { HUB_GX_DEAD = 0; if (e) { e.pf = Date.now(); e.ts = Date.now(); } return f; }
     HUB_R2.delete(drive);
     const f2 = await m4uHubFsl(drive, true).catch(() => '');
-    if (f2 && await m4uProof(f2)) { const e2 = HUB_R2.get(drive); if (e2) e2.pf = Date.now(); return f2; }
+    if (f2 && await m4uProof(f2)) { HUB_GX_DEAD = 0; const e2 = HUB_R2.get(drive); if (e2) e2.pf = Date.now(); return f2; }
+    // v1.34.78: 403-body NotEntitled hole shudhu ei file noy — gamerxyt-er puro R2 account
+    //   mrito (prod-mapa: BND-r protiti lazy-FSL card click-e 502). Tokhon 30min lazy-HubCloud
+    //   card dekhanoi bondho thakbe (TD-worker + pack gate niche) — bucket bachle nijei khulbe.
+    try {
+      const rb = await fetch(f2 || f, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(3500) }).catch(() => null);
+      if (rb && rb.status === 403) { const tx = await rb.text().catch(() => ''); if (/NotEntitled/i.test(tx)) { HUB_GX_DEAD = Date.now() + 30 * 60e3; try { diag('hub', 'gx-bucket-dead-30m drv=' + String(drive).slice(-18)); } catch (e) { } } }
+      else if (rb && rb.body) { try { rb.body.cancel(); } catch (e) { } }
+    } catch (e) { }
     HUB_DEAD.set(drive, Date.now());   // ★ v1.34.40: তাজা presigned-ও মৃত ⇒ সোর্স-মৃত (R2 NotEntitled) — কার্ড বাদ যাবে
     return '';
   }
@@ -10166,7 +10175,8 @@ async function m4uHubInfo(driveUrl) {
 }
 const M4U_TD_INFO = new Map();       // hubcloud drive-url → {q, name}
 async function m4uHubCard(link, T, Y, isS, s, e, needProof, lazy) {
-  const _hdt2 = HUB_DEAD.get(link.href); if (_hdt2 && Date.now() - _hdt2 < 30 * 60e3) return null;   // v1.34.40
+  const _hdt2 = HUB_DEAD.get(link.href); if (_hdt2 && Date.now() - _hdt2 < 30 * 60e3) return null;
+  if (HUB_GX_DEAD > Date.now()) return null;   // v1.34.78: gamerxyt bucket account-dead — pack-eo FSL card noy   // v1.34.40
   const inf = await m4uHubInfo(link.href).catch(() => ({}));
   const q = String((inf && inf.q) || '').replace(/[^0-9]/g, '');
   let size = (inf && inf.size) || '';
@@ -10360,8 +10370,10 @@ async function m4uTdStreams(tmdbId, title, type, s, e, origin, maxh) {
         if (!_bk[k]) continue;
         for (const l of _bk[k].slice(0, (k === 'V-Cloud' ? 1 : 2))) {
           if (k === 'HubCloud') {   // ★ v1.34.40: মৃত-bucket জানা থাকলে কার্ডই নয়
+            if (HUB_GX_DEAD > Date.now()) break;   // v1.34.78: gamerxyt bucket account-dead — porer server (V-Cloud/GDFlix/G-Direct) card hobe, dead FSL noy
             const _hdt = HUB_DEAD.get(l.href); if (_hdt && Date.now() - _hdt < 30 * 60e3) break;
             // ★ v1.34.35: FSL কার্ড এখন **লেজি** — gamerxyt-স্ক্র্যাপ (৩ হপ, ~২০সে পর্যন্ত) কার্ড-সময়ে আর নয়; ক্লিকে m4uTdServe hub-শাখা HUB_R2 (৫ঘণ্টা ডিস্ক-ক্যাশ) দিয়ে 302 দেবে। আগে এই স্ক্র্যাপই ৯সে-বাজেট ফাটিয়ে FSL কার্ড হারাত (ইউজার: "fsl card sobsomoy ase na")
+            if (HUB_GX_DEAD < Date.now() && Date.now() - HUB_GX_PROBED > 20 * 60e3) { HUB_GX_PROBED = Date.now(); try { m4uHubFinal(l.href).catch(() => { }); } catch (e) { } }   // v1.34.78: BG bucket-health probe (20min-e ekbar) — user-click charai dead bucket dhora pore
             r = { url: l.href, srv: 'FSL', lazy: 1 }; break;
           }
           if (k === 'V-Cloud') {   // ★ v1.34.19: এক এন্ট্রি → ভিতরের FSL/Pixeldrain/GDFlix আলাদা কার্ড
