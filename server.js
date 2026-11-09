@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.70';
+const VERSION = '1.34.71';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -14454,7 +14454,7 @@ function fmtCardText(c, hint) {
   return c;
 }
 const fmtCards = (cards, hint) => { if (!Array.isArray(cards)) return cards; for (const c of cards) fmtCardText(c, hint); return cards; };
-const stripCards = cards => (cards || []).map(c => { const { _hq, _lang, _pack, _exoTwin, _srv, quality, headers, subtitles, ...r } = c || {}; if (headers && /^mm\|/.test(String(r.bingeGroup || ''))) r.headers = headers; return r; }); // v1.15.97: MM-কার্ডে falcon-ধাঁচার শীর্ষ-স্তরের headers অক্ষত রাখা
+const stripCards = cards => (cards || []).map(c => { const { _hq, _lang, _pack, _exoTwin, _srv, _src, _dl, _direct, quality, headers, subtitles, ...r } = c || {}; if (headers && /^mm\|/.test(String(r.bingeGroup || ''))) r.headers = headers; return r; }); // v1.34.71: _src/_dl/_direct-o strip (age API-output-e leak hoto; fmtCards _src agei pore ney)
 // ---------- v1.15.52: সব-সোর্সের-কার্ড-এক-ফরম্যাটে (ইউজার: "প্রতি-সোর্সের-কার্ড-ফরম্যাট-এমনি-চাই") — decorate()-এর-ভিডি-ফরম্যাট:
 // ⧉ Title | Year |  /  ⧠ Movie|SsEe  /  ⊞ Server ⌗ Audio — mbxr-চাইল্ড-ইতিমধ্যে-এই-ফরম্যাটে-প্রমাণিত; বাকি-সোর্স-এখানে-বসে
 const YEAR_CACHE = new Map();
