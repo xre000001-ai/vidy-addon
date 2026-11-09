@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.71';
+const VERSION = '1.34.72';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -9655,6 +9655,16 @@ async function m4uTdServe(req, res, target) {
   const okJson = (code, o) => { try { res.writeHead(code, { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'cache-control': 'no-store' }); res.end(JSON.stringify(o)); } catch (e) { } };
   try {
     const host = m4uHostOf(target);
+    // ★ v1.34.72: GDFlix file-page ⇒ m4uFinalFor-er gf-path diye fresh final (GU/r2/pixeldrain) —
+    //   card ekhon /m4d/ lazy, tai m4uTdServe-keo gdflix chin te hobe (age sudhu /m4g/ chinto)
+    if (/gdflix\.|gdlink\.dev/i.test(host)) {
+      const gc = M4U_TD_USED.get('gf:' + target);
+      let gf2 = (gc && Date.now() - gc.ts < 5 * 60e3) ? gc.final : '';
+      if (!gf2) { const rr = await m4uTdResolve({ href: target, srv: 'GDFlix' }, false).catch(() => null); gf2 = (rr && rr.url) || ''; if (gf2) M4U_TD_USED.set('gf:' + target, { ts: Date.now(), final: gf2 }); }
+      if (!gf2) return okJson(502, { error: 'gdflix-no-final' });
+      if (m4uDirectOk(gf2)) { res.writeHead(302, { location: gf2, 'cache-control': 'no-store', 'access-control-allow-origin': '*' }); return res.end(); }
+      return await bfServeGeneric(req, res, gf2);
+    }
     // ★ (ক০) HubCloud পেজ ⇒ FSL (r2) লিংক ফ্রেশ করে নিয়ে স্ট্রিম (206/রিজিউম অক্ষত)
     if (m4uHubHost(host)) {
       const hc = M4U_TD_USED.get('hub:' + target);
@@ -10305,7 +10315,7 @@ async function m4uTdStreams(tmdbId, title, type, s, e, origin, maxh) {
           bingeGroup: 'm4u|' + mlsNorm(T) + '::' + (isS ? 'S' + (s || 1) + 'E' + (e || 1) : 'm')
         });
       }));
-      await Promise.all(gfs.map(async gf => {   // ★ v1.34.52: Pack GDFlix card (lazy via /m4g/ at click)
+      await Promise.all(gfs.map(async gf => {   // ★ v1.34.52: Pack GDFlix card (lazy via /m4d/ at click — v1.34.72: /m4g/ MKV-slice HLS ExoPlayer-e cholto na)
         const inf = await m4uGfInfo(gf.href).catch(() => null);
         try { mlsGd(gf.href, 4000).catch(() => { }); } catch (e) { }   // v1.34.58: warm the resolver in background
         const qq = Number(inf && inf.q) || 0;
@@ -10318,7 +10328,7 @@ async function m4uTdStreams(tmdbId, title, type, s, e, origin, maxh) {
           + '\u229e Movies4u' + (audioG ? ' \u2317 ' + audioG : '') + (sz ? ' \u00b7 ' + sz : '');
         cards.push({
           name: '\u25a5 ' + (qq || 'Auto') + ' \u25a5', title: txtG, description: txtG, quality: String(qq || ''),
-          url: m4uSeekUrl(gf.href, origin), _src: 'Movies4u', _srv: 'GDFlix', _direct: '',
+          url: m4uLazyUrl(gf.href, origin), _src: 'Movies4u', _srv: 'GDFlix', _direct: '',
           behaviorHints: { notWebReady: false, isBingeable: true, filename: (inf && inf.name) || ('movies4u-' + (qq || 'auto') + '.mkv') },
           bingeGroup: 'm4u|' + mlsNorm(T) + '::' + (isS ? 'S' + (s || 1) + 'E' + (e || 1) : 'm')
         });
@@ -10363,7 +10373,7 @@ async function m4uTdStreams(tmdbId, title, type, s, e, origin, maxh) {
             + '\u229e Movies4u' + (audioM ? ' \u2317 ' + audioM : '') + (sizeM ? ' \u00b7 ' + sizeM : '');
           cards.push({
             name: '\u25a5 ' + (x.q || 'Auto') + ' \u25a5', title: txtM, description: txtM, quality: String(x.q || ''),
-            url: ((v.srv === 'FSL' || v.srv === 'Pixeldrain' || (v.srv === 'GDFlix' && !/googleusercontent/i.test(v.url))) ? m4uCardUrl(v.url, origin) : m4uSeekUrl(x.mdisk + '#vc' + v.srv, origin)), _src: 'Movies4u', _srv: v.srv, _direct: v.url,
+            url: ((v.srv === 'FSL' || v.srv === 'Pixeldrain' || (v.srv === 'GDFlix' && !/googleusercontent/i.test(v.url))) ? m4uCardUrl(v.url, origin) : m4uLazyUrl(x.mdisk + '#vc' + v.srv, origin)), _src: 'Movies4u', _srv: v.srv, _direct: v.url,
             behaviorHints: { notWebReady: false, isBingeable: true, filename: 'movies4u-' + (x.q || 'auto') + '.mkv' },
             bingeGroup: 'm4u|' + mlsNorm(T) + '::' + (isS ? 'S' + (s || 1) + 'E' + (e || 1) : 'm')
           });
@@ -10379,7 +10389,7 @@ async function m4uTdStreams(tmdbId, title, type, s, e, origin, maxh) {
         + '\u229e Movies4u' + (audio ? ' \u2317 ' + audio : '') + (size ? ' \u00b7 ' + size : '');
       cards.push({
         name: '\u25a5 ' + (x.q || 'Auto') + ' \u25a5', title: txt, description: txt, quality: String(x.q || ''),
-        url: (r.lazy ? m4uLazyUrl(r.url, origin) : (r.srv === 'FSL' ? m4uCardUrl(r.url, origin) : m4uSeekUrl(x.mdisk, origin))), _src: 'Movies4u', _srv: r.srv || 'Google Drive', _direct: r.lazy ? '' : r.url,
+        url: (r.lazy ? m4uLazyUrl(r.url, origin) : (r.srv === 'FSL' ? m4uCardUrl(r.url, origin) : m4uLazyUrl(x.mdisk, origin))), _src: 'Movies4u', _srv: r.srv || 'Google Drive', _direct: r.lazy ? '' : r.url,
         behaviorHints: { notWebReady: false, isBingeable: true, filename: 'movies4u-' + (x.q || 'auto') + '.mkv' },
         bingeGroup: 'm4u|' + mlsNorm(T) + '::' + (isS ? 'S' + (s || 1) + 'E' + (e || 1) : 'm')
       });
@@ -10509,7 +10519,7 @@ async function m4uPostCards(hit, T, Y, isS, s, e, maxh, T0, maxN, origin) {
       + (isS ? ('\u29e0 S' + (s || 1) + ept + (x.pack && !ept ? ' Pack' : '')) : '\u29e0 Movie') + '\n' + lines;
     cards.push({
       name: '⫥ ' + (qq || 'Auto') + ' ⫥', title: txt, description: txt, quality: String(qq || ''),
-      url: (origin ? m4uSeekUrl(x.href, origin) : m4uCardUrl(r.url, origin)), _srv: 'Google Drive', _src: 'Movies4u', _direct: r.url,
+      url: (origin ? m4uLazyUrl(x.href, origin) : m4uCardUrl(r.url, origin)), _srv: 'Google Drive', _src: 'Movies4u', _direct: r.url,
       behaviorHints: { notWebReady: false, isBingeable: true, filename: 'movies4u-' + (qq || 'auto') + '.mkv' },
       bingeGroup: 'm4u|' + mlsNorm(T) + '::' + (isS ? 'S' + (s || 1) + 'E' + (e || 1) : 'm')
     });
