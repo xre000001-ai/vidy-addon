@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.87';
+const VERSION = '1.34.88';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -10593,7 +10593,7 @@ async function m4uPostCards(hit, T, Y, isS, s, e, maxh, T0, maxN, origin) {
     //   /m4d/<b64(x.href)> (bfGuServe req.url theke ei key-i ney). Done/adoptable thakle chhobo na.
     if (!_guWarmed && m4uIsIpLocked(r.url) && (!r.cl || Number(r.cl) <= 6e9)) {
       _guWarmed = true;
-      try { const _wk = Buffer.from(String(x.href)).toString('base64url'); if (!BF_GUC.get(_wk) && !bfGuAdopt(_wk) && BF_GU_PULLN < 1) bfGuStart(_wk, r.url); } catch (e) { } // v1.34.87: onno pull cholle listing-warm noy
+      try { const _wk = Buffer.from(String(x.href)).toString('base64url'); gdWarmQueue(_wk, r.url); } catch (e) { } // v1.34.88: srinkhol warm-queue (serial, click-age)
     }
     const qq = Number(x.q) || 0;
     const size = mlsMB(r.cl || 0) || x.size;
@@ -12732,10 +12732,11 @@ let BF_GU_PULLN = 0; const BF_GU_PULLQ = [];
 function bfGuSlotWait() { return new Promise(res => { if (BF_GU_PULLN < 2) { BF_GU_PULLN++; res(); } else BF_GU_PULLQ.push(res); }); }
 function bfGuSlotFree() { BF_GU_PULLN = Math.max(0, BF_GU_PULLN - 1); const n = BF_GU_PULLQ.shift(); if (n) { BF_GU_PULLN++; n(); } }
 function bfGuReserved(excl) { let s = 0; try { for (const e2 of BF_GUC.values()) if (e2 !== excl && !e2.done && !e2.err && e2.total) s += Math.max(0, e2.total - (e2.got || 0)); } catch (e) { } return s; }
-function bfGuStart(key, url) {
+function bfGuStart(key, url, opts) {
   const d = bfGuDir();
   if (!d) return null;
   const e = { f: d + '/' + require('crypto').createHash('sha1').update(key).digest('hex').slice(0, 22) + '.bin', src: url, got: 0, pts: Date.now(), total: 0, done: false, err: '', ts: Date.now(), used: Date.now() };
+  if (opts && opts.warm) e._warm = true;   // v1.34.88: warm-pull (fail-fast, OFF trip noy)
   BF_GUC.set(key, e);
   (async () => {
     await bfGuSlotWait();   // ★ v1.34.87: একসাথে সর্বোচ্চ ২টি pull (storm-রোধ)
@@ -12761,10 +12762,10 @@ function bfGuStart(key, url) {
           const stt = fs.statfsSync(bfGuDir());
           free = Number(stt.bavail) * Number(stt.bsize) - bfGuReserved(e);
           if (free >= _need) break;
-          if (Date.now() - _admT0 > 60000) break;
+          if (Date.now() - _admT0 > (e._warm ? 5000 : 60000)) break;   // v1.34.88: warm jaygar jonno boshe thakbe na
           await new Promise(r2 => setTimeout(r2, 3000));
         }
-        if (free < _need) { try { await r.body.cancel(); } catch (er) { } e.err = 'nospace'; if (free < 150 * 1048576) BF_GU_OFF = Date.now(); return; }
+        if (free < _need) { try { await r.body.cancel(); } catch (er) { } e.err = 'nospace'; if (free < 150 * 1048576 && !e._warm) BF_GU_OFF = Date.now(); return; }   // v1.34.88: warm-er nospace click-path bondho kore na
       } catch (er) { }
       BF_GU_BYTES -= e.got; e.got = 0;
       const ws = fs.createWriteStream(e.f);
@@ -12801,6 +12802,43 @@ function bfGuStart(key, url) {
 //   + cold m4hGeo probe (~5s mapa) + cold GU pull — tintei list-time-ei jana jay. Tai stream-
 //   response sajanor somoy prottek /m4g/ o /m4h/ card pichhone warm kori (10min dedup);
 //   user click-e sob cache gorom => playlist pray songe songe.
+// ★ v1.34.88: srinkhol warm-queue — serial (eksathe 1), click-pull cholle
+//   opekkha, jayga <900MB hole thambe, 8min-er purono ichha bad. bfGuStart-er
+//   slot(2)+reservation thakay .85-er storm/disk-0 sombhob na. Uddesso: user
+//   list dekhar somoyei pull egiye thake => 1st click-e live playlist songe
+//   songe => play. (Click-chain mapa: resolve-cache + pull + matro 1MB-i lage.)
+const GD_WARMQ = [];
+let GD_WARM_RUN = false;
+function gdWarmQueue(k, fin) {
+  try {
+    if (!k || !fin) return;
+    const ex = BF_GUC.get(k);
+    if (ex && (ex.done || !ex.err)) return;
+    if (bfGuAdopt(k)) return;
+    if (GD_WARMQ.some(q => q.k === k)) return;
+    GD_WARMQ.push({ k: k, fin: fin, ts: Date.now() });
+    while (GD_WARMQ.length > 6) GD_WARMQ.shift();
+    gdWarmDrain();
+  } catch (e) { }
+}
+async function gdWarmDrain() {
+  if (GD_WARM_RUN) return; GD_WARM_RUN = true;
+  try {
+    while (GD_WARMQ.length) {
+      const q = GD_WARMQ.shift();
+      if (Date.now() - q.ts > 8 * 60e3) continue;
+      if (BF_GUC.get(q.k) || bfGuAdopt(q.k)) continue;
+      let waited = 0;
+      while (BF_GU_PULLN > 0 && waited < 20000) { await new Promise(r => setTimeout(r, 1500)); waited += 1500; }
+      if (BF_GU_PULLN > 0) continue;   // click cholche — warm pore, click-i pull tanbe
+      try { const s = fs.statfsSync(bfGuDir()); if (Number(s.bavail) * Number(s.bsize) < 900 * 1048576) break; } catch (e) { break; }
+      const e = bfGuStart(q.k, q.fin, { warm: true });
+      if (!e) continue;
+      const t0 = Date.now();
+      while (!e.done && !e.err && Date.now() - t0 < 8 * 60e3) await new Promise(r => setTimeout(r, 2000));
+    }
+  } catch (e) { } finally { GD_WARM_RUN = false; }
+}
 const GD_WARM = new Map(); // key -> ts
 function gdWarmGeo(fin) {
   try {
@@ -12819,10 +12857,10 @@ function gdWarm(tgt, key) {
       const fin = await m4uFinalFor(tgt).catch(() => '');
       if (!fin || /\.zip(\?|$)/i.test(String(fin).split('#')[0])) return;
       if (!m4uIsIpLocked(fin)) { gdWarmGeo(fin); return; }
-      // ★ v1.34.87: IP-locked-e warm ekhon full-pull suru kore NA (prod-mapa:
-      //   browsing-ei proti card/post theke GB-pull uthe disk 0MB hoye sob GD
-      //   morto, box-saturation-e Vidy playlist-o timeout khaito). Sudhu resolve
-      //   gorom thaklo; pull asol click-ei suru (bfGuServe 1MB thekei live-serve).
+      // ★ v1.34.88: IP-locked hole srinkhol warm-queue-te pull pathai (upore
+      //   gdWarmQueue) => list dekhar somoyei pull egiye thake, 1st click-ei
+      //   live playlist => play. (.85-er moto sob card eksathe pull noy.)
+      gdWarmQueue(key || Buffer.from(String(tgt)).toString('base64url'), fin);
     })().catch(() => { });
   } catch (e) { }
 }
