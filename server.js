@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.69';
+const VERSION = '1.34.70';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -7134,27 +7134,31 @@ async function ottStreams(tmdbId, type, s, e, ottq) { // সার্চ→ম�
     const ed = (e3 && e3.result) || e3 || {};
     const srcs = (ed.sources || []).map(x2 => x2 && x2.url).filter(u2 => /^https?:\/\//.test(u2 || '') && u2.indexOf('/embed') < 0).sort((a, b) => (/\.m3u8/.test(b) ? 1 : 0) - (/\.m3u8/.test(a) ? 1 : 0)); // এমবেড-পাতা-বাদ; m3u8-আগে
     if (!srcs.length) { if (DBG) console.error('[ott] ' + T0 + ' সোর্স-শূন্য'); return []; }
-    let q = 0, master = '';
-    for (const u2 of srcs.slice(0, 3)) { // v1.15.74: সর্বোচ্চ-রেজো-সোর্স-নির্বাচন (৩-প্রোব; প্রথম-জীবন্ত-নয়-সেরাটা)
+    // v1.34.70: sudhu sera master noy — promanito protiti source-er alada card (max 3); user-niyom: sob stream ana joruri
+    const alives = [];
+    for (const u2 of srcs.slice(0, 3)) {
       try {
         const mt = await fetch(u2, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(7000) }).then(r2 => r2.ok ? r2.text() : '');
         if (mt.indexOf('#EXTM') < 0) continue;
         let cq = 0;
-        for (const m3 of mt.matchAll(/RESOLUTION=(\d+)x(\d+)/g)) { const w2 = Number(m3[1]); const c2 = w2 >= 3600 ? 2160 : w2 >= 1900 ? 1080 : w2 >= 1200 ? 720 : w2 >= 640 ? 480 : 360; if (c2 > cq) cq = c2; } // প্রস্থ-ভিত্তিক-শ্রেণি (স্ট্রিমিও-কনভেনশন — 1280x640=720-শ্রেণি, 960x480=480)
-        if (cq > q) { q = cq; master = u2; }
-        if (q >= 1080) break; // যথেষ্ট-ভালো — আর-প্রোব-বর্জ্য
-      } catch (er2) { if (DBG) console.error('[ott] মাস্টার-ব্যর্থ ' + String(er2.message).slice(0, 30)); }
+        for (const m3 of mt.matchAll(/RESOLUTION=(\d+)x(\d+)/g)) { const w2 = Number(m3[1]); const c2 = w2 >= 3600 ? 2160 : w2 >= 1900 ? 1080 : w2 >= 1200 ? 720 : w2 >= 640 ? 480 : 360; if (c2 > cq) cq = c2; }
+        alives.push({ u: u2, q: cq || 720 });
+        if (cq >= 1080 && alives.length >= 2) break;
+      } catch (er2) { if (DBG) console.error('[ott] master-fail ' + String(er2.message).slice(0, 30)); }
     }
-    if (!master) { if (!/\.m3u8/.test(srcs[0])) { if (DBG) console.error('[ott] ' + T0 + ' কোনো-জীবন্ত-HLS-নেই'); return []; } master = srcs[0]; q = 720; } // যাচাই-ব্যর্থ-হলেও-প্রাথমিক-m3u8-কার্ড (ইউজার-IP-চলতে-পারে)
-    if (Array.isArray(ottq) && ottq.length && ottq.indexOf(q) < 0) { if (DBG) console.error('[ott] ' + T0 + ' q=' + q + ' ছাঁকা'); return []; }
+    if (!alives.length) { if (!/\.m3u8/.test(srcs[0])) { if (DBG) console.error('[ott] ' + T0 + ' no live HLS'); return []; } alives.push({ u: srcs[0], q: 720 }); }
+    const q = Math.max.apply(null, alives.map(x => x.q));
     const LANG = OTT_LANG[String(det.country || hit.country || '').toLowerCase()] || 'Subbed';
     const epLine = isTv ? '\u29e0 S' + (s || 1) + 'E' + (e || 1) : '\u29e0 Movie';
     const txt = '\u29c9 ' + T0 + ' |\n' + epLine + '\n\u229e AsianTV \u2317 ' + LANG;
     const seenL = new Set();
-    const subs = (ed.track || []).filter(t4 => { if (!t4 || !/^https?:/.test(t4.file || '')) return false; const L = String(t4.code || 'en').slice(0, 3); if (seenL.has(L)) return false; seenL.add(L); return true; }).slice(0, 4).map(t4 => ({ lang: String(t4.code || 'en').slice(0, 3), url: t4.file })); // ভাষা-প্রতি-এক-ট্র্যাক (ডুপ-কাটা)
-    if (subs.length) OTT_SUBS.set((isTv ? 'series' : 'movie') + ':' + tmdbId + ':' + (isTv ? (s || 1) + 'x' + (e || 1) : 'm'), { ts: Date.now(), v: subs }); // /subtitles-রিসোর্স-চ্যানেল
-    if (DBG) console.error('[ott] ' + type + ':' + tmdbId + ' কার্ড=১ q=' + q + ' lang=' + LANG + ' subs=' + subs.length + ' @' + (Date.now() - t3) + 'ms');
-    return [{ name: '\u25a5 ' + q + ' \u25a5', quality: String(q), url: master, title: txt, description: txt, behaviorHints: { filename: 'asiantv.m3u8' }, bingeGroup: 'ott|' + T0.toLowerCase() + '::' }];
+    const subs = (ed.track || []).filter(t4 => { if (!t4 || !/^https?:/.test(t4.file || '')) return false; const L2 = String(t4.code || 'en').slice(0, 3); if (seenL.has(L2)) return false; seenL.add(L2); return true; }).slice(0, 4).map(t4 => ({ lang: String(t4.code || 'en').slice(0, 3), url: t4.file }));
+    if (subs.length) OTT_SUBS.set((isTv ? 'series' : 'movie') + ':' + tmdbId + ':' + (isTv ? (s || 1) + 'x' + (e || 1) : 'm'), { ts: Date.now(), v: subs });
+    let ocards = alives.sort((x, y) => y.q - x.q).map(x => ({ name: '\u25a5 ' + x.q + ' \u25a5', quality: String(x.q), url: x.u, title: txt, description: txt, behaviorHints: { filename: 'asiantv.m3u8' }, bingeGroup: 'ott|' + T0.toLowerCase() + '::' }));
+    if (Array.isArray(ottq) && ottq.length) ocards = ocards.filter(c => ottq.indexOf(Number(c.quality)) >= 0);
+    if (!ocards.length) { if (DBG) console.error('[ott] ' + T0 + ' q-filtered'); return []; }
+    if (DBG) console.error('[ott] ' + type + ':' + tmdbId + ' cards=' + ocards.length + ' q=' + q + ' lang=' + LANG + ' subs=' + subs.length + ' @' + (Date.now() - t3) + 'ms');
+    return ocards;
   } catch (e2) { if (DBG) console.error('[ott] ' + tmdbId + ' ERR ' + String(e2 && e2.message).slice(0, 60) + ' @' + (Date.now() - t3) + 'ms'); return []; }
 }
 // ---------- v1.15.76: AniZone (anizone.to) — anime-সোর্স (Eclipsia-নির্দেশিত, নিজস্ব-পুনঃখুঁড়া-চেইন); Livewire-সাইট: পেজ-ভেতরের JSON.parse('…')-লিটারাল-ডিকোড (পূর্ণ-JS-literal-unescape — \\u0022-যুগল-নিরাপদ); watch-URL-সরাসরি /anime/{slug}/{ep} (Livewire-পেজিনেশন-অদরকারী — E27/E28-সরাসরি-player-প্রমাণ); পুল-অনলি (ইউজার-নির্দেশ: anizone-সাইট-এক-সার্ভার-IP-ফ্ল্যাগ-আটকাতে), মিডিয়া/মাস্টার-প্রোব-সরাসরি (vid-cdn — রেফারার-ছাড়াও-200, প্রোব-প্রমাণ) ----------
