@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.78';
+const VERSION = '1.34.79';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -13740,7 +13740,11 @@ function srvBump(srv, d) {
 }
 // ★ v1.18.3 (ইউজার: "Miami, Boise, Phoenix, Atlanta, Delhi ei 5 ta server rakho"): শুধু এই ৫টি সার্ভার।
 //   ৫ সার্ভার = ৫×(seed+sources) ≈ ১০ কল ⇒ মাত্র ৩–৪টি নোডেই সবগুলো চলে ⇒ ভাগ্য-নির্ভরতা প্রায় শেষ।
-const SRV_KEEP = (process.env.VSRV || 'miami,boise,phoenix,atlanta,delhi').split(',').map(x => x.trim()).filter(Boolean);
+const SRV_KEEP = (process.env.VSRV || 'miami,boise,phoenix,atlanta,delhi,reno,paris,oakland').split(',').map(x => x.trim()).filter(Boolean);
+// v1.34.79 (user: "Delhi, Reno, Paris, Oakland add koro, performance drop jate na hoi"): the three were
+//   already in SERVERS (historic scores paris 20, reno 20, oakland 5) — now kept. All servers fetch in
+//   parallel under the same VPICK(9s)/tighten cuts, so wall-clock is unchanged; delhi keeps its 2.6s
+//   budget + partial-exemption (still upstream-500, near-zero cost).
 const SERVERS_ON = SERVERS.filter(x => SRV_KEEP.indexOf(x) >= 0);
 // ★★★ v1.26.2 (ইউজার: "Vidy er Miami, Boise ei duita server e gurutto besi thakbe"):
 //   (ক) **ক্রম**: miami, boise সবার আগে (তারপর স্কোর-অনুযায়ী বাকিরা) — vidy-ঢেউয়ের প্রথম স্লট ওরা পায়;
