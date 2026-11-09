@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.91';
+const VERSION = '1.34.92';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -14981,14 +14981,21 @@ async function vhSegNeedsRelay(target, body) {
   //   mapa) — direct no-Referer-e kintu 206 druto. Tai media-line bachai:
   const _ml = [];
   for (const ln of String(body || '').split('\n')) { const t = ln.trim(); if (t && t.charAt(0) !== '#') { try { const u2 = new URL(t, target).toString(); if (!/\.m3u8(\?|$)/i.test(u2)) _ml.push(u2); } catch (e) { } } }
-  const seg = _ml.length > 1 && String(body || '').indexOf('#EXT-X-MAP') >= 0 ? _ml[1] : (_ml[0] || '');
+  // ★ v1.34.92 (prod-mapa): prob player-er chokhe — card-er proxyHeaders (UA +
+  //   Referer) player segment-eo pathay, tai Referer-soho prob; ar prothom
+  //   segment noy, porer (gate-thaka) segment dhor (seg-1 khola thakleo seg-2+
+  //   403 hote pare). Ekbar byartho hole 700ms pore aro ekbar (rate-blip).
+  const seg = _ml.length > 2 ? _ml[2] : (_ml.length > 1 && String(body || '').indexOf('#EXT-X-MAP') >= 0 ? _ml[1] : (_ml[0] || ''));
   let relay = true;
   if (seg) {
-    try {
-      const r = await fetch(seg, { headers: { 'User-Agent': UA, 'Range': 'bytes=0-1023', 'Accept': '*/*' }, redirect: 'follow', signal: AbortSignal.timeout(6000) });
-      relay = !(r.status >= 200 && r.status < 300);
+    const _probe = async () => {
+      const r = await fetch(seg, { headers: { 'User-Agent': UA, 'Referer': VIDY_REFERER, 'Range': 'bytes=0-1023', 'Accept': '*/*' }, redirect: 'follow', signal: AbortSignal.timeout(6000) });
+      const ok = r.status >= 200 && r.status < 300;
       try { r.body.cancel(); } catch (e) { }
-    } catch (e) { relay = true; }
+      return ok;
+    };
+    try { relay = !(await _probe()); } catch (e) { relay = true; }
+    if (relay) { try { await new Promise(r2 => setTimeout(r2, 700)); relay = !(await _probe()); } catch (e) { } }
   }
   if (VH_SEGPROBE.size > 400) VH_SEGPROBE.clear();
   VH_SEGPROBE.set(target, { relay: relay, ts: Date.now() });
