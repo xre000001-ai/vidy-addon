@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.84';
+const VERSION = '1.34.85';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -9648,7 +9648,9 @@ function m4uLazyUrl(u, origin) {
 }
 function m4uSeekUrl(u, origin) {   // ★ v1.34.35: GDrive/GDirect কার্ড → /m4g/ (ক্যাশ-ভিত্তিক HLS, আসল সিক)
   const base = String(origin || '').replace(/\/+$/, '') || PUB_BASE_DEF;
-  return base + '/m4g/' + Buffer.from(String(u)).toString('base64url') + '/v.m3u8';
+  const _b = Buffer.from(String(u)).toString('base64url');
+  try { gdWarm(String(u), _b); } catch (e) { } // ★ v1.34.85: card toiri howar songe songei warm suru (list assembly-r somoytuku head-start)
+  return base + '/m4g/' + _b + '/v.m3u8';
 }
 async function m4uTdServe(req, res, target) {
   const okJson = (code, o) => { try { res.writeHead(code, { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'cache-control': 'no-store' }); res.end(JSON.stringify(o)); } catch (e) { } };
