@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.76';
+const VERSION = '1.34.77';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -9669,7 +9669,7 @@ async function m4uTdServe(req, res, target) {
       const hc = M4U_TD_USED.get('hub:' + target);
       let f = (hc && Date.now() - hc.ts < 4 * 60e3) ? hc.final : '';   // v1.34.41: ৪মিনিটের বেশি পুরনো হলে m4uHubFinal দিয়ে revalidate
       if (!f) { f = await m4uHubFinal(target).catch(() => ''); if (f) M4U_TD_USED.set('hub:' + target, { ts: Date.now(), final: f }); }   // v1.34.38: proof-সহ
-      if (!f) return okJson(502, { error: 'hub-no-fsl' });
+      if (!f) { try { diag('hub', 'serve-no-fsl tgt=' + String(target).slice(-24)); } catch (e) { } return okJson(502, { error: 'hub-no-fsl' }); }
       if (m4uDirectOk(f)) { res.writeHead(302, { location: f, 'cache-control': 'no-store', 'access-control-allow-origin': '*' }); return res.end(); } // v1.34.31: সরাসরি
       return await bfServeGeneric(req, res, f);
     }
@@ -9863,12 +9863,13 @@ async function m4uHubFsl(drive, force) {
       p1 = await run(drive, 'https://hubcloud.pw/', 7000);
       gx = (p1.body.match(/https:\/\/gamerxyt\.com\/hubcloud\.php\?[^"'\s<]+/) || [])[0] || '';
     }
-    if (!gx) { if (DBG) console.error('[hubfsl] no-gamerxyt st=' + p1.st); return ''; }
+    if (!gx) { if (DBG) console.error('[hubfsl] no-gamerxyt st=' + p1.st); try { diag('hub', 'no-gx st=' + p1.st + ' len=' + (p1.body || '').length + ' eu=' + String(p1.eu || '').slice(0, 64) + ' drv=' + String(drive).slice(-22)); } catch (e) { } return ''; }
     gx = gx.replace(/&amp;/g, '&');
     for (let t = 0; t < 2; t++) {
       if (t) await new Promise(r => setTimeout(r, 900));          // ★ "একটু wait" — দ্বিতীয় চেষ্টা
       const p2 = await run(gx, p1.eu || 'https://hubcloud.pw/', 7000);
       const m = /https:\/\/[a-z0-9]+\.r2\.cloudflarestorage\.com\/hub\/[^"'\s<]+/i.exec(p2.body);
+      try { diag('hub', 'gx' + t + ' st=' + p2.st + ' len=' + (p2.body || '').length + ' m=' + (m ? m[0].split('?')[0].slice(0, 84) : 'NONE')); } catch (e) { }
       if (m) {
         const u2 = m[0].replace(/&amp;/g, '&');
         if (HUB_R2.size > 300) HUB_R2.clear();
@@ -9887,12 +9888,14 @@ async function m4uProof(u) {
     const r = await fetch(u, { headers: { 'User-Agent': UA, Range: 'bytes=0-0' }, signal: AbortSignal.timeout(3500) });
     const ct = String(r.headers.get('content-type') || '');
     try { if (r.body && r.body.cancel) r.body.cancel(); } catch (e) { }
-    return (r.status === 200 || r.status === 206) && !/xml|text\/html/i.test(ct);
-  } catch (e) { return false; }
+    const okp = (r.status === 200 || r.status === 206) && !/xml|text\/html/i.test(ct);
+    if (!okp) { try { diag('hub', 'proof st=' + r.status + ' ct=' + ct.slice(0, 26) + ' u=' + String(u).split('?')[0].slice(-48)); } catch (e) { } }
+    return okp;
+  } catch (e) { try { diag('hub', 'proof-err ' + String((e && e.message) || e).slice(0, 60)); } catch (e2) { } return false; }
 }
 async function m4uHubFinal(drive) {   // serve-পথের জন্য: পুরনো ক্যাশ proof ছাড়া 302 নয়
   const _hd = HUB_DEAD.get(drive);
-  if (_hd && Date.now() - _hd < 30 * 60e3) return '';   // v1.34.40: মৃত জানা থাকলে সাথে সাথে বাদ
+  if (_hd && Date.now() - _hd < 30 * 60e3) { try { diag('hub', 'dead-gate drv=' + String(drive).slice(-22)); } catch (e) { } return ''; }   // v1.34.40: মৃত জানা থাকলে সাথে সাথে বাদ
   let f = await m4uHubFsl(drive).catch(() => '');
   if (!f) return '';
   const e = HUB_R2.get(drive);
