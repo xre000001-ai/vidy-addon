@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.81';
+const VERSION = '1.34.82';
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
 // ইউজার: "memory ekhono 90%, kalke 30-39 chilo, aste aste barlo" ⇒ ধীর-লিক খুঁজতে হলে
@@ -9940,7 +9940,7 @@ async function m4uHubFinal(drive) {   // serve-পথের জন্য: পু
     //   card dekhanoi bondho thakbe (TD-worker + pack gate niche) — bucket bachle nijei khulbe.
     try {
       const rb = await fetch(f2 || f, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(3500) }).catch(() => null);
-      if (rb && rb.status === 403) { const tx = await rb.text().catch(() => ''); if (/NotEntitled/i.test(tx)) { HUB_GX_DEAD = Date.now() + 30 * 60e3; try { diag('hub', 'gx-bucket-dead-30m drv=' + String(drive).slice(-18)); } catch (e) { } } }
+      if (rb && rb.status === 403) { const tx = await rb.text().catch(() => ''); if (/NotEntitled/i.test(tx)) { try { diag('hub', 'gx-oldbucket-drive drv=' + String(drive).slice(-18)); } catch (e) { } } } // v1.34.82: NotEntitled ekhon per-drive (niche HUB_DEAD) — global flag noy, karon gamerxyt notun file-e jibito hub2 bucket dey (prod-mapa); global dile play-hobe emon lazy card-o 30min mute thakto
       else if (rb && rb.body) { try { rb.body.cancel(); } catch (e) { } }
     } catch (e) { }
     HUB_DEAD.set(drive, Date.now());   // ★ v1.34.40: তাজা presigned-ও মৃত ⇒ সোর্স-মৃত (R2 NotEntitled) — কার্ড বাদ যাবে
@@ -10401,7 +10401,7 @@ async function m4uTdStreams(tmdbId, title, type, s, e, origin, maxh) {
             if (HUB_GX_DEAD > Date.now()) break;   // v1.34.78: gamerxyt bucket account-dead — porer server (V-Cloud/GDFlix/G-Direct) card hobe, dead FSL noy
             const _hdt = HUB_DEAD.get(l.href); if (_hdt && Date.now() - _hdt < 30 * 60e3) break;
             // ★ v1.34.35: FSL কার্ড এখন **লেজি** — gamerxyt-স্ক্র্যাপ (৩ হপ, ~২০সে পর্যন্ত) কার্ড-সময়ে আর নয়; ক্লিকে m4uTdServe hub-শাখা HUB_R2 (৫ঘণ্টা ডিস্ক-ক্যাশ) দিয়ে 302 দেবে। আগে এই স্ক্র্যাপই ৯সে-বাজেট ফাটিয়ে FSL কার্ড হারাত (ইউজার: "fsl card sobsomoy ase na")
-            if (HUB_GX_DEAD < Date.now() && Date.now() - HUB_GX_PROBED > 20 * 60e3) { HUB_GX_PROBED = Date.now(); try { m4uHubFinal(l.href).catch(() => { }); } catch (e) { } }   // v1.34.78: BG bucket-health probe (20min-e ekbar) — user-click charai dead bucket dhora pore
+            if (HUB_GX_DEAD < Date.now() && Date.now() - HUB_GX_PROBED > 5 * 60e3) { HUB_GX_PROBED = Date.now(); try { m4uHubFinal(l.href).catch(() => { }); } catch (e) { } } // v1.34.82: 20min -> 5min (mrito drive agei HUB_DEAD-e chinho, user-clicker age)   // v1.34.78: BG bucket-health probe (20min-e ekbar) — user-click charai dead bucket dhora pore
             r = { url: l.href, srv: 'FSL', lazy: 1 }; break;
           }
           if (k === 'V-Cloud') {   // ★ v1.34.19: এক এন্ট্রি → ভিতরের FSL/Pixeldrain/GDFlix আলাদা কার্ড
