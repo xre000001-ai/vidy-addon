@@ -34,6 +34,10 @@ const CONC = Number(arg('conc', 56));                // সমান্তরা
 const MAXU = Number(arg('max', 6000));               // এই রানে সর্বোচ্চ কতটি নতুন এন্ট্রি
 const WANT = Math.max(1, Number(arg('want', 1)));     // প্রতি ইউনিটে কতটি হোস্ট লাগবে (১ = HubCloud-আগে দ্রুত কভার, ২ = +Pixeldrain মিরর)
 const SHARDS = Number(arg('shards', 16));
+// ★★ v1.34.147: **স্লাইস-সমান্তরাল** — GitHub Actions-এ একসাথে কয়েকটি জব চলতে পারে; প্রতিটি জব
+//   নিজের স্লাইসের শো-গুলো (hash % slices) করে এবং **নিজের শার্ডগুলোই** লেখে ⇒ কোনো লিখা-সংঘর্ষ নেই।
+//   মাপা থ্রুপুট ~১০২ এন্ট্রি/মিনিট/জব ⇒ ৫ জবে ২৩,৮৮৯ ইউনিট কভার ~১ ঘণ্টায়।
+const SLICE = Number(arg('slice', 0)), SLICES = Math.max(1, Number(arg('slices', 1)));
 const PUBLISH = !!arg('publish', false);
 const SHORTENER = Number(arg('short', 7));
 const CHECK_MS = Number(arg('check', 600)) * 1000;   // প্রতি ১০মিনে checkpoint-publish (কাজ হারাবে না)
@@ -172,11 +176,14 @@ function loadShards() {
       if (!unitFull(k)) todo.push({ slug: r.slug, s: 0, e: 0 });
     }
   }
+  // স্লাইস: এই জব শুধু নিজের ভাগের শো করে
+  const mine = todo.filter(u => (hash(u.slug) % SLICES) === SLICE);
+  todo.length = 0; todo.push(...mine);
   // ডিটারমিনিস্টিক ক্রম ⇒ রান একই জায়গা থেকে শুরু করে, ক্রমাগত এগোয়
   todo.sort((a, b) => (a.slug === b.slug ? (a.s - b.s) || (a.e - b.e) : a.slug.localeCompare(b.slug)));
   const haveUnits = totalUnits - todo.length;
   console.log('[idx] সাইট-ইউনিট =', totalUnits, '| ইনডেক্সে =', haveUnits, '(' + (haveUnits / totalUnits * 100).toFixed(1) + '%)', '| বাকি =', todo.length);
-  console.log('[idx] budget=' + (BUDGET / 1000) + 's max=' + MAXU + ' scan=' + SCAN + ' unlock-conc=' + CONC + ' want=' + WANT);
+  console.log('[idx] budget=' + (BUDGET / 1000) + 's max=' + MAXU + ' scan=' + SCAN + ' unlock-conc=' + CONC + ' want=' + WANT + ' slice=' + SLICE + '/' + SLICES);
 
   let added = 0, tried = 0, noHost = 0, unlockFail = 0, unitsDone = haveUnits;
   const addRow = (slug, row) => {
@@ -252,8 +259,9 @@ function loadShards() {
       units: { done: unitsDone, total: totalUnits },
       slugs: [...rows.keys()].filter(s => (rows.get(s) || []).some(r => r[2] >= 0)).sort()
     };
-    const files = [['dti/manifest.json', JSON.stringify(manifest)]];
-    for (const [sd, obj] of perShard) files.push(['dti/s' + pad(sd) + '.json', JSON.stringify(obj)]);
+    const files = [];
+    if (SLICE === 0) files.push(['dti/manifest.json', JSON.stringify(manifest)]);
+    for (const [sd, obj] of perShard) if ((sd % SLICES) === SLICE) files.push(['dti/s' + pad(sd) + '.json', JSON.stringify(obj)]);
     let ok = 0;
     for (const [p2, txt] of files) {
       try {
