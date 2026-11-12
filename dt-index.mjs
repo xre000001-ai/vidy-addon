@@ -82,9 +82,9 @@ function idsOf(links) {
 
 (async () => {
   const t00 = Date.now();
-  // (১) পুরোনো ইনডেক্স মিলিয়ে নাও (merge — কখনো হারায় না)
-  let idx = { ver: 1, ts: 0, n: 0, links: {} };
-  try { const j = JSON.parse(fs.readFileSync(OUT, 'utf8')); if (j && j.links) idx = j; } catch { }
+  // (১) পুরোনো ইনডেক্স মিলিয়ে নাও (merge — কখনো হারায় না) + cursor (কোথা থেকে স্ক্যান শুরু)
+  let idx = { ver: 1, ts: 0, n: 0, cursor: 0, pass: 0, links: {} };
+  try { const j = JSON.parse(fs.readFileSync(OUT, 'utf8')); if (j && j.links) idx = Object.assign(idx, j); } catch { }
   const have = new Set(Object.keys(idx.links || {}));
   const before = have.size;
 
@@ -94,63 +94,65 @@ function idsOf(links) {
     const j = await getJson('/anime?page=' + p + '&limit=50');
     const d = (j && j.data) || [];
     if (!d.length) break;
-    for (const x of d) if (x && x.slug) list.push({ slug: x.slug, type: x.type || 'tv', name: x.anime_name || '' });
+    for (const x of d) if (x && x.slug) list.push({ slug: x.slug, type: x.type || 'tv' });
   }
-  console.log('[idx] anime তালিকা:', list.length, '| আগের ইনডেক্স:', before);
+  let cur0 = Number(idx.cursor || 0);
+  if (!(cur0 >= 0 && cur0 < list.length)) { cur0 = 0; idx.pass = Number(idx.pass || 0); }
+  console.log('[idx] anime তালিকা:', list.length, '| cursor:', cur0, '| pass:', idx.pass || 0, '| আগের ইনডেক্স:', before);
 
-  // (৩) প্রতিটি অ্যানিমের এপিসোড → লিঙ্ক → কাজের আইডি (যেগুলো এখনো নেই)
-  const jobs = [];
-  let scanned = 0, dupe = 0;
-  outer:
-  for (const a of list) {
-    if (jobs.length >= MAX * 3) break;                     // যথেষ্ট প্রার্থী জমেছে
-    const meta = await getJson('/anime/' + encodeURIComponent(a.slug), 9000);
-    if (!meta) continue;
-    scanned++;
-    const seasons = (meta.seasons || []).filter(s2 => (s2.episode_count || 0) > 0);
-    if (!seasons.length) {                                  // মুভি/একক-এন্ট্রি
-      for (const c of idsOf(meta.links)) { if (have.has(String(c.id))) { dupe++; continue; } jobs.push(Object.assign(c, { slug: a.slug, s: 0, e: 0 })); }
-      continue;
-    }
-    for (const s2 of seasons) {
-      const sn = Number(s2.season_number || 1), cnt = Math.min(Number(s2.episode_count || 0), 60);
-      for (let e = 1; e <= cnt; e++) {
-        const d = await getJson('/anime/' + encodeURIComponent(a.slug) + '/season/' + sn + '/episode/' + e, 9000);
-        const links = (d && d.links) || [];
-        for (const c of idsOf(links)) {
-          if (have.has(String(c.id))) { dupe++; continue; }
-          have.add(String(c.id));                           // ডুপ-জব নয়
-          jobs.push(Object.assign(c, { slug: a.slug, s: sn, e }));
-        }
-        if (jobs.length >= MAX * 3) break outer;
-      }
-    }
-  }
-  console.log('[idx] স্ক্যান:', scanned, 'অ্যানিমে | নতুন প্রার্থী:', jobs.length, '| আগেই-আছে:', dupe);
-  const work = jobs.slice(0, MAX);
-
-  // (৪) সমান্তরাল আনলক (গেট ১৫সে — conc দিয়ে স্কেল)
-  let done = 0, ok = 0, fail = 0;
-  const queue = work.slice();
+  // (৩) ★ পাইপলাইন: স্ক্যান আর আনলক একসাথে (আগে সব স্ক্যান শেষে আনলক ⇒ সময় নষ্ট)
+  const q = [];
+  let done = 0, ok = 0, fail = 0, queued = 0;
+  const TARGET = MAX * 1.15;
   async function worker() {
     for (;;) {
-      const c = queue.shift();
-      if (!c) return;
+      const c = q.shift();
+      if (!c) { if (globalThis.__dtScanDone) return; await new Promise(r => setTimeout(r, 250)); continue; }
       const r = await unlock(c.id);
       done++;
-      if (r && r.u) {
-        ok++;
-        idx.links[String(c.id)] = { u: r.u, h: c.h, q: c.q, slug: c.slug, s: c.s, e: c.e, t: Date.now() };
-      } else fail++;
-      if (done % 40 === 0) console.log('[idx] ' + done + '/' + work.length + ' (ok=' + ok + ' fail=' + fail + ') @' + Math.round((Date.now() - t00) / 1000) + 's');
+      if (r && r.u) { ok++; idx.links[String(c.id)] = { u: r.u, h: c.h, q: c.q, slug: c.slug, s: c.s, e: c.e, t: Date.now() }; }
+      else fail++;
+      if (done % 60 === 0) console.log('[idx] unlock ' + done + ' (ok=' + ok + ' fail=' + fail + ') queue=' + q.length + ' @' + Math.round((Date.now() - t00) / 1000) + 's');
     }
   }
-  await Promise.all(Array.from({ length: Math.min(CONC, work.length || 1) }, worker));
+  globalThis.__dtScanDone = false;
+  const workers = Array.from({ length: CONC }, worker);
+
+  let scannedFrom = cur0, animeScanned = 0;
+  for (let ai = cur0; ai < list.length; ai++) {
+    if (queued >= TARGET) break;
+    const a = list[ai];
+    const meta = await getJson('/anime/' + encodeURIComponent(a.slug), 9000);
+    animeScanned++;
+    scannedFrom = ai + 1;
+    if (!meta) continue;
+    const seasons = (meta.seasons || []).filter(s2 => (s2.episode_count || 0) > 0);
+    const push = (c, sn, e) => {
+      if (have.has(String(c.id))) return;
+      have.add(String(c.id));
+      q.push(Object.assign(c, { slug: a.slug, s: sn, e }));
+      queued++;
+    };
+    if (!seasons.length) { for (const c of idsOf(meta.links)) push(c, 0, 0); continue; }
+    for (const s2 of seasons) {
+      const sn = Number(s2.season_number || 1), cnt = Math.min(Number(s2.episode_count || 0), 80);
+      for (let e = 1; e <= cnt; e++) {
+        if (queued >= TARGET) break;
+        const d = await getJson('/anime/' + encodeURIComponent(a.slug) + '/season/' + sn + '/episode/' + e, 9000);
+        for (const c of idsOf((d && d.links) || [])) push(c, sn, e);
+      }
+      if (queued >= TARGET) break;
+    }
+  }
+  globalThis.__dtScanDone = true;
+  await Promise.all(workers);
 
   idx.ver = 1; idx.ts = Date.now(); idx.n = Object.keys(idx.links).length;
+  idx.cursor = scannedFrom >= list.length ? 0 : scannedFrom;
+  if (scannedFrom >= list.length) idx.pass = Number(idx.pass || 0) + 1;
   fs.writeFileSync(OUT, JSON.stringify(idx));
   const kb = (fs.statSync(OUT).size / 1024).toFixed(0);
-  console.log('[idx] ✅ ডান: ok=' + ok + ' fail=' + fail + ' | মোট-এন্ট্রি ' + before + ' → ' + idx.n + ' | ' + kb + 'KB | ' + Math.round((Date.now() - t00) / 1000) + 's');
+  console.log('[idx] ✅ স্ক্যান=' + animeScanned + ' অ্যানিমে | unlock ok=' + ok + ' fail=' + fail + ' | মোট-এন্ট্রি ' + before + ' → ' + idx.n + ' | cursor ' + cur0 + '→' + idx.cursor + ' | ' + kb + 'KB | ' + Math.round((Date.now() - t00) / 1000) + 's');
 
   // (৫) GitHub-এ প্রকাশ (contents API — git-push নয়, তাই হালকা ও নির্ভরযোগ্য)
   if (PUBLISH) {
@@ -160,10 +162,10 @@ function idsOf(links) {
     if (!tok) { console.error('[idx] GH_TOKEN নেই — প্রকাশ বাদ'); process.exit(0); }
     const api = 'https://api.github.com/repos/' + repo + '/contents/' + p2;
     const cur = await fetch(api + '?ref=' + (process.env.GH_BRANCH || 'main'), { headers: { Authorization: 'Bearer ' + tok, 'User-Agent': UA } }).then(r => (r.ok ? r.json() : null)).catch(() => null);
-    const body = { message: 'dt index: ' + idx.n + ' links (' + new Date().toISOString().slice(0, 16) + ')', content: Buffer.from(fs.readFileSync(OUT)).toString('base64'), branch: process.env.GH_BRANCH || 'main' };
+    const body = { message: 'dt index: ' + idx.n + ' links (cursor ' + idx.cursor + ', pass ' + (idx.pass || 0) + ') ' + new Date().toISOString().slice(0, 16), content: Buffer.from(fs.readFileSync(OUT)).toString('base64'), branch: process.env.GH_BRANCH || 'main' };
     if (cur && cur.sha) body.sha = cur.sha;
     const r2 = await fetch(api, { method: 'PUT', headers: { Authorization: 'Bearer ' + tok, 'User-Agent': UA, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     const j2 = await r2.json().catch(() => ({}));
-    console.log('[idx] GitHub publish:', r2.status, j2 && j2.commit ? j2.commit.sha.slice(0, 10) : JSON.stringify(j2).slice(0, 120));
+    console.log('[idx] GitHub publish:', r2.status, j2 && j2.commit ? j2.commit.sha.slice(0, 10) : JSON.stringify(j2).slice(0, 140));
   }
 })();
