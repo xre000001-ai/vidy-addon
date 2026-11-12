@@ -1,12 +1,16 @@
 name: dt-index
+# ★ ইনডেক্স শুধু GitHub-এ বিল্ড হয় (ইউজার-নির্দেশ) — সার্ভার/অ্যাডন কিছুই বিল্ড করে না, শুধু পড়ে।
 on:
   schedule:
-    - cron: '17 */3 * * *'
+    - cron: '7 * * * *'        # প্রতি ঘণ্টা
   workflow_dispatch:
     inputs:
       max:
-        description: 'max links this run'
-        default: '2500'
+        description: 'max NEW links this run'
+        default: '2200'
+      verify:
+        description: 'how many existing entries to re-prove'
+        default: '600'
 permissions:
   contents: write
 concurrency: dt-index
@@ -19,10 +23,16 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: show current index
-        run: node -e "const j=require('./dt_index.json');console.log('before n='+j.n+' cursor='+j.cursor)"
-      - name: build index
+      - name: index before
+        run: node -e "const j=require('./dt_index.json');console.log('before n='+j.n+' cursor='+j.cursor+' pass='+j.pass)"
+      - name: verify + build (GitHub-side only)
         env:
-          GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: \${{ github.repository }}
-        run: node dt-index.mjs --max=\${{ github.event.inputs.max || '2500' }} --conc=30 --pages=29 --publish
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: >-
+          node dt-index.mjs
+          --verify=${{ github.event.inputs.verify || '600' }}
+          --max=${{ github.event.inputs.max || '2200' }}
+          --conc=30 --pages=29 --publish
+      - name: index after
+        run: node -e "const j=require('./dt_index.json');console.log('after n='+j.n+' cursor='+j.cursor+' pass='+j.pass)"
