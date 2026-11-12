@@ -1,16 +1,17 @@
 name: dt-index
-# ★ ইনডেক্স শুধু GitHub-এ বিল্ড হয় (ইউজার-নির্দেশ) — সার্ভার/অ্যাডন কিছুই বিল্ড করে না, শুধু পড়ে।
+# ★ Deadtoons **সম্পূর্ণ সাইট-কপি** ইনডেক্স (ইউজার: "puro website ta copy korba") — শুধু GitHub-এ বিল্ড হয়।
+#   প্রোড অ্যাডন শুধু `dti/manifest.json` + প্রয়োজনীয় শার্ড পড়ে (ডাউনলোড-লিঙ্ক আগেই প্রমাণিত)।
 on:
   schedule:
-    - cron: '7 * * * *'        # প্রতি ঘণ্টা
+    - cron: '11 * * * *'        # প্রতি ঘণ্টা — কভারেজ ক্রমাগত পূর্ণ হতে থাকে
   workflow_dispatch:
     inputs:
-      max:
-        description: 'max NEW links this run'
-        default: '3200'
-      verify:
-        description: 'how many existing entries to re-prove'
-        default: '600'
+      want:
+        description: 'hosts per unit (1 = HubCloud-first full sweep, 2 = add Pixeldrain mirror)'
+        default: '1'
+      budget:
+        description: 'seconds of work this run'
+        default: '2700'
 permissions:
   contents: write
 concurrency: dt-index
@@ -24,15 +25,18 @@ jobs:
         with:
           node-version: '20'
       - name: index before
-        run: node -e "const j=require('./dt_index.json');console.log('before n='+j.n+' cursor='+j.cursor+' pass='+j.pass)"
-      - name: verify + build (GitHub-side only)
+        run: |
+          node -e "try{const m=require('./dti/manifest.json');console.log('before n='+m.n+' units='+JSON.stringify(m.units))}catch(e){console.log('before: no shards yet')}"
+      - name: build (GitHub-side only)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
         run: >-
-          node dt-index.mjs
-          --verify=${{ github.event.inputs.verify || '600' }}
-          --max=${{ github.event.inputs.max || '3200' }}
-          --mode=breadth --per=2 --conc=40 --pages=29 --publish
+          node dt-index3.mjs
+          --budget=${{ github.event.inputs.budget || '2700' }}
+          --want=${{ github.event.inputs.want || '1' }}
+          --scan=30 --conc=56 --max=20000 --publish
       - name: index after
-        run: node -e "const j=require('./dt_index.json');console.log('after n='+j.n+' cursor='+j.cursor+' pass='+j.pass)"
+        run: |
+          node -e "const m=require('./dti/manifest.json');console.log('after n='+m.n+' units='+JSON.stringify(m.units)+' shards='+m.shards)"
+          ls -la dti | head -6
