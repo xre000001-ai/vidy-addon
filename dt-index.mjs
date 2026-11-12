@@ -91,15 +91,23 @@ async function proofPixeldrain(u) {
     return b.length > 0 && b[0] !== 0x3c;
   } catch { return false; }
 }
+// ★ মাপা (১২-১১-২০২৬): gamerxyt-পেজে **দুটো** PixelServer — একটি মৃত (`negn6f` ৪০৪), একটি জীবিত।
+//   পুরোনো verify শুধু প্রথমটাই দেখত ⇒ ৪০০-এর ২৮০ ভুয়া-"dead" (pixeldrain 12/12 সুস্থ)। এখন **সব** প্রার্থী।
 async function proofHubcloud(u) {
   try {
     const g = await fetch(u, { headers: { 'User-Agent': UA, Referer: 'https://hubcloud.pw/' }, signal: AbortSignal.timeout(15000) }).then(r => (r.ok ? r.text() : '')).catch(() => '');
     if (!g) return false;
     const gx = (g.match(/https:\/\/gamerxyt\.com\/hubcloud\.php\?[^"'\s]+/) || [])[0];
     const page = gx ? await fetch(gx, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(15000) }).then(r => (r.ok ? r.text() : '')).catch(() => '') : g;
-    const px = (page.match(/pixeldrain\.(?:dev|com)\/u\/([A-Za-z0-9]{5,})/) || [])[1];
-    if (px) return await proofPixeldrain('https://pixeldrain.com/u/' + px);
-    return /r2\.cloudflarestorage\.com|workers\.dev|hubcloud\./i.test(page);   // অন্য সার্ভার-লিঙ্ক থাকলে গ্রহণ
+    const px = [...String(page).matchAll(/pixeldrain\.(?:dev|com)\/u\/([A-Za-z0-9]{5,})/g)].map(m => m[1]);
+    const fsl = [...String(page).matchAll(/https:\/\/[A-Za-z0-9.\-]+\.(?:r2\.cloudflarestorage\.com|workers\.dev)\/[^"'\s]+/g)].map(m => m[0]);
+    const cands = px.map(id => 'https://pixeldrain.com/u/' + id).concat(fsl)
+      .filter((v, i, a) => a.indexOf(v) === i).sort((a, b) => (/negn6f/.test(a) ? 1 : 0) - (/negn6f/.test(b) ? 1 : 0));
+    for (const c of cands.slice(0, 5)) {
+      if (/pixeldrain/.test(c)) { if (await proofPixeldrain(c)) return true; }
+      else { try { const rr = await fetch(c, { headers: { 'User-Agent': UA, Range: 'bytes=0-1023' }, signal: AbortSignal.timeout(12000) }); if (rr.status === 200 || rr.status === 206) return true; } catch { } }
+    }
+    return false;
   } catch { return false; }
 }
 
