@@ -25,10 +25,18 @@ const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,
 const H = { 'User-Agent': UA, 'Accept': 'application/json', 'Referer': 'https://deadtoons.sbs/', 'Origin': 'https://deadtoons.sbs' };
 
 const arg = (k, d) => { const m = process.argv.find(a => a.startsWith('--' + k + '=')); return m ? m.split('=')[1] : (process.argv.includes('--' + k) ? true : d); };
-const MAX = Number(arg('max', 1200));
+const MAX = Number(arg('max', 1600));   // ★ v1.34.142: ১২০০ → ১৬০০ (ব্রেডথ-পাস: ১৪৩৩ শো × ১ এপি ≈ ১৪০০-১৮০০ লিঙ্ক)
 const CONC = Number(arg('conc', 24));
 const OUT = String(arg('out', path.join(__dirname, 'dt_index.json')));
 const PAGES = Number(arg('pages', 29));
+// ★★ v1.34.142 (প্রোড-প্রমাণ: ইনডেক্স ২৬ শো / ১৪৩৩ শো-র তালিকা ⇒ `idxReady:0` ⇒ Deadtoons কার্ড ০):
+//   পুরোনো বিল্ডার **ডেপথ-ফার্স্ট** ছিল — MAX লিঙ্ক একই শো-এর সব এপিসোডে খরচ হতো (মাপা: `স্ক্যান=১ শো`),
+//   তাই কভারেজ আটকে থাকত। এখন ডিফল্ট **ব্রেডথ-ফার্স্ট**: প্রতি রানে প্রতিটি শো-এর কেবল
+//   **পাস-নম্বরের এপিসোড** (১ম পাসে S1E1, ২য় পাসে S1E2 …) ⇒ ১৪৩৩ শো-র E1 এক রানেই কভার হয়।
+const MODE = String(arg('mode', 'breadth'));
+// ★ v1.34.142: প্রতি শো-এ সর্বোচ্চ কতটি লিঙ্ক রাখবে (ব্রেডথ)। ১-২ রাখলেই DT-প্রমাণের জন্য যথেষ্ট,
+//   আর তাতে এক রানেই ১৪৩৩ শো-র প্রথম-এপিসোড কভার হয়ে যায় (মাপা: ~৬ লিঙ্ক/শো ⇒ রান অনেক লম্বা হতো)।
+const PER_SHOW = Math.max(1, Number(arg('per', 2)));
 const PUBLISH = !!arg('publish', false);
 const SHORTENER = Number(arg('short', 7));
 const VERIFY = Number(arg('verify', 400));      // প্রতি রানে কতটি পুরোনো এন্ট্রি Range-প্রমাণে যাচাই হবে
@@ -147,7 +155,7 @@ async function proofHubcloud(u) {
 
   let cur0 = Number(idx.cursor || 0);
   if (!(cur0 >= 0 && cur0 < list.length)) { cur0 = 0; idx.pass = Number(idx.pass || 0); }
-  console.log('[idx] anime তালিকা:', list.length, '| cursor:', cur0, '| pass:', idx.pass || 0, '| আগের ইনডেক্স:', before);
+  console.log('[idx] anime তালিকা:', list.length, '| cursor:', cur0, '| pass:', idx.pass || 0, '| mode:', MODE, '| max:', MAX, '| আগের ইনডেক্স:', before);
 
   // (৩) ★ পাইপলাইন: স্ক্যান আর আনলক একসাথে (আগে সব স্ক্যান শেষে আনলক ⇒ সময় নষ্ট)
   const q = [];
@@ -183,6 +191,21 @@ async function proofHubcloud(u) {
       queued++;
     };
     if (!seasons.length) { for (const c of idsOf(meta.links)) push(c, 0, 0); continue; }
+    if (MODE === 'breadth') {
+      // ★ v1.34.142: কভারেজ-প্রথম — প্রতি শো-এ মাত্র **একটি** এপিসোড (পাস p ⇒ E(p)), সব সিজনে।
+      //   ফলে এক রানেই ১৪৩৩ শো-র প্রথম-এপিসোড ইনডেক্স হয় ⇒ `idxReady` > 0 ⇒ DT কার্ড প্রথম-ট্যাপেই।
+      const want = Math.max(1, Number(idx.pass || 0) + 1);
+      const qBefore = queued;
+      for (const s2 of seasons) {
+        if (queued >= TARGET || (queued - qBefore) >= PER_SHOW) break;
+        const sn = Number(s2.season_number || 1), cnt = Math.min(Number(s2.episode_count || 0), 80);
+        if (want > cnt) continue;
+        const d = await getJson('/anime/' + encodeURIComponent(a.slug) + '/season/' + sn + '/episode/' + want, 9000);
+        for (const c of idsOf((d && d.links) || [])) { if ((queued - qBefore) >= PER_SHOW) break; push(c, sn, want); }
+      }
+      if (queued >= TARGET) break;
+      continue;
+    }
     for (const s2 of seasons) {
       const sn = Number(s2.season_number || 1), cnt = Math.min(Number(s2.episode_count || 0), 80);
       for (let e = 1; e <= cnt; e++) {
