@@ -31,6 +31,7 @@ const OUT = String(arg('out', path.join(__dirname, 'dt_index.json')));
 const PAGES = Number(arg('pages', 29));
 const PUBLISH = !!arg('publish', false);
 const SHORTENER = Number(arg('short', 7));
+const VERIFY = Number(arg('verify', 400));      // প্রতি রানে কতটি পুরোনো এন্ট্রি Range-প্রমাণে যাচাই হবে
 
 const getJson = async (p, ms = 15000) => { try { const r = await fetch(API + p, { headers: H, signal: AbortSignal.timeout(ms) }); return r.ok ? await r.json() : null; } catch { return null; } };
 const postJson = async (p, body, ms = 9000) => { try { const r = await fetch(API + p, { method: body === null ? 'GET' : 'POST', headers: Object.assign({}, H, body === null ? {} : { 'Content-Type': 'application/json' }), body: body === null ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(ms) }); return r.ok ? await r.json() : null; } catch { return null; } };
@@ -80,6 +81,28 @@ function idsOf(links) {
   return out;
 }
 
+// ---------- পুরোনো এন্ট্রির সত্যতা যাচাই (ফাইল মরে গেলে এন্ট্রি বাদ) ----------
+async function proofPixeldrain(u) {
+  try {
+    const id = u.split('/u/')[1].split(/[?#]/)[0];
+    const r = await fetch('https://pixeldrain.com/api/file/' + id + '?download', { headers: { 'User-Agent': UA, Range: 'bytes=0-1023' }, signal: AbortSignal.timeout(15000) });
+    if (r.status !== 200 && r.status !== 206) return false;
+    const b = Buffer.from(await r.arrayBuffer());
+    return b.length > 0 && b[0] !== 0x3c;
+  } catch { return false; }
+}
+async function proofHubcloud(u) {
+  try {
+    const g = await fetch(u, { headers: { 'User-Agent': UA, Referer: 'https://hubcloud.pw/' }, signal: AbortSignal.timeout(15000) }).then(r => (r.ok ? r.text() : '')).catch(() => '');
+    if (!g) return false;
+    const gx = (g.match(/https:\/\/gamerxyt\.com\/hubcloud\.php\?[^"'\s]+/) || [])[0];
+    const page = gx ? await fetch(gx, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(15000) }).then(r => (r.ok ? r.text() : '')).catch(() => '') : g;
+    const px = (page.match(/pixeldrain\.(?:dev|com)\/u\/([A-Za-z0-9]{5,})/) || [])[1];
+    if (px) return await proofPixeldrain('https://pixeldrain.com/u/' + px);
+    return /r2\.cloudflarestorage\.com|workers\.dev|hubcloud\./i.test(page);   // অন্য সার্ভার-লিঙ্ক থাকলে গ্রহণ
+  } catch { return false; }
+}
+
 (async () => {
   const t00 = Date.now();
   // (১) পুরোনো ইনডেক্স মিলিয়ে নাও (merge — কখনো হারায় না) + cursor (কোথা থেকে স্ক্যান শুরু)
@@ -96,6 +119,24 @@ function idsOf(links) {
     if (!d.length) break;
     for (const x of d) if (x && x.slug) list.push({ slug: x.slug, type: x.type || 'tv' });
   }
+  // (২খ) ★ পুরোনো এন্ট্রি যাচাই — মাপা: একই link_server_id বারবার আনলকেও URL **একই থাকে**,
+  //      কিন্তু pixeldrain/hubcloud-এর ফাইল **মরে যেতে পারে** ⇒ Range-প্রমাণে মৃত এন্ট্রি বাদ।
+  if (VERIFY > 0 && Object.keys(idx.links).length) {
+    const keys = Object.keys(idx.links).sort((a, b) => (idx.links[a].t || 0) - (idx.links[b].t || 0)).slice(0, VERIFY);
+    let vOk = 0, vBad = 0, vi = 0;
+    const vq = keys.slice();
+    await Promise.all(Array.from({ length: Math.min(24, vq.length) }, async () => {
+      for (;;) {
+        const k = vq.shift(); if (!k) return;
+        const e = idx.links[k]; if (!e || !e.u) { delete idx.links[k]; continue; }
+        const good = e.h === 'pixeldrain' ? await proofPixeldrain(e.u) : await proofHubcloud(e.u);
+        if (good) { e.t = Date.now(); vOk++; } else { delete idx.links[k]; vBad++; }
+        if (++vi % 100 === 0) console.log('[idx] verify ' + vi + '/' + keys.length + ' ok=' + vOk + ' dead=' + vBad);
+      }
+    }));
+    console.log('[idx] verify শেষ: ok=' + vOk + ' dead=' + vBad + ' (বাদ-পড়েছে) @' + Math.round((Date.now() - t00) / 1000) + 's');
+  }
+
   let cur0 = Number(idx.cursor || 0);
   if (!(cur0 >= 0 && cur0 < list.length)) { cur0 = 0; idx.pass = Number(idx.pass || 0); }
   console.log('[idx] anime তালিকা:', list.length, '| cursor:', cur0, '| pass:', idx.pass || 0, '| আগের ইনডেক্স:', before);
