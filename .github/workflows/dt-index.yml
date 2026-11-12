@@ -1,16 +1,16 @@
 name: dt-index
 # ★ Deadtoons **সম্পূর্ণ সাইট-কপি** ইনডেক্স (ইউজার: "puro website ta copy korba") — শুধু GitHub-এ বিল্ড হয়।
-#   প্রোড অ্যাডন শুধু `dti/manifest.json` + প্রয়োজনীয় শার্ড পড়ে (ডাউনলোড-লিঙ্ক আগেই প্রমাণিত)।
+#   ৫টি স্লাইস-জব সমান্তরালে চলে (প্রতিটি নিজের শার্ডই লেখে ⇒ সংঘর্ষ নেই), প্রতি ঘণ্টায়।
 on:
   schedule:
-    - cron: '11 * * * *'        # প্রতি ঘণ্টা — কভারেজ ক্রমাগত পূর্ণ হতে থাকে
+    - cron: '11 * * * *'
   workflow_dispatch:
     inputs:
       want:
         description: 'hosts per unit (1 = HubCloud-first full sweep, 2 = add Pixeldrain mirror)'
         default: '1'
       budget:
-        description: 'seconds of work this run'
+        description: 'seconds of work per job'
         default: '2700'
 permissions:
   contents: write
@@ -19,15 +19,17 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 58
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        slice: [0, 1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: index before
-        run: |
-          node -e "try{const m=require('./dti/manifest.json');console.log('before n='+m.n+' units='+JSON.stringify(m.units))}catch(e){console.log('before: no shards yet')}"
-      - name: build (GitHub-side only)
+      - name: build slice ${{ matrix.slice }} (GitHub-side only)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
@@ -35,8 +37,7 @@ jobs:
           node dt-index3.mjs
           --budget=${{ github.event.inputs.budget || '2700' }}
           --want=${{ github.event.inputs.want || '1' }}
+          --slice=${{ matrix.slice }} --slices=5
           --scan=30 --conc=56 --max=20000 --publish
-      - name: index after
-        run: |
-          node -e "const m=require('./dti/manifest.json');console.log('after n='+m.n+' units='+JSON.stringify(m.units)+' shards='+m.shards)"
-          ls -la dti | head -6
+      - name: after
+        run: node -e "try{const m=require('./dti/manifest.json');console.log('after n='+m.n+' units='+JSON.stringify(m.units))}catch(e){console.log('no manifest in this workspace (slice '+${{ matrix.slice }}+')')}"
