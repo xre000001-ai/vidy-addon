@@ -1,0 +1,26 @@
+name: dt-index
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      max:
+        description: 'max links this run'
+        default: '900'
+permissions:
+  contents: write
+concurrency: dt-index
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: build index
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: node dt-index.mjs --max=${{ github.event.inputs.max || '900' }} --conc=28 --pages=29 --publish
