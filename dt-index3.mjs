@@ -181,8 +181,10 @@ function loadShards() {
   todo.length = 0; todo.push(...mine);
   // ডিটারমিনিস্টিক ক্রম ⇒ রান একই জায়গা থেকে শুরু করে, ক্রমাগত এগোয়
   todo.sort((a, b) => (a.slug === b.slug ? (a.s - b.s) || (a.e - b.e) : a.slug.localeCompare(b.slug)));
-  const haveUnits = totalUnits - todo.length;
-  console.log('[idx] সাইট-ইউনিট =', totalUnits, '| ইনডেক্সে =', haveUnits, '(' + (haveUnits / totalUnits * 100).toFixed(1) + '%)', '| বাকি =', todo.length);
+  // ★ স্লাইস-মোডে কভারেজ-গণনা নিজের ভাগের উপরেই (নাহলে manifest-এ ভুল সংখ্যা ওঠে)
+  const sliceTotal = SLICES > 1 ? cat.reduce((a, r) => a + ((hash(r.slug) % SLICES) === SLICE ? (r.seasons.length ? r.eps : 1) : 0), 0) : totalUnits;
+  const haveUnits = sliceTotal - todo.length;
+  console.log('[idx] সাইট-ইউনিট =', totalUnits, '| এই-স্লাইস =', sliceTotal, '| ইনডেক্সে =', haveUnits, '| বাকি =', todo.length);
   console.log('[idx] budget=' + (BUDGET / 1000) + 's max=' + MAXU + ' scan=' + SCAN + ' unlock-conc=' + CONC + ' want=' + WANT + ' slice=' + SLICE + '/' + SLICES);
 
   let added = 0, tried = 0, noHost = 0, unlockFail = 0, unitsDone = haveUnits;
@@ -256,7 +258,7 @@ function loadShards() {
     }
     const manifest = {
       ver: 3, ts: Date.now(), shards: SHARDS, n,
-      units: { done: unitsDone, total: totalUnits },
+      units: { done: unitsDone, total: totalUnits, slice: SLICE, slices: SLICES, sliceTotal },
       slugs: [...rows.keys()].filter(s => (rows.get(s) || []).some(r => r[2] >= 0)).sort()
     };
     const files = [];
