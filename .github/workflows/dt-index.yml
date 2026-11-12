@@ -7,7 +7,7 @@ on:
     inputs:
       max:
         description: 'max NEW links this run'
-        default: '2200'
+        default: '3200'
       verify:
         description: 'how many existing entries to re-prove'
         default: '600'
@@ -32,7 +32,7 @@ jobs:
         run: >-
           node dt-index.mjs
           --verify=${{ github.event.inputs.verify || '600' }}
-          --max=${{ github.event.inputs.max || '2200' }}
-          --conc=30 --pages=29 --publish
+          --max=${{ github.event.inputs.max || '3200' }}
+          --mode=breadth --per=2 --conc=40 --pages=29 --publish
       - name: index after
         run: node -e "const j=require('./dt_index.json');console.log('after n='+j.n+' cursor='+j.cursor+' pass='+j.pass)"
