@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.148';
+const VERSION = '1.34.149';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -687,7 +687,14 @@ async function mmProbeImg(u) {
 const MM_DIRECT = process.env.MMDIRECT !== '0';
 const MM_DCHK = new Map();      // origin → {ts, ok}
 async function mmDirectOK(u) {
-  return /^https?:\/\//i.test(String(u || '')); // No range probe for player routing.
+  // Known Referer-gated CDN segments must not be sent directly to players
+  // that drop headers on nested requests. Decide without a network probe.
+  try {
+    const x = new URL(String(u || ''));
+    if (!/^https?:$/.test(x.protocol)) return false;
+    if (/(?:^|\.)(?:homechefrecipes\.sbs|contentpublishing\.site)$/i.test(x.hostname) || /\.urlset\//i.test(x.pathname)) return false;
+    return true;
+  } catch { return false; }
   if (!MM_DIRECT) return false;
   let o = ''; try { o = new URL(u).origin; } catch (e) { return false; }
   const c = MM_DCHK.get(o);
@@ -17547,7 +17554,7 @@ const server = http.createServer((req, res) => {
         if (relOn && !isMasterForm) {
           // ★ v1.27.7: প্রথম সেগমেন্ট সত্যিই সরাসরি চলে? ⇒ তাহলে আর রিলে নয়
           const _fseg = (mini.match(/^https?:\/\/\S+$/gm) || []).find(u2 => !/\.m3u8(\?|$)/i.test(u2)) || '';
-          const _direct = !!_fseg && await mmDirectOK(_fseg);
+          const _direct = !rel && !!_fseg && await mmDirectOK(_fseg); // explicit relay takes precedence
           if (_direct) {
             if (process.env.VUQ !== '0') miniOut = String(mini).replace(/^(https?:\/\/\S+)\s*$/gm,
               (m0, uu) => (/\.m3u8(\?|$)/i.test(uu) ? m0 : vuStampLine(uu, origin2)));   // ★ v1.27.9: force-স্ট্যাম্প (হোস্ট ইতিমধ্যেই মাপা)
