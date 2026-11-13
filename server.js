@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.145';
+const VERSION = '1.34.146';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -6525,37 +6525,10 @@ async function mmVidbolt(tmdbId, isSeries, s, e, ms) { // v1.15.28: the vidbolt 
           const h = parseInt(String(sc.quality || ''), 10) || 0;
           const mp4 = String(sc.kind || '').toLowerCase() === 'mp4' || /\.mp4(?:[?#]|$)/i.test(sc.url);
           const lang = String(sc.language || '').trim();
-          // Only parse metadata already in the resolver response; never fetch media here.
-          const embedded = !mp4 && typeof sc.master === 'string' ? sc.master : '';
-          const vars = embedded ? mmVarList(embedded, sc.url) : [];
-          if (vars.length) {
-            push(0, sc.url, VB_REF, 0, lang, '', 0, sc.url); // retain adaptive card
-            const heights = new Set();
-            const tracks = mmAudTracks(embedded).slice(0, MM_MAXLANG);
-            const audioGroupByHeight = new Map();
-            for (const line of embedded.split('\n')) {
-              if (!/^#EXT-X-STREAM-INF:/i.test(line)) continue;
-              const rm = /RESOLUTION=(\d+)x(\d+)/i.exec(line);
-              if (!rm) continue;
-              const h2 = resoRung(rm[1], rm[2]);
-              const group = (/AUDIO="([^"]+)"/i.exec(line) || [])[1] || '';
-              if (!audioGroupByHeight.has(h2)) audioGroupByHeight.set(h2, group);
-            }
-            for (const v of vars) {
-              if (!v.h || v.h < 720 || heights.has(v.h)) continue;
-              heights.add(v.h);
-              // Retain the multi-audio card and add each declared compatible audio track.
-              push(v.h, sc.url, VB_REF, 0, lang, '', 1, sc.url + '|quality:' + v.h);
-              const group = audioGroupByHeight.get(v.h) || '';
-              if (!group) continue; // Do not invent audio associations.
-              for (const track of tracks) {
-                if (group && track.group && track.group !== group) continue;
-                push(v.h, sc.url, VB_REF, 0, track.name || lang, '', 1,
-                  sc.url + '|quality:' + v.h + '|audio:' + track.key,
-                  track.key, mmLangBlob(track));
-              }
-            }
-          } else push(h, sc.url, VB_REF, mp4, lang, '', 0, sc.url);
+          // One card per source: pass the original HLS master intact so the player
+          // can select any audio track it declares. No list-time media requests.
+          const isMaster = !mp4 && typeof sc.master === 'string' && /#EXT-X-STREAM-INF/i.test(sc.master);
+          push(isMaster ? 0 : h, sc.url, VB_REF, mp4, lang, '', 0, sc.url);
         }
         return out;
       } // Do not fetch/probe returned video. // v1.15.99: ৮ → MM_MAXLANG (callisto-তে ১০-১২ ভাষা থাকে)
