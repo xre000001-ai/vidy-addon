@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.144';
+const VERSION = '1.34.145';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -6139,11 +6139,12 @@ function mmAudTracks(pl) {
     const name = String((ln.match(/NAME="([^"]+)"/i) || [])[1] || lang || 'Audio').replace(/^\s*[\[(]?\d+[\]).]?\s*/, '').trim(); // v1.15.88: "[2] Czech" ও "2. Czech" দুটোই → "Czech"
     const uri = (ln.match(/URI="([^"]+)"/i) || [])[1] || '';
     const def = /DEFAULT=YES/i.test(ln);
+    const group = (ln.match(/GROUP-ID="([^"]+)"/i) || [])[1] || '';
     if (!uri) continue;
     const key = (lang || name).toLowerCase();
     const prev = out.find(x => x.key === key);
     if (prev) { if (!prev.altUri && uri !== prev.uri) prev.altUri = uri; continue; } // v1.15.99: বিকল্প ট্র্যাক URI সংরক্ষণ (যেমন track_spanish2.m3u8)
-    out.push({ key: key, lang: (lang || name), name: name, uri: uri, def: def });
+    out.push({ key: key, lang: (lang || name), name: name, uri: uri, def: def, group: group });
   }
   return out;
 }
@@ -6530,11 +6531,29 @@ async function mmVidbolt(tmdbId, isSeries, s, e, ms) { // v1.15.28: the vidbolt 
           if (vars.length) {
             push(0, sc.url, VB_REF, 0, lang, '', 0, sc.url); // retain adaptive card
             const heights = new Set();
+            const tracks = mmAudTracks(embedded).slice(0, MM_MAXLANG);
+            const audioGroupByHeight = new Map();
+            for (const line of embedded.split('\n')) {
+              if (!/^#EXT-X-STREAM-INF:/i.test(line)) continue;
+              const rm = /RESOLUTION=(\d+)x(\d+)/i.exec(line);
+              if (!rm) continue;
+              const h2 = resoRung(rm[1], rm[2]);
+              const group = (/AUDIO="([^"]+)"/i.exec(line) || [])[1] || '';
+              if (!audioGroupByHeight.has(h2)) audioGroupByHeight.set(h2, group);
+            }
             for (const v of vars) {
               if (!v.h || v.h < 720 || heights.has(v.h)) continue;
               heights.add(v.h);
-              // Mini playlist is constructed only when the user selects this card.
+              // Retain the multi-audio card and add each declared compatible audio track.
               push(v.h, sc.url, VB_REF, 0, lang, '', 1, sc.url + '|quality:' + v.h);
+              const group = audioGroupByHeight.get(v.h) || '';
+              if (!group) continue; // Do not invent audio associations.
+              for (const track of tracks) {
+                if (group && track.group && track.group !== group) continue;
+                push(v.h, sc.url, VB_REF, 0, track.name || lang, '', 1,
+                  sc.url + '|quality:' + v.h + '|audio:' + track.key,
+                  track.key, mmLangBlob(track));
+              }
             }
           } else push(h, sc.url, VB_REF, mp4, lang, '', 0, sc.url);
         }
@@ -14580,6 +14599,7 @@ async function withSources(cardsP, srcs, cfg, t0, mkey, lookupP) {
     cardsP.catch(e => { if (DBG) console.error('[srcdbg] cardsP died: ' + String(e && e.message || e).slice(0, 90)); return []; }),
     new Promise(r => setTimeout(() => r([]), cLeft))
   ]);
+  try { diag('vidy', 'foreground n=' + (cards || []).length + ' elapsed=' + (Date.now() - t0) + 'ms'); } catch (_) {}
   if (DBG) console.error('[srcdbg] vidy-cards settled @' + (Date.now() - t0) + 'ms n=' + (cards || []).length);
   if (!live.length) { if (_watch) clearInterval(_watch); return cards; } // সব-বন্ধ → শূন্য-অপেক্ষা
   try {
@@ -15011,7 +15031,7 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
     //   কারণ vidy-কার্ড শেষ হওয়ার জন্য অপেক্ষা করত)। এখন vidy-ধাপের **কঠিন কাট VPICK=4.5সে**:
     //   যা এসেছে তাই নিয়ে উত্তর; বাকি সার্ভারগুলো পেছনে শেষ হয়ে **মাইক্রো-ক্যাশ (৬০সে) ও ৩০মিন-ক্যাশ** ভরে
     //   ⇒ পরের ট্যাপে ওগুলো সঙ্গে সঙ্গে আসে। মানে "প্রথম ট্যাপ ৫–৬সে, রিফ্রেশ ০.২সে, সার্ভার বাড়তেই থাকে"।
-    const VPICK = Number(process.env.VPICK || 9000); // v1.23.0 (ইউজার: beshi somoy dao) — দেরিতে-আসা সোর্সও কার্ড দেবে // ★ v1.22.0: ৬.৮সে — vidy ৪.২-৪.৫সে-তেই শেষ, বাকি সোর্স (m4u/sky/hm) ৫-৬.৪সে-তে আসে; এখন তারা সত্যিই কার্ড দেয়
+    const VPICK = Number(process.env.VPICK || 6800); // v1.23.0 (ইউজার: beshi somoy dao) — দেরিতে-আসা সোর্সও কার্ড দেবে // ★ v1.22.0: ৬.৮সে — vidy ৪.২-৪.৫সে-তেই শেষ, বাকি সোর্স (m4u/sky/hm) ৫-৬.৪সে-তে আসে; এখন তারা সত্যিই কার্ড দেয়
     const part = [];
     const allP = Promise.all(allow.map(s2 => budget(s2).then(r => { part.push(r); return r; })));
     const picked = await Promise.race([allP, new Promise(r => setTimeout(() => r(null), VPICK))]);
@@ -15030,8 +15050,8 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
     //   পুনঃচেষ্টাও নিরাপদ: নোড বদলে যায়, একই নোড পোড়ে না)।
     try {
       const gMiss = picked === null ? [] : rs.filter(r => GIANT.indexOf(r.srv) >= 0 && !r.ok).map(r => r.srv);
-      if (gMiss.length && Date.now() - t0 < Number(process.env.VGRETRY || 7500)) { // ★ v1.20.2 + v1.34.119: dhiro wave-eo (atlanta allfail ~6.7s) rakha-server retry pabe
-        const leftMs = Math.max(700, Math.min(2200, Number(process.env.VPICK || 9000) - (Date.now() - t0)));
+      if (gMiss.length && Date.now() - t0 < Number(process.env.VGRETRY || 4800)) { // ★ v1.20.2 + v1.34.119: dhiro wave-eo (atlanta allfail ~6.7s) rakha-server retry pabe
+        const leftMs = Math.max(700, Math.min(1200, Number(process.env.VPICK || 6800) - (Date.now() - t0)));
         if (DBG) console.error('[giant] পুনঃচেষ্টা ' + gMiss.join(',') + ' @' + (Date.now() - t0) + 'ms');
         const again = await Promise.race([
           Promise.all(gMiss.map(s2 => budget(s2))),
@@ -15042,7 +15062,8 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
     } catch (eG) { }
     if (picked !== null && !rs.some(r => r.ok) && Date.now() - t0 < 3600) { // gate 3.4s (নতুন-বাজেটে-সমন্বয়): দ্রুত-সর্বব্যর্থতায়-রিট্রাই-এখনো-৯.৮সে-সীমার-ভেতরে-শেষ-হয়
       await new Promise(r2 => setTimeout(r2, 800)); force = true;
-      rs = rs.concat(await Promise.all(allow.map(srv => budget(srv)))); // v1.15.10: পূর্ণ-পুনরুদ্ধার-ঢেউ-ফিরল (v1.15.9-ফিল্টার-ঠান্ডা-জানালার-কার্ড-উদ্ধার-ভাঙছিল — ইউজার-রিপোর্ট-অনুযায়ী-ফিরেছে)
+      const retry = await Promise.race([Promise.all(allow.map(srv => budget(srv))), new Promise(r => setTimeout(() => r([]), 1200))]);
+      rs = rs.concat(retry); // v1.15.10: পূর্ণ-পুনরুদ্ধার-ঢেউ-ফিরল (v1.15.9-ফিল্টার-ঠান্ডা-জানালার-কার্ড-উদ্ধার-ভাঙছিল — ইউজার-রিপোর্ট-অনুযায়ী-ফিরেছে)
     }
     rs.forEach(absorb);
     // v1.11.5: এপি-মেটা (বছর+টাইটেল) এসে-গেলে-কার্ডে-বসাও — সর্বোচ্চ ১.৮সে-অপেক্ষা (স্ক্যান-চলার-সময়েই-সাধারণত-আসে):
@@ -15111,6 +15132,7 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
       try { PART_WHY.vymiss = (PART_WHY.vymiss || 0) + 1; } catch (eP) { }
       if (DBG) console.error('[partial] বাদ-পড়া vidy-সার্ভার: [' + _miss.join(',') + '] চলমান=' + _pend + ' → ক্যাশে যাবে না');
     }
+    try { diag('vidy', 'resolver n=' + out.length + ' elapsed=' + (Date.now() - t0) + 'ms servers=' + rs.filter(r => r.ok).length + '/' + allow.length); } catch (_) {}
     if (DBG) console.error('[getsrc] returning @' + (Date.now() - t0) + 'ms n=' + out.length);
     if (!out.length && lastErr) throw lastErr;
     return out;
