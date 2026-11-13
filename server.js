@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.146';
+const VERSION = '1.34.147';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -475,6 +475,8 @@ function mmPickVar(pl, base, wantH) { // the wanted variant's URI (resolution ma
 // মাস্টারের অডিও-ট্র্যাক-তালিকায় ভাষার ক্রমিক নম্বর N বের করে ভ্যারিয়েন্টের "-a1" কে "-aN"-এ বদল করা হয়।
 function mmAudIdx(pl, alang) { // v1.15.97: মাস্টারে কাঙ্ক্ষিত ভাষার ১-ভিত্তিক ক্রমিক (না পেলে 0)
   if (!alang) return 0;
+  const indexed = /^@track(\d+)$/.exec(String(alang));
+  if (indexed) return Number(indexed[1]);
   try {
     const trks = mmAudTracks(pl) || [];
     const want = String(alang).toLowerCase();
@@ -6471,6 +6473,8 @@ async function mmTrkProbe(u, ref, ms) {
 function mmPinAud(tags, alang) {
   if (!alang) return tags;
   const want = String(alang).toLowerCase();
+  const indexed = /^@track(\d+)$/.exec(want);
+  let trackNumber = 0;
   const kept = [];
   for (const tg of tags) {
     if (!/TYPE=AUDIO/i.test(tg)) { kept.push(tg); continue; } // অডিও-নয় (subs/key/map) — অক্ষত
@@ -6478,7 +6482,8 @@ function mmPinAud(tags, alang) {
     const nmRaw = ((tg.match(/NAME="([^"]+)"/i) || [])[1] || '');
     const nm = nmRaw.toLowerCase();
     const nmClean = nmRaw.replace(/^\s*[\[(]?\d+[\]).]?\s*/, '').trim().toLowerCase();
-    if (lg !== want && nm !== want && nmClean !== want) continue; // অন্য ভাষা → বাদ
+    if (/URI="[^"]+"/i.test(tg)) trackNumber++;
+    if (indexed ? trackNumber !== Number(indexed[1]) || !/URI="[^"]+"/i.test(tg) : (lg !== want && nm !== want && nmClean !== want)) continue; // pin one declared track
     kept.push(tg.replace(/DEFAULT=NO/i, 'DEFAULT=YES').replace(/AUTOSELECT=NO/i, 'AUTOSELECT=YES')
       + (/DEFAULT=/i.test(tg) ? '' : ',DEFAULT=YES'));
   }
@@ -6508,6 +6513,34 @@ async function woSubs(tmdb, type, s, e, ms) { // sub/tv/{id}/{s}/{e}/subtitles.j
     return Object.keys(subs).slice(0, 8).map(k => ({ url: String(subs[k]), lang: WO_LANGS[String(k).toLowerCase()] || String(k).toUpperCase() })).filter(x => /^https?:/.test(x.url));
   } catch { return []; }
 }
+// Split only declared master metadata. No per-track or video liveness probing.
+function mmExpandMaster(raw, url, ref, vbq) {
+  const tracks = []; let ordinal = 0;
+  for (const line of String(raw || '').split('\n')) {
+    if (!/^#EXT-X-MEDIA:TYPE=AUDIO/i.test(line)) continue;
+    if (!/URI="[^"]+"/i.test(line)) continue;
+    ordinal++;
+    const attr = k => (line.match(new RegExp(k + '="([^"]+)"', 'i')) || [])[1] || '';
+    const name = attr('NAME') || attr('LANGUAGE') || 'Audio ' + ordinal;
+    const clean = name.replace(/^\s*[\[(]?\d+[\]).]?\s*/, '').trim();
+    tracks.push({ selector: '@track' + ordinal, name: clean || name, lang: attr('LANGUAGE'), group: attr('GROUP-ID'), ordinal });
+  }
+  const vars = []; const seen = new Set();
+  for (const line of String(raw || '').split('\n')) {
+    if (!/^#EXT-X-STREAM-INF:/i.test(line)) continue;
+    const rm = /RESOLUTION=(\d+)x(\d+)/i.exec(line); if (!rm) continue;
+    const height = resoRung(rm[1], rm[2]);
+    const group = (/AUDIO="([^"]+)"/i.exec(line) || [])[1] || '';
+    if (height < 720 || !group) continue;
+    for (const t of tracks) {
+      if (t.group !== group) continue;
+      const key = height + '|' + t.selector; if (seen.has(key)) continue; seen.add(key);
+      const duplicate = tracks.filter(x => x.group === group && x.name.toLowerCase() === t.name.toLowerCase()).length > 1;
+      vars.push({h: height, url, ref, mp4: 0, lang: t.name + (duplicate ? ' #' + t.ordinal : ''), aud: '', mini: 1, vbq: vbq || '', alang: t.selector, _lang: [t.lang, t.name, MM_LNAME[t.lang] || ''].join(' ')});
+    }
+  }
+  return vars;
+}
 async function mmVidbolt(tmdbId, isSeries, s, e, ms) { // v1.15.28: the vidbolt resolve chain — mp4 direct cards + hls-bridge variants (audio-group masters stay whole)
   const vT0 = Date.now(); const vLeft = cap => Math.max(350, Math.min(cap, (ms || 6500) - (Date.now() - vT0)));
   try {
@@ -6520,7 +6553,13 @@ async function mmVidbolt(tmdbId, isSeries, s, e, ms) { // v1.15.28: the vidbolt 
       try { j = jtxt ? JSON.parse(jtxt) : null; } catch { }
       const srcs = (j && j.stream && Array.isArray(j.stream.sources) ? j.stream.sources : []).slice(0, MM_MAXLANG);
       if (srcs.length) {
-        for (const sc of srcs) {
+        // Language-labelled bridge sources often omit embedded metadata. Read their
+        // master playlists concurrently so their actual quality variants survive.
+        const bridgeMasters = await Promise.all(srcs.map(async sc => {
+          if (!sc || sc.master || String(sc.kind || '').toLowerCase() === 'mp4' || !/dash-hls-bridge\./i.test(String(sc.url || ''))) return '';
+          try { return await mmPoolText(sc.url, Math.min(2200, vLeft(2200))) || ''; } catch (_) { return ''; }
+        }));
+        for (const [scIndex, sc] of srcs.entries()) {
           if (!sc || !/^https?:\/\//i.test(String(sc.url || ''))) continue;
           const h = parseInt(String(sc.quality || ''), 10) || 0;
           const mp4 = String(sc.kind || '').toLowerCase() === 'mp4' || /\.mp4(?:[?#]|$)/i.test(sc.url);
@@ -6529,6 +6568,15 @@ async function mmVidbolt(tmdbId, isSeries, s, e, ms) { // v1.15.28: the vidbolt 
           // can select any audio track it declares. No list-time media requests.
           const isMaster = !mp4 && typeof sc.master === 'string' && /#EXT-X-STREAM-INF/i.test(sc.master);
           push(isMaster ? 0 : h, sc.url, VB_REF, mp4, lang, '', 0, sc.url);
+          const masterText = isMaster ? sc.master : bridgeMasters[scIndex];
+          if (masterText && /#EXT-X-STREAM-INF/i.test(masterText)) {
+            for (const v of mmExpandMaster(masterText, sc.url, VB_REF, q)) {
+              // A bridge's generic "Audio" name refers to its labelled source.
+              if (lang && /^audio$/i.test(v.lang)) { v.lang = lang; v._lang = lang; }
+              const k = sc.url + '|' + v.h + '|' + v.alang;
+              if (!oseen.has(k)) { oseen.add(k); out.push(v); }
+            }
+          }
         }
         return out;
       } // Do not fetch/probe returned video. // v1.15.99: ৮ → MM_MAXLANG (callisto-তে ১০-১২ ভাষা থাকে)
@@ -7152,10 +7200,21 @@ async function mmStreams(tmdbId, title, type, s, e, origin, maxh, rel) { // v1.1
     const seen = new Set();
     const raws = servers.map(url => ({ h: 0, url, ref: WO_REF, mp4: 0, lang: '', aud: '', mini: 0 }));
     for (const x of raws) seen.add(x.url + '|0|');
+    // Read index master only to enumerate its declared tracks; preserve the original
+    // card on timeout/failure and never treat an addon-IP failure as dead content.
+    const indexMasters = await Promise.all(servers.map(u => woFetch(u, Math.min(2200, left())).then(r => r && r.ok ? r.text() : '').catch(() => '')));
+    for (let i = 0; i < servers.length; i++) {
+      const body = indexMasters[i] || '';
+      if (body.indexOf('#EXTM3U') < 0) continue;
+      for (const v of mmExpandMaster(body, servers[i], WO_REF, '')) {
+        const k = v.url + '|' + v.h + 'm|' + v.alang;
+        if (!seen.has(k)) { seen.add(k); raws.push(v); }
+      }
+    }
     try { const vbl = await vbP; for (const v of (vbl || [])) { if (!v || !v.url) continue; const vk2 = v.url + '|' + (v.h | 0) + (v.mini ? 'm' : '') + '|' + (v.alang || ''); if (seen.has(vk2)) continue; seen.add(vk2); raws.push(v); } } catch { } // vidbolt merge — dedup per url+height so per-quality minis all survive
     if (DBG) console.error('[mm] ' + tmdbId + '/' + (isSeries ? 'S' + (s || 1) + 'E' + (e || 1) : 'movie') + ' servers=' + servers.length + ' variants=' + raws.length + ' @' + (Date.now() - t3) + 'ms');
     const fvars = maxh ? raws.filter(x => !x.h || x.h <= maxh) : raws; // v1.15.39: config-রেজোলিউশন-ফিল্টার — অজানা-উচ্চতা (0) সবসময়-থাকে
-    const vars = fvars.slice().sort((a, b) => b.h - a.h).slice(0, 60); // v1.15.51: 12→16 // v1.15.88: 16→20 (কোয়ালিটি×ভাষা মেট্রিক্স — ১৬-এ ৪৮০p-সারি কেটে যেত) // v1.15.91: ২০ → ৬০ (১৩ ভাষা × ৩-৪ কোয়ালিটি = ৩৯-৫২ কার্ড ধরা পড়ুক)
+    const vars = fvars.slice().sort((a, b) => b.h - a.h); // v1.15.51: 12→16 // v1.15.88: 16→20 (কোয়ালিটি×ভাষা মেট্রিক্স — ১৬-এ ৪৮০p-সারি কেটে যেত) // v1.15.91: ২০ → ৬০ (১৩ ভাষা × ৩-৪ কোয়ালিটি = ৩৯-৫২ কার্ড ধরা পড়ুক)
     if (!vars.length) return [];
     const subs = await subsP;
     const T = String(title || 'Multimovies');
@@ -17350,7 +17409,9 @@ const server = http.createServer((req, res) => {
           const audN = mmAudIdx(raw, ent.alang);
           let usedLangVar = false;
           // v1.15.90+97: ভাষা-মেলানো মাক্সড ভ্যারিয়েন্ট (-aN) থাকলে সেটিই ব্যবহার; ৪০৪ হলে '__404__' নেগেটিভ-ক্যাশ
-          if (ent.alang && top && audN > 1 && /-a1\.(m3u8|txt)/i.test(top)) {
+          const muxIndex = top && /-a(\d+)\.(?:m3u8|txt)(?:[?#]|$)/i.exec(top);
+          if (ent.alang && muxIndex && audN === Number(muxIndex[1])) usedLangVar = true;
+          if (ent.alang && top && audN > 0 && muxIndex && audN !== Number(muxIndex[1])) {
             const tL = mmPickVarLang(raw, ent.m, ent.h, ent.alang);
             if (tL) {
               try {
@@ -17377,7 +17438,7 @@ const server = http.createServer((req, res) => {
             }
             const hasExtAudUri = /#EXT-X-MEDIA:[^\n]*TYPE=AUDIO[^\n]*URI="/i.test(raw);
             const isMuxedCand = /-a\d+\.(m3u8|txt)/i.test(top || '');
-            const knownExtAud = (audN > 1 && !usedLangVar) || MM_MUX.get(top) === 0 || (hasExtAudUri && !!ent.alang && !isMuxedCand);
+            const knownExtAud = (!!ent.alang && audN > 0 && !usedLangVar && !!muxIndex) || (audN > 1 && !usedLangVar) || MM_MUX.get(top) === 0 || (hasExtAudUri && !!ent.alang && !isMuxedCand);
             // v1.15.99: যখন বাহ্যিক অডিও নিশ্চিত (যেমন rousav-এর Greek/Spanish/German বা contentpublishing-এর ২য়+ ভাষা),
             // তখন vbest ও mmVarProbe-এর জন্য ২–৫ সেকেন্ড অপেক্ষা না করে তাৎক্ষণিক (~১ms) mmMasterForm রিটার্ন + পটভূমিতে উভয় প্লেলিস্ট ও সেগমেন্ট প্রি-ওয়ার্ম!
             if (knownExtAud) {
