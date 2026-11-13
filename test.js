@@ -11,7 +11,7 @@ const skip = label => console.log('   ~ SKIP ' + label + ' (coverage oscillates 
 const b64u = o => Buffer.from(JSON.stringify(o)).toString('base64url');
 const cfgUrl = (c, path) => BASE + (Object.keys(c || {}).length ? '/cfg/' + b64u(c) : '') + path;
 const NAME_RE = /^\u25a5 (Auto|\d{3,4}) \u25a5$/;
-const SERVER_WORDS = ['miami', 'boise', 'atlanta', 'phoenix', 'dallas', 'austin', 'seattle', 'delhi', 'munich', 'paris', 'orlando', 'reno', 'oakland', 'vegas', 'cancun', 'tampa'];
+const SERVER_WORDS = ['miami', 'boise', 'atlanta', 'phoenix', 'dallas', 'austin', 'seattle', 'delhi', 'munich', 'paris', 'orlando', 'reno', 'oakland', 'vegas', 'cancun', 'tampa', 'nashville', 'chicago'];
 const audioOf = c => { // ★ v1.27.11: টেইল-লাইনে-ভুল না পড়তে \u2318 লাইনটাই খুঁজি; "\u2022 সার্ভার" লেজ বাদ
   const L = String(c.description || '').split('\n');
   const ln = L.find(x => (x || '').trim().charAt(0) === '\u2318') || L.pop() || '';
@@ -22,7 +22,8 @@ const slotOf = c => { // ★ v1.27.11: সোর্স-লাইন এখন " 
   const m = /\u2318 (.+?)(?: \u2317 | \u2022 |$)/.exec(ln); return m ? m[1].trim() : ''; };
 const rows = [];
 
-const v0len = s => s.filter(c => SERVER_WORDS.includes(slotOf(c).toLowerCase())).length === 0;
+const srvOf = c => { const L = String(c.description || '').split('\n'); const ln = (L.find(x => (x || '').trim().charAt(0) === '\u2318') || '').trim(); return ln.includes('\u2022') ? ln.split('\u2022').pop().trim().toLowerCase() : ''; }; // v1.34.106: সার্ভার এখন লেজে ('• Miami')
+const v0len = s => s.filter(c => slotOf(c) === 'Vidy').length === 0;
 async function tap(label, url, checks) {
   const t0 = Date.now();
   let j = null, err = null;
@@ -30,7 +31,7 @@ async function tap(label, url, checks) {
   const ms = Date.now() - t0;
   const s = (j && j.streams) || [];
   const mb = s.filter(c => slotOf(c) === 'MovieBox');
-  const v = s.filter(c => SERVER_WORDS.includes(slotOf(c).toLowerCase())); // v1.15.70: vidy = সার্ভার-নাম-স্লট (Arctic/ToonWorld/Movies4u/RareToons-স্লট-বাদ)
+  const v = s.filter(c => slotOf(c) === 'Vidy'); // v1.34.106: বর্তমান ছাঁচে স্লট='Vidy' (আগে সার্ভার-নাম-স্লট ছিল — stale হয়ে vidy=0 দেখাত)
   console.log('\n\u00b7 ' + label + '  \u2014  ' + ms + 'ms, ' + s.length + ' cards (vidy ' + v.length + ' / moviebox ' + mb.length + ')');
   rows.push([label, ms, s.length]);
   ok(!err, 'http ok' + (err ? ' (' + err.message + ')' : ''));
@@ -82,12 +83,12 @@ async function tap(label, url, checks) {
 
   // ── 1) English movie: resolution resolved (no Auto), audio = English, MB original present ──
   await tap('movie tt0468569 DarkKnight (en)', BASE + '/stream/movie/tt0468569.json', (s, mb, v) => {
-    ok(!v.some(c => c.name === '\u25a5 Auto \u25a5' && slotOf(c).toLowerCase() === 'dallas'), 'Dallas: BANDWIDTH resolved (no Auto)');
+    ok(!v.some(c => c.name === '\u25a5 Auto \u25a5' && srvOf(c) === 'dallas'), 'Dallas: BANDWIDTH resolved (no Auto)');
     ok(v.filter(c => c.name === '\u25a5 Auto \u25a5').length <= 1, 'Auto only if probe geo-blocked (\u22641)');
     ok(v.length && v.every(c => audioOf(c) === 'English'), 'vidy audio = English');
-    ok(v.length && v.every(c => SERVER_WORDS.includes(slotOf(c).toLowerCase())), 'vidy slots = server names');
+    ok(v.length && v.every(c => !srvOf(c) || SERVER_WORDS.includes(srvOf(c))), 'vidy servers = known names');
     ok(mb.length === 0 || mb.some(c => audioOf(c) === 'English'), 'moviebox: original audio present (English)');
-    ok(s.every(c => !c.bingeGroup || /^(mbxr|mm|tw|rt|m4u|peng|sky|vsp|ott|az|hd|mlb)\|/.test(String(c.bingeGroup))), 'bingeGroup: known-source prefix'); // v1.15.71: vsp=Vidsrc; v1.15.72: ott=AsianTV; v1.15.76: az=AniZone; v1.26.6: hd=HDHub4u
+    ok(s.every(c => !c.bingeGroup || /^(mbxr|mm|tw|rt|dtd|dt|m4u|peng|sky|vsp|ott|az|hd|mlb|mls|hm)\|/.test(String(c.bingeGroup))), 'bingeGroup: known-source prefix'); // v1.15.71: vsp=Vidsrc; v1.15.72: ott=AsianTV; v1.15.76: az=AniZone; v1.26.6: hd=HDHub4u
     ok(mb.length === 0 || mb.every(c => c.bingeGroup && String(c.bingeGroup).indexOf('mbxr|') === 0), 'moviebox cards carry bingeGroup');
     ok(s.every(c => !c.behaviorHints || typeof c.behaviorHints === 'object'), 'behaviorHints sane');
     ok(v.every(c => !Array.isArray(c.subtitles) || c.subtitles.every(u2 => u2 && typeof u2.url === 'string')), 'vidy cards: subs shape sane (embedded subs retired — /subtitles resource serves them)');
@@ -192,7 +193,7 @@ async function tap(label, url, checks) {
     if (!az.length) return skip('AniZone: no cards this run (pool/site)'); // ভাণ্ডার-ঝুঁকি — কাঠামো-টেস্ট-কার্ড-থাকলেই
     ok(az.length === 1, 'AniZone: ১-কার্ড (single master)');
     ok(az.every(c => /^https?:\/\//.test(String(c.url || '')) && String(c.url).indexOf('/vsp/') < 0), 'AniZone url = সরাসরি-m3u8 (vid-cdn, রিলে-নয়)');
-    ok(az.every(c => audioOf(c) === 'Subbed'), 'AniZone audio = Subbed');
+    ok(az.every(c => audioOf(c) === 'Japanese'), 'AniZone audio = Japanese'); // v1.34.106: লেবেল এখন আসল ভাষা (আগে 'Subbed')
     ok(az.every(c => !c.bingeGroup || String(c.bingeGroup).indexOf('az|') === 0), 'AniZone bingeGroup az|');
     ok(/^\u25a5 (\d{3,4}) \u25a5$/.test(String(az[0].name || '')), 'AniZone quality sane (' + String(az[0].name).replace(/\D/g, '') + 'p)'); // কার্ড-শেপার-quality-ছাঁটে — name-ই-সত্য
   });
@@ -243,6 +244,11 @@ async function tap(label, url, checks) {
   // ── safety-net: series without s:e → S1E1 ──
   await tap('series tt0903747 (no s:e safety-net)', BASE + '/stream/series/tt0903747.json', (s) => {
     ok(s.length === 0 || s.every(c => /\u23e3 S1E1/.test(c.description)), 'defaults to S1E1');
+  });
+
+  // ── regression v1.34.124: tmdb-native movie route must not die on undeclared infoP ──
+  await tap('movie tmdb155 (tmdb-native route alive)', BASE + '/stream/movie/tmdb155.json', (s) => {
+    ok(s.length > 0, 'tmdb-movie route returns cards (was ReferenceError → always empty)');
   });
 
   // ── summary ──

@@ -28,7 +28,12 @@ import { SITE, UA } from './upstream.js';
 const SRCS = ['https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&proxy_format=protocolipport&format=text',
               'https://raw.githubusercontent.com/TheSpeedX/PROXY-LIST/master/http.txt',
               'https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt',
-              'https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/protocols/http/data.txt']; // proxifly: পৃথক-http-মডিউল, প্রতি-৫মিনিটে-যাচাইকৃত (ইউজার-প্রস্তাব)
+              'https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/protocols/http/data.txt', // proxifly
+              'https://raw.githubusercontent.com/proxmint/free-proxy-list/main/proxies/http.txt',
+              'https://raw.githubusercontent.com/zloi-user/hideip.me/main/http.txt', // v1.34.68: parent-enrich-e mapa sera list (ip:port format)
+              'https://raw.githubusercontent.com/jetkai/proxy-list/main/online-proxies/txt/proxies-http.txt',
+              'https://raw.githubusercontent.com/sunny9577/proxy-scraper/master/proxies.txt',
+              'https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt']; // v1.34.127: aro 3ti jachai-kora (~4200 line) utso — bench-space
 const BENCH_MAX = Math.max(32, Number(process.env.NX_BENCH_MAX || 0) || 128); // v1.17.31: env-টিউনেবল (অ্যাডন ১৬০ পাঠায়)             // v2.10.4 (ইউজার): ক্যাপ-ডাবল ৬৪→১২৮             // r-20261016m (ইউজার: 'ম্যাক্স-পর্যন্ত'): বেঞ্চ-ক্যাপ ৩২→৬৪ — ঝড়ে-অর্ধেক-মরলেও-৩২-থাকে
 const SAMPLE = Math.max(100, Number(process.env.NX_SAMPLE || 0) || 400);               // candidates probed per pass (২০০→৪০০)
 const BOOT_TARGET = Math.max(24, Number(process.env.NX_BOOT_TARGET || 0) || 96);           // v2.10.4 (ইউজার): বুট-টার্গেট-ডাবল ৪৮→৯৬           // boot stops once this many exits are in (২৮→৪৮)
@@ -42,7 +47,12 @@ let FETCHING = false;
 
 function agentFor(u) {
   let a = AGENTS.get(u);
-  if (!a) { a = new ProxyAgent(u); AGENTS.set(u, a); }
+  if (!a) {
+    // v1.34.127: AGENTS age chirokal barto (proti candidate-er agent rekhe jeto) —
+    // bench-er baire thaka agent chhete feli, naile boro bench-e memory fule othe
+    if (AGENTS.size > 2400) { for (const k of [...AGENTS.keys()]) if (!POOL.includes(k)) AGENTS.delete(k); }
+    a = new ProxyAgent(u); AGENTS.set(u, a);
+  }
   return a;
 }
 
@@ -76,7 +86,7 @@ function noteFail(u, kind) {
   const s = STATS.get(u) || { ok: 0, fail: 0, lat: null };
   s.fail += 1;
   STATS.set(u, s);
-  BAD.set(u, Date.now() + (kind === 'block' ? 300000 : 180000)); // r-20261016a: 403→৫মিন (২০মিন-ছিল), মৃত→৩মিন — কঠোর-বেঞ্চে-MovieBox-না-খেতেই-বসে-থাকত
+  BAD.set(u, Date.now() + (kind === 'block' ? 300000 : 90000)); // r-20261016a: 403→৫মিন (২০মিন-ছিল) // v1.34.127: মৃত→৯০সে — flaky-member দ্রুত ফেরে, বেঞ্চ-খরা কমে (block আগের মতোই ৫মিন)
 }
 
 export function pick(exclude) {
@@ -96,7 +106,14 @@ export function pick(exclude) {
       const b = BAD.get(u);
       if (!b || b <= now) return u;               // least-evil fallback
     }
-    return null;
+    // v1.34.70: sobai banned hole pool-cold noy — jar ban sobcheye age uthbe takei dao (ekbar holei bojha jabe asolei mora kina)
+    let best = null, bestB = Infinity;
+    for (const u of POOL) {
+      if (exclude && exclude.has(u)) continue;
+      const b = BAD.get(u) || 0;
+      if (b < bestB) { bestB = b; best = u; }
+    }
+    return best;
   }
   el.sort((a, b) => a.ew - b.ew);                 // TRAINED: fastest first
   const top = el.slice(0, 4);
@@ -248,7 +265,7 @@ async function probe(u) {
       SITE + '/wefeed-h5api-bff/subject/search-suggest',
       { method: 'POST', body: JSON.stringify({ keyword: 'a', perPage: 1 }),
         headers: { 'Content-Type': 'application/json', 'User-Agent': UA },
-        dispatcher: agentFor(u), signal: AbortSignal.timeout(3500) }); // v1.17.38: ৫→৩.৫সে (মৃত-দ্রুত-ছেঁটা ⇒ প্রতি-মিনিটে বেশি প্রার্থী)
+        dispatcher: agentFor(u), signal: AbortSignal.timeout(3000) }); // v1.17.38: ৫→৩.৫সে // v1.34.127: ৩সে — funnel আরও দ্রুত
     return r.status < 400 ? [Date.now() - t0, u] : null;
   } catch { return null; }
 }
@@ -266,7 +283,7 @@ async function searchVerify(u) {
       { method: 'POST', body: JSON.stringify({ keyword: 'a', perPage: 1 }),
         headers: { 'Content-Type': 'application/json', 'User-Agent': UA,
                    'X-Client-Token': ct },
-        dispatcher: agentFor(u), signal: AbortSignal.timeout(4000) }); // v1.17.38: ৬→৪সে
+        dispatcher: agentFor(u), signal: AbortSignal.timeout(3000) }); // v1.17.38: ৬→৪সে // v1.34.127: ৩সে
     const xu = r0.headers.get('x-user') || '';
     const tok = (JSON.parse(xu || '{}').token) || '';
     if (!tok) return false;
@@ -280,7 +297,7 @@ async function searchVerify(u) {
                    Referer: SITE + '/', Accept: 'application/json',
                    'X-Client-Info': '{"timezone":"Africa/Lagos"}',
                    'X-Request-Lang': 'en', 'X-Source': 'h5' },
-        dispatcher: agentFor(u), signal: AbortSignal.timeout(5000) }); // v1.17.38: ৭→৫সে
+        dispatcher: agentFor(u), signal: AbortSignal.timeout(4000) }); // v1.17.38: ৭→৫সে // v1.34.127: ৪সে
     const j = await r1.json().catch(() => null);
     return ((j?.data?.items || []).length) >= 1;
   } catch { return false; }
@@ -288,7 +305,7 @@ async function searchVerify(u) {
 
 export async function poolOnce(force = false) {
   if (force) POOL.__passes = 1;                     // boot/fresh-wave
-  if (!force && Date.now() - TS < 90000) return;   // r-20261016a: ১.৫-মিনিট-পুনঃযাচাই (ইউজার-নির্দেশ — fastest-alive bench সতেজ)
+  if (!force && Date.now() - TS < (POOL.length >= 8 ? 240000 : 90000)) return; // v1.34.68: bench sustho (>=8) hole pass 4min-antor — odhora lokkheye jalani na
   if (FETCHING) return;
   FETCHING = true;
   TS = Date.now();
@@ -310,7 +327,7 @@ export async function poolOnce(force = false) {
     let freshCand = [];
     if (POOL.length < BOOT_TARGET) {
       const txts = await Promise.all(SRCS.map(u => undiciFetch(u, { signal: AbortSignal.timeout(20000) }).then(r => r.text()).catch(() => '')));
-      freshCand = [...new Set(txts.join('\n').split('\n').map(x => x.trim()).filter(u => u.startsWith('http://')))];
+      freshCand = [...new Set(txts.join('\n').split('\n').map(x => x.trim()).map(u => /^\d{1,3}(?:\.\d{1,3}){3}:\d{2,5}$/.test(u) ? 'http://' + u : u).filter(u => u.startsWith('http://')))]; // v1.34.68: ip:port list-o grohon
       const have = new Set(seedCand);
       freshCand = freshCand.filter(u => !have.has(u));
       freshCand.sort(() => Math.random() - 0.5);
@@ -323,17 +340,18 @@ export async function poolOnce(force = false) {
     // ★ v1.17.36: **বীজ-আগে** — seeded (আমাদের-প্রমাণিত) exit-গুলো সরাসরি token-যাচাই দিয়ে
     //   শুরু (probe বাদ — এক ধাপ কম), দ্রুততম আগে; তারপরই কেবল পাবলিক-স্ক্র্যাপের প্রার্থীরা।
     //   পুরোটা `runLimited`-এ ⇒ একসাথে সর্বোচ্চ CONC (২০) ডাক।
-    const seedList = sample;
-    const scrapeList = freshCand;
+    const _notBanned = u => { const bb = BAD.get(u); return !bb || bb <= Date.now(); };
+    const seedList = sample.filter(_notBanned); // v1.34.66: banned seed ei pass-e noy
+    const scrapeList = freshCand.filter(_notBanned);
     const verifyOne = async (u, fast) => {
       if (fast) {                                   // বীজ: token-যাচাই-ই যথেষ্ট (probe বাদ)
         const t0 = Date.now();
-        if (!(await searchVerify(u))) return null;
+        if (!(await searchVerify(u))) { noteFail(u, 'dead'); return null; } // v1.34.66: negative memory
         noteGood(u, Date.now() - t0);
       } else {
         const p0 = await probe(u);
-        if (!p0) return null;
-        if (!(await searchVerify(u))) return null;
+        if (!p0) { noteFail(u, 'dead'); return null; } // v1.34.66
+        if (!(await searchVerify(u))) { noteFail(u, 'block'); return null; } // v1.34.66
         noteGood(u, p0[0]);
       }
       if (!POOL.includes(u) && POOL.length < BENCH_MAX) POOL.push(u);
@@ -344,12 +362,20 @@ export async function poolOnce(force = false) {
     //   একটাও চলত না ⇒ বেঞ্চ যাচাই-হীন হয়ে পড়ে থাকত। বাকিগুলো পরের চেকার-ঢেউয়ে ধীরে যাচাই হয়।
     const SEED_BUDGET = Math.max(8000, Number(process.env.NX_SEED_BUDGET || 0) || 25000);
     const tBoot = Date.now();
-    for (const list of [seedList, scrapeList]) {
+    // v1.34.67: seed-order — generic-ms-krome datacenter-exit age (MB-er jonno sabcheye kharap);
+    //   prothom 60 druto, bakita shuffle. Bench khub patla (<12) hole fresh scrape age —
+    //   ar scrape-pass-o budget-baddho (lomba pass checker-ke thamiye LASTOK-cut dakto).
+    const seedOrdered = seedList.slice(0, 60).concat(seedList.slice(60).sort(() => Math.random() - 0.5));
+    const SCRAPE_BUDGET = Math.max(10000, Number(process.env.NX_SCRAPE_BUDGET || 0) || 45000);
+    const lists = POOL.length < 12 ? [[scrapeList, false], [seedOrdered, true]] : [[seedOrdered, true], [scrapeList, false]];
+    for (const [list, isSeed] of lists) {
       if (!list.length) continue;
+      const tList = Date.now();
       await runLimited(list, async (u) => {
         if (POOL.length >= BOOT_TARGET) return;
-        if (list === seedList && Date.now() - tBoot > SEED_BUDGET) return;   // লেজ-কাটা
-        const r = await verifyOne(u, list === seedList);
+        if (isSeed && Date.now() - tBoot > SEED_BUDGET) return;   // লেজ-কাটা
+        if (!isSeed && Date.now() - tList > SCRAPE_BUDGET) return; // v1.34.67: scrape-o budget-baddho
+        const r = await verifyOne(u, isSeed);
         if (r) tested.push(r);
       });
       if (POOL.length >= BOOT_TARGET) break;
@@ -372,7 +398,7 @@ export async function poolOnce(force = false) {
     console.log(`[pool] bench=${POOL.length} healthy=${poolStats().healthy}`);
     benchSave();
     // thin bench right after boot -> more passes immediately (up to 3)
-    if (POOL.length < 24 && POOL.__passes < 3) {
+    if (POOL.length < 48 && POOL.__passes < 3) {
       POOL.__passes = (POOL.__passes || 0) + 1;
       FETCHING = false;
       TS = 0;
@@ -401,7 +427,7 @@ async function checkerWave() {
   //   blind/403 হয়ে বেঞ্চ-দুলুনি। এখন: ঢেউ-প্রতি **স্লাইস** (বেঞ্চের ১/৬, সর্বনিম্ন ১৬, সর্বোচ্চ ৩২),
   //   সবচেয়ে-পুরনো-প্রমাণ আগে, প্রতি-exit-গ্যাপ ≥ `NX_VERIFY_GAP` (ডিফল্ট ৬০সে) + সীমিত-সমান্তরালতা।
   const GAP = Math.max(20000, Number(process.env.NX_VERIFY_GAP || 0) || 60000);
-  const sliceN = Math.max(16, Math.min(32, Math.ceil(POOL.length / 6)));
+  const sliceN = Math.max(16, Math.min(160, Math.ceil(POOL.length / 4))); // v1.34.65: bench 480-scale — wave slice cap 32 -> 96 // v1.34.127: 900-scale-e cap 160 (600s-proof-window-er bhetore puro bench ghore)
   const wave = POOL.filter(u => { const b = BAD.get(u); return !b || b <= now; })
     .filter(u => now - (LASTOK.get(u) || 0) >= GAP)
     .sort((a, b) => (LASTOK.get(a) || 0) - (LASTOK.get(b) || 0))
@@ -418,7 +444,7 @@ async function checkerWave() {
   const t2 = Date.now();
   let cut = 0;
   for (let i = POOL.length - 1; i >= 0 && POOL.length > 12; i--) { // r-20261016k: ফ্লোর ৮→১২ (বেঞ্চ-সর্বদা-মোটা)
-    if (t2 - (LASTOK.get(POOL[i]) || t2) > 600000) { const du = POOL.splice(i, 1)[0]; LASTOK.delete(du); STATS.delete(du); cut++; } // ৬০০সে-কোনো-প্রমাণ-নেই
+    if (t2 - (LASTOK.get(POOL[i]) || t2) > 600000) { const du = POOL.splice(i, 1)[0]; LASTOK.delete(du); STATS.delete(du); AGENTS.delete(du); BAD.delete(du); cut++; } // ৬০০সে-কোনো-প্রমাণ-নেই // v1.34.127: agent/ban-map-o porishkar
   }
   // কাটা-ইচ্ছাকৃতভাবে-ফাইলে-লেখা-হয়-না: NX_POOL_FILE=vidy-র-মূল-vidy_proxy_pool.json — লিখলে-দুই-পুল-মিশে-যেত;
   // কাটা-মেম্বার-পরের-রিফিল-পাসে-আবার-পূর্ণ-যাচাই-দিয়ে-ফিরতে-পারে (রেজলভার-গ্রোয়ার-সমতুল্য দ্বিতীয়-সুযোগ)
@@ -462,7 +488,7 @@ export function benchSave(force = false) {
       const old = merged.get(r.px);
       if (!old || r.ms < old.ms) merged.set(r.px, r);
     }
-    const rows = [...merged.values()].sort((a, b) => a.ms - b.ms).slice(0, 160);
+    const rows = [...merged.values()].sort((a, b) => a.ms - b.ms).slice(0, BENCH_MAX); // v1.34.66: age 160-te kata porto
     fs.writeFileSync(out, JSON.stringify(rows));
   } catch { }
 }
