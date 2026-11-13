@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.147';
+const VERSION = '1.34.148';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -7198,7 +7198,7 @@ async function mmStreams(tmdbId, title, type, s, e, origin, maxh, rel) { // v1.1
     }
     servers = servers.slice(0, 6);
     const seen = new Set();
-    const raws = servers.map(url => ({ h: 0, url, ref: WO_REF, mp4: 0, lang: '', aud: '', mini: 0 }));
+    const raws = servers.map(url => ({ h: 0, url, ref: WO_REF, mp4: 0, lang: '', aud: '', mini: 0, autoRef: /(?:homechefrecipes\.sbs|contentpublishing\.site)|\.urlset\//i.test(url) }));
     for (const x of raws) seen.add(x.url + '|0|');
     // Read index master only to enumerate its declared tracks; preserve the original
     // card on timeout/failure and never treat an addon-IP failure as dead content.
@@ -7231,7 +7231,7 @@ async function mmStreams(tmdbId, title, type, s, e, origin, maxh, rel) { // v1.1
         title: txt,
         description: txt,
         quality: q2,
-        url: x.mini ? (origin ? origin + '/mm/' + mmMiniKey(x.url, x.ref || WO_REF, x.h, x.vbq, x.lang, x.alang) + '/mini.m3u8' + (rel ? '?r=1' : '') : x.url) : x.url, // v1.15.30+52+54: mini — রেজো-পিনড+সত্য-অডিও-লেবেল; rel=?r=1
+        url: x.autoRef && origin ? origin + '/mm/' + mmMiniKey(x.url, x.ref || WO_REF, 0, '', '', '') + '/mini.m3u8?auto=1' : x.mini ? (origin ? origin + '/mm/' + mmMiniKey(x.url, x.ref || WO_REF, x.h, x.vbq, x.lang, x.alang) + '/mini.m3u8' + (rel ? '?r=1' : '') : x.url) : x.url, // v1.15.30+52+54: mini — রেজো-পিনড+সত্য-অডিও-লেবেল; rel=?r=1
         behaviorHints: { notWebReady: true, isBingeable: true, filename: x.mp4 ? 'multimovies.mp4' : 'multimovies.m3u8', proxyHeaders: { request: { Referer: x.ref || WO_REF, 'User-Agent': UA } } }, // v1.15.56 (ডক: proxyHeaders শুধু notWebReady:true-তে-কাজ-করে; false-এ-Stremio-হেডার-ফেলে-দেয় → রেফারার-গেটেড-মাস্টার-প্লেয়ারে-404)
         // v1.15.96 — **falcon-ধাঁচায় শীর্ষ-স্তরের headers** (প্রমাণ: xre000001-ai/falcon, public/netflix.js buildCard():
         //   `headers: { "Referer": …, "User-Agent": … }`)। Nuvio এই শীর্ষ-স্তরের `headers`-কে
@@ -17401,6 +17401,27 @@ const server = http.createServer((req, res) => {
         }
         if (!raw || raw.indexOf('#EXTM') < 0) { res.writeHead(502, { 'content-type': 'text/plain' }); return res.end('upstream'); }
         mmPut(MM_MC, ent.m, raw);
+        if (/[?&]auto=1(?:&|$)/.test(req.url) && /#EXT-X-STREAM-INF/i.test(raw)) {
+          // Keep adaptive variants and all tracks, but route child playlists through
+          // the existing reference-aware relay; media segments get the right Referer.
+          const routeChild = u => {
+            const abs = mmAbsUri(u, ent.m);
+            if (!/^https?:\/\//i.test(abs)) return u;
+            return origin2 + '/mma/' + Buffer.from(abs).toString('base64url') + '/a.m3u8?r=1';
+          };
+          let afterInf = false;
+          const out = String(raw).split('\n').map(line => {
+            if (/^#EXT-X-STREAM-INF:/i.test(line)) { afterInf = true; return line; }
+            if (afterInf && line.trim() && line[0] !== '#') { afterInf = false; return routeChild(line.trim()); }
+            if (/^#EXT-X-MEDIA:/i.test(line) && /TYPE=(?:AUDIO|SUBTITLES)/i.test(line))
+              return line.replace(/URI="([^"]+)"/ig, (_, u) => 'URI="' + routeChild(u) + '"');
+            if (/^#EXT-X-(?:KEY|SESSION-KEY|MAP):/i.test(line))
+              return line.replace(/URI="([^"]+)"/ig, (_, u) => 'URI="' + mmAbsUri(u, ent.m) + '"');
+            return line;
+          }).join('\n');
+          res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl', 'access-control-allow-origin': '*', 'cache-control': 'no-store' });
+          return res.end(out);
+        }
         let mini = mmMiniBuild(ent.m, ent.h, raw, ent.lang, ent.alang) || raw;
         let isMasterForm = false; // v1.15.97: mmMasterForm হলে শিশুগুলো ইতিমধ্যেই /mma/-এ মোড়ানো
         const qsTail = rel ? '?r=1' : (mmDirect ? '?d=1' : '');
@@ -17571,7 +17592,7 @@ const server = http.createServer((req, res) => {
         }
         if (aRel) {
           const _fs2 = (out.match(/^https?:\/\/\S+$/gm) || []).find(u2 => !/\.m3u8(\?|$)/i.test(u2)) || '';
-          const _d2 = !!_fs2 && await mmDirectOK(_fs2);
+          const _d2 = !rel && !!_fs2 && await mmDirectOK(_fs2); // explicit relay must really relay
           if (_d2) {
             if (process.env.VUQ !== '0') out = String(out).replace(/^(https?:\/\/\S+)\s*$/gm,
               (m0, uu) => (/\.m3u8(\?|$)/i.test(uu) ? m0 : vuStampLineForce(uu, originOf(req))));   // ★ v1.27.9: force-স্ট্যাম্প
