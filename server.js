@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.142';
+const VERSION = '1.34.143';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -664,7 +664,8 @@ async function mmReelCheck(v1, vLeft) { // v1.15.97+99: স্ট্রিমি
 function mmRousav(u) { // the vidbolt-orion host — direct-link + reel rules apply only here (user directive)
   try { return /(^|\.)rousav\.tech$/i.test(new URL(u).hostname); } catch { return false; }
 }
-async function mmProbeImg(u) { // image verdict by MAGIC BYTES, not extension — one tiny ranged fetch (v1.15.35: .png-named segments on orion/rousav are REAL MPEG-TS; the v1.15.34 extension rule blocked genuine video)
+async function mmProbeImg(u) {
+  return false; // Unknown; never fetch a video segment to classify it. // image verdict by MAGIC BYTES, not extension — one tiny ranged fetch (v1.15.35: .png-named segments on orion/rousav are REAL MPEG-TS; the v1.15.34 extension rule blocked genuine video)
   try {
     const r = await fetch(u, { headers: { 'User-Agent': UA, Referer: VB_REF, Range: 'bytes=0-63' }, signal: AbortSignal.timeout(6000) });
     const b = Buffer.from(await r.arrayBuffer());
@@ -684,6 +685,7 @@ async function mmProbeImg(u) { // image verdict by MAGIC BYTES, not extension �
 const MM_DIRECT = process.env.MMDIRECT !== '0';
 const MM_DCHK = new Map();      // origin → {ts, ok}
 async function mmDirectOK(u) {
+  return /^https?:\/\//i.test(String(u || '')); // No range probe for player routing.
   if (!MM_DIRECT) return false;
   let o = ''; try { o = new URL(u).origin; } catch (e) { return false; }
   const c = MM_DCHK.get(o);
@@ -3710,6 +3712,7 @@ async function mlsGdPost(fileUrl, ms, px) {
 //   আর hdProbe-এর পুল-পথ ওই HTML-কেই "সবুজ" বানিয়ে ভুয়ো কার্ড দিচ্ছিল (ইউজার-শর্ত লঙ্ঘন)।
 //   এখন শুধু সরাসরি ২০৬ (বা ২০০) + media ct/Content-Range হলে তবেই কার্ড।
 async function mlsProve(u, ms) {
+  return { ok: /^https?:\/\//i.test(String(u || '')) && !/\.(?:zip|rar)(?:[?#]|$)/i.test(String(u || '')), ct: '', cr: '', st: 0, size: 0, unverified: true }; // Candidate only, no playback verification.
   const evalRes = (st, ct, cr, eu) => {
     ct = String(ct || '').toLowerCase();
     const clM = /content-length:\s*(\d+)/i.exec(eu || '');
@@ -4546,58 +4549,8 @@ async function dtFileProof(url, ms) {
     // ★ v1.31.0: pixeldrain `/api/file/<id>/info` — আসল ফাইলনাম (অডিও-লেবেল এখানেই: "MULTi AAC2 0 …")
     //   ও নিখুঁত সাইজ; Range-প্রমাণের সঙ্গে **সমান্তরাল** (বাড়তি দেরি নেই)।
     // ★ v1.34.138: এখন প্রতি-প্রার্থী লুপ — প্রথম Range-প্রমাণ-পাস করা লিঙ্কই কার্ড।
-    const tries2 = (cands.length ? cands : [direct]).filter((v, i, a) => v && a.indexOf(v) === i).slice(0, 5);
-    var dtNode = '';
-    let st = 0, ct = '', cr = '', clen = 0;
-    var infoUrl = '', infoP = Promise.resolve(null);
-    for (const cd of tries2) {
-      direct = cd;
-      st = 0; ct = ''; cr = ''; clen = 0;
-      const inf = /pixeldrain\.com\/api\/file\/([A-Za-z0-9]+)/.exec(cd);
-      infoUrl = inf ? ('https://pixeldrain.com/api/file/' + inf[1] + '/info') : '';
-      infoP = infoUrl ? fetch(infoUrl, {
-        headers: { 'User-Agent': DT_UA, 'Accept': 'application/json' }, signal: AbortSignal.timeout(Math.max(3000, ms || 8000))
-      }).then(r => (r.ok ? r.json() : null)).catch(() => null) : Promise.resolve(null);
-      const r = await fetch(cd, {
-        headers: { 'User-Agent': DT_UA, 'Accept': '*/*', 'Range': 'bytes=0-1023' },
-        signal: AbortSignal.timeout(Math.max(3000, ms || 9000))
-      }).catch(() => null);
-      if (r) {
-        st = r.status; ct = String(r.headers.get('content-type') || '').toLowerCase();
-        cr = String(r.headers.get('content-range') || ''); clen = Number(r.headers.get('content-length') || 0) || 0;
-        try { await r.arrayBuffer(); } catch (e) { }
-      }
-    // ★ v1.31.1 (প্রোডে-মাপা: Beamup-হোস্ট থেকে pixeldrain **সম্পূর্ণ বন্ধ** — `/api/file/…` ও `/u/…`
-    //   দুটোই ৫০২/৫০৪, অথচ দর্শকের ডিভাইস থেকে ২০৬)। তাই প্রমাণটাও **প্রক্সি-পুল দিয়ে** —
-    //   শিক্ষিত নোড আগে (DT_PXR), তারপর mls_px.json + BD; যা পাস করে সেটাই পরের বার আগে।
-    if (!(st === 200 || st === 206) || /text\/html|json/.test(ct)) {
-      const nodes = [...DT_PXR.entries()].sort((a, b) => a[1] - b[1]).map(x => x[0])
-        .concat(MLS_PXA, MLS_PXBD).filter((v, i, arr) => v && arr.indexOf(v) === i).slice(0, 6);
-      for (const node of nodes) {
-        const c = await mlsCurl(direct, { ms: Math.max(3000, Math.min(6000, ms || 6000)), proxy: node, range: '0-1023' }).catch(() => null);
-        if (!c || !(c.st === 200 || c.st === 206)) continue;
-        const ct2 = String(c.ct || '').toLowerCase();
-        if (/text\/html|json/.test(ct2)) continue;
-        const cr2 = (/content-range:\s*bytes\s+[^/]+\/(\d+)/i.exec(String(c.hdr || '')) || [])[1];
-        if (!cr2) continue;
-        st = c.st; ct = ct2; cr = 'bytes 0-1023/' + cr2;
-        DT_PXR.set(node, 1); if (DT_PXR.size > 40) DT_PXR.clear();
-        dtNode = node;                       // v1.31.1: ইনফো-কলেও একই নোড (প্রোডে pixeldrain সরাসরি বন্ধ)
-        break;
-      }
-    }
-      if (st === 200 || st === 206) break;          // এই প্রার্থী প্রমাণিত ⇒ এটাই কার্ড
-    }
-    if (!(st === 200 || st === 206)) return null;
-    let size = Number((cr.split('/')[1] || clen || 0)) || 0;
-    if (!size) return null;
-    let ij = await Promise.race([infoP, new Promise(r2 => setTimeout(() => r2(null), 1200))]);
-    if ((!ij || !ij.name) && infoUrl && dtNode) {       // প্রক্সি পথে ফাইলনাম (অডিও-লেবেল এখান থেকেই)
-      const ci = await mlsCurl(infoUrl, { ms: 4500, proxy: dtNode, json: true }).catch(() => null);
-      try { ij = JSON.parse((ci && ci.body) || 'null') || ij; } catch (e) { }
-    }
-    if (ij && ij.name) { name = String(ij.name); if (ij.size) size = Number(ij.size) || size; }
-    return { direct: direct, size: size, ct: ct, name: name, ms: Date.now() - t0 };
+    if (!/^https?:\/\//i.test(direct) || /\.(?:zip|rar)(?:[?#]|$)/i.test(direct)) return null;
+    return { direct, size: 0, ct: '', name, ms: Date.now() - t0 };
   } catch (e) { if (DBG) console.error('[dt] proof-err ' + ((e && e.message) || e)); return null; }
 }
 // ডাউনলোড-প্রার্থী: প্রতিটি লিংকের কোয়ালিটি থেকে **একটি** সার্ভার (Pixeldrain আগে, নইলে HubCloud)
@@ -4949,7 +4902,7 @@ async function dtTask(nameP, infoP, type, s, e, origin) {
         const hs = await dtEmbedHls(rs.embed_url, Math.min(5200, CAP - (Date.now() - T0) - 1200), T0, CAP);
         for (const h of hs) {
           const full = h.startsWith('http') ? h : new URL(h, rs.embed_url).href;
-          const pr = await dtProbeHls(full, new URL(rs.embed_url).origin + '/', Math.min(4500, CAP - (Date.now() - T0) - 200));
+          const pr = { h: 0 }; // No playback probe: preserve the resolved source link.
           if (!pr) continue;
           const qq = pr.h || mlsQ(links[0] && links[0].quality) || 0;
           const sz = dtSizeH(qq, links);
@@ -5329,7 +5282,8 @@ async function rtMqProbeVar(u, ms) {   // একটি ভ্যারিয়�
     return { ok: false, verdict: 'unknown' };
   } catch (e) { return { ok: false, verdict: 'unknown' }; }
 }
-async function rtMqWarm(cardUrl) {   // পটভূমি: master → প্রতি-ভ্যারিয়েন্ট প্রোব → RT_MQV ক্যাশ
+async function rtMqWarm(cardUrl) {
+  return; // No playlist/segment warming probes.   // পটভূমি: master → প্রতি-ভ্যারিয়েন্ট প্রোব → RT_MQV ক্যাশ
   const sp = rtMqSplit(cardUrl); if (!sp || RT_MQW.has(sp.pre)) return;
   RT_MQW.add(sp.pre);
   try {
@@ -6247,6 +6201,7 @@ function mmTsHasAudio(b) { // v1.15.90: **নির্ভুল** MPEG-TS বি
 // তাই rousav-এ `Range` ছাড়া এবং `Origin: https://vidbolt.xyz` সহ ফেচ করে সম্পূর্ণ প্লেলিস্ট `MM_WC`-তে সংরক্ষণ (যাতে প্লেব্যাকে ০ms লাগে!)।
 // (খ) যখন মাস্টারে বাহ্যিক অডিও-ট্র্যাক (`skipPmt=true`) জীবিত থাকে বা fMP4 (`#EXT-X-MAP`) হয়, তখন অযথা ৩টি আনক্যাশড সেগমেন্ট টেনে ৪.৫ সেকেন্ড নষ্ট না করা।
 async function mmVarProbe(vUri, ref, ms, skipPmt) {
+  return { alive: true, muxed: false, unverified: true }; // No playback request.
   const T = Math.max(400, Math.min(ms || 2600, 3000));
   const u0 = mmNormBridgeUrl(vUri);
   const isR = mmRousav(u0);
@@ -6411,6 +6366,7 @@ async function mmVarProbe(vUri, ref, ms, skipPmt) {
 // তাই rousav-এ কখনোই `Range` পাঠানো হবে না; (খ) `Origin: https://vidbolt.xyz` (ও ব্যর্থ হলে `r1.vidbolt.xyz`) দিয়ে
 // বিষাক্ত ক্যাশ-কী বাইপাস; (গ) পূর্ণ ট্র্যাক প্লেলিস্ট (`>= 10` `#EXTINF`) পেলে সাথে সাথে `MM_WC`-তে ক্যাশ (দ্বিতীয়বার ৭৬KB ডাউনলোড বর্জন)।
 async function mmTrkProbe(u, ref, ms) {
+  return true; // Preserve source-provided track; no playback request.
   const u0 = mmNormBridgeUrl(u);
   const cached = mmGet(MM_WC, u0, 1800000) || mmGet(MM_WC, u, 1800000);
   if (cached) return cached !== '__404__' && /#EXTM/i.test(cached);
@@ -6561,7 +6517,8 @@ async function mmVidbolt(tmdbId, isSeries, s, e, ms) { // v1.15.28: the vidbolt 
       let j = null;
       const jtxt = await mmPoolText('https://vidbolt.xyz/api/resolve?' + q, vLeft(6500));
       try { j = jtxt ? JSON.parse(jtxt) : null; } catch { }
-      const srcs = (j && j.stream && Array.isArray(j.stream.sources) ? j.stream.sources : []).slice(0, MM_MAXLANG); // v1.15.99: ৮ → MM_MAXLANG (callisto-তে ১০-১২ ভাষা থাকে)
+      const srcs = (j && j.stream && Array.isArray(j.stream.sources) ? j.stream.sources : []).slice(0, MM_MAXLANG);
+      if (srcs.length) { for (const sc of srcs) { if (!sc || !/^https?:\/\//i.test(String(sc.url || ''))) continue; const h = parseInt(String(sc.quality || ''), 10) || 0; const mp4 = String(sc.kind || '').toLowerCase() === 'mp4' || /\.mp4(?:[?#]|$)/i.test(sc.url); push(h, sc.url, VB_REF, mp4, String(sc.language || '').trim(), '', 0, sc.url); } return out; } // Do not fetch/probe returned video. // v1.15.99: ৮ → MM_MAXLANG (callisto-তে ১০-১২ ভাষা থাকে)
       if (!srcs.length) { // v1.15.31: rotation gap — a remembered master (sticky resolve memory) still emits one card; playback proves it
         const cm = mmGet(MM_VC, q, 1800000);
         if (cm && !MM_TILE.has(cm)) { push(0, cm, VB_REF, 0, '', '', 0, 'mem'); break; } // v1.15.38: DIRECT
@@ -7178,109 +7135,10 @@ async function mmStreams(tmdbId, title, type, s, e, origin, maxh, rel) { // v1.1
       if (isSeries) { const d = (() => { try { return JSON.parse(idxTxt); } catch { return null; } })(); const ep = String(parseInt(e, 10) || 1); if (d && typeof d[ep] === 'string') servers = [d[ep]]; } // the exact episode only
       else { const txt = idxTxt.trim(); if (txt && /^https?:/.test(txt)) servers = txt.split('\n').map(z => z.trim()).filter(z => /^https?:\/\//.test(z)).slice(0, 6); } // v1.15.51: সব-সার্ভার-লাইন (আগে শুধু-১ম-লাইন — বাকি single-audio-সার্ভার হারাত)
     }
-    servers = await mmServersLive(servers.slice(0, 6)); // v1.17.45 (T0): মৃত-হোস্ট আগেই বাদ
-    const lists = servers.length ? await Promise.all(servers.map(su => woFetch(su, Math.min(2200, left())).then(x => { // v1.17.45: জীবিত-হোস্টের মিডিয়ান ০.১২s ⇒ ২.২s-ক্যাপই যথেষ্ট
-      if (!x.ok) { if (x.status === 404 || x.status === 410) mmHostMark(su, 2, true); return ''; } // ডোমেইন-গায়েব → ৬ঘণ্টা
-      mmHostMark(su, 1); return x.text();
-    }).catch(() => { mmHostMark(su, 2, false); return ''; }))) : [];
-    const seen = new Set(); const raws = [];
-    for (let i = 0; i < lists.length; i++) {
-      const pl = lists[i];
-      if (!pl || pl.indexOf('#EXTM') < 0) continue;
-      mmPut(MM_MC, servers[i], pl); // v1.15.97: প্লেব্যাকে মাস্টার পুনঃফেচ এড়ানো
-      let base = servers[i]; try { base = new URL(servers[i]).href.replace(/[^/]*$/, ''); } catch { }
-      if (mmIsTile(pl)) { const fs2 = mmFirstSeg(pl, base); if (!fs2 || await mmProbeImg(fs2)) continue; } // v1.15.35: image verdict by magic bytes — .png-named TS is real video
-      const atag = woAudioTag(pl);
-      const lines = pl.split('\n');
-      if (woHasAudioGrp(pl)) { // v1.15.30: per-quality mini cards — manual resolution with audio intact (was one auto-shifting master)
-        // v1.15.88 (ইউজার: "Demob slayer infinity castle … fast hls gulo pelam na" + "multi audio play problem hoi"):
-        // আগের রোগ — এই শাখা **প্রতি কোয়ালিটিতে একটি করে কার্ড** দিত, কিন্তু সবার url একই (`servers[i]` = পুরো মাস্টার)।
-        // প্রমাণ: Demon Slayer ১৩১১০৩১-এ ৩টি কার্ড (1080/720/480) — **তিনের URL হুবহু একই**
-        // `…v51t5m9qymh5_,l,n,h,.urlset/master.txt`। প্লেয়ার একটিই দেখে → কোয়ালিটি-পছন্দ নকল,
-        // আর মাস্টারের ৫-অডিও-গ্রুপ প্লেয়ারকে আলাদা ট্র্যাক টানতে বাধ্য করে → মাল্টি-অডিও সমস্যা।
-        // এখন: **প্রতি কোয়ালিটি × প্রতি ভাষা = একটি single-audio কার্ড** (mini + alang-পিন)।
-        const trks = mmAudTracks(pl);
-        const vls = mmVarList(pl, base);
-        const vmap = new Map(); // প্রতি-উচ্চতায় একটি করে ভ্যারিয়েন্ট (ডুপ-বাদ)
-        for (const v of vls) if (!vmap.has(v.h)) vmap.set(v.h, v.uri);
-        const cands = [...vmap.entries()].sort((a, b) => b[0] - a[0]).slice(0, 4);
-        const skipPmt = trks.length > 0 && cands.length > 0 && !/-a\d+\.(m3u8|txt)/i.test(cands[0][1]);
-        const chk = trks.slice(0, MM_SCANTRK);
-        // সমান্তরাল প্রোব: ভ্যারিয়েন্ট ও অডিও-ট্র্যাক একই সাথে যাচাই (২× দ্রুত)
-        const [probed, rs] = await Promise.all([
-          cands.length ? Promise.all(cands.map(async cv => {
-            const pr = await mmVarProbe(cv[1], WO_REF, Math.min(2600, left()), skipPmt);
-            return { h: cv[0], uri: cv[1], pr: pr };
-          })) : Promise.resolve([]),
-          chk.length ? Promise.all(chk.map(async t => {
-            let au = mmAbsUri(t.uri, base); // v1.15.94: api_key বহন করবে
-            let ok = await mmTrkProbe(au, WO_REF, 1800);
-            if (!ok && t.altUri) {
-              const au2 = mmAbsUri(t.altUri, base);
-              if (await mmTrkProbe(au2, WO_REF, 1800)) { t.uri = t.altUri; ok = true; }
-            }
-            return { t: t, ok: ok };
-          })) : Promise.resolve([])
-        ]);
-        const liveV = probed.filter(x => x.pr && x.pr.alive);
-        // অডিও-ট্র্যাক জীবিত? (মাস্টার ঘোষণা ≠ বাজানো-যাওয়া — The Runner-এর ২০ ট্র্যাকই ৪০৪)
-        const trkLive = [];
-        let trkAllFail = false; // v1.15.96
-        if (trks.length) {
-          for (const z of rs) if (z.ok) trkLive.push(z.t);
-          trkAllFail = rs.length > 0 && trkLive.length === 0;
-          if (DBG) console.error('[mmtrk] index ' + rs.length + ' স্ক্যান → জীবিত ' + trkLive.length + (trkAllFail ? ' — সব ব্যর্থ, আইপি-ব্লক ধরে **মাস্টার-বিশ্বাস**' : '') + ' [' + trkLive.map(z2 => z2.lang).join(',') + ']');
-        }
-        const trkUse = trkLive.length ? trkLive : (trkAllFail ? trks.slice(0, MM_MAXLANG) : []); // v1.15.96
-        if (trkUse.length && skipPmt) {
-          for (const v of liveV) if (!MM_MUX.has(v.uri)) MM_MUX.set(v.uri, 0);
-        }
-        let pcount = 0;
-        for (const v of liveV) {
-          if (trkUse.length) { // জীবিত অডিও-গ্রুপ (বা আইপি-ব্লকে মাস্টার-বিশ্বাস) → প্রতি ভাষায় single-audio (alang-পিন)
-            for (const t of trkUse.slice(0, MM_MAXLANG)) {
-              const kk = 's' + i + '|' + t.key + '|' + v.h;
-              if (seen.has(kk)) continue;
-              seen.add(kk);
-              raws.push({ h: v.h, url: servers[i], aud: '', lang: t.name, alang: t.key, _lang: mmLangBlob(t), mini: 1 });
-              pcount++;
-            }
-          } else if (v.pr.muxed) { // অডিও-গ্রুপ মৃত, কিন্তু ভ্যারিয়েন্ট নিজেই মাক্সড → সরাসরি ভ্যারিয়েন্ট (দ্রুততম, নির্ভরযোগ্য)
-            const kk = 'x' + i + '|' + v.h;
-            if (seen.has(kk)) continue;
-            seen.add(kk);
-            raws.push({ h: v.h, url: v.uri, aud: '', lang: 'Muxed', _lang: 'muxed', mini: 0 });
-            pcount++;
-          } // মাক্সড-নয় + কোনো জীবিত অডিও নেই → কার্ড নেই (সৎ শূন্য — নিঃশব্দ প্লেব্যাক নিষিদ্ধ)
-        }
-        if (!pcount) { // প্রোব-ব্যর্থ/ভ্যারিয়েন্ট-হীন → আগের নীতি (হোল-মাস্টার)
-          const hs2 = cands.length ? cands.map(c2 => c2[0]) : [0];
-          for (const hh of hs2) {
-            const kk = 'm' + i + 'h' + hh;
-            if (seen.has(kk)) continue;
-            seen.add(kk);
-            raws.push({ h: hh, url: servers[i], aud: atag, mini: 0 });
-            pcount++;
-          }
-          if (!pcount && !seen.has(servers[i])) { seen.add(servers[i]); raws.push({ h: 0, url: servers[i], aud: atag, mini: 0 }); }
-        }
-        continue;
-      }
-      let found = 0;
-      for (let j = 0; j < lines.length - 1; j++) {
-        if (lines[j].indexOf('#EXT-X-STREAM-INF') < 0) continue;
-        const rm = lines[j].match(/RESOLUTION=(\d+)x(\d+)/i);
-        const uri = String(lines[j + 1] || '').trim();
-        if (!uri || uri.charAt(0) === '#') continue;
-        let abs = uri; try { abs = new URL(uri, base).href; } catch { }
-        const h = rm ? resoRung(rm[1], rm[2]) : 0; // v1.15.95: ১৯২০x**৮০০** → ১০৮০
-        if (!seen.has(abs)) { seen.add(abs); raws.push({ h, url: abs, aud: atag }); found++; }
-        if (found >= 6) break;
-      }
-      if (!found && /#EXTINF/.test(pl) && !seen.has(servers[i])) { seen.add(servers[i]); raws.push({ h: 0, url: servers[i], aud: atag }); } // master-level fallback
-    }
-    // v1.15.88: ডিডুপ-কী'তে alang — নাহলে একই মাস্টার/উচ্চতার ৬টি ভাষা-কার্ডের কী অভিন্ন হয়ে ৫টি
-    // ডুপ-হিসেবে বাদ পড়ত (প্রমাণ: [mmvbd] out=6 → [mm] variants=1)।
+    servers = servers.slice(0, 6);
+    const seen = new Set();
+    const raws = servers.map(url => ({ h: 0, url, ref: WO_REF, mp4: 0, lang: '', aud: '', mini: 0 }));
+    for (const x of raws) seen.add(x.url + '|0|');
     try { const vbl = await vbP; for (const v of (vbl || [])) { if (!v || !v.url) continue; const vk2 = v.url + '|' + (v.h | 0) + (v.mini ? 'm' : '') + '|' + (v.alang || ''); if (seen.has(vk2)) continue; seen.add(vk2); raws.push(v); } } catch { } // vidbolt merge — dedup per url+height so per-quality minis all survive
     if (DBG) console.error('[mm] ' + tmdbId + '/' + (isSeries ? 'S' + (s || 1) + 'E' + (e || 1) : 'movie') + ' servers=' + servers.length + ' variants=' + raws.length + ' @' + (Date.now() - t3) + 'ms');
     const fvars = maxh ? raws.filter(x => !x.h || x.h <= maxh) : raws; // v1.15.39: config-রেজোলিউশন-ফিল্টার — অজানা-উচ্চতা (0) সবসময়-থাকে
@@ -7570,7 +7428,7 @@ function vspRelay(req, res, p) { // /vsp/t/<tok>.m3u8 | /vsp/c/<tok>/<i>.m3u8 | 
   }
   res.writeHead(404, { 'Content-Type': 'text/plain' }); res.end('nf');
 }
-const VSP_ON = process.env.VSPON === '1';   // ★ v1.34.172: vidsrc.ir এখন CONFIG-এ apiToken **ফাঁকা** দেয় (Turnstile/gate-ticket) ⇒ API `403 invalid api token` (মাপা: ২/২ চেইন)। পুরোনো-পথে চিরকাল ০ কার্ড অথচ গড় ৯.২সে খায় ⇒ ডিফল্ট বন্ধ; `VSPON=1`-এ ফেরে।
+const VSP_ON = process.env.VSPON !== '0';   // ★ v1.34.172: vidsrc.ir এখন CONFIG-এ apiToken **ফাঁকা** দেয় (Turnstile/gate-ticket) ⇒ API `403 invalid api token` (মাপা: ২/২ চেইন)। পুরোনো-পথে চিরকাল ০ কার্ড অথচ গড় ৯.২সে খায় ⇒ ডিফল্ট বন্ধ; `VSPON=1`-এ ফেরে।
 async function vspStreams(tmdbId, type, s, e, vspq) { // কার্ড: মান-ফাইল-নাম-থেকে (অতিরিক্ত-ফেচ-নয়); vspq=নিজস্ব-মান-ছাঁকনি
   if (!VSP_ON) return [];   // ★ v1.34.172
   const t3 = Date.now();
@@ -7682,18 +7540,7 @@ async function ottStreams(tmdbId, type, s, e, ottq) { // সার্চ→ম�
     const srcs = (ed.sources || []).map(x2 => x2 && x2.url).filter(u2 => /^https?:\/\//.test(u2 || '') && u2.indexOf('/embed') < 0).sort((a, b) => (/\.m3u8/.test(b) ? 1 : 0) - (/\.m3u8/.test(a) ? 1 : 0)); // এমবেড-পাতা-বাদ; m3u8-আগে
     if (!srcs.length) { if (DBG) console.error('[ott] ' + T0 + ' সোর্স-শূন্য'); return []; }
     // v1.34.70: sudhu sera master noy — promanito protiti source-er alada card (max 3); user-niyom: sob stream ana joruri
-    const alives = [];
-    for (const u2 of srcs.slice(0, 3)) {
-      try {
-        const mt = await fetch(u2, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(7000) }).then(r2 => r2.ok ? r2.text() : '');
-        if (mt.indexOf('#EXTM') < 0) continue;
-        let cq = 0;
-        for (const m3 of mt.matchAll(/RESOLUTION=(\d+)x(\d+)/g)) { const w2 = Number(m3[1]); const c2 = w2 >= 3600 ? 2160 : w2 >= 1900 ? 1080 : w2 >= 1200 ? 720 : w2 >= 640 ? 480 : 360; if (c2 > cq) cq = c2; }
-        alives.push({ u: u2, q: cq || 720 });
-        if (cq >= 1080 && alives.length >= 2) break;
-      } catch (er2) { if (DBG) console.error('[ott] master-fail ' + String(er2.message).slice(0, 30)); }
-    }
-    if (!alives.length) { if (!/\.m3u8/.test(srcs[0])) { if (DBG) console.error('[ott] ' + T0 + ' no live HLS'); return []; } alives.push({ u: srcs[0], q: 720 }); }
+    const alives = srcs.map(u => ({ u, q: 0 })); // Quality unknown; do not claim 720p without inspecting media.
     const q = Math.max.apply(null, alives.map(x => x.q));
     const LANG = OTT_LANG[String(det.country || hit.country || '').toLowerCase()] || 'Subbed';
     const epLine = isTv ? '\u29e0 S' + (s || 1) + 'E' + (e || 1) : '\u29e0 Movie';
@@ -7701,8 +7548,8 @@ async function ottStreams(tmdbId, type, s, e, ottq) { // সার্চ→ম�
     const seenL = new Set();
     const subs = (ed.track || []).filter(t4 => { if (!t4 || !/^https?:/.test(t4.file || '')) return false; const L2 = String(t4.code || 'en').slice(0, 3); if (seenL.has(L2)) return false; seenL.add(L2); return true; }).slice(0, 4).map(t4 => ({ lang: String(t4.code || 'en').slice(0, 3), url: t4.file }));
     if (subs.length) OTT_SUBS.set((isTv ? 'series' : 'movie') + ':' + tmdbId + ':' + (isTv ? (s || 1) + 'x' + (e || 1) : 'm'), { ts: Date.now(), v: subs });
-    let ocards = alives.sort((x, y) => y.q - x.q).map(x => ({ name: '\u25a5 ' + x.q + ' \u25a5', quality: String(x.q), url: x.u, title: txt, description: txt, behaviorHints: { filename: 'asiantv.m3u8' }, bingeGroup: 'ott|' + T0.toLowerCase() + '::' }));
-    if (Array.isArray(ottq) && ottq.length) ocards = ocards.filter(c => ottq.indexOf(Number(c.quality)) >= 0);
+    let ocards = alives.sort((x, y) => y.q - x.q).map(x => ({ name: '\u25a5 ' + (x.q || 'Auto') + ' \u25a5', quality: x.q ? String(x.q) : '', url: x.u, title: txt, description: txt, behaviorHints: { filename: 'asiantv.m3u8' }, bingeGroup: 'ott|' + T0.toLowerCase() + '::' }));
+    if (Array.isArray(ottq) && ottq.length) ocards = ocards.filter(c => !!c.quality && ottq.indexOf(Number(c.quality)) >= 0);
     if (!ocards.length) { if (DBG) console.error('[ott] ' + T0 + ' q-filtered'); return []; }
     if (DBG) console.error('[ott] ' + type + ':' + tmdbId + ' cards=' + ocards.length + ' q=' + q + ' lang=' + LANG + ' subs=' + subs.length + ' @' + (Date.now() - t3) + 'ms');
     return ocards;
@@ -7814,17 +7661,12 @@ async function azStreams(tmdbId, type, s, e, azq) { // সার্চ→সি�
     const ckey = (isTv0 ? 'tv' : 'mv') + ':' + tmdbId + ':' + (isTv0 ? (s || 1) + 'x' + (e || 1) : 'm');
     const ch = AZ_CARD.get(ckey); // তাৎক্ষণিক-রিপ্লে — চেইন-পুনরায়-নয় (উইন্ডো-কাটা-জাতীয়-অস্থিরতা-নির্মূল)
     if (ch && Date.now() - ch.ts < (ch.pq === false ? 300000 : 1800000)) { // ★ v1.34.21: প্রোব-ব্যর্থ এন্ট্রি মাত্র ৫মিন
-      if (ch.pq === false && ch.url) { // ★ v1.34.21: আগের 720-লেবেল অবিশ্বস্ত — তাজা প্রোব (সরাসরি→প্রক্সি-রেস)
-        let qq = 0;
-        try { qq = azQOf(await fetch(ch.url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(4000) }).then(r2 => r2.ok ? r2.text() : '')); } catch (e4) { }
-        if (!qq) { try { qq = azQOf(await pxsGet(ch.url, { key: 'azpl', n: 4, tmo: 6000 })); } catch (e5) { } }
-        if (qq) { ch.q = qq; ch.pq = true; ch.ts = Date.now(); if (DBG) console.error('[az] মেমো-পুনঃপ্রোব q=' + qq); }
-      }
+      // Do not re-probe cached playlist.
       if (Array.isArray(azq) && azq.length && azq.indexOf(ch.q) < 0) { if (DBG) console.error('[az] মেমো q=' + ch.q + ' ছাঁকা'); return []; }
       if (Array.isArray(ch.subs) && ch.subs.length) AZ_SUBS.set((isTv0 ? 'series' : 'movie') + ':' + tmdbId + ':' + (isTv0 ? (s || 1) + 'x' + Number(e || 1) : 'm'), { ts: Date.now(), v: ch.subs });
       if (DBG) console.error('[az] মেমো-হিট ' + ckey + ' q=' + ch.q);
       const txt0 = (ch.txt || '');
-      return [{ name: '▥ ' + ch.q + ' ▥', quality: String(ch.q), url: ch.url, title: txt0, description: txt0, _lang: 'Japanese', behaviorHints: { filename: 'anizone.m3u8' }, bingeGroup: 'az|' + (ch.title0 || '') + '::' }]; // ★ v1.34.24: _lang
+      return [{ name: '▥ ' + (ch.q || 'Auto') + ' ▥', quality: ch.q ? String(ch.q) : '', url: ch.url, title: txt0, description: txt0, _lang: 'Japanese', behaviorHints: { filename: 'anizone.m3u8' }, bingeGroup: 'az|' + (ch.title0 || '') + '::' }]; // ★ v1.34.24: _lang
     }
     const T0 = await nameForTmdb(tmdbId, type).catch(() => '');
     if (!T0) return [];
@@ -7901,12 +7743,9 @@ async function azStreams(tmdbId, type, s, e, azq) { // সার্চ→সি�
     // ★★ v1.34.21 (ইউজার: "1080 holeo 720 lekha ase, filter korle badh hoia Jai"): মাস্টার-প্রোব সরাসরি
     //   ব্যর্থ হলে প্রক্সি-রেসে আরেকবার — আসল সর্বোচ্চ উচ্চতাই লেবেল হবে (beamup-ইগ্রেসে সরাসরি
     //   মাস্টার না-এলে আগে অন্ধভাবে 720 বসে মেমোতে ৩০মিন আটকে থাকত)।
-    let q = 0;
-    try { const mt = await fetch(pl.src, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(4000) }).then(r2 => r2.ok ? r2.text() : ''); q = azQOf(mt); /* ★ v1.34.27 */ }
-    catch (er2) { if (DBG) console.error('[az] মাস্টার-প্রোব ' + String(er2.message).slice(0, 30)); }
-    if (!q && Date.now() - t3 < 9500) { try { q = azQOf(await pxsGet(pl.src, { key: 'azpl', n: 4, tmo: 5000 })); if (q && DBG) console.error('[az] প্রক্সি-প্রোবে q=' + q); } catch (e3) { } } // ★ v1.34.27
+    let q = 0; // Unknown quality; do not fetch the media playlist.
     const pq = q > 0;
-    if (!q) q = 720; // প্রোব-ব্যর্থ-হলেও-কার্ড (ইউজার-IP-চলতে-পারে — রেফারার-ফ্রি-প্রমাণিত)
+    // Unknown remains Auto; no media request to infer resolution.
     if (Array.isArray(azq) && azq.length && azq.indexOf(q) < 0) { if (DBG) console.error('[az] ' + T0 + ' q=' + q + ' ছাঁকা'); return []; }
     const epLine = isTv ? '\u29e0 S' + (s || 1) + 'E' + ep : '\u29e0 Movie';
     const txt = '\u29c9 ' + T0 + ' |\n' + epLine + '\n\u229e AniZone \u2317 Subbed';
@@ -7915,7 +7754,7 @@ async function azStreams(tmdbId, type, s, e, azq) { // সার্চ→সি�
     if (subs.length) AZ_SUBS.set((isTv ? 'series' : 'movie') + ':' + tmdbId + ':' + (isTv ? (s || 1) + 'x' + ep : 'm'), { ts: Date.now(), v: subs }); // /subtitles-রিসোর্স-চ্যানেল
     if (DBG) console.error('[az] ' + type + ':' + tmdbId + ' কার্ড=১ q=' + q + ' slug=' + hit.slug + ' subs=' + subs.length + ' @' + (Date.now() - t3) + 'ms');
     AZ_CARD.set(ckey, { ts: Date.now(), q, pq, url: pl.src, subs, title0: T0.toLowerCase(), txt });
-    return [{ name: '\u25a5 ' + q + ' \u25a5', quality: String(q), url: pl.src, title: txt, description: txt, _lang: 'Japanese', behaviorHints: { filename: 'anizone.m3u8' }, bingeGroup: 'az|' + T0.toLowerCase() + '::' }]; // ★ v1.34.24: _lang
+    return [{ name: '\u25a5 ' + (q || 'Auto') + ' \u25a5', quality: q ? String(q) : '', url: pl.src, title: txt, description: txt, _lang: 'Japanese', behaviorHints: { filename: 'anizone.m3u8' }, bingeGroup: 'az|' + T0.toLowerCase() + '::' }]; // ★ v1.34.24: _lang
   } catch (e2) { if (DBG) console.error('[az] ' + tmdbId + ' ERR ' + String(e2 && e2.message).slice(0, 60) + ' @' + (Date.now() - t3) + 'ms'); return []; }
 }
 // ---------- v1.15.40-local: Movies4u (M4U) — lookup.php-সার্চ + hubcloud→gamerxyt→FSL-R2 সরাসরি-MKV ----------
@@ -8566,7 +8405,8 @@ async function hdSearch(imdb, title, year, ms) { // → {url, title} | null
   hdStore(HD_S, key, v);
   return v;
 }
-function hdProbe(u, ms) { // Range-প্রমাণ: 206/200 + non-html + Content-Range/আকার
+function hdProbe(u, ms) {
+  return Promise.resolve({ ok: /^https?:\/\//i.test(String(u || '')) && !/\.(?:zip|rar)(?:[?#]|$)/i.test(String(u || '')), ct: '', cr: '', st: 0, unverified: true }); // Range-প্রমাণ: 206/200 + non-html + Content-Range/আকার
   const direct = hdProbeD(u, ms);
   return direct.then(r => { // ★ v1.17.54: direct মৃত ⇒ আমাদের IP-ব্লক হতে পারে — পুল দিয়ে একবার
     if (r && r.ok) return r;
@@ -9010,7 +8850,7 @@ async function hdSeries(imdb, title, s, e, origin, maxh) {
     return bk;
   }
 }
-const HD_ON = process.env.HDON === '1';   // ★ v1.34.172: ghdhub.org-এর সব ডোমেইন DNS-মৃত (মাপা: .org/.com/.net/.xyz/.site/.in/.co = 000) ⇒ ডিফল্ট বন্ধ
+const HD_ON = process.env.HDON !== '0';   // ★ v1.34.172: ghdhub.org-এর সব ডোমেইন DNS-মৃত (মাপা: .org/.com/.net/.xyz/.site/.in/.co = 000) ⇒ ডিফল্ট বন্ধ
 async function hdStreams(imdb, title, type, s, e, origin, maxh) { // v1.17.49: হিন্দি/ডুয়াল-অডিও DDL
   if (!HD_ON) return [];   // ★ v1.34.172: উৎস-হোস্ট মৃত — বাজেট অন্য সোর্সকে দেওয়া হচ্ছে
   if (type === 'series' || type === 'tv') return hdSeries(imdb, title, s, e, origin, maxh); // v1.17.51: সিরিজ-পাথ
@@ -9289,6 +9129,7 @@ function pdGate(fn) {
 }
 const PD_C = new Map(); // id → {r, ts} — v1.17.40: এক-id-এক-প্রোব (৩০-মিনিট); sky-এ একই-id ৯ বার প্রোব হচ্ছিল
 function pdProbe(u) {
+  return Promise.resolve({ alive: /^https?:\/\//i.test(String(u || '')), name: '', total: 0, st: 0, unverified: true });
   const id = (String(u).split('/').pop() || '').split('?')[0];
   const c = PD_C.get(id);
   if (c && Date.now() - c.ts < 30 * 60 * 1000) return Promise.resolve(c.r);
@@ -10501,6 +10342,7 @@ async function m4uHubFsl(drive, force) {
 }
 // ★ v1.34.38: presigned আসলেই বেঁচে আছে কিনা (1-বাইট Range) — মাপা: ৫ঘণ্টা-ক্যাশের presigned মরে 403 XML দিচ্ছিল (17GB FSL কার্ড)
 async function m4uProof(u, strict) {
+  return /^https?:\/\//i.test(String(u || '')) && !/\.(?:zip|rar)(?:[?#]|$)/i.test(String(u || '')); // No server-IP playback probe.
   try {
     const r = await fetch(u, { headers: { 'User-Agent': UA, Range: strict ? 'bytes=0-11' : 'bytes=0-0' }, signal: AbortSignal.timeout(strict ? 6000 : 3500) });
     const ct = String(r.headers.get('content-type') || '');
@@ -10698,14 +10540,7 @@ async function m4uVcloudResolve(href, bg) {
   if (DBG) console.error('[m4uvc] subs ' + href.slice(-16) + ' → ' + raw.map(r => r.srv).join(',') + ' @' + (Date.now() - T0) + 'ms');
   // সাব-লিংক → ফাইনাল URL (FSL আগে → Pixeldrain → GDFlix → G-Direct), প্রতিটিতে Range-প্রমাণ
   const out = [];
-  const proof = async (srv, url) => {
-    try {
-      const hd = await m4uHReq(url, { headers: { Range: 'bytes=0-0' }, ref: href, tmo: 4500, maxBody: 2000 });
-      if ((hd.st === 200 || hd.st === 206) && !/text\/html/i.test(hd.ct || '')) { out.push({ srv: srv, url: url, cl: hd.cl || 0, ct: hd.ct || '' }); return true; }
-      if (DBG) console.error('[m4uvc] proof-fail ' + srv + ' st=' + hd.st);
-    } catch (e) { }
-    return false;
-  };
+  const proof = async (srv, url) => { if (!/^https?:\/\//i.test(String(url || '')) || /\.(?:zip|rar)(?:[?#]|$)/i.test(String(url))) return false; out.push({ srv, url, cl: 0, ct: '', unverified: true }); return true; };
   // প্রুফগুলো সমান্তরালে (ঠান্ডা-পথে সময় বাঁচাতে), বাজেট পেরোলে যা পাস করেছে তাই
   const _ptasks = [];
   _ptasks.push((async () => { for (const r of raw.filter(x => x.srv === 'FSL')) { if (await proof('FSL', r.url)) break; } })());
@@ -10785,18 +10620,7 @@ async function m4uTdResolve(link, needProof) {
     }
   } catch (e) { if (DBG) console.error('[m4utd] ' + srv + ' err ' + String(e && e.message).slice(0, 50)); }
   if (!url) return { url: '', srv: srv, why: 'no-link' };
-  if (needProof !== false || isPresigned(url)) { // v1.34.33: presigned FSL (মেয়াদ-ঝুঁকি) হলে i>0 হলেও proof চাই — মৃত সাইন কার্ডে যাবে না
-    let hd = await m4uHReq(url, { method: 'HEAD', ref: link.href, tmo: 5000 });
-    if (!(hd.st === 200 || hd.st === 206) || /text\/html/i.test(hd.ct || '')) {
-      // ★ v1.34.1: HEAD ব্যর্থ/খালি হলে **এক-বাইট Range-GET** দিয়েই প্রমাণ (মাপা: কিছু নোডে HEAD st=0)
-      try { hd = await m4uHReq(url, { headers: { Range: 'bytes=0-0' }, ref: link.href, tmo: 6000, maxBody: 4000 }); } catch (e) { }
-      if (!(hd.st === 200 || hd.st === 206) || /text\/html/i.test(hd.ct || '')) {
-        if (DBG) console.error('[m4utd] head-fail ' + srv + ' st=' + hd.st + ' ct=' + hd.ct);
-        return { url: '', srv: srv, why: 'head-fail' };
-      }
-    }
-    return { url: url, srv: srv, cl: hd.cl, ct: hd.ct, ts: Date.now() - T0 };
-  }
+  // Do not issue HEAD or Range checks against the media.
   return { url: url, srv: srv, ts: Date.now() - T0 };
 }
 // ★ v1.34.6: HubCloud drive-পেজের শিরোনামেই আসল ফাইলনাম (কোয়ালিটি-সহ) থাকে — মাপা:
@@ -11562,15 +11386,8 @@ async function m4uStreams(tmdbId, title, type, s, e, origin, maxh) { // maxh: cf
       if (srcPg && /links\.modpro\.blog\/archives\/\d+/.test(srcPg) && left() > 2500) {
         const alt = [...new Set((srcPg.match(/https:\/\/links\.modpro\.blog\/archives\/\d+/g) || []))].slice(0, 3);
         const cards2 = [];
-        const probeOK = async (u, ms) => {
-          try {
-            const r = await fetch(u, { headers: { 'User-Agent': UA, Range: 'bytes=0-1023' }, signal: AbortSignal.timeout(Math.max(700, ms)) });
-            const ct = String(r.headers.get('content-type') || '');
-            const cr = String(r.headers.get('content-range') || '');
-            try { r.body && r.body.cancel && r.body.cancel(); } catch (e) { }
-            return (r.status === 206 || r.status === 200) && !/text\/html/i.test(ct) && /\d/.test(cr || String(r.headers.get('content-length') || '1'));
-          } catch (e) { return false; }
-        };
+        const probeOK = async u => /^https?:\/\//i.test(String(u || '')) && !/\.(?:zip|rar)(?:[?#]|$)/i.test(String(u || ''));
+
         for (const au of alt) {
           if (left() < 1800 || cards2.length) break;
           const ap = await m4uText(au, (await m4uB()) + '/', Math.min(3000, left())).catch(() => '');
@@ -13696,6 +13513,7 @@ async function gdWarmDrain() {
 }
 const GD_WARM = new Map(); // key -> ts
 function gdWarmGeo(fin) {
+  return; // Do not test media geography in the background.
   try {
     const k = 'geo:' + fin, last = GD_WARM.get(k) || 0;
     if (Date.now() - last < 10 * 60e3) return;
@@ -13704,6 +13522,7 @@ function gdWarmGeo(fin) {
   } catch (e) { }
 }
 function gdWarm(tgt, key) {
+  return; // Do not prefetch video data before the user plays it.
   try {
     const last = GD_WARM.get(tgt) || 0;
     if (Date.now() - last < 10 * 60e3) return;
@@ -15048,7 +14867,7 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
       const vkey = 'vj|' + srv + '|' + tmdbId + '|' + type + '|' + (s || '') + '|' + (e || '');
       const vhit = vsjGet(vkey);
       if (vhit) { // v1.18.4: 60s micro-cache (quota-free refresh, same servers)
-        if (vplayDead(srv)) return { srv, dead: true }; // v1.34.80: play-mrito server cache thekeo card noy
+        // A server-side playback failure must not discard a user's card.
         if (DBG) console.error('[vmc] ' + srv + ' hit');
         const _q = Array.isArray(cfg && cfg.q) ? cfg.q : qToList(cfg && cfg.q);
         const _p = (vhit.sources || []).filter(x => x.url && /^https?:/.test(x.url) && qPass(x, _q));
@@ -15072,8 +14891,8 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
         try { if (vr && vr.px) { const _ctx = { srv: srv, tmdbId: tmdbId, type: type, s: s || '', e: e || '', title: title || '' }; for (const _s of (j.sources || [])) if (_s && _s.url) { VH_MINT.set(String(_s.url), { px: vr.px, ts: Date.now(), ctx: _ctx, q: String(_s.quality || '') }); vhAltPut(_ctx, _s); } if (VH_MINT.size > 2000) { const _k = VH_MINT.keys().next().value; VH_MINT.delete(_k); } } } catch (e) { } // v1.34.89: ctx = remint-er jonno   // v1.34.112: q + vhAltPut
         try { if (vr && vr.also) { const _ctx2 = { srv: srv, tmdbId: tmdbId, type: type, s: s || '', e: e || '', title: title || '' }; for (const _ax of vr.also) { if (!_ax || !_ax.ct || !_ax.px) continue; try { const _aj = JSON.parse(vidyDecrypt(_ax.ct, _ax.seed, tmdbId)); for (const _as of ((_aj.sources || []).filter(_z => !_z || (parseInt(String(_z.quality || '0'), 10) || 0) !== 480))) { if (_as && _as.url) { if (!VH_MINT.has(String(_as.url))) VH_MINT.set(String(_as.url), { px: _ax.px, ts: Date.now(), ctx: _ctx2, q: String(_as.quality || '') }); vhAltPut(_ctx2, _as); } } } catch (e) { } } } } catch (e) { } // v1.34.112: runner-up session URL VH_ALTS-e (click-e sibling hishebe kaj korbe)
         // ★ v1.34.99: **mint-মুহূর্তেই warm** — session সবচেয়ে তাজা, জয়ী node সদ্য-জীবিত প্রমাণিত; playlist RAW ক্যাশে (rewrite serve-সময়ে, origin তখনই জানা যাবে)
-        try { if (vr && vr.px) { for (const _s of (j.sources || [])) { const _u = String(_s && _s.url || ''); if (!_u || !/\.m3u8(\?|$)/i.test(_u) || VH_C.has(_u) || VH_PRE.has(_u) || vhWarmBad(_u)) continue; const _job = vhGetPlaylist(_u).then(_b => { if (_b) { if (VH_C.size > 800) _shrink(VH_C, 0.5); VH_C.set(_u, { ts: Date.now(), raw: 1, body: _b, base: _u }); } }).catch(() => { }).then(() => VH_PRE.delete(_u)); VH_PRE.set(_u, _job); } } } catch (e) { } // v1.34.106: mint-warm fail-e warmMark na (prewarm-remint 40s atkato)
-        try { const _gk = srv + '|' + tmdbId + '|' + (s || '') + '|' + (e || ''); const _rec = VH_ALTS.get(_gk); if (_rec) { const _wq = {}; for (const _s of (j.sources || [])) if (_s && _s.quality) _wq[String(_s.quality)] = 1; let _nw = 0; for (const _q of Object.keys(_wq)) { if (_nw >= 3) break; const _alts = _rec.byQ[_q] || []; for (const _au of _alts) { if (!_au || !/\.m3u8(\?|$)/i.test(_au) || VH_C.has(_au) || VH_PRE.has(_au) || vhWarmBad(_au)) continue; const _job2 = vhGetPlaylist(_au).then(_b => { if (_b) { if (VH_C.size > 800) _shrink(VH_C, 0.5); VH_C.set(_au, { ts: Date.now(), raw: 1, body: _b, base: _au }); if (DBG) console.error('[sibwarm] ok ' + srv + ' q=' + _q); } }).catch(() => { }).then(() => VH_PRE.delete(_au)); VH_PRE.set(_au, _job2); _nw++; break; } } } } catch (e) { }   // v1.34.115: sibling playlist harvest-ei warm — click-e sibling cache-hit (session shobtaje thaktei proof)
+        // Proactive playlist warming disabled; fetch only when the player requests it.
+        // Proactive playlist warming disabled; fetch only when the player requests it.
         vsjPut(vkey, j); // v1.18.4: মাইক্রো-ক্যাশ-রাখা
         if (DBG) console.error('[t1g] ' + srv + ' fetch=' + (Date.now() - tS) + 'ms n=' + (j.sources || []).length + ' | jkeys=' + Object.keys(j).join(',') + ' | s0=' + JSON.stringify((j.sources || [])[0] || {}).slice(0, 220) + (j.audios ? ' | audios=' + JSON.stringify(j.audios).slice(0, 200) : '') + (j.audio ? ' | audio=' + JSON.stringify(j.audio).slice(0, 120) : ''));
         if (DBG && j.playlist) console.error('[t1g] ' + srv + ' PLAYLIST=' + JSON.stringify(j.playlist).slice(0, 500));
@@ -15091,20 +14910,8 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
         let autoH = 0;
         // v1.11.11: payload-এর-নিজস্ব-মাস্টার (j.playlist) আগে — ওখানেই EXT-X-MEDIA-অডিও-ঘোষণা; মৃত-হলে-আগের-সব-পথ-অক্ষত
         const masterU = (j.playlist && /^https?:/.test(String(j.playlist))) ? String(j.playlist) : '';
-        let pr = masterU ? await probePlaylist(masterU) : null;
-        if (pr && (pr.to || pr.blk)) { /* v1.17.39: master-প্রোব-টাইমআউট ⇒ আর কোনো প্রোব-চেইনে সময় নষ্ট নয় */ }
-        else if (!pr || !pr.ok) {
-          if (autoRows.length) { let r2 = await probePlaylist(autoRows[0].url); if (!r2.ok && autoRows[1]) r2 = await probePlaylist(autoRows[1].url); if (!pr || r2.ok) pr = r2; }
-          else if (pass.length > 1) pr = { ok: await probeAny([pass[0].url, pass[1].url]), h: 0, auds: [] };
-          else if (pass.length) pr = { ok: await playable(pass[0].url), h: 0, auds: [] };
-          else if (!pr) pr = { ok: true, h: 0, auds: [] }; // zero filter-matches -> probe skipped entirely
-        }
-        autoH = pr.h || 0;
-        if (pr.auds && pr.auds.length) j._audN = pr.auds.join('/'); // সোর্স-ঘোষিত-ভাষা — TMDB-অনুমানকে-হারায়
-        // ★ v1.34.80: master/source-probe CF-worker-mrityu sOi pele ei server-er card-i noy
-        //   (paris: API-ok shotteo playlist 451 'error code: 1026' — device-eo eki hobe).
-        if (pr && pr.dead) { vplayKill(srv); srvBump(srv, -3); if (DBG) console.error('[t1g] ' + srv + ' PLAY-DEAD st=' + pr.st); return { srv, dead: true }; }
-        if (pr && !pr.ok && !(pr.to || pr.blk) && pass.length) { const pd2 = await probePlaylist(pass[0].url).catch(() => null); if (pd2 && pd2.dead) { vplayKill(srv); srvBump(srv, -3); if (DBG) console.error('[t1g] ' + srv + ' PLAY-DEAD(src) st=' + pd2.st); return { srv, dead: true }; } }
+        // Do not test media from the addon IP or suppress server cards.
+        const pr = { ok: true, h: 0, auds: [] };
         const ok = !!pr.ok;
         const soft = !ok; // v1.18.2: probe amader IP-er — 404/timeout = "amra dekhchi na", file mora noy => card-gate noy
         // v1.34.33: v1.34.31-এর DEAD-GATE **বাতিল** (ইউজার: "Miami, Boise ase o na") — প্রোড-egress দিয়েও প্রোব
@@ -16358,7 +16165,7 @@ async function vhGetPlaylist(target) {
 function vhPrewarm(rawUrls, origin) {
   // ★ v1.28.3-L3: রিলে বন্ধ থাকলে প্রি-ওয়ার্ম **বৃথা** — কার্ড সরাসরি CDN-এ যায়, আমাদের VH_C কেউ ছোঁয় না
   //   ⇒ শুধু মেমরি (+১৯৩KB × N) নষ্ট। তাই রিলে চালু থাকলেই প্রি-ওয়ার্ম।
-  if (process.env.VHRELAY === '0' || process.env.VHPW === '0' || !origin) return; // v1.34.35: রিলে আবার ডিফল্ট-চালু (নিচের নোট)
+  return; // No proactive playlist checks; playback relay remains available on request. // v1.34.35: রিলে আবার ডিফল্ট-চালু (নিচের নোট)
   const n = Number(process.env.VHPW || 10);
   let i = 0;
   for (const u of (rawUrls || [])) {
@@ -16645,7 +16452,8 @@ function vuTok() { try { return 'vu=' + RELVU.randomBytes(6).toString('base64url
 function vuJoinW(u, q) { return u + (u.indexOf('?') >= 0 ? (u.endsWith('?') || u.endsWith('&') ? '' : '&') : '?') + q; }
 let VU_PROBE_N = 0;             // ★ v1.27.9: একসাথে সর্বোচ্চ ৬টি প্রোব (লোড-সুরক্ষা)
 const VU_PROBE_MAX = 6;
-function vuHostOk(host, sample) {              // sync — কখনো অপেক্ষা করে না
+function vuHostOk(host, sample) {
+  return !!host && VU_SAFE.test(host.toLowerCase()); // No background media probe.              // sync — কখনো অপেক্ষা করে না
   if (!host) return false;
   const h = host.toLowerCase();
   if (VU_SAFE.test(h)) return true;
@@ -16998,9 +16806,8 @@ function sendStreams(res, skey, plog, ms, cards, ua, cfg) {
   // ★ v1.28.0: প্রতিটি কার্ডে `headers` অবশ্য — মাপা: UA ছাড়া pixeldrain ২০০ দেয় না (ব্যাটারিতে 404), আর অনেক ক্লায়েন্ট `behaviorHints.proxyHeaders` পড়ে না।
   let _cards = stripCards(cards);
   /* ★★★ v1.34.135: মৃত-কার্ড বাদ (সিঙ্ক) + পটভূমি-প্রোব/ওয়ার্ম (উত্তর পাঠানোর পরে, শূন্য-দেরি) */
-  if (process.env.CGDROP === '1') { try { _cards = cardGateFilter(_cards); } catch (eCG) { } }  /* ডিফল্ট: বাদ নয় — শুধু গরম করা */
-  try { rtHlsWarm(_cards); } catch (eRW) { }
-  try { cardGateProbe(_cards); } catch (eCP) { }
+  // Do not probe playback or filter streams based on the server's IP.
+
   if (DBG) console.error('[ss] in=' + (cards || []).length + ' após-strip=' + _cards.length);
   /* ★★ v1.28.1 (মাপা-বাগ): **IP-লক টোকেন-কার্ড বাদ**।
      vidy-এর কিছু সার্ভার (যেমন delhi → i-arch-400.deton444eik.com) HLS-টোকেনে **যে IP থেকে API কল হয়েছে সেটা বোধা থাকে**
@@ -17020,11 +16827,7 @@ function sendStreams(res, skey, plog, ms, cards, ua, cfg) {
     _cards = _cards.filter(c => { const q = _qNum(c); return !(q > 0 && q < 720); });
     if (DBG) console.error('[qfloor] ' + _lowq.length + ' কার্ড বাদ (৭২০p-এর নিচে: ' + _lowq.slice(0, 4).map(c => c.quality + '/' + String(c.bingeGroup || '?').split('|')[0]).join(', ') + ')');
   }
-  const _drop = _cards.filter(c => c && c.url && IP_LOCK.test(String(c.url)));
-  if (_drop.length) {
-    _cards = _cards.filter(c => !(c && c.url && IP_LOCK.test(String(c.url))));
-    if (DBG) console.error('[iplock] ' + _drop.length + ' কার্ড বাদ (IP-লক টোকেন — প্লেয়ারে 404 হবে): ' + _drop.slice(0, 3).map(c => String(c.url).split('/')[2]).join(', '));
-  }
+  // Preserve source-provided cards; do not discard based on server-side IP assumptions.
   if (DBG) console.error('[ss] após-qfloor+iplock=' + _cards.length);
   for (const c0 of _cards) {
     if (!c0 || !c0.url) continue;

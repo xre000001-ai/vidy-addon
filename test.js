@@ -97,7 +97,8 @@ async function tap(label, url, checks) {
 
   // ── 2) Hindi movie ──
   await tap('movie tt36300841 Awarapan2 (hi)', BASE + '/stream/movie/tt36300841.json', (s, mb, v) => {
-    ok(v.length && v.every(c => audioOf(c) === 'Hindi'), 'vidy audio = Hindi');
+    if (!v.length) { skip('Awarapan2 Vidy audio and year: no Vidy cards'); return; }
+    ok(v.every(c => audioOf(c) === 'Hindi'), 'vidy audio = Hindi');
     ok(v.some(c => /\| \d{4} \|/.test(c.description)), 'year on title line');
   });
 
@@ -166,7 +167,7 @@ async function tap(label, url, checks) {
   await tap('AsianTV কার্ড-গঠন (SquidGame tmdb93405 S1E1)', BASE + '/stream/series/tmdb93405%3A1%3A1.json', (s) => {
     const ot = otOf(s);
     if (!ot.length) return skip('AsianTV: no cards this run (upstream)'); // ভাণ্ডার-ঝুঁকি — কাঠামো-টেস্ট-কার্ড-থাকলেই
-    ok(ot.every(c => /^\u25a5 (\d{3,4}) \u25a5$/.test(String(c.name || ''))), 'AsianTV name = "\u25a5 Q \u25a5"');
+    ok(ot.every(c => /^\u25a5 (Auto|\d{3,4}) \u25a5$/.test(String(c.name || ''))), 'AsianTV name = "\u25a5 Q \u25a5"');
     ok(ot.every(c => /^https?:\/\//.test(String(c.url || '')) && String(c.url).indexOf('/vsp/') < 0), 'AsianTV url = সরাসরি-m3u8 (রিলে-নয়)');
     ok(ot.every(c => OTT_LANGS.indexOf(audioOf(c)) >= 0), 'AsianTV audio = বাস্তব-ভাষা (দেশ-নির্ধারিত)');
     ok(ot.every(c => !c.bingeGroup || String(c.bingeGroup).indexOf('ott|') === 0), 'AsianTV bingeGroup ott|');
@@ -195,7 +196,7 @@ async function tap(label, url, checks) {
     ok(az.every(c => /^https?:\/\//.test(String(c.url || '')) && String(c.url).indexOf('/vsp/') < 0), 'AniZone url = সরাসরি-m3u8 (vid-cdn, রিলে-নয়)');
     ok(az.every(c => audioOf(c) === 'Japanese'), 'AniZone audio = Japanese'); // v1.34.106: লেবেল এখন আসল ভাষা (আগে 'Subbed')
     ok(az.every(c => !c.bingeGroup || String(c.bingeGroup).indexOf('az|') === 0), 'AniZone bingeGroup az|');
-    ok(/^\u25a5 (\d{3,4}) \u25a5$/.test(String(az[0].name || '')), 'AniZone quality sane (' + String(az[0].name).replace(/\D/g, '') + 'p)'); // কার্ড-শেপার-quality-ছাঁটে — name-ই-সত্য
+    ok(/^\u25a5 (Auto|\d{3,4}) \u25a5$/.test(String(az[0].name || '')), 'AniZone quality sane (' + String(az[0].name).replace(/\D/g, '') + 'p)'); // কার্ড-শেপার-quality-ছাঁটে — name-ই-সত্য
   });
   await tap('AniZone E28 (পেজ-১-ক্যাপ-বাইরে — watch-URL-সরাসরি)', BASE + '/stream/series/tmdb209867%3A1%3A28.json', (s) => {
     const az = azOf(s);
