@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.143';
+const VERSION = '1.34.144';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -6518,7 +6518,28 @@ async function mmVidbolt(tmdbId, isSeries, s, e, ms) { // v1.15.28: the vidbolt 
       const jtxt = await mmPoolText('https://vidbolt.xyz/api/resolve?' + q, vLeft(6500));
       try { j = jtxt ? JSON.parse(jtxt) : null; } catch { }
       const srcs = (j && j.stream && Array.isArray(j.stream.sources) ? j.stream.sources : []).slice(0, MM_MAXLANG);
-      if (srcs.length) { for (const sc of srcs) { if (!sc || !/^https?:\/\//i.test(String(sc.url || ''))) continue; const h = parseInt(String(sc.quality || ''), 10) || 0; const mp4 = String(sc.kind || '').toLowerCase() === 'mp4' || /\.mp4(?:[?#]|$)/i.test(sc.url); push(h, sc.url, VB_REF, mp4, String(sc.language || '').trim(), '', 0, sc.url); } return out; } // Do not fetch/probe returned video. // v1.15.99: ৮ → MM_MAXLANG (callisto-তে ১০-১২ ভাষা থাকে)
+      if (srcs.length) {
+        for (const sc of srcs) {
+          if (!sc || !/^https?:\/\//i.test(String(sc.url || ''))) continue;
+          const h = parseInt(String(sc.quality || ''), 10) || 0;
+          const mp4 = String(sc.kind || '').toLowerCase() === 'mp4' || /\.mp4(?:[?#]|$)/i.test(sc.url);
+          const lang = String(sc.language || '').trim();
+          // Only parse metadata already in the resolver response; never fetch media here.
+          const embedded = !mp4 && typeof sc.master === 'string' ? sc.master : '';
+          const vars = embedded ? mmVarList(embedded, sc.url) : [];
+          if (vars.length) {
+            push(0, sc.url, VB_REF, 0, lang, '', 0, sc.url); // retain adaptive card
+            const heights = new Set();
+            for (const v of vars) {
+              if (!v.h || v.h < 720 || heights.has(v.h)) continue;
+              heights.add(v.h);
+              // Mini playlist is constructed only when the user selects this card.
+              push(v.h, sc.url, VB_REF, 0, lang, '', 1, sc.url + '|quality:' + v.h);
+            }
+          } else push(h, sc.url, VB_REF, mp4, lang, '', 0, sc.url);
+        }
+        return out;
+      } // Do not fetch/probe returned video. // v1.15.99: ৮ → MM_MAXLANG (callisto-তে ১০-১২ ভাষা থাকে)
       if (!srcs.length) { // v1.15.31: rotation gap — a remembered master (sticky resolve memory) still emits one card; playback proves it
         const cm = mmGet(MM_VC, q, 1800000);
         if (cm && !MM_TILE.has(cm)) { push(0, cm, VB_REF, 0, '', '', 0, 'mem'); break; } // v1.15.38: DIRECT
@@ -7292,6 +7313,7 @@ async function vspChain(tmdbId, type, s, e, ent) { // পূর্ণ-চেই�
     const cfgm = /window\.CONFIG = (\{.*?\});/s.exec(e3);
     if (!cfgm) throw new Error('CONFIG-none');
     const cfg = JSON.parse(cfgm[1]);
+    if (cfg.turnstile && !cfg.apiToken) { try { diag('vsp', 'source-requires-human-verification'); } catch (_) {} throw new Error('vsp-human-verification-required'); }
     const apiBase = (type === 'tv' // v1.15.71-ফিক্স: টিভি=streamBase&season=&episode=&stream_urls (player.js-এর apiFor() হুবহু — প্যারাম s/e নয়)
       ? (cfg.streamBase ? cfg.streamBase + '&season=' + (s || 1) + '&episode=' + (e || 1) + '&stream_urls' : cfg.api)
       : cfg.api || '').replace(/&amp;/g, '&');
@@ -7323,7 +7345,7 @@ async function vspChain(tmdbId, type, s, e, ent) { // পূর্ণ-চেই�
     const px = vspPick(ent && ent.sub ? { sub: ent.sub } : null);
     if (!px) break;
     try { const r = await tryOnce(px.px); ent.px = px.px; ent.sub = vspSubnet(px.px); if (DBG) console.error('[vsp] pool-পথ ✓ ' + px.px); return r; }
-    catch (pe) { VSP_BAD.set(px.px, Date.now()); if (DBG) console.error('[vsp] ' + px.px + ' ERR ' + String(pe.message).slice(0, 40)); }
+    catch (pe) { if (!/vsp-human-verification-required/.test(String(pe && pe.message))) VSP_BAD.set(px.px, Date.now()); if (DBG) console.error('[vsp] ' + px.px + ' ERR ' + String(pe.message).slice(0, 40)); }
   }
   return { urls: [], fileName: '' };
 }
