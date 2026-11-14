@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.164';
+const VERSION = '1.34.165';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -8591,10 +8591,9 @@ async function hdDrive(driveUrl, ms) { // hubcloud drive → gamerxyt → প্
   const pd = [...new Set((txt.match(/pixeldrain\.dev\/u\/([A-Za-z0-9]+)/g) || []).map(z => z.split('/u/')[1]))].filter(id => id !== 'negn6f').slice(0, 3);
   const s3 = [...new Set((txt.match(/https?:\/\/[a-z0-9.-]+\/[^"'\s<>]*X-Amz-Signature=[A-Za-z0-9%]+/g) || []).map(z => z.replace(/&amp;/g, '&')))].slice(0, 1);
   const wk = [...new Set((txt.match(/https:\/\/[a-z0-9.-]*workers\.dev\/[^"'\s<>]*/g) || []))].filter(u => !/\.m3u8/i.test(u)).slice(0, 1);
-  // ★ v1.27.1: "Server : 10Gbps" = `gpdl.hubcloud.<tld>/?id=<hash>` → 302 → `<host>.workers.dev/?id=…`
-  //   (মাপা)। আলাদা প্রার্থী-ধরন; 302-পার হয়ে Range-প্রমাণ ছাড়া কার্ড নয়।
-  const gp = [...new Set((txt.match(/https:\/\/gpdl\.hubcloud\.[a-z]+\/\?id=[A-Za-z0-9]+/g) || []))].slice(0, 2);
-  return { fn: nm, cands: [...s3.map(u => ({ u: u, k: 's3' })), ...wk.map(u => ({ u: u, k: 'wk' })), ...gp.map(u => ({ u: u, k: 'gp' })), ...pd.map(id => ({ u: 'https://pixeldrain.dev/api/file/' + id, k: 'pd' }))] };
+  // GP download gateways are not stable media URLs: they may expire or lead to HTML.
+  // Do not present an unverified gateway as a playable card.
+  return { fn: nm, cands: [...s3.map(u => ({ u: u, k: 's3' })), ...wk.map(u => ({ u: u, k: 'wk' })), ...pd.map(id => ({ u: 'https://pixeldrain.dev/api/file/' + id, k: 'pd' }))] };
 }
 // ---------- HDHub4u সিরিজ (v1.17.51) ----------
 // ★ মাপা গঠন (Reacher S4): পোস্টে দুই ধরনের লিঙ্ক —
