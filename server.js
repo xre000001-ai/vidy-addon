@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.166';
+const VERSION = '1.34.167';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -8773,6 +8773,10 @@ function hdEpisodeConsistent(name, season, episode) {
 }
 // Round-robin quality and host type so a large group of FSL/worker links
 // cannot crowd Pixeldrain (or a lower-quality rung) out of the response.
+function hdMirrorKey(raw) {
+  try { const u = new URL(String(raw)); if (/\.r2\.cloudflarestorage\.com$/i.test(u.hostname) && u.searchParams.has('X-Amz-Signature')) return u.origin + u.pathname; } catch (_) {}
+  return String(raw || '');
+}
 function hdPickMirrors(list, limit) {
   const groups = new Map();
   for (const c of list) { const k = String(c.h || 0) + '|' + c.k; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(c); }
@@ -8899,9 +8903,9 @@ async function hdSeries(imdb, title, s, e, origin, maxh) {
     const preHub = [];                                     // v1.27.1: প্যাক-র্যাপারে পাওয়া সরাসরি hubcloud
     for (let i = 0; i < wpages.length; i++) {
       const t = String(wpages[i].t || '');
-      if (/https:\/\/hubcloud\.[a-z]+\/drive\//i.test(t)) continue;      // সরাসরি পাওয়া গেছে
+      // A wrapper can contain direct HubCloud links AND separate higher-quality HubDrive links.
       const hd2 = [...new Set((t.match(/https:\/\/hubdrive\.(?:bar|blog)\/file\/[A-Za-z0-9]+/g) || []))];
-      for (const u2 of hd2) if (needDrv.indexOf(u2) < 0 && needDrv.length < 6) needDrv.push(u2);
+      for (const u2 of hd2) if (needDrv.indexOf(u2) < 0 && needDrv.length < 12) needDrv.push(u2);
     }
     for (let i = 0; i < packPages.length; i++) {           // ★ v1.27.1: "Episode N" সারি → ড্রাইভ/hubcloud
       for (const z of hdEpInPack(String(packPages[i].t || ''), EP)) {
@@ -8969,7 +8973,7 @@ async function hdSeries(imdb, title, s, e, origin, maxh) {
       const info = hdFileOf(r.fn || dsel[i].ttl);
       if (!hdEpisodeConsistent(info.fn, SE, EP)) continue;
       const hh = info.h || dsel[i].h || 0, tg = dsel[i].tag || info.tag || '';
-      for (const c of r.cands) { if (!hdEpisodeConsistent(c.u, SE, EP) || seenU.has(c.u)) continue; seenU.add(c.u); cands.push({ u: c.u, k: c.k, h: hh, fn: info.fn || dsel[i].ttl, tag: tg }); }
+      for (const c of r.cands) { const uk = hdMirrorKey(c.u); if (!hdEpisodeConsistent(c.u, SE, EP) || seenU.has(uk)) continue; seenU.add(uk); cands.push({ u: c.u, k: c.k, h: hh, fn: info.fn || dsel[i].ttl, tag: tg }); }
     }
     const pool = cands.filter(c => !(maxh && c.h && c.h > maxh));
     if (!pool.length) { if (DBG) console.error('[hds] no-cands @' + (Date.now() - T0) + 'ms'); const bk2 = hdCardsBack('hc:' + (imdb || title) + ':' + SE + ':' + EP); if (bk2.length && DBG) console.error('[hds] cache-fallback ' + bk2.length + ' @' + (Date.now() - T0) + 'ms'); return bk2; }
@@ -9077,7 +9081,7 @@ async function hdStreams(imdb, title, type, s, e, origin, maxh) { // v1.17.49: �
     const uniqC = []; const seenU = new Set();
     // ★ v1.17.49: **রেজোলিউশন-আগে** (পোস্টের ক্রম ৪৮০p-দিয়ে-শুরু ⇒ আগে ২১৬০p বাদ পড়ত), হোস্ট-ধরন tiebreak
     for (const c of cands.slice().sort((a, b) => ((b.h || 0) - (a.h || 0)) || (prio(a) - prio(b)))) {
-      if (seenU.has(c.u)) continue; seenU.add(c.u);
+      const uk = hdMirrorKey(c.u); if (seenU.has(uk)) continue; seenU.add(uk);
       if (maxh && c.h && c.h > maxh) continue;
       uniqC.push(c);
     }
