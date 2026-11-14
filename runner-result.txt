@@ -1,0 +1,29 @@
+URL https://cinedoze.tv/ HTTP 403 redirect 
+URL https://cinedoze.tv/?s=Project+Hail+Mary HTTP 403 redirect 
+URL https://cinedoze.tv/movies/lenin-pandiyan-2026-dual-audio-hindi-org-tamil-amazon/ HTTP 403 redirect 
+URL https://cinedoze.tv/links/m1volkkome/ HTTP 403 redirect 
+URL https://mlsbd.co/ HTTP 403 redirect 
+URL https://savelinks.me/view/iNTi2twT HTTP 403 redirect 
+URL https://joya9links.com/view/ltCp85X6 HTTP 403 redirect 
+candidate count 229
+VALID 1 ms 2202
+VALID 2 ms 3162
+VALID 3 ms 5894
+VALID 4 ms 7956
+VALID 5 ms 7351
+VALID 6 ms 5220
+VALID 7 ms 4535
+VALID 8 ms 5622
+tested 50
+VALID 9 ms 2080
+VALID 10 ms 5471
+tested 100
+VALID 11 ms 7032
+tested 150
+VALID 12 ms 4624
+VALID 13 ms 6422
+tested 200
+DONE 13 / 229
+BD_PROXY_RESULT home valid 3 tested 12 statuses ['000', '200']
+BD_PROXY_RESULT sitemap valid 4 tested 12 statuses ['000', '200']
+BD_PROXY_RESULT link valid 4 tested 12 statuses ['000', '301']
