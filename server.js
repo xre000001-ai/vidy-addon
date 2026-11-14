@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.156';
+const VERSION = '1.34.157';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -3910,8 +3910,8 @@ async function mlsGdPackMeta(link, ms) {
   const cached=MLS_GD_META.get(link); if(cached && Date.now()-cached.ts<300000)return cached.val;
   const r=await mlsGet(link,{ms:Math.min(4000,ms||4000)}); const title=mlsEnt((/<title[^>]*>([\s\S]*?)<\/title>/i.exec(String(r.body||''))||[])[1]||'');
   const em=/\bS0*(\d{1,2})E0*(\d{1,4})(?!\d)(?:[-–]E?0*(\d{1,4}))?/i.exec(title);
-  const qm=/(2160|1080|720|480)p\b/i.exec(title); const val={season:em?+em[1]:0,episode:em?+em[2]:0,episode_end:em?+(em[3]||em[2]):0,q:qm?+qm[1]:(/\b4k\b/i.test(title)?2160:0)};
-  if(val.season&&val.episode&&val.q){MLS_GD_META.set(link,{ts:Date.now(),val});if(MLS_GD_META.size>200)MLS_GD_META.clear();} return val;
+  const qm=/(2160|1080|720|480)p\b/i.exec(title); const sm=/\bS0*(\d{1,2})(?!\d)/i.exec(title); const val={title,season:em?+em[1]:(sm?+sm[1]:0),episode:em?+em[2]:0,episode_end:em?+(em[3]||em[2]):0,q:qm?+qm[1]:(/\b4k\b/i.test(title)?2160:0)};
+  if(val.season&&val.q){MLS_GD_META.set(link,{ts:Date.now(),val});if(MLS_GD_META.size>200)MLS_GD_META.clear();} return val;
 }
 
 // Watch-Online চেইন (v1.28.10, মাপা ২৬-১০-২০২৬): `new3.multicloudlinks.com/view/<id>`
@@ -3992,7 +3992,7 @@ function mlsMakeCard(it, INFO, NAME, type, s, e) {
     const TTL = String(I.name || NAME || '').trim();
     const lines = '⊞ MLSBD ◧ ' + srv + (audio ? ' ⌗ ' + audio : '') + (size ? ' · ' + size : '');
     const txt = '⧉ ' + TTL + (YR ? ' | ' + YR + ' |' : ' |') + '\n'
-      + (type === 'series' ? '⧠ S' + Number(s || 1) + 'E' + Number(e || 1) : '⧠ Movie') + (size ? ' · ' + size : '') + '\n' + lines + (it.range ? '\nⓘ Episodes ' + it.range.start + '–' + it.range.end + ' Pack · seek manually' : '');
+      + (type === 'series' ? '⧠ S' + Number(s || 1) + 'E' + Number(e || 1) : '⧠ Movie') + (size ? ' · ' + size : '') + '\n' + lines + (it.range ? '\nⓘ Episodes ' + it.range.start + '–' + it.range.end + ' Pack · seek manually' : (it.seasonFile ? '\nⓘ Season file · episode coverage unverified · seek manually' : ''));
     return {
       name: '\u25a5 ' + (qq || 'Auto') + ' \u25a5', title: txt, description: txt, quality: String(qq || ''),
       url: u, _srv: srv, _hq: qq, _mlsRange: it.range || null,
@@ -4094,11 +4094,11 @@ async function mlsTask(nameP, infoP, type, s, e) {
       const TTL = String(I.name || NAME || '').trim();
       const lines = '⊞ MLSBD ◧ ' + srv + (audio ? ' ⌗ ' + audio : '') + (size ? ' · ' + size : '');
       const txt = '⧉ ' + TTL + (YR ? ' | ' + YR + ' |' : ' |') + '\n'
-        + (type === 'series' ? '⧠ S' + Number(s || 1) + 'E' + Number(e || 1) : '⧠ Movie') + (size ? ' · ' + size : '') + '\n' + lines + (it.range ? '\nⓘ Episodes ' + it.range.start + '–' + it.range.end + ' Pack · seek manually' : '');
+        + (type === 'series' ? '⧠ S' + Number(s || 1) + 'E' + Number(e || 1) : '⧠ Movie') + (size ? ' · ' + size : '') + '\n' + lines + (it.range ? '\nⓘ Episodes ' + it.range.start + '–' + it.range.end + ' Pack · seek manually' : (it.seasonFile ? '\nⓘ Season file · episode coverage unverified · seek manually' : ''));
       CARD_BUF.push({
         name: '\u25a5 ' + (qq || 'Auto') + ' \u25a5', title: txt, description: txt, quality: String(qq || ''),
-        url: u, _srv: srv, _hq: qq, _mlsRange: it.range || null,
-        behaviorHints: { notWebReady: false, isBingeable: !it.range, proxyHeaders: { request: Object.assign({ 'User-Agent': UA }, it.r.srv === 'multicloud·watch' ? { Referer:'https://new.multicloudlinks.com/', Origin:'https://new.multicloudlinks.com' } : {}) }, filename: 'mlsbd-' + (qq || 'auto') + '.mkv' },
+        url: u, _srv: srv, _hq: qq, _mlsRange: it.range || null, _mlsSeasonFile: !!it.seasonFile,
+        behaviorHints: { notWebReady: false, isBingeable: !it.range && !it.seasonFile, proxyHeaders: { request: Object.assign({ 'User-Agent': UA }, it.r.srv === 'multicloud·watch' ? { Referer:'https://new.multicloudlinks.com/', Origin:'https://new.multicloudlinks.com' } : {}) }, filename: 'mlsbd-' + (qq || 'auto') + '.mkv' },
         bingeGroup: 'mls|' + mlsNorm(TTL) + '::' + (type === 'series' ? 'S' + Number(s || 1) + 'E' + Number(e || 1) : 'm')
       });
       // Deliver a ready GDx watch card without waiting for slow unrelated mirror jobs.
@@ -4219,7 +4219,7 @@ async function mlsTask(nameP, infoP, type, s, e) {
     for (const p of cands) for (const it of (Array.isArray(p._sav) ? p._sav : mlsSavIds(p.html))) if (!savList.some(x => x.id === it.id)) savList.push(Object.assign({ p: p }, it));
     // ★ v1.29.0: সিরিজ ⇒ **শুধু অনুরোধ-করা এপিসোডের sav** (পোস্টে সব এপিসোডের লিংক থাকে)
     if (type === 'series' && Number(e) > 0) {
-      const epMatch = savList.filter(x => { const lo=Number(x.ep)||0, hi=Number(x.ep_end)||0; if (lo) return lo<=EP && (hi||lo)>=EP; return !/\bS\d{1,2}E\d{1,4}\s*[-–]\s*E?\d/i.test(String(x.p.title||'')) && mlsEpOk(x.p.title,SE,EP); });
+      const epMatch = savList.filter(x => { const lo=Number(x.ep)||0, hi=Number(x.ep_end)||0; if (lo) return lo<=EP && (hi||lo)>=EP; return !/\bS\d{1,2}E\d{1,4}\s*[-–]\s*E?\d/i.test(String(x.p.title||'')) && mlsEpOk(x.p.title,SE,EP) && (/\bS\d{1,2}E\d/i.test(String(x.p.title||'')) || !savList.some(y=>y.p===x.p && Number(y.ep)>0)); });
       savList.length = 0; for (const x of epMatch) savList.push(x);
     }
     for (let i=savList.length-1;i>=0;i--) if (Number(savList[i].q)>0 && Number(savList[i].q)<720) savList.splice(i,1);
@@ -4253,6 +4253,7 @@ async function mlsTask(nameP, infoP, type, s, e) {
           if (MLS_HOSTDBG.length < 20) MLS_HOSTDBG.push(x.hosts);
           const inner = [];
           const range = (Number(it.ep)>0 && Number(it.ep_end)>Number(it.ep)) ? {start:Number(it.ep),end:Number(it.ep_end)} : null;
+          const seasonOnly = type === 'series' && !Number(it.ep) && !/\bS\d{1,2}E\d/i.test(String(p.title||''));
           const consistent = r => type !== 'series' || (r.season === SE && r.episode === (range ? range.start : EP) && (r.episode_end||r.episode) === (range ? range.end : EP));
           for (const u of (x.gdx || []).slice(0, 1))
             inner.push(require('./tools/mls-index-lab/gdx_watch').resolve(u, mlsGet, Math.max(3000, CAP - (Date.now() - T0) - 400)).then(r => { if (!r || !consistent(r) || ![720,1080,2160].includes(r.q) || (q0 && q0 !== r.q)) return null; addCard({ kind:'watch', r, title:ttlOf(p), q:r.q, range }); return {kind:'watch',r,title:ttlOf(p),q:r.q}; }).catch(() => null));
@@ -4261,13 +4262,13 @@ async function mlsTask(nameP, infoP, type, s, e) {
           // ★ v1.28.22: গেট এখন **বাকি-সময়** দেখে (আগে T0<CAP*0.45 ⇒ সার্চ ৪-৫সে নিলে gdflix কখনোই
           //   চালু হতো না ⇒ সব কার্ড multicloud-এ সীমিত)। আংশিক-কার্ড থাকায় দেরিতে শেষ হলেও ক্ষতি নেই।
           if (CAP - (Date.now() - T0) > 2400)
-            for (const u of ((q0 || range) ? x.gd : []).slice(0, 1))
+            for (const u of ((q0 || range || seasonOnly) ? x.gd : []).slice(0, 1))
               inner.push((async () => {
                 let actualQ=q0;
-                if (range) { const meta=await mlsGdPackMeta(u,4000); if (!consistent(meta) || ![720,1080,2160].includes(meta.q) || (q0 && q0!==meta.q)) return null; actualQ=meta.q; }
+                if (range || seasonOnly) { const meta=await mlsGdPackMeta(u,4000); if (range ? !consistent(meta) : (!require('./tools/mls-index-lab/season_file').seasonFile(meta.title, SE) || !names.some(n=>mlsTitleOk(n,meta.title,year,true)))) return null; if (![720,1080,2160].includes(meta.q) || (q0 && q0!==meta.q)) return null; actualQ=meta.q; }
                 const r=await mlsGd(u, Math.max(2600, CAP - (Date.now() - T0) - 400));
-                if (r && r.ok && r.direct) addCard({kind:'gd',r,title:ttlOf(p),q:actualQ,range});
-                if (r && !r.ok && !range) MLS_GD_CTX.set(mlsGdId(u), { ck:RCK,INFO,NAME,type,s,e,title:ttlOf(p),q:actualQ });
+                if (r && r.ok && r.direct) addCard({kind:'gd',r,title:ttlOf(p),q:actualQ,range,seasonFile:seasonOnly});
+                if (r && !r.ok && !range && !seasonOnly) MLS_GD_CTX.set(mlsGdId(u), { ck:RCK,INFO,NAME,type,s,e,title:ttlOf(p),q:actualQ });
                 return {kind:'gd',r,title:ttlOf(p),q:actualQ};
               })().catch(() => null));
           return Promise.all(inner);
@@ -15594,6 +15595,7 @@ function fmtCardText(c, hint) {
     const bob = e.replace(/^[\u23e3\u29e0]\s*/, '').trim();
     if (bob && !/^movie$/i.test(bob)) epLine = ' \u23e3 ' + bob.slice(0, 60);
   }
+  if (c._mlsSeasonFile && sm) epLine = ' \u23e3 S' + (parseInt(sm[1], 10) || 1) + ' · Season file';
   // ---- সোর্স-লাইন (+ • সার্ভার) ----
   let rest = s.replace(/^[\u2318\u229e]\s*/, '').trim();
   // ★ v1.33.0: **যতগুলো ট্রেইলিং `• X` আছে সবই কাটা** — নইলে fmtCardText দুইবার চললে
@@ -15662,7 +15664,7 @@ function fmtCardText(c, hint) {
   return c;
 }
 const fmtCards = (cards, hint) => { if (!Array.isArray(cards)) return cards; for (const c of cards) fmtCardText(c, hint); return cards; };
-const stripCards = cards => (cards || []).map(c => { const { _hq, _lang, _pack, _mlsRange, _exoTwin, _srv, _src, _dl, _direct, quality, headers, subtitles, ...r } = c || {}; if (headers && /^mm\|/.test(String(r.bingeGroup || ''))) r.headers = headers; return r; }); // v1.34.71: _src/_dl/_direct-o strip (age API-output-e leak hoto; fmtCards _src agei pore ney)
+const stripCards = cards => (cards || []).map(c => { const { _hq, _lang, _pack, _mlsRange, _mlsSeasonFile, _exoTwin, _srv, _src, _dl, _direct, quality, headers, subtitles, ...r } = c || {}; if (headers && /^mm\|/.test(String(r.bingeGroup || ''))) r.headers = headers; return r; }); // v1.34.71: _src/_dl/_direct-o strip (age API-output-e leak hoto; fmtCards _src agei pore ney)
 // ---------- v1.15.52: সব-সোর্সের-কার্ড-এক-ফরম্যাটে (ইউজার: "প্রতি-সোর্সের-কার্ড-ফরম্যাট-এমনি-চাই") — decorate()-এর-ভিডি-ফরম্যাট:
 // ⧉ Title | Year |  /  ⧠ Movie|SsEe  /  ⊞ Server ⌗ Audio — mbxr-চাইল্ড-ইতিমধ্যে-এই-ফরম্যাটে-প্রমাণিত; বাকি-সোর্স-এখানে-বসে
 const YEAR_CACHE = new Map();
@@ -15703,7 +15705,7 @@ async function unifyCards(cards, meta) { // শুধু-টেক্সট-ব�
       const pk = c._pack ? (' \u00b7 S' + c._pack + ' Pack') : ''; // v1.15.83: সিজন-প্যাক — লেবেলে স্পষ্ট (ভুল-কনটেন্ট-নয় বোঝাতে)
       const txt = head + '\n' + epLine + '\n\u229e ' + (UNIFY_SRV[src] || src) + (au ? ' \u2317 ' + au : '') + pk;
       c.title = txt;
-      c.description = txt + (pk ? '\n\u24d8 Full season in one file \u2014 starts at Ep 1' : '') + (c._mlsRange ? '\nⓘ Episodes ' + c._mlsRange.start + '–' + c._mlsRange.end + ' Pack · seek manually' : '');
+      c.description = txt + (pk ? '\n\u24d8 Full season in one file \u2014 starts at Ep 1' : '') + (c._mlsRange ? '\nⓘ Episodes ' + c._mlsRange.start + '–' + c._mlsRange.end + ' Pack · seek manually' : (c._mlsSeasonFile ? '\nⓘ Season file · episode coverage unverified · seek manually' : ''));
     }
     // ★ v1.27.10: **সব** সোর্সের কার্ডে বছর-পূরণ (Vidsrc/HDHub4u-র মতো যেগুলোতে বছরই ছিল না)
     //   — শুধু হেড-লাইনের শেষে `| <বছর> |` বসে, শিরোনাম/url/অন্য-কিছু অপরিবর্তিত।

@@ -36,9 +36,10 @@ function find(rows,q){
    // only when the post names one exact episode; episode-range posts need hints.
    const s=String(p.title||'').match(/\bS\d{1,2}E0*(\d{1,3})(?:\s*[-–]\s*E?0*(\d{1,3}))?/i);
    const hasRange=s && s[2] && +s[2]!==+s[1];
-   sav=sav.filter(x=> (Number(x.ep)>0 && Number(x.ep_end)>=Number(x.ep) && Number(x.ep)<=Number(q.episode) && Number(q.episode)<=Number(x.ep_end)) || (Number(x.ep)===Number(q.episode) && !x.ep_end && !hasRange) || (!x.ep && s && !hasRange && +s[1]===Number(q.episode)));
+   const seasonOnly=!s && !(p.sav||[]).some(x=>Number(x.ep)>0);
+   sav=sav.filter(x=> (Number(x.ep)>0 && Number(x.ep_end)>=Number(x.ep) && Number(x.ep)<=Number(q.episode) && Number(q.episode)<=Number(x.ep_end)) || (Number(x.ep)===Number(q.episode) && !x.ep_end && !hasRange) || (!x.ep && ((s && !hasRange && +s[1]===Number(q.episode)) || seasonOnly)));
   }
-  sav=sav.filter(x=>Number(x.q)>0 || (q.type==='series' && Number(x.ep)>0 && Number(x.ep_end)>=Number(x.ep) && Number(x.ep)<=Number(q.episode) && Number(q.episode)<=Number(x.ep_end)));
+  sav=sav.filter(x=>Number(x.q)>0 || (q.type==='series' && !Number(x.ep)) || (q.type==='series' && Number(x.ep)>0 && Number(x.ep_end)>=Number(x.ep) && Number(x.ep)<=Number(q.episode) && Number(q.episode)<=Number(x.ep_end)));
   if(sav.length)r.push({id:p.id,title:p.title,url:p.url,sav});
  }
  return r;

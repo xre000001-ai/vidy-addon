@@ -30,3 +30,10 @@ for(const ep of [121,125,128]) assert.deepEqual(find([bachelor],q('Bachelor Poin
 assert.equal(find([bachelor],q('Bachelor Point','series',5,120)).length,0);
 assert.equal(find([bachelor],q('Bachelor Point','series',4,130)).length,0);
 console.log('Bachelor Point ranges, unknown quality, season and 480p passed');
+const season=row('Take Charge of My Heart (2026) S01 Dual Audio Netflix',[{id:'watch',q:0,ep:0,ep_end:0},{id:'hd',q:1080,ep:0,ep_end:0},{id:'low',q:480,ep:0,ep_end:0}]);
+for(const ep of [1,5,10]) assert.deepEqual(find([season],q('Take Charge of My Heart','series',1,ep))[0].sav.map(x=>x.id),['watch','hd']);
+assert.equal(find([season],q('Take Charge of My Heart','series',2,1)).length,0);
+assert.equal(find([season],q('Take Charge of My Heart Again','series',1,1)).length,0);
+const mixed=row('Show (2024) S01 Netflix',[{id:'unknown',q:1080,ep:0},{id:'ep2',q:720,ep:2,ep_end:2}]);
+assert.equal(find([mixed],q('Show','series',1,1)).length,0);
+console.log('season-only discovery and mixed episode safety passed');
