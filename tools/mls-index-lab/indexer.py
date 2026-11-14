@@ -20,17 +20,18 @@ class Links(HTMLParser):
 def extract_post(body):
  p=Links();p.feed(body or ''); out=[]
  for a in p.links:
-  m=re.search(r'https?://(?:www\.)?savelinks\.me/view/([A-Za-z0-9]+)',a['url'],re.I)
+  m=re.search(r'https?://(?:www\.)?(savelinks\.me|joya9links\.com)/view/([A-Za-z0-9]+)',a['url'],re.I)
   if not m:continue
+  host=m.group(1).lower(); ident=m.group(2)
   t=a['label']; q=re.search(r'\b(2160|1080|720|480|360)\s*p?\b|\b(4k|uhd)\b',t,re.I)
   em=list(re.finditer(r'(?<![A-Za-z0-9])(?:episode|epi|ep|e)\s*[-_.: ]?\s*0*(\d{1,3})(?:\s*[-–]\s*(?:e|ep)?0*(\d{1,3}))?(?![A-Za-z0-9])',a['context'],re.I))
-  out.append({'id':m.group(1),'url':'https://savelinks.me/view/'+m.group(1),'label':t,'quality':(int(q.group(1)) if q and q.group(1) else 2160 if q else 0),'episode':int(em[-1].group(1)) if em else 0,'episode_end':int(em[-1].group(2) or em[-1].group(1)) if em else 0})
- return list({x['id']:x for x in out}.values())
+  out.append({'id':ident,'url':'https://'+host+'/view/'+ident,'label':t,'quality':(int(q.group(1)) if q and q.group(1) else 2160 if q else 0),'episode':int(em[-1].group(1)) if em else 0,'episode_end':int(em[-1].group(2) or em[-1].group(1)) if em else 0})
+ return list({x['url']:x for x in out}.values())
 
-def mirror_links(body):
+def mirror_links(body,base='https://savelinks.me/'):
  p=Links();p.feed(body or '');out=[]
  for a in p.links:
-  u=urljoin('https://savelinks.me/',a['url']);h=(urlparse(u).hostname or '').lower()
+  u=urljoin(base,a['url']);h=(urlparse(u).hostname or '').lower()
   if re.search(r'(^|\.)(?:gdflix\.[a-z.]+|gdlink\.[a-z.]+|ddflix\.[a-z.]+|multicloudlinks\.[a-z.]+|multidownload\.[a-z.]+|fsldownload\.[a-z.]+|filepress\.[a-z.]+|pixeldrain\.com)$',h):out.append({'url':u,'label':a['label'][:180]})
  return list({x['url']:x for x in out}.values())
 
@@ -78,10 +79,14 @@ def savepost(db,p):
  db.execute('INSERT OR REPLACE INTO post_other VALUES(?,?)',(p['id'],json.dumps(other_pages(body),ensure_ascii=False)))
 
 def fetchmirror(id):
- url='https://savelinks.me/view/'+id
+ if id.startswith('joya9links.com/'):
+  ident=id.split('/',1)[1];host='joya9links.com'
+ else:ident=id;host='savelinks.me'
+ if not re.fullmatch(r'[A-Za-z0-9]+',ident):raise ValueError('invalid link-page identifier')
+ url='https://'+host+'/view/'+ident
  def parse(body):
   if len(body)<1000 or re.search(r'just a moment|checking your browser|bots not allowed',body,re.I):raise ValueError('challenge or incomplete page')
-  links=mirror_links(body)
+  links=mirror_links(body,url)
   if not links:raise ValueError('no supported mirror links')
   return links
  try:
@@ -118,7 +123,8 @@ def main():
  ids=[];last={k:v for k,v in db.execute('SELECT id,checked FROM mirrors')}
  for (links,) in db.execute('SELECT links FROM posts ORDER BY date DESC'):
   for l in json.loads(links):
-   if l['id'] not in last or time.time()-last[l['id']]>86400:ids.append(l['id'])
+   key=('joya9links.com/'+l['id']) if 'joya9links.com/' in l.get('url','') else l['id']
+   if key not in last or time.time()-last[key]>86400:ids.append(key)
  ids=list(dict.fromkeys(ids));ids.sort(key=lambda x:last.get(x,0));ids=ids[:max(0,a.mirror_limit)]
  with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
   futures={pool.submit(fetchmirror,x):x for x in ids}
