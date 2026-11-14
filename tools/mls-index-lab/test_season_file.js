@@ -2,3 +2,9 @@
 assert.equal(seasonFile('GDFlix | CineDoze.TV-Take Charge of My Heart (2026) MLSBD.Co-S01 Dual Audio Netflix 720p.mkv',1).quality,720);
 for(const s of ['Show S02 720p.mkv','Show S01E01 720p.mkv','Show S01E01-10 1080p.mkv','Show S01 480p.mkv','Show S01 720p.zip'])assert.equal(seasonFile(s,1),null,s);
 console.log('season-file metadata safety passed');
+const opts={name:'My Demon',year:2023};
+const f='GDFlix | CineDoze.Com-My Demon (2023) MLSBD.Shop-Dual Audio [Hindi-Korean] 720p.mkv';
+assert.equal(seasonFile(f,1,opts).unmarked,true);
+for(const bad of ['GDFlix | CineDoze.Com-My Demonic (2023) 720p.mkv','GDFlix | CineDoze.Com-My Demon (2022) 720p.mkv','GDFlix | CineDoze.Com-My Demon (2023) Season 2 720p.mkv','GDFlix | CineDoze.Com-My Demon (2023) Epi-3 720p.mkv','GDFlix | CineDoze.Com-My Demon (2023) 480p.mkv']) assert.equal(seasonFile(bad,1,opts),null,bad);
+assert.equal(seasonFile(f,2,opts),null);assert.equal(seasonFile(f,1),null);
+console.log('unmarked season listing strict name, year and episode safety passed');
