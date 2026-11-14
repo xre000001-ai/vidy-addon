@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.155';
+const VERSION = '1.34.156';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -3640,11 +3640,11 @@ function mlsSavIds(html) {
     // ★ v1.29.0: **সিরিজের এপিসোড-মার্কার** — বড় পোস্টে (S20E53 = ১৬০টি sav, সব এপিসোড একসাথে)
     //   আগে ভুল এপিসোডের ফাইলকার্ড হয়ে যেত। অ্যাঙ্করের ঠিক আগের লেখা ("Epi-53", "E53", "Episode 53")
     //   থেকে এপিসোড-নম্বর তুলে রাখি ⇒ টাস্কে শুধু মিলে-যাওয়া এপিসোডের sav নেওয়া হবে।
-    let ep = 0;
+    let ep = 0, ep_end = 0;
     const C = String(ctx || '');
-    const em = [...C.matchAll(/(?:episode|epi|ep|e)\s*[-_.: ]?\s*0*(\d{1,4})(?![0-9])/gi)];
-    if (em.length) { const last = em[em.length - 1]; ep = +last[1]; if (!(ep > 0 && ep < 3000)) ep = 0; }
-    out.push({ id: savKey, q: q ? +q : 0, ep: ep });
+    const em = [...C.matchAll(/(?<![A-Za-z0-9])(?:episode|epi|ep|e)\s*[-_.: ]?\s*0*(\d{1,4})(?:\s*[-–]\s*(?:e|ep)?0*(\d{1,4}))?(?![0-9])/gi)];
+    if (em.length) { const last = em[em.length - 1]; ep = +last[1]; ep_end = +(last[2] || last[1]); if (!(ep > 0 && ep < 3000 && ep_end >= ep && ep_end < 3000)) ep = ep_end = 0; }
+    out.push({ id: savKey, q: q ? +q : 0, ep: ep, ep_end });
   };
   const re = /<a\b[^>]*\bclass=['"][^'"]*\bDbtn\b[^'"]*['"][^>]*>([\s\S]{0,120}?)<\/a>/gi;
   const re2 = /<a\b[^>]*\bhref=['"]([^'"]+)['"][^>]*\bclass=['"][^'"]*\bDbtn\b[^'"]*['"][^>]*>([\s\S]{0,120}?)<\/a>/gi;
@@ -3904,6 +3904,16 @@ async function mlsGd(link, ms, px) {
   return { ok: false, route: (r && r.route) || 'pending', link: link };
 }
 
+// Validate pack identity against GDFlix file-page title before labeling it as a season/range.
+const MLS_GD_META = new Map();
+async function mlsGdPackMeta(link, ms) {
+  const cached=MLS_GD_META.get(link); if(cached && Date.now()-cached.ts<300000)return cached.val;
+  const r=await mlsGet(link,{ms:Math.min(4000,ms||4000)}); const title=mlsEnt((/<title[^>]*>([\s\S]*?)<\/title>/i.exec(String(r.body||''))||[])[1]||'');
+  const em=/\bS0*(\d{1,2})E0*(\d{1,4})(?!\d)(?:[-–]E?0*(\d{1,4}))?/i.exec(title);
+  const qm=/(2160|1080|720|480)p\b/i.exec(title); const val={season:em?+em[1]:0,episode:em?+em[2]:0,episode_end:em?+(em[3]||em[2]):0,q:qm?+qm[1]:(/\b4k\b/i.test(title)?2160:0)};
+  if(val.season&&val.episode&&val.q){MLS_GD_META.set(link,{ts:Date.now(),val});if(MLS_GD_META.size>200)MLS_GD_META.clear();} return val;
+}
+
 // Watch-Online চেইন (v1.28.10, মাপা ২৬-১০-২০২৬): `new3.multicloudlinks.com/view/<id>`
 //   → ৩০২ → `/view/<hash>?c=<id>&exp=…` পেজে **সরাসরি** `dr1.multidownload.lol/d/<id>?exp&token&eid`
 //   → ওই URL-এ `&action=watch` দিলে **২০৬ + video/matroska + Content-Range** (প্রমাণিত: ৭৬৪MB)।
@@ -3935,8 +3945,8 @@ async function mlsWatch(link, ms, px) {
       try {const su=new URL(mlsEnt(src)); if (su.protocol==='https:' && /(^|\.)multidownload\.[a-z]+$/i.test(su.hostname)) push(su.href, 'multicloud·watch');} catch (_) {}
     }
     const title=mlsEnt((/<title[^>]*>([\s\S]*?)<\/title>/i.exec(pb)||[])[1]||'');
-    const qm=/(2160|1080|720|480)p\b/i.exec(title); const em=/\bS0*(\d{1,2})E0*(\d{1,4})(?!\d)/i.exec(title);
-    meta={q:qm?+qm[1]:(/\b4k\b/i.test(title)?2160:0),season:em?+em[1]:0,episode:em?+em[2]:0};
+    const qm=/(2160|1080|720|480)p\b/i.exec(title); const em=/\bS0*(\d{1,2})E0*(\d{1,4})(?!\d)(?:[-–]E?0*(\d{1,4}))?/i.exec(title);
+    meta={q:qm?+qm[1]:(/\b4k\b/i.test(title)?2160:0),season:em?+em[1]:0,episode:em?+em[2]:0,episode_end:em?+(em[3]||em[2]):0};
   }
   if (DBG) console.error('[mlsw] cands=' + cands.map(c => c.tag).join(','));
   for (const c of cands.slice(0, 2)) {
@@ -3982,11 +3992,11 @@ function mlsMakeCard(it, INFO, NAME, type, s, e) {
     const TTL = String(I.name || NAME || '').trim();
     const lines = '⊞ MLSBD ◧ ' + srv + (audio ? ' ⌗ ' + audio : '') + (size ? ' · ' + size : '');
     const txt = '⧉ ' + TTL + (YR ? ' | ' + YR + ' |' : ' |') + '\n'
-      + (type === 'series' ? '⧠ S' + Number(s || 1) + 'E' + Number(e || 1) : '⧠ Movie') + (size ? ' · ' + size : '') + '\n' + lines;
+      + (type === 'series' ? '⧠ S' + Number(s || 1) + 'E' + Number(e || 1) : '⧠ Movie') + (size ? ' · ' + size : '') + '\n' + lines + (it.range ? '\nⓘ Episodes ' + it.range.start + '–' + it.range.end + ' Pack · seek manually' : '');
     return {
       name: '\u25a5 ' + (qq || 'Auto') + ' \u25a5', title: txt, description: txt, quality: String(qq || ''),
-      url: u, _srv: srv, _hq: qq,
-      behaviorHints: { notWebReady: false, isBingeable: true, proxyHeaders: { request: Object.assign({ 'User-Agent': UA }, it.r.srv === 'multicloud·watch' ? { Referer:'https://new.multicloudlinks.com/', Origin:'https://new.multicloudlinks.com' } : {}) }, filename: 'mlsbd-' + (qq || 'auto') + '.mkv' },
+      url: u, _srv: srv, _hq: qq, _mlsRange: it.range || null,
+      behaviorHints: { notWebReady: false, isBingeable: !it.range, proxyHeaders: { request: Object.assign({ 'User-Agent': UA }, it.r.srv === 'multicloud·watch' ? { Referer:'https://new.multicloudlinks.com/', Origin:'https://new.multicloudlinks.com' } : {}) }, filename: 'mlsbd-' + (qq || 'auto') + '.mkv' },
       bingeGroup: 'mls|' + mlsNorm(TTL) + '::' + (type === 'series' ? 'S' + Number(s || 1) + 'E' + Number(e || 1) : 'm')
     };
   } catch (e2) { if (DBG) console.error('[mlsd] makeCard-err ' + ((e2 && e2.message) || e2)); return null; }
@@ -4064,7 +4074,7 @@ async function mlsTask(nameP, infoP, type, s, e) {
   const finalize = () => {
     const out = CARD_BUF.slice().sort((a, b) => (b._hq || 0) - (a._hq || 0));
     if (out.length && DBG) console.error('[mlsd] finalize n=' + out.length);
-    return out.slice(0, Number(process.env.MLSN || 8));
+    return out.slice(0, Number(process.env.MLSN || 20));
   };
   const addCard = (it) => {
     try {
@@ -4084,11 +4094,11 @@ async function mlsTask(nameP, infoP, type, s, e) {
       const TTL = String(I.name || NAME || '').trim();
       const lines = '⊞ MLSBD ◧ ' + srv + (audio ? ' ⌗ ' + audio : '') + (size ? ' · ' + size : '');
       const txt = '⧉ ' + TTL + (YR ? ' | ' + YR + ' |' : ' |') + '\n'
-        + (type === 'series' ? '⧠ S' + Number(s || 1) + 'E' + Number(e || 1) : '⧠ Movie') + (size ? ' · ' + size : '') + '\n' + lines;
+        + (type === 'series' ? '⧠ S' + Number(s || 1) + 'E' + Number(e || 1) : '⧠ Movie') + (size ? ' · ' + size : '') + '\n' + lines + (it.range ? '\nⓘ Episodes ' + it.range.start + '–' + it.range.end + ' Pack · seek manually' : '');
       CARD_BUF.push({
         name: '\u25a5 ' + (qq || 'Auto') + ' \u25a5', title: txt, description: txt, quality: String(qq || ''),
-        url: u, _srv: srv, _hq: qq,
-        behaviorHints: { notWebReady: false, isBingeable: true, proxyHeaders: { request: Object.assign({ 'User-Agent': UA }, it.r.srv === 'multicloud·watch' ? { Referer:'https://new.multicloudlinks.com/', Origin:'https://new.multicloudlinks.com' } : {}) }, filename: 'mlsbd-' + (qq || 'auto') + '.mkv' },
+        url: u, _srv: srv, _hq: qq, _mlsRange: it.range || null,
+        behaviorHints: { notWebReady: false, isBingeable: !it.range, proxyHeaders: { request: Object.assign({ 'User-Agent': UA }, it.r.srv === 'multicloud·watch' ? { Referer:'https://new.multicloudlinks.com/', Origin:'https://new.multicloudlinks.com' } : {}) }, filename: 'mlsbd-' + (qq || 'auto') + '.mkv' },
         bingeGroup: 'mls|' + mlsNorm(TTL) + '::' + (type === 'series' ? 'S' + Number(s || 1) + 'E' + Number(e || 1) : 'm')
       });
       // Deliver a ready GDx watch card without waiting for slow unrelated mirror jobs.
@@ -4167,7 +4177,7 @@ async function mlsTask(nameP, infoP, type, s, e) {
       if (anyMatch) { MLS_C.set(ck, { ts: Date.now(), posts: posts }); if (MLS_C.size > 300) _shrink(MLS_C, 0.5); }
     }
     const SE = Number(s || 1), EP = Number(e || 1);
-    const okPost = p => names.some(n => mlsTitleOk(n, p.title, year, type === 'series')) && (type !== 'series' || mlsEpOk(p.title, SE, EP) || (Array.isArray(p._sav) && new RegExp('(?:S0*' + SE + '(?:\\D|$))|(?:Season\\s*0*' + SE + '(?:\\D|$))', 'i').test(p.title) && p._sav.some(x => Number(x.ep) === EP && Number(x.ep_end) === EP)));
+    const okPost = p => names.some(n => mlsTitleOk(n, p.title, year, type === 'series')) && (type !== 'series' || mlsEpOk(p.title, SE, EP) || (Array.isArray(p._sav) && new RegExp('(?:S0*' + SE + '(?:\\D|$))|(?:Season\\s*0*' + SE + '(?:\\D|$))', 'i').test(p.title) && p._sav.some(x => Number(x.ep)>0 && Number(x.ep)<=EP && Number(x.ep_end)>=EP)));
         // ★ v1.29.1 (ইউজার: "onek stream pacchi na"): আগে মিলে-যাওয়া **২টি** পোস্টই যথেষ্ট ধরা হতো —
     //   এক পোস্টে শুধু 1080/480 আর অন্যটায় 2160/720 থাকলে দুটোই হারাত। এখন ৩টি পোস্টের sav-লিংক
     //   একসাথে (রেজলভ-চেইন কিন্তু এখনো savTop=৩ ⇒ সময় বাড়ে না, শুধু কোয়ালিটি-বিকল্প বাড়ে)।
@@ -4209,13 +4219,10 @@ async function mlsTask(nameP, infoP, type, s, e) {
     for (const p of cands) for (const it of (Array.isArray(p._sav) ? p._sav : mlsSavIds(p.html))) if (!savList.some(x => x.id === it.id)) savList.push(Object.assign({ p: p }, it));
     // ★ v1.29.0: সিরিজ ⇒ **শুধু অনুরোধ-করা এপিসোডের sav** (পোস্টে সব এপিসোডের লিংক থাকে)
     if (type === 'series' && Number(e) > 0) {
-      const epMatch = savList.filter(x => Number(x.ep) === Number(e));
-      if (epMatch.length) {
-        if (DBG) console.error('[mlsd] ep-filter E' + e + ': ' + savList.length + ' → ' + epMatch.length);
-        savList.length = 0;
-        for (const x of epMatch) savList.push(x);
-      } else if (DBG) console.error('[mlsd] ep-filter E' + e + ': কোনো মার্কার মেলেনি (' + savList.length + ' sav) — সব ধরা হলো');
+      const epMatch = savList.filter(x => { const lo=Number(x.ep)||0, hi=Number(x.ep_end)||0; if (lo) return lo<=EP && (hi||lo)>=EP; return !/\bS\d{1,2}E\d{1,4}\s*[-–]\s*E?\d/i.test(String(x.p.title||'')) && mlsEpOk(x.p.title,SE,EP); });
+      savList.length = 0; for (const x of epMatch) savList.push(x);
     }
+    for (let i=savList.length-1;i>=0;i--) if (Number(savList[i].q)>0 && Number(savList[i].q)<720) savList.splice(i,1);
     savList.sort((a, b) => (b.q || 0) - (a.q || 0));
     // ★ v1.28.34: আগে **প্রতি ক্যান্ডিডেটে ২টি** sav ⇒ এক টাইটেলে ৪টি sav-পেজ (**৪টি curl+প্রক্সি**) ⇒
     //   savelinks-এর CF রেট-লিমিটে ২টি ৪-৫সে নিত ⇒ CAP-এর আগে রুট শেষ হতো না (মাপা: sav=4 @8367ms ⇒ cards=0)।
@@ -4230,14 +4237,10 @@ async function mlsTask(nameP, infoP, type, s, e) {
     //   বাকিগুলো ব্যাকগ্রাউন্ড-এ enrich (রিফ্রেশে যোগ হয়)। ৩টি আলাদা sav = ৩টি আলাদা রেজলভ-চেইন।
     savList.sort((a, b) => (b.q || 0) - (a.q || 0));
     const savPick = [];
-    for (const it of savList) {
-      const k = it.q || 0;
-      if (seenQ.has(k) && savPick.length < 4) continue;
-      seenQ.add(k);
-      savPick.push(it);
-      if (savPick.length >= 5) break;
-    }
-    const savTop = savPick.slice(0, 3);
+    for (const it of savList) { const k=it.q||0; if(!seenQ.has(k)) { seenQ.add(k); savPick.push(it); } }
+    for (const it of savList) if(!savPick.includes(it)) savPick.push(it);
+    // Include duplicate-quality releases (e.g. WEBRip and WEB-DL) in parallel.
+    const savTop = savPick.slice(0, 6);
     if (DBG) console.error('[mlsd] savOrder=' + savList.map(x => (x.q || 0) + ':' + x.id).join(',') + ' → top=' + savTop.map(x => x.q || 0).join(','));
     // ★ v1.29.0: ফোরগ্রাউন্ডে না-নেওয়া কোয়ালিটিগুলো (720/480) ব্যাকগ্রাউন্ডে — রেসপন্সের পরে যোগ হয়
     ENR_MORE = savList.filter(x => savTop.indexOf(x) < 0).slice(0, 4);
@@ -4245,23 +4248,28 @@ async function mlsTask(nameP, infoP, type, s, e) {
       for (const it of savTop.filter(x => x.p === p)) {
         if (seenSav.has(it.id)) continue;
         seenSav.add(it.id);
-        const q0 = Array.isArray(p._sav) ? Number(it.q)||0 : (it.q || mlsQ(p.title) || 0);
+        const q0 = Number(it.q)||0;
         const chain = mlsSav(it.id, 4500).then(x => {
           if (MLS_HOSTDBG.length < 20) MLS_HOSTDBG.push(x.hosts);
           const inner = [];
-          const done = (r) => { if (r && r.ok === true && r.direct) addCard({ kind: kindOf(r), r: r, title: ttlOf(p), q: q0 }); return r; };
+          const range = (Number(it.ep)>0 && Number(it.ep_end)>Number(it.ep)) ? {start:Number(it.ep),end:Number(it.ep_end)} : null;
+          const consistent = r => type !== 'series' || (r.season === SE && r.episode === (range ? range.start : EP) && (r.episode_end||r.episode) === (range ? range.end : EP));
           for (const u of (x.gdx || []).slice(0, 1))
-            inner.push(require('./tools/mls-index-lab/gdx_watch').resolve(u, mlsGet, Math.max(3000, CAP - (Date.now() - T0) - 400)).then(r => { if (!r || (type === 'series' && (!r.season || !r.episode || r.season !== SE || r.episode !== EP)) || ![720,1080,2160].includes(r.q) || (q0 && q0 !== r.q)) return null; addCard({ kind:'watch', r, title:ttlOf(p), q:r.q }); return {kind:'watch',r,title:ttlOf(p),q:r.q}; }).catch(() => null));
+            inner.push(require('./tools/mls-index-lab/gdx_watch').resolve(u, mlsGet, Math.max(3000, CAP - (Date.now() - T0) - 400)).then(r => { if (!r || !consistent(r) || ![720,1080,2160].includes(r.q) || (q0 && q0 !== r.q)) return null; addCard({ kind:'watch', r, title:ttlOf(p), q:r.q, range }); return {kind:'watch',r,title:ttlOf(p),q:r.q}; }).catch(() => null));
           for (const u of x.mcl.slice(0, 1))
-            inner.push(mlsWatch(u, Math.max(3000, CAP - (Date.now() - T0) - 400)).then(r => { if (!r || (type === 'series' && (!r.season || !r.episode || r.season !== SE || r.episode !== EP)) || ![720,1080,2160].includes(r.q) || (q0 && q0 !== r.q)) return null; addCard({kind:'watch',r,title:ttlOf(p),q:r.q}); return {kind:'watch',r,title:ttlOf(p),q:r.q}; }).catch(() => null));
+            inner.push(mlsWatch(u, Math.max(3000, CAP - (Date.now() - T0) - 400)).then(r => { if (!r || !consistent(r) || ![720,1080,2160].includes(r.q) || (q0 && q0 !== r.q)) return null; addCard({kind:'watch',r,title:ttlOf(p),q:r.q,range}); return {kind:'watch',r,title:ttlOf(p),q:r.q}; }).catch(() => null));
           // ★ v1.28.22: গেট এখন **বাকি-সময়** দেখে (আগে T0<CAP*0.45 ⇒ সার্চ ৪-৫সে নিলে gdflix কখনোই
           //   চালু হতো না ⇒ সব কার্ড multicloud-এ সীমিত)। আংশিক-কার্ড থাকায় দেরিতে শেষ হলেও ক্ষতি নেই।
           if (CAP - (Date.now() - T0) > 2400)
-            for (const u of (q0 ? x.gd : []).slice(0, 1))
-              inner.push(mlsGd(u, Math.max(2600, CAP - (Date.now() - T0) - 400)).then(r => {
-                if (r && !r.ok) MLS_GD_CTX.set(mlsGdId(u), { ck: RCK, INFO: INFO, NAME: NAME, type: type, s: s, e: e, title: ttlOf(p), q: q0 });
-                done(r); return { kind: 'gd', r: r, title: ttlOf(p), q: q0 };
-              }).catch(() => null));
+            for (const u of ((q0 || range) ? x.gd : []).slice(0, 1))
+              inner.push((async () => {
+                let actualQ=q0;
+                if (range) { const meta=await mlsGdPackMeta(u,4000); if (!consistent(meta) || ![720,1080,2160].includes(meta.q) || (q0 && q0!==meta.q)) return null; actualQ=meta.q; }
+                const r=await mlsGd(u, Math.max(2600, CAP - (Date.now() - T0) - 400));
+                if (r && r.ok && r.direct) addCard({kind:'gd',r,title:ttlOf(p),q:actualQ,range});
+                if (r && !r.ok && !range) MLS_GD_CTX.set(mlsGdId(u), { ck:RCK,INFO,NAME,type,s,e,title:ttlOf(p),q:actualQ });
+                return {kind:'gd',r,title:ttlOf(p),q:actualQ};
+              })().catch(() => null));
           return Promise.all(inner);
         }).catch(() => []);
         jobs.push(chain);
@@ -15654,7 +15662,7 @@ function fmtCardText(c, hint) {
   return c;
 }
 const fmtCards = (cards, hint) => { if (!Array.isArray(cards)) return cards; for (const c of cards) fmtCardText(c, hint); return cards; };
-const stripCards = cards => (cards || []).map(c => { const { _hq, _lang, _pack, _exoTwin, _srv, _src, _dl, _direct, quality, headers, subtitles, ...r } = c || {}; if (headers && /^mm\|/.test(String(r.bingeGroup || ''))) r.headers = headers; return r; }); // v1.34.71: _src/_dl/_direct-o strip (age API-output-e leak hoto; fmtCards _src agei pore ney)
+const stripCards = cards => (cards || []).map(c => { const { _hq, _lang, _pack, _mlsRange, _exoTwin, _srv, _src, _dl, _direct, quality, headers, subtitles, ...r } = c || {}; if (headers && /^mm\|/.test(String(r.bingeGroup || ''))) r.headers = headers; return r; }); // v1.34.71: _src/_dl/_direct-o strip (age API-output-e leak hoto; fmtCards _src agei pore ney)
 // ---------- v1.15.52: সব-সোর্সের-কার্ড-এক-ফরম্যাটে (ইউজার: "প্রতি-সোর্সের-কার্ড-ফরম্যাট-এমনি-চাই") — decorate()-এর-ভিডি-ফরম্যাট:
 // ⧉ Title | Year |  /  ⧠ Movie|SsEe  /  ⊞ Server ⌗ Audio — mbxr-চাইল্ড-ইতিমধ্যে-এই-ফরম্যাটে-প্রমাণিত; বাকি-সোর্স-এখানে-বসে
 const YEAR_CACHE = new Map();
@@ -15695,7 +15703,7 @@ async function unifyCards(cards, meta) { // শুধু-টেক্সট-ব�
       const pk = c._pack ? (' \u00b7 S' + c._pack + ' Pack') : ''; // v1.15.83: সিজন-প্যাক — লেবেলে স্পষ্ট (ভুল-কনটেন্ট-নয় বোঝাতে)
       const txt = head + '\n' + epLine + '\n\u229e ' + (UNIFY_SRV[src] || src) + (au ? ' \u2317 ' + au : '') + pk;
       c.title = txt;
-      c.description = txt + (pk ? '\n\u24d8 Full season in one file \u2014 starts at Ep 1' : '');
+      c.description = txt + (pk ? '\n\u24d8 Full season in one file \u2014 starts at Ep 1' : '') + (c._mlsRange ? '\nⓘ Episodes ' + c._mlsRange.start + '–' + c._mlsRange.end + ' Pack · seek manually' : '');
     }
     // ★ v1.27.10: **সব** সোর্সের কার্ডে বছর-পূরণ (Vidsrc/HDHub4u-র মতো যেগুলোতে বছরই ছিল না)
     //   — শুধু হেড-লাইনের শেষে `| <বছর> |` বসে, শিরোনাম/url/অন্য-কিছু অপরিবর্তিত।

@@ -6,3 +6,5 @@ vm.runInContext(cut('function mlsSavIds(html)', '// savelinks পেজ')+'\n'+c
 const h='<a class="Dbtn" href="https://savelinks.me/view/abc">720p</a><a class="Dbtn" href="https://joya9links.com/view/abc">1080p</a><a class="Dbtn" href="https://eviljoya9links.com/view/no">1080p</a>';
 const p=ctx.parse(h);assert.equal(p.length,2);assert.equal(p[0].id,'abc');assert.equal(p[1].id,'joya9links.com/abc');assert.equal(p[1].q,1080);
 (async()=>{let a=await ctx.fetchPage('joya9links.com/abc',5000);assert.equal(a.gd.length,1);assert.equal(a.mcl.length,1);assert.equal(ctx.requests[0],'https://joya9links.com/view/abc');a=await ctx.fetchPage('abc',5000);assert.equal(ctx.requests[1],'https://savelinks.me/view/abc');await ctx.fetchPage('evil.com/a',5000);assert.equal(ctx.requests.length,2);console.log('joya/savelinks parser and resolver: 7 checks passed')})().catch(e=>{console.error(e);process.exit(1)});
+const pk=ctx.parse('<p>Epi-129-134</p><a class="Dbtn" href="https://savelinks.me/view/Pack1">1080p</a>');
+assert.equal(pk[0].ep,129);assert.equal(pk[0].ep_end,134);console.log('live HTML episode range parser passed');

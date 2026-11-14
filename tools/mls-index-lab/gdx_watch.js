@@ -19,7 +19,7 @@ async function resolve(link,get,ms){
  const b=await get(watch,{ms:Math.min(ms||6000,4000),referer:page});const direct=video(b&&b.body);if(!direct)return null;
  let filename='';try{filename=decodeURIComponent(new URL(direct).pathname.split('/').pop()||'')}catch(_){}
  const q=(/\b(2160|1080|720|480)p\b/i.exec(filename)||[])[1] || (/\b4k\b/i.test(filename)?'2160':'0');
- const ep=/\bS0*(\d{1,2})E0*(\d{1,4})(?!\d)(?:[-–]E?0*\d+)?/i.exec(filename);
- return {ok:true,direct,srv:'gdx·watch',size:0,ct:'',unverified:true,q:Number(q),season:ep?Number(ep[1]):0,episode:ep?Number(ep[2]):0,filename};
+ const ep=/\bS0*(\d{1,2})E0*(\d{1,4})(?!\d)(?:[-–]E?0*(\d{1,4}))?/i.exec(filename);
+ return {ok:true,direct,srv:'gdx·watch',size:0,ct:'',unverified:true,q:Number(q),season:ep?Number(ep[1]):0,episode:ep?Number(ep[2]):0,episode_end:ep?Number(ep[3]||ep[2]):0,filename};
 }
 module.exports={safePage,watchPage,video,resolve};

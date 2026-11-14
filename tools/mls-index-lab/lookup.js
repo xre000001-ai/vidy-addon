@@ -20,7 +20,7 @@ function matches(row,name,year,type,season,episode) {
   const se=new RegExp('(?:\\bS0*'+Number(season)+'(?=E|\\b)|\\bSeason\\s*0*'+Number(season)+'\\b)','i');
   if(!se.test(text))return false;
   const ranges=[...text.matchAll(/\bS\d{1,2}E0*(\d{1,3})(?:\s*[-–]\s*E?0*(\d{1,3}))?/gi)];
-  const exactLink=(row.sav||[]).some(x=>Number(x.ep)===Number(episode) && Number(x.ep_end)===Number(episode));
+  const exactLink=(row.sav||[]).some(x=>Number(x.ep)>0 && Number(x.ep_end)>=Number(x.ep) && Number(x.ep)<=Number(episode) && Number(episode)<=Number(x.ep_end));
   if(ranges.length && !ranges.some(m=>+m[1]<=episode && episode<=+(m[2]||m[1])) && !exactLink) return false;
  }
  return true;
@@ -36,9 +36,9 @@ function find(rows,q){
    // only when the post names one exact episode; episode-range posts need hints.
    const s=String(p.title||'').match(/\bS\d{1,2}E0*(\d{1,3})(?:\s*[-–]\s*E?0*(\d{1,3}))?/i);
    const hasRange=s && s[2] && +s[2]!==+s[1];
-   sav=sav.filter(x=> (Number(x.ep)===Number(q.episode) && ((x.ep_end && Number(x.ep_end)===Number(x.ep)) || (!x.ep_end && !hasRange))) || (!x.ep && s && !hasRange && +s[1]===Number(q.episode)));
+   sav=sav.filter(x=> (Number(x.ep)>0 && Number(x.ep_end)>=Number(x.ep) && Number(x.ep)<=Number(q.episode) && Number(q.episode)<=Number(x.ep_end)) || (Number(x.ep)===Number(q.episode) && !x.ep_end && !hasRange) || (!x.ep && s && !hasRange && +s[1]===Number(q.episode)));
   }
-  sav=sav.filter(x=>Number(x.q)>0 || (q.type==='series' && Number(x.ep)===Number(q.episode) && Number(x.ep_end)===Number(q.episode)));
+  sav=sav.filter(x=>Number(x.q)>0 || (q.type==='series' && Number(x.ep)>0 && Number(x.ep_end)>=Number(x.ep) && Number(x.ep)<=Number(q.episode) && Number(q.episode)<=Number(x.ep_end)));
   if(sav.length)r.push({id:p.id,title:p.title,url:p.url,sav});
  }
  return r;

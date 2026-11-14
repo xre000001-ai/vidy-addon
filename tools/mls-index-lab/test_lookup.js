@@ -6,14 +6,14 @@ assert.equal(find([row('Alien Predator (2024)',[{id:'A',q:720}])],q('Alien')).le
 assert.equal(find([row('Alien (2024) 720p',[{id:'A',q:480},{id:'B',q:720},{id:'C',q:0}])],q('Alien'))[0].sav.length,1);
 assert.equal(find([row('Alien (1990)',[{id:'A',q:720}])],q('Alien')).length,0);
 const r=row('Show (2024) S01E01-03',[{id:'A',q:720,ep:1,ep_end:1},{id:'B',q:1080,ep:2,ep_end:2},{id:'C',q:720,ep:0}]);
-assert.equal(find([row('Show (2024) S01E01-03',[{id:'A',q:720,ep:1,ep_end:3}])],q('Show','series',1,1)).length,0);
+assert.equal(find([row('Show (2024) S01E01-03',[{id:'A',q:720,ep:1,ep_end:3}])],q('Show','series',1,1)).length,1);
 assert.equal(find([row('Show (2024) S01E01-03',[{id:'A',q:720,ep:1}])],q('Show','series',1,1)).length,0);
 assert.deepEqual(find([r],q('Show','series',1,2))[0].sav.map(x=>x.id),['B']);
 assert.equal(find([r],q('Show','series',2,2)).length,0);
 assert.equal(find([row('Show (2024) S01E01',[{id:'A',q:720,ep:0}])],q('Show','series',1,1)).length,1);
 console.log('lookup fixture tests passed');
 const vision=row('VisionQuest (2026) S01E08 Dual Audio 720P | 1080P | 4K',[{id:'p6',q:1080,ep:6,ep_end:6},{id:'w6',q:0,ep:6,ep_end:6},{id:'p8',q:1080,ep:8,ep_end:8},{id:'pack',q:1080,ep:6,ep_end:8}]);
-assert.deepEqual(find([vision],q('Vision Quest','series',1,6))[0].sav.map(x=>x.id),['p6','w6']);
+assert.deepEqual(find([vision],q('Vision Quest','series',1,6))[0].sav.map(x=>x.id),['p6','w6','pack']);
 assert.equal(find([vision],q('Vision Quest','series',2,6)).length,0);
 assert.equal(find([vision],q('Vision Quest','series',1,9)).length,0);
 assert.equal(find([row('VisionQuest Extra (2026) S01E08',[{id:'a',q:1080,ep:6,ep_end:6}])],q('Vision Quest','series',1,6)).length,0);
@@ -23,3 +23,10 @@ assert.equal(find([row('[PG-13] Superman Returns (2006) Dual Audio', [{id:'A',q:
 assert.equal(find([row('[PG-13] Superman Returns (2006) Dual Audio', [{id:'A',q:720}])],q('Superman','movie',0,0,2006)).length,0);
 assert.equal(find([row('The Batman (2022) Dual Audio',[{id:'A',q:1080}])],q('Batman','movie',0,0,2022)).length,0);
 console.log('rating prefixes and wrong-title safeguards passed');
+
+const bachelor=row('Bachelor Point (2025) S05E129-134 Bengali BongoBD',[{id:'pack720',q:0,ep:129,ep_end:134},{id:'pack1080',q:1080,ep:129,ep_end:134},{id:'older',q:720,ep:121,ep_end:128},{id:'bad480',q:480,ep:129,ep_end:134}]);
+for(const ep of [129,130,134]) assert.deepEqual(find([bachelor],q('Bachelor Point','series',5,ep))[0].sav.map(x=>x.id),['pack720','pack1080']);
+for(const ep of [121,125,128]) assert.deepEqual(find([bachelor],q('Bachelor Point','series',5,ep))[0].sav.map(x=>x.id),['older']);
+assert.equal(find([bachelor],q('Bachelor Point','series',5,120)).length,0);
+assert.equal(find([bachelor],q('Bachelor Point','series',4,130)).length,0);
+console.log('Bachelor Point ranges, unknown quality, season and 480p passed');
