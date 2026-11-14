@@ -116,12 +116,27 @@ def fetchmirror(id):
   except Exception:pass
  raise ValueError('all mirror fetch paths failed')
 
+def select_mirror_ids(rows,last,attempts,now,limit,retry_seconds=3600):
+ # Failed/unsupported pages must not occupy every batch and starve later IDs.
+ # Do not alter a last-good mirror when a refresh fails.
+ seen=set();candidates=[]
+ for links in rows:
+  for l in json.loads(links):
+   key=('joya9links.com/'+l['id']) if 'joya9links.com/' in l.get('url','') else l['id']
+   if key in seen:continue
+   seen.add(key)
+   if key in last and now-last[key]<=86400:continue
+   if key in attempts and now-attempts[key]<retry_seconds:continue
+   candidates.append(key)
+ candidates.sort(key=lambda x:(attempts.get(x,0),last.get(x,0)))
+ return candidates[:max(0,limit)]
+
 def main():
  global PROXIES
  ap=argparse.ArgumentParser();ap.add_argument('--db',default='index.sqlite');ap.add_argument('--pages',type=int,default=2);ap.add_argument('--mirror-limit',type=int,default=10);ap.add_argument('--proxy-list');a=ap.parse_args()
  if a.proxy_list:
   data=json.load(open(a.proxy_list));PROXIES=[x['proxy'] for x in sorted(data['good'],key=lambda x:x['ms'])]
- db=sqlite3.connect(a.db);db.executescript('CREATE TABLE IF NOT EXISTS posts(id INTEGER PRIMARY KEY,title TEXT,url TEXT,date TEXT,modified TEXT,links TEXT); CREATE TABLE IF NOT EXISTS mirrors(id TEXT PRIMARY KEY, data TEXT, checked INTEGER); CREATE TABLE IF NOT EXISTS state(k TEXT PRIMARY KEY,v TEXT);')
+ db=sqlite3.connect(a.db);db.executescript('CREATE TABLE IF NOT EXISTS posts(id INTEGER PRIMARY KEY,title TEXT,url TEXT,date TEXT,modified TEXT,links TEXT); CREATE TABLE IF NOT EXISTS mirrors(id TEXT PRIMARY KEY, data TEXT, checked INTEGER); CREATE TABLE IF NOT EXISTS mirror_attempts(id TEXT PRIMARY KEY, attempted INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS state(k TEXT PRIMARY KEY,v TEXT);')
  def state(k):
   x=db.execute('SELECT v FROM state WHERE k=?',(k,)).fetchone();return x[0] if x else None
  def setstate(k,v):db.execute('INSERT OR REPLACE INTO state VALUES(?,?)',(k,str(v)))
@@ -136,12 +151,9 @@ def main():
   except Exception as e:
    print('wp FAILED',p,type(e).__name__,str(e)[:200],flush=True)
    if cut:break
- ids=[];last={k:v for k,v in db.execute('SELECT id,checked FROM mirrors')}
- for (links,) in db.execute('SELECT links FROM posts ORDER BY date DESC'):
-  for l in json.loads(links):
-   key=('joya9links.com/'+l['id']) if 'joya9links.com/' in l.get('url','') else l['id']
-   if key not in last or time.time()-last[key]>86400:ids.append(key)
- ids=list(dict.fromkeys(ids));ids.sort(key=lambda x:last.get(x,0));ids=ids[:max(0,a.mirror_limit)]
+ last={k:v for k,v in db.execute('SELECT id,checked FROM mirrors')}
+ attempts={k:v for k,v in db.execute('SELECT id,attempted FROM mirror_attempts')}
+ ids=select_mirror_ids((r[0] for r in db.execute('SELECT links FROM posts ORDER BY date DESC')),last,attempts,time.time(),a.mirror_limit)
  with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
   futures={pool.submit(fetchmirror,x):x for x in ids}
   for f in concurrent.futures.as_completed(futures):
@@ -152,5 +164,7 @@ def main():
      with db:db.execute('INSERT OR REPLACE INTO mirrors VALUES(?,?,?)',(id,json.dumps(links,ensure_ascii=False),int(time.time())))
     print('mirror',id,len(links),flush=True)
    except Exception as e:print('mirror FAILED',id,type(e).__name__,flush=True)
+   finally:
+    with db:db.execute('INSERT OR REPLACE INTO mirror_attempts VALUES(?,?)',(id,int(time.time())))
  print('totals posts',db.execute('SELECT COUNT(*) FROM posts').fetchone()[0],'mirrors',db.execute('SELECT COUNT(*) FROM mirrors').fetchone()[0],'next_page',state('next_page'),'before',state('before'),flush=True);db.close()
 if __name__=='__main__':main()

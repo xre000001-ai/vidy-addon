@@ -2,6 +2,13 @@ import unittest,sqlite3,json
 from unittest.mock import patch,Mock
 import indexer as m
 class Test(unittest.TestCase):
+ def test_failed_mirror_does_not_starve_untried(self):
+  rows=[json.dumps([{'id':'failed'},{'id':'fresh'},{'id':'fresh'},{'id':'ok'},{'id':'old'},{'id':'Joy','url':'https://joya9links.com/view/Joy'}])]
+  now=200000
+  chosen=m.select_mirror_ids(rows,{'ok':now-1,'old':now-90000},{'failed':now-10,'old':now-80000},now,10)
+  self.assertEqual(chosen,['fresh','joya9links.com/Joy','old'])
+  chosen=m.select_mirror_ids(rows,{'ok':now-1},{'failed':now-4000},now,10)
+  self.assertEqual(chosen,['fresh','old','joya9links.com/Joy','failed'])
  def test_quality_episode(self):
   x=m.extract_post('<p>Episode 12</p><a class="Dbtn" href="https://savelinks.me/view/AbC123">Download 1080p</a>');self.assertEqual((x[0]['episode'],x[0]['quality']),(12,1080))
  def test_joya9_and_savelinks_distinct_hosts(self):

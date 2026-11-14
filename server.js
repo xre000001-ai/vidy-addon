@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.160';
+const VERSION = '1.34.161';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -3420,12 +3420,12 @@ async function mlsGetRaw(u, opt) {
       if (cu && cu.st >= 200 && cu.st < 400 && valid(cu.body)) {
         mlsRec(u, 200, cu.body.length, 'curl');
         MLS_GOOD.set(host0, 'curl'); MLS_GOOD_TS.set(host0, Date.now());
-        return { st: 200, body: cu.body, url: u, via: 'curl' };
+        return { st: 200, body: cu.body, url: cu.eu || u, via: 'curl' };
       }
       if (DBG) console.error('[mlsd] ' + host0 + ' curl-ব্যর্থ ' + ((cu && cu.st) || 0) + ' @' + (Date.now() - t1) + 'ms');
     }
     const race = [];
-    const addRace = (tag, fn) => race.push(new Promise(res => fn().then(b => res(b ? { tag: tag, body: b } : null)).catch(() => res(null))));
+    const addRace = (tag, fn) => race.push(new Promise(res => fn().then(b => res(b ? (typeof b === 'string' ? { tag:tag, body:b, url:u } : { tag:tag, body:b.body, url:b.url || u }) : null)).catch(() => res(null))));
     // ★ v1.28.25: savelinks/gdflix/multicloud-এ **সরাসরি curl-ই সবচেয়ে দ্রুত** (মাপা ১.০–২.২সে, ৫/৫ সফল),
     //   কিন্তু আগে একবার প্রক্সি জিতলে (`good='px:…'`) বা `dead` সেট হলে curl রেস থেকেই বাদ পড়ত ⇒
     //   sav-হপ ৪.০সে নিত আর বাজেট শেষে কার্ড হারাত। এখন সবসময় রেসে।
@@ -3433,7 +3433,7 @@ async function mlsGetRaw(u, opt) {
       addRace('curl', async () => {
         for (let i = 0; i < 2 && left() > 1200; i++) {
           const cu = await mlsCurl(u, { ms: Math.min(4000, left()), json: !!opt.json, referer: opt.referer });
-          if (cu && cu.st >= 200 && cu.st < 400 && valid(cu.body)) return cu.body;
+          if (cu && cu.st >= 200 && cu.st < 400 && valid(cu.body)) return {body:cu.body,url:cu.eu || u};
         }
         return '';
       });
@@ -3447,7 +3447,7 @@ async function mlsGetRaw(u, opt) {
       addRace('px:' + fp, async () => {
         if (left() < 1200) return '';
         const cp2 = await mlsCurl(u, { ms: Math.min(4500, left()), json: !!opt.json, referer: opt.referer, proxy: fp });
-        return (cp2 && cp2.st >= 200 && cp2.st < 400 && valid(cp2.body)) ? cp2.body : '';
+        return (cp2 && cp2.st >= 200 && cp2.st < 400 && valid(cp2.body)) ? {body:cp2.body,url:cp2.eu || u} : '';
       });
     }
     if (process.env.MLSREADER !== '0' && isMlsHost) addRace('reader', async () => {
@@ -3476,7 +3476,7 @@ async function mlsGetRaw(u, opt) {
         else if (tag === 'reader') MLS_GOOD.set(host0, 'reader');
         MLS_GOOD_TS.set(host0, Date.now());
         if (DBG) console.error('[mlsd] ' + host0 + ' ✓ ' + tag + ' ' + w.body.length + 'b @' + (Date.now() - T0) + 'ms');
-        return { st: 200, body: w.body, url: u, via: tag };
+        return { st: 200, body: w.body, url: w.url || u, via: tag };
       }
     }
     got = null;
@@ -3504,11 +3504,11 @@ async function mlsGetRaw(u, opt) {
     if (opt.proxy) {
       for (const fp of (Array.isArray(opt.proxy) ? opt.proxy : [opt.proxy])) {
         const cp3 = await mlsCurl(u, { ms: Math.min(4500, ms - (Date.now() - T0)), json: !!opt.json, referer: opt.referer, proxy: fp });
-        if (cp3 && cp3.st >= 200 && cp3.st < 400) return { st: cp3.st, body: cp3.body, url: u, ct: cp3.ct, px: fp };
+        if (cp3 && cp3.st >= 200 && cp3.st < 400) return { st: cp3.st, body: cp3.body, url: cp3.eu || u, ct: cp3.ct, px: fp };
       }
     }
     const cu = await mlsCurl(u, { ms: Math.min(4500, ms - (Date.now() - T0)), json: !!opt.json, referer: opt.referer });
-    if (cu && cu.st >= 200 && cu.st < 400 && String(cu.body || '').length > 200) return { st: cu.st, body: cu.body, url: u, ct: cu.ct };
+    if (cu && cu.st >= 200 && cu.st < 400 && String(cu.body || '').length > 200) return { st: cu.st, body: cu.body, url: cu.eu || u, ct: cu.ct };
   }
   try {
     const b = await mlsPoolFetch(u, Math.max(3000, Math.min(5600, ms)), opt.json ? mlsOkJson : mlsOkHtml);
@@ -3666,6 +3666,7 @@ function mlsSavIds(html) {
 // savelinks পেজ → ঘোষিত মিরর-হোস্ট (gdflix ▼ / multicloud watch)
 const MLS_SAV = new Map(typeof MLS_SAV_LOAD !== 'undefined' ? MLS_SAV_LOAD : undefined);                    // id → {ts,val} (১০ মিনিট; শুধু মিরর-লিংকের তালিকা — ডাইরেক্ট-লিংক ক্যাশ নয়)
 const MLS_SAV_REFRESH = new Set();
+const MLS_SAV_NET = new Map();
 async function mlsSav(id, ms, forceFresh) {
   const km = /^(?:(joya9links\.com)\/)?([A-Za-z0-9]+)$/i.exec(String(id || ''));
   if (!km) return { gd: [], mcl: [], hosts: [] };
@@ -3682,6 +3683,10 @@ async function mlsSav(id, ms, forceFresh) {
       return seed;
     }
   }
+  // Concurrent taps share the same in-flight stable-link-page fetch; failures
+  // are never cached and each caller still constructs its own stream cards.
+  if (MLS_SAV_NET.has(id)) return MLS_SAV_NET.get(id);
+  const fetchPage=(async()=>{
   let r = await mlsGet(base + 'view/' + km[2], { ms: Math.min(ms, 5000), referer: MLS_BASE + '/' });
   // ★ v1.29.0 (মাপা: ৬টি sav একসাথে টানলে ২টি ফাঁকা ফিরত ⇒ সিরিজে route-jobs=0 ⇒ ০ কার্ড):
   //   বডি ফাঁকা/স্টাব হলে **একবার রিট্রাই** — রেফারার ছাড়া + প্রক্সি-পথ খোলা রেখে।
@@ -3700,6 +3705,9 @@ async function mlsSav(id, ms, forceFresh) {
   };
   if (val.gd.length || val.mcl.length || val.gdx.length) { MLS_SAV.set(id, { ts: Date.now(), val: val }); mlsMarkDirty(); if (MLS_SAV.size > 200) _shrink(MLS_SAV, 0.5); }
   return val;
+  })();
+  MLS_SAV_NET.set(id,fetchPage);
+  try { return await fetchPage; } finally { if (MLS_SAV_NET.get(id) === fetchPage) MLS_SAV_NET.delete(id); }
 }
 
 // gdflix রেজলভ (cookies-মুক্ত রুট: inline-r2 / worker-direct / worker-inline) + Range-প্রমাণ
@@ -3854,10 +3862,18 @@ function mlsGdBg(fileUrl, id) {
   setTimeout(() => tick(0), 2500);
 }
 
+const MLS_GD_FILE_FLIGHT = new Map();
+function mlsGdFilePage(link, ms) {
+  const key=String(link||'');
+  if (MLS_GD_FILE_FLIGHT.has(key)) return MLS_GD_FILE_FLIGHT.get(key);
+  const p=Promise.resolve().then(()=>mlsGet(key,{ms:Math.min(ms||4000,4000)})).finally(()=>MLS_GD_FILE_FLIGHT.delete(key));
+  MLS_GD_FILE_FLIGHT.set(key,p); return p;
+}
+
 async function mlsGdOnce(fileUrl, ms, resume) {
   const T0 = Date.now();
   if (resume && resume.tok && resume.cloud) return await mlsGdPoll(resume.tok, resume.cloud, Math.max(1200, ms));
-  const g = await mlsGet(fileUrl, { ms: Math.min(ms, 3600) });
+  const g = await mlsGdFilePage(fileUrl, Math.min(ms, 3600));
   const body = g.body || '';
   if (!body) return { ok: false, route: 'nofile' };
   let origin = 'https://new7.gdflix.io';
@@ -3908,7 +3924,7 @@ async function mlsGd(link, ms, px) {
 const MLS_GD_META = new Map();
 async function mlsGdPackMeta(link, ms) {
   const cached=MLS_GD_META.get(link); if(cached && Date.now()-cached.ts<300000)return cached.val;
-  const r=await mlsGet(link,{ms:Math.min(4000,ms||4000)}); const title=mlsEnt((/<title[^>]*>([\s\S]*?)<\/title>/i.exec(String(r.body||''))||[])[1]||'');
+  const r=await mlsGdFilePage(link,Math.min(4000,ms||4000)); const title=mlsEnt((/<title[^>]*>([\s\S]*?)<\/title>/i.exec(String(r.body||''))||[])[1]||'');
   const em=/\bS0*(\d{1,2})E0*(\d{1,4})(?!\d)(?:[-–]E?0*(\d{1,4}))?/i.exec(title);
   const qm=/(2160|1080|720|480)p\b/i.exec(title); const sm=/\bS0*(\d{1,2})(?!\d)/i.exec(title); const val={title,season:em?+em[1]:(sm?+sm[1]:0),episode:em?+em[2]:0,episode_end:em?+(em[3]||em[2]):0,q:qm?+qm[1]:(/\b4k\b/i.test(title)?2160:0)};
   if(val.q && title){MLS_GD_META.set(link,{ts:Date.now(),val});if(MLS_GD_META.size>200)MLS_GD_META.clear();} return val;
@@ -4261,15 +4277,19 @@ async function mlsTask(nameP, infoP, type, s, e) {
               inner.push((async () => {
                 let actualQ=q0;
                 let seasonUnmarked=false;
+                // Start metadata validation and media generation together; shared file-page
+                // request is coalesced. Do not emit until validation completes successfully.
+                const metaP=(range || seasonOnly) ? mlsGdPackMeta(u,4000) : Promise.resolve(null);
+                const resolveP=MLS_PLAY_RESOLVE.get('gd:'+u, () => mlsGd(u, Math.max(2600, CAP - (Date.now() - T0) - 400))).catch(()=>null);
                 if (range || seasonOnly) {
-                  const meta=await mlsGdPackMeta(u,4000);
+                  const meta=await metaP;
                   const postYear=+(String(p.title||'').match(/\b(?:19|20)\d{2}\b/)||[])[0]||0;
                   const seasonMeta=seasonOnly && names.map(n=>require('./tools/mls-index-lab/season_file').seasonFile(meta.title,SE,{name:n,year:postYear})).find(Boolean);
                   if (range ? !consistent(meta) : (!seasonMeta || !names.some(n=>mlsTitleOk(n,meta.title,year,true)))) return null;
                   if (![720,1080,2160].includes(meta.q) || (q0 && q0!==meta.q)) return null;
                   actualQ=meta.q;seasonUnmarked=!!(seasonMeta && seasonMeta.unmarked);
                 }
-                const r=await MLS_PLAY_RESOLVE.get('gd:'+u, () => mlsGd(u, Math.max(2600, CAP - (Date.now() - T0) - 400)));
+                const r=await resolveP;
                 if (r && r.ok && r.direct) addCard({kind:'gd',r,title:ttlOf(p),q:actualQ,range,seasonFile:seasonOnly,seasonUnmarked});
                 if (r && !r.ok && !range && !seasonOnly) MLS_GD_CTX.set(mlsGdId(u), { ck:RCK,INFO,NAME,type,s,e,title:ttlOf(p),q:actualQ });
                 return {kind:'gd',r,title:ttlOf(p),q:actualQ};
