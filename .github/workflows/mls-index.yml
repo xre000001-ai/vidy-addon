@@ -44,6 +44,8 @@ jobs:
         run: |
           python -m unittest -v test_indexer.py test_refresh.py
           node test_lookup.js
+          node test_runtime.js
+          node test_joya_source.cjs
       - name: Discover and verify BD proxies
         working-directory: tools/mls-index-lab
         run: python scan_bd.py
@@ -52,6 +54,7 @@ jobs:
         run: |
           set -euo pipefail
           python indexer.py --db /tmp/mls-pilot/store.sqlite --proxy-list bd-results.json --pages 0 --mirror-limit 12
+          python migrate.py /tmp/mls-pilot/store.sqlite
           python refresh.py --db /tmp/mls-pilot/store.sqlite --proxy-list bd-results.json --max-pages 10
           python backfill.py --db /tmp/mls-pilot/store.sqlite --proxy-list bd-results.json --start 1 --end auto --max-pages 20 --workers 4
           python export_index.py --db /tmp/mls-pilot/store.sqlite --output /tmp/mls-pilot/data

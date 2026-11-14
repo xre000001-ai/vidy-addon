@@ -4,6 +4,8 @@ import indexer as m
 class Test(unittest.TestCase):
  def test_quality_episode(self):
   x=m.extract_post('<p>Episode 12</p><a class="Dbtn" href="https://savelinks.me/view/AbC123">Download 1080p</a>');self.assertEqual((x[0]['episode'],x[0]['quality']),(12,1080))
+ def test_joya9_and_savelinks_distinct_hosts(self):
+  x=m.extract_post('<a href="https://savelinks.me/view/Same12">720p</a><a href="https://joya9links.com/view/Same12">1080p</a>');self.assertEqual(len(x),2);self.assertEqual(x[1]['url'],'https://joya9links.com/view/Same12')
  def test_episode_range_is_not_single_episode(self):
   x=m.extract_post('<p>Download Now Epi-129-134 WEB-DL</p><a href="https://savelinks.me/view/AbC123">Download 1080p</a>');self.assertEqual((x[0]['episode'],x[0]['episode_end']),(129,134))
  def test_no_false_episode_from_file_size(self):

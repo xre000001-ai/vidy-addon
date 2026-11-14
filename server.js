@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.151';
+const VERSION = '1.34.152';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -3056,7 +3056,8 @@ const MLS_BASE = 'https://mlsbd.co';
 const mlsOn = cfg => (process.env.MLSD !== '0') && !(cfg && cfg.mls === 0);
 const MLS_C = new Map();
 const MLS_GD_LOAD = [], MLS_SAV_LOAD = [];
-const MLS_RC = new Map();   // v1.28.30: টাইটেল-ভিত্তিক পুরো-কার্ড ক্যাশ
+const MLS_RC = new Map();   // Stream-card cache disabled; playback and page caches remain intact.
+MLS_RC.set = function () { return this; };  // Includes legacy disk-load / background-card writes.
 // ★ v1.29.0: **ডিস্ক-ক্যাশ** — রিস্টার্ট/ডিপ্লয়েও কার্ড ও gdflix-ফল টেকে (সিরিজের gdflix লিংক
 //   ৩০-৬০সে পরে তৈরি হয়; একবার তৈরি হলে আর হারানো উচিত নয়)। ২০সে পর পর লিখি, বুটে পড়ি।
 const MLS_CACHE_FILE = require('path').join(__dirname, 'mls_cache.json');
@@ -3624,9 +3625,11 @@ function mlsSavIds(html) {
   const seen = new Set();
   const add = (u0, txt, ctx) => {
     const u = mlsEnt(u0);
-    const mm = /savelinks\.me\/view\/([A-Za-z0-9]+)/.exec(u);
-    if (!mm || seen.has(mm[1])) return;
-    seen.add(mm[1]);
+    const mm = /(?:^|\/\/)(?:www\.)?(savelinks\.me|joya9links\.com)\/view\/([A-Za-z0-9]+)(?:[/?#]|$)/i.exec(u);
+    if (!mm) return;
+    const savKey = mm[1].toLowerCase() === 'joya9links.com' ? 'joya9links.com/' + mm[2] : mm[2];
+    if (seen.has(savKey)) return;
+    seen.add(savKey);
     // ★ v1.29.0: **4K/2160 লেবেল** আগে ধরা পড়ত না (`Download in 4K quality` ⇒ q=0 ⇒ তালিকার শেষে
     //   ⇒ কখনো রেজলভ হতো না) — এখন 2160 হিসেবে ধরা হয়, তাই সর্বোচ্চ কোয়ালিটি আগে যায়।
     const T = String(txt || '');
@@ -3639,7 +3642,7 @@ function mlsSavIds(html) {
     const C = String(ctx || '');
     const em = [...C.matchAll(/(?:episode|epi|ep|e)\s*[-_.: ]?\s*0*(\d{1,4})(?![0-9])/gi)];
     if (em.length) { const last = em[em.length - 1]; ep = +last[1]; if (!(ep > 0 && ep < 3000)) ep = 0; }
-    out.push({ id: mm[1], q: q ? +q : 0, ep: ep });
+    out.push({ id: savKey, q: q ? +q : 0, ep: ep });
   };
   const re = /<a\b[^>]*\bclass=['"][^'"]*\bDbtn\b[^'"]*['"][^>]*>([\s\S]{0,120}?)<\/a>/gi;
   const re2 = /<a\b[^>]*\bhref=['"]([^'"]+)['"][^>]*\bclass=['"][^'"]*\bDbtn\b[^'"]*['"][^>]*>([\s\S]{0,120}?)<\/a>/gi;
@@ -3652,7 +3655,7 @@ function mlsSavIds(html) {
   }
   while ((m = re2.exec(html))) add(m[1], m[2].replace(/<[^>]+>/g, ' '), String(html).slice(Math.max(0, m.index - 400), m.index).replace(/<[^>]+>/g, ' '));
   if (!out.length) {                                  // ফলব্যাক: শুধু href-স্ক্যান
-    const r1 = /href=['"]([^'"]*savelinks\.me\/view\/[^'"]+)['"]/gi;
+    const r1 = /href=['"]([^'"]*(?:savelinks\.me|joya9links\.com)\/view\/[^'"]+)['"]/gi;
     while ((m = r1.exec(html))) add(m[1], '');
   }
   return out;
@@ -3661,16 +3664,19 @@ function mlsSavIds(html) {
 // savelinks পেজ → ঘোষিত মিরর-হোস্ট (gdflix ▼ / multicloud watch)
 const MLS_SAV = new Map(typeof MLS_SAV_LOAD !== 'undefined' ? MLS_SAV_LOAD : undefined);                    // id → {ts,val} (১০ মিনিট; শুধু মিরর-লিংকের তালিকা — ডাইরেক্ট-লিংক ক্যাশ নয়)
 async function mlsSav(id, ms) {
+  const km = /^(?:(joya9links\.com)\/)?([A-Za-z0-9]+)$/i.exec(String(id || ''));
+  if (!km) return { gd: [], mcl: [], hosts: [] };
+  const base = km[1] ? 'https://joya9links.com/' : 'https://savelinks.me/';
   const hit0 = MLS_SAV.get(id);
   if (hit0 && Date.now() - hit0.ts < 600000) return hit0.val;
-  let r = await mlsGet('https://savelinks.me/view/' + id, { ms: Math.min(ms, 5000), referer: MLS_BASE + '/' });
+  let r = await mlsGet(base + 'view/' + km[2], { ms: Math.min(ms, 5000), referer: MLS_BASE + '/' });
   // ★ v1.29.0 (মাপা: ৬টি sav একসাথে টানলে ২টি ফাঁকা ফিরত ⇒ সিরিজে route-jobs=0 ⇒ ০ কার্ড):
   //   বডি ফাঁকা/স্টাব হলে **একবার রিট্রাই** — রেফারার ছাড়া + প্রক্সি-পথ খোলা রেখে।
   if (!r || !r.body || String(r.body).length < 4000) {
     if (DBG) console.error('[mlsd] sav-retry ' + id + ' len=' + ((r && r.body) || '').length);
-    r = await mlsGet('https://savelinks.me/view/' + id, { ms: Math.min(ms, 6000), referer: 'https://savelinks.me/' });
+    r = await mlsGet(base + 'view/' + km[2], { ms: Math.min(ms, 6000), referer: base });
   }
-  const hs = mlsHrefs(r.body, 'https://savelinks.me/');
+  const hs = mlsHrefs((r && r.body) || '', base);
   const val = {
     // ★ v1.28.5h: `gdlink.dev/file/<id>` → ৩০১ → `new7.gdflix.io/file/<id>` (মাপা ২০০, validate.multiup2 লিংক-সহ)
     //   ⇒ একই gdflix-রেজলভার চলে; পুরোনো পোস্টের কভারেজ অনেক বাড়ে (`hubcloud.*`-এ কিছু নেই — বাদ)।
@@ -4093,6 +4099,14 @@ async function mlsTask(nameP, infoP, type, s, e) {
     const SE0 = Number(s || 1), EP0 = Number(e || 1);
     const okPost0 = (t) => names.some(n => mlsTitleOk(n, t, year, type === 'series')) && (type === 'series' ? mlsEpOk(t, SE0, EP0) : true);
     let posts = (hit && Date.now() - hit.ts < 20 * 60e3) ? hit.posts : null;   // শুধু পোস্ট-আইডি ক্যাশ (লিংক নয়)
+    // MLSBD metadata index is a discovery aid only: resolve every link page on demand.
+    // A partial/failed index fetch never replaces the last good index or live-search fallback.
+    if (!posts && process.env.MLS_INDEX !== '0') {
+      try {
+        const indexed = await require('./tools/mls-index-lab/runtime_index').candidates(names, year, type, SE0, EP0, 1000);
+        if (indexed.length) posts = indexed;
+      } catch (_) { /* preserve existing live-search path */ }
+    }
     if (!posts) {
       // ★ v1.28.18: **ছোট-হপ আগে** — মাপা: `posts?search=`-এর বডি ৩৩৬KB (৪.২সে), অথচ
       //   `/wp/v2/search` (শিরোনাম-only) কয়েক KB। তাই আগে শিরোনাম-সার্চে ম্যাচ করা আইডি,
@@ -4169,7 +4183,7 @@ async function mlsTask(nameP, infoP, type, s, e) {
     //   সবগুলো টানলে বাজেট ফুরায় (মাপা: ৭ পাতা ⇒ ১০.১সে ⇒ কার্ড ০)। তাই **উচ্চ-কোয়ালিটি আগে**,
     //   সর্বোচ্চ ৩টি পাতা; প্রতিটির ভেতর থেকে gdflix ১ + multicloud ১ ⇒ ≤৬ Range-প্রমাণিত কার্ড।
     const savList = [];
-    for (const p of cands) for (const it of mlsSavIds(p.html)) if (!savList.some(x => x.id === it.id)) savList.push(Object.assign({ p: p }, it));
+    for (const p of cands) for (const it of (Array.isArray(p._sav) ? p._sav : mlsSavIds(p.html))) if (!savList.some(x => x.id === it.id)) savList.push(Object.assign({ p: p }, it));
     // ★ v1.29.0: সিরিজ ⇒ **শুধু অনুরোধ-করা এপিসোডের sav** (পোস্টে সব এপিসোডের লিংক থাকে)
     if (type === 'series' && Number(e) > 0) {
       const epMatch = savList.filter(x => Number(x.ep) === Number(e));
@@ -17178,7 +17192,7 @@ const server = http.createServer((req, res) => {
       RT_INFLIGHT.set(kRT, pr);
       res = w;
     }
-    if (p === '/_health') { const _vf = [...VIDY_OK.values()].filter(v => v.ts && Date.now() - v.ts < Number(process.env.PXFRESH || 240000)).length; return sendJson(res, 200, { ok: 1, cg: CG_ST, cgDead: CG_DEAD.size, cgSrc: Object.fromEntries([...CG_SRC].map(([k, v]) => [k, { ok: v.ok, fail: v.fail, down: v.down > Date.now() ? Math.round((v.down - Date.now()) / 1000) : 0 }])), version: VERSION, cache: CACHE_ST, bg: BG_ST, pwhy: PART_WHY, up: Math.round(process.uptime()), deploy: 'v' + VERSION, mmpool: { size: MM_POOL.length, bench: MM_SITE.size, cooling: [...MM_COOL.values()].filter(t => t > Date.now()).length, race: MM_RACE_ST }, pool: POOL.length, pxbench: POOL.filter(c => PX_SITE.has(c.px)).length, pxbf: PX_BF.size, memo: memo.size, gw: (typeof GW !== 'undefined' ? GW.size : -1), nx: NEXBASE ? 1 : 0, nxpool: NXBENCH, nxwaves: NXWAVES, nxsize: NXSIZE, tw: TWBASE ? 1 : 0, rt: RTBASE ? 1 : 0, mls: (process.env.MLSD !== '0') ? 1 : 0, vsp: VSP_POOL.length, vy: VIDY_OK.size, vyfresh: _vf, vhg: (typeof VHG !== 'undefined' ? VHG : 0), pxpl: (typeof PXPL !== 'undefined' ? PXPL.size : 0), rtmq: RT_MQ_ST, dti: (typeof DT_IDX !== 'undefined' ? DT_IDX : 0), dtst: (typeof DT_ST !== 'undefined' ? DT_ST : 0), dtsh: (typeof DT_SH !== 'undefined' ? { on: DT_SH.on, src: DT_SH.src, pre: DT_SH.pre, loaded: DT_SH.loaded, hits: DT_SH.hits, miss: DT_SH.miss, cache: (typeof DT_SH_CACHE !== 'undefined' ? DT_SH_CACHE.size : 0), err: DT_SH.err, units: (DT_SH.man && DT_SH.man.units) || null, slugs: (DT_SH.man && DT_SH.man.slugs || []).length } : 0), lastreq: { el: LR.el, n: LR.total, pend: LR.pend, p: LR.path, sr: (LR.sr || []).map(x => x[0] + ':' + x[1] + '@' + x[2]) } }); } // v1.34.95, v1.34.105 // ★ v1.21.9: vy=verified vidy নোড, vyfresh=৪মিন-তাজা // v1.15.71: vsp=Vidsrc-পুল-আকার // v1.15.18: pxbench=সাইট-প্রমাণিত-বেঞ্চ (v1.15.8: nxpool=MB-বেঞ্চ)
+    if (p === '/_health') { const _vf = [...VIDY_OK.values()].filter(v => v.ts && Date.now() - v.ts < Number(process.env.PXFRESH || 240000)).length; return sendJson(res, 200, { ok: 1, cg: CG_ST, cgDead: CG_DEAD.size, cgSrc: Object.fromEntries([...CG_SRC].map(([k, v]) => [k, { ok: v.ok, fail: v.fail, down: v.down > Date.now() ? Math.round((v.down - Date.now()) / 1000) : 0 }])), version: VERSION, cache: CACHE_ST, bg: BG_ST, pwhy: PART_WHY, up: Math.round(process.uptime()), deploy: 'v' + VERSION, mmpool: { size: MM_POOL.length, bench: MM_SITE.size, cooling: [...MM_COOL.values()].filter(t => t > Date.now()).length, race: MM_RACE_ST }, pool: POOL.length, pxbench: POOL.filter(c => PX_SITE.has(c.px)).length, pxbf: PX_BF.size, memo: memo.size, gw: (typeof GW !== 'undefined' ? GW.size : -1), nx: NEXBASE ? 1 : 0, nxpool: NXBENCH, nxwaves: NXWAVES, nxsize: NXSIZE, tw: TWBASE ? 1 : 0, rt: RTBASE ? 1 : 0, mls: (process.env.MLSD !== '0') ? 1 : 0, mlsindex: require('./tools/mls-index-lab/runtime_index').stats(), vsp: VSP_POOL.length, vy: VIDY_OK.size, vyfresh: _vf, vhg: (typeof VHG !== 'undefined' ? VHG : 0), pxpl: (typeof PXPL !== 'undefined' ? PXPL.size : 0), rtmq: RT_MQ_ST, dti: (typeof DT_IDX !== 'undefined' ? DT_IDX : 0), dtst: (typeof DT_ST !== 'undefined' ? DT_ST : 0), dtsh: (typeof DT_SH !== 'undefined' ? { on: DT_SH.on, src: DT_SH.src, pre: DT_SH.pre, loaded: DT_SH.loaded, hits: DT_SH.hits, miss: DT_SH.miss, cache: (typeof DT_SH_CACHE !== 'undefined' ? DT_SH_CACHE.size : 0), err: DT_SH.err, units: (DT_SH.man && DT_SH.man.units) || null, slugs: (DT_SH.man && DT_SH.man.slugs || []).length } : 0), lastreq: { el: LR.el, n: LR.total, pend: LR.pend, p: LR.path, sr: (LR.sr || []).map(x => x[0] + ':' + x[1] + '@' + x[2]) } }); } // v1.34.95, v1.34.105 // ★ v1.21.9: vy=verified vidy নোড, vyfresh=৪মিন-তাজা // v1.15.71: vsp=Vidsrc-পুল-আকার // v1.15.18: pxbench=সাইট-প্রমাণিত-বেঞ্চ (v1.15.8: nxpool=MB-বেঞ্চ)
     if (p === '/_mem') { /* ★ v1.28.1: মেমোরি-ডিয়াগনস্টিক — OOM-ক্ষতির কারন খুঁজতে (প্রমাণ: ব্যাটারি-চালাকালে node 896MB-তে kernel-OOM-kill) */
       const m = process.memoryUsage(); const sz = o => { try { return o instanceof Map ? o.size : (Array.isArray(o) ? o.length : -1); } catch (e) { return -1; } };
       // ★ v1.28.3-M4: সীমা + purge-পরিসংখ্যান (কতবার, কোন স্তরে) — প্রোডে "মেমরি ফুল" কেন, একনজরে
