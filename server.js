@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.165';
+const VERSION = '1.34.166';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -8588,12 +8588,12 @@ async function hdDrive(driveUrl, ms) { // hubcloud drive → gamerxyt → প্
   const p2 = await hdText(gx, 'https://hubcloud.ist/', ms);
   const txt = String(p2.t || '');
   // HDHub's PixelServer placeholder negn6f is the same 404 file across unrelated episodes; it is not an episode mirror.
-  const pd = [...new Set((txt.match(/pixeldrain\.dev\/u\/([A-Za-z0-9]+)/g) || []).map(z => z.split('/u/')[1]))].filter(id => id !== 'negn6f').slice(0, 3);
-  const s3 = [...new Set((txt.match(/https?:\/\/[a-z0-9.-]+\/[^"'\s<>]*X-Amz-Signature=[A-Za-z0-9%]+/g) || []).map(z => z.replace(/&amp;/g, '&')))].slice(0, 1);
-  const wk = [...new Set((txt.match(/https:\/\/[a-z0-9.-]*workers\.dev\/[^"'\s<>]*/g) || []))].filter(u => !/\.m3u8/i.test(u)).slice(0, 1);
+  const pd = [...new Set(txt.match(/https:\/\/pixeldrain\.(?:dev|com)\/u\/[A-Za-z0-9]+/gi) || [])].filter(u => !/\/negn6f$/i.test(u)).slice(0, 6).map(u => u.replace(/\/u\//i, '/api/file/'));
+  const s3 = [...new Set((txt.match(/https?:\/\/[a-z0-9.-]+\/[^"'\s<>]*X-Amz-Signature=[A-Za-z0-9%]+/gi) || []).map(z => z.replace(/&amp;/g, '&')))].slice(0, 4);
+  const wk = [...new Set((txt.match(/https:\/\/[a-z0-9.-]*workers\.dev\/[^"'\s<>]*/g) || []))].filter(u => !/\.m3u8/i.test(u)).slice(0, 4);
   // GP download gateways are not stable media URLs: they may expire or lead to HTML.
   // Do not present an unverified gateway as a playable card.
-  return { fn: nm, cands: [...s3.map(u => ({ u: u, k: 's3' })), ...wk.map(u => ({ u: u, k: 'wk' })), ...pd.map(id => ({ u: 'https://pixeldrain.dev/api/file/' + id, k: 'pd' }))] };
+  return { fn: nm, cands: [...s3.map(u => ({ u: u, k: 's3' })), ...wk.map(u => ({ u: u, k: 'wk' })), ...pd.map(u => ({ u: u, k: 'pd' }))] };
 }
 // ---------- HDHub4u সিরিজ (v1.17.51) ----------
 // ★ মাপা গঠন (Reacher S4): পোস্টে দুই ধরনের লিঙ্ক —
@@ -8669,7 +8669,7 @@ async function hdSmFind(want, SE, isSeries) {
   for (const u of urls) {
     const ws = hdSlugWords(u);
     if (!ww.every(t => hdHasWord(ws, t))) continue;                 // সব শব্দ থাকতেই হবে (শব্দ-সীমা ধরে)
-    const sNums = ws.map((x, i) => (x === 'season' || /^s\d{1,2}$/.test(x)) ? parseInt(String(ws[i + 1] || x).replace(/\D/g, ''), 10) : 0).filter(Boolean);
+    const sNums = ws.map((x, i) => x === 'season' ? parseInt(ws[i + 1], 10) : (/^s\d{1,2}$/.test(x) ? parseInt(x.slice(1), 10) : 0)).filter(Boolean);
     if (isSeries) {
       const epish = ws.indexOf('all-episodes') >= 0 || ws.indexOf('full-series') >= 0 || ws.indexOf('episodes') >= 0;
       if (SE && sNums.length && sNums.indexOf(SE) < 0) continue;      // অন্য সিজন বাদ
@@ -8761,6 +8761,29 @@ const hdLabH = (s) => { // "720p 10Bit HEVC" → 720
   let h = m ? parseInt(m[1], 10) : (/\b4k\b|2160/i.test(String(s)) ? 2160 : 0);
   return [480, 720, 1080, 2160].indexOf(h) >= 0 ? h : 0;
 };
+// Explicit episode information must not contradict the requested episode; unknown
+// labels remain discoverable because many mirrors use opaque IDs.
+function hdEpisodeConsistent(name, season, episode) {
+  let text = String(name || ''); try { text = decodeURIComponent(text); } catch (_) {}
+  const matches = [...text.matchAll(/\bS0*(\d{1,2})[. _-]*E0*(\d{1,3})(?!\d)/gi)];
+  if (!matches.length) return true;
+  // Multi-episode ranges are not a verified single-episode video.
+  if (/\bS0*\d{1,2}[. _-]*E0*\d{1,3}[. _]*[-–][. _]*E?0*\d{1,3}\b/i.test(text)) return false;
+  return matches.every(m => Number(m[1]) === Number(season) && Number(m[2]) === Number(episode));
+}
+// Round-robin quality and host type so a large group of FSL/worker links
+// cannot crowd Pixeldrain (or a lower-quality rung) out of the response.
+function hdPickMirrors(list, limit) {
+  const groups = new Map();
+  for (const c of list) { const k = String(c.h || 0) + '|' + c.k; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(c); }
+  const selected = [];
+  while (selected.length < limit) {
+    let added = false;
+    for (const q of groups.values()) { if (q.length && selected.length < limit) { selected.push(q.shift()); added = true; } }
+    if (!added) break;
+  }
+  return selected;
+}
 async function hdSeries(imdb, title, s, e, origin, maxh) {
   const T0 = Date.now(); const B = Number(process.env.HDS || 8600); /* v1.27.0: মাপা ৪.০–৬.০সে (hubdrive-হপসহ) */ const left = () => Math.max(600, B - (Date.now() - T0));
   const SE = parseInt(s, 10) || 1, EP = parseInt(e, 10) || 1;
@@ -8944,8 +8967,9 @@ async function hdSeries(imdb, title, s, e, origin, maxh) {
     for (let i = 0; i < resolved.length; i++) {
       const r = resolved[i]; if (!r) continue;
       const info = hdFileOf(r.fn || dsel[i].ttl);
+      if (!hdEpisodeConsistent(info.fn, SE, EP)) continue;
       const hh = info.h || dsel[i].h || 0, tg = dsel[i].tag || info.tag || '';
-      for (const c of r.cands) { if (seenU.has(c.u)) continue; seenU.add(c.u); cands.push({ u: c.u, k: c.k, h: hh, fn: info.fn || dsel[i].ttl, tag: tg }); }
+      for (const c of r.cands) { if (!hdEpisodeConsistent(c.u, SE, EP) || seenU.has(c.u)) continue; seenU.add(c.u); cands.push({ u: c.u, k: c.k, h: hh, fn: info.fn || dsel[i].ttl, tag: tg }); }
     }
     const pool = cands.filter(c => !(maxh && c.h && c.h > maxh));
     if (!pool.length) { if (DBG) console.error('[hds] no-cands @' + (Date.now() - T0) + 'ms'); const bk2 = hdCardsBack('hc:' + (imdb || title) + ':' + SE + ':' + EP); if (bk2.length && DBG) console.error('[hds] cache-fallback ' + bk2.length + ' @' + (Date.now() - T0) + 'ms'); return bk2; }
@@ -8959,8 +8983,7 @@ async function hdSeries(imdb, title, s, e, origin, maxh) {
         : await hdProbe(c.u, Math.min(2800, left())).then(x => ({ ok: !!x.ok, sz: +((String(x.cr || '').match(/\/(\d+)\s*$/) || [])[1] || 0), nm: '' }));
       if (pr.ok) { c.sz = pr.sz || 0; if (pr.nm && !c.fn) c.fn = hdFileOf(pr.nm).fn; proven.push(c); }
     };
-    const w1 = []; let pdN = 0;
-    for (const c of ordered) { if (w1.length >= 8) break; if (c.k === 'pd') { if (pdN >= 3) continue; pdN++; } w1.push(c); }
+    const w1 = hdPickMirrors(ordered, 24);
     await Promise.all(w1.map(probeOne));
     if (!proven.length && left() > 2400) await Promise.all(ordered.filter(c => w1.indexOf(c) < 0).slice(0, 3).map(probeOne));   // ★ v1.27.5: যেকোনো অপ্রমাণিত, শুধু pd নয়
     if (!proven.length) { if (DBG) console.error('[hds] no-proven @' + (Date.now() - T0) + 'ms'); const bk2 = hdCardsBack('hc:' + (imdb || title) + ':' + SE + ':' + EP); if (bk2.length && DBG) console.error('[hds] cache-fallback ' + bk2.length + ' @' + (Date.now() - T0) + 'ms'); return bk2; }
@@ -8970,12 +8993,10 @@ async function hdSeries(imdb, title, s, e, origin, maxh) {
       .replace(/\s{2,}/g, ' ').trim();
     const baseTtl = cleanT(title) || cleanT(hit.title) || String(title || '');
     const epLine = '\u29e0 S' + SE + 'E' + EP;
-    const out = []; const us = new Set(); const hseen = new Set();
+    const out = []; const us = new Set();
     for (const c of proven) {
-      if (us.has(c.u)) continue; us.add(c.u);
-      const hk = String(c.h || 0) + '|' + String(c.tag || '');
-      if (hseen.has(hk)) continue; hseen.add(hk);            // একই রেজো বারবার নয়
-      if (out.length >= Number(process.env.HDCAPS || 8)) break;
+      if (us.has(c.u)) continue; us.add(c.u); // Keep distinct mirrors even when resolution/audio match.
+      if (out.length >= Number(process.env.HDCAPS || 24)) break;
       const txt = '\u29c9 ' + baseTtl + '\n' + epLine + '\n\u229e HDHub4u' + (c.tag ? ' \u2317 ' + c.tag : '') + (c.h ? ' \u00b7 ' + c.h + 'p' : '');
       out.push({
         name: '\u25a5 ' + (c.h ? String(c.h) : 'Auto') + ' \u25a5', title: txt, description: txt, quality: String(c.h || ''),
@@ -9069,8 +9090,7 @@ async function hdStreams(imdb, title, type, s, e, origin, maxh) { // v1.17.49: �
       if (pr.ok) { c.sz = pr.sz || 0; if (pr.nm && !c.fn) c.fn = hdFileOf(pr.nm).fn; proven.push(c); }
       return pr.ok;
     };
-    const w1 = []; let pdInW1 = 0; // ১ম ঢেউ: সবচেয়ে ভালো ৬টি, তবে pixeldrain সর্বোচ্চ ২ (গেট-লাইন এড়াতে)
-    for (const c of uniqC) { if (w1.length >= 8) break; if (c.k === 'pd') { if (pdInW1 >= 3) continue; pdInW1++; } w1.push(c); }
+    const w1 = hdPickMirrors(uniqC, 24);
     await Promise.all(w1.map(probeOne));
     if (proven.length < 3 && left() > 1200) { // ২য় ঢেউ: বাকি pixeldrain-মিরর
       const done = new Set(w1.map(c => c.u));
@@ -9080,13 +9100,9 @@ async function hdStreams(imdb, title, type, s, e, origin, maxh) { // v1.17.49: �
     proven.sort((a, b) => (b.h || 0) - (a.h || 0));
     const out = [];
     const us = new Set();
-    const sig = new Set();   // ★ v1.27.0: (উচ্চতা + আসল আকার) — একই ফাইলের দুই মিরর একই কার্ড
     for (const c of proven) {
-      if (us.has(c.u)) continue; us.add(c.u);
-      const szN = +c.sz || 0;
-      const sk = (c.h || 0) + '|' + (szN ? Math.round(szN / 25e6) : String(c.fn || c.u).slice(-24));
-      if (sig.has(sk)) continue; sig.add(sk);
-      if (out.length >= Number(process.env.HDCAP || 10)) break;
+      if (us.has(c.u)) continue; us.add(c.u); // Same-size files on distinct mirrors are not duplicate URLs.
+      if (out.length >= Number(process.env.HDCAP || 24)) break;
       const ttl = String(hit.title || title || '').replace(/\s*\|.*$/, '').slice(0, 78);
       const gb = c.sz ? ' \u00b7 ' + (c.sz > 1e9 ? (c.sz / 1e9).toFixed(1) + 'GB' : Math.round(c.sz / 1e6) + 'MB') : '';
       const txt = '\u29c9 ' + ttl + '\n\u29e0 Movie\n\u229e HDHub4u' + (c.tag ? ' \u2317 ' + c.tag : '') + (c.h ? ' \u00b7 ' + c.h + 'p' : '') + gb;
