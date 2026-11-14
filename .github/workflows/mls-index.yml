@@ -46,6 +46,7 @@ jobs:
           node test_lookup.js
           node test_season_file.js
           node test_runtime.js
+          node test_bootstrap.js
           node test_gdx_watch.js
           node test_joya_source.cjs
       - name: Discover and verify BD proxies

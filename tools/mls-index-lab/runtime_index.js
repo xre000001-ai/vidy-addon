@@ -3,6 +3,15 @@
 const {find}=require('./lookup');
 const repo='xre000001-ai/vidy-addon';
 let current=null,inflight=null,lastAttempt=0;
+// Last known good immutable metadata snapshot: protects cold starts from GitHub outages.
+// It is discovery-only; signed playback links are never stored here.
+try {
+ const fs=require('node:fs'),zlib=require('node:zlib'),path=require('node:path');
+ const seed=JSON.parse(zlib.gunzipSync(fs.readFileSync(path.join(__dirname,'bootstrap.json.gz'))).toString('utf8'));
+ if(seed.schema===1 && /^[a-f0-9]{40}$/.test(seed.sha||'') && Array.isArray(seed.rows) && seed.rows.length>=100 && seed.rows.every(r=>r && Number.isSafeInteger(r.id) && typeof r.title==='string' && Array.isArray(r.sav)))
+  current={rows:seed.rows,mirrors:seed.mirrors && typeof seed.mirrors==='object'?seed.mirrors:{},sha:seed.sha,at:0,bootstrap:true};
+} catch (_) { /* Online load and live search still work without a local snapshot. */ }
+
 async function load(){
  const shaRes=await fetch('https://api.github.com/repos/'+repo+'/commits/mls-index-sandbox-data',{headers:{'User-Agent':'Vidy-MLSBD-Index','Accept':'application/vnd.github+json'},signal:AbortSignal.timeout(7000)});
  if(!shaRes.ok)throw Error('index reference unavailable');
@@ -45,5 +54,5 @@ function mirror(id){
  if(!(out.gd.length||out.gdx.length||out.mcl.length))return null;
  out.hosts=[...new Set([...out.gd,...out.gdx,...out.mcl].map(u=>new URL(u).hostname))];return out;
 }
-function stats(){return {posts:current?current.rows.length:0,mirrors:current?Object.keys(current.mirrors||{}).length:0,revision:current?current.sha.slice(0,12):'',ageSeconds:current?Math.round((Date.now()-current.at)/1000):null,loading:!!inflight};}
+function stats(){return {posts:current?current.rows.length:0,mirrors:current?Object.keys(current.mirrors||{}).length:0,revision:current?current.sha.slice(0,12):'',ageSeconds:current&&current.at?Math.round((Date.now()-current.at)/1000):null,bootstrap:!!(current&&current.bootstrap),loading:!!inflight};}
 module.exports={candidates,start,stats,mirror};
