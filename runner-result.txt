@@ -1,0 +1,35 @@
+run 43562727259
+candidate count 227
+VALID 1 ms 5037
+VALID 2 ms 11013
+VALID 3 ms 3302
+VALID 4 ms 5605
+VALID 5 ms 3287
+VALID 6 ms 2354
+VALID 7 ms 6111
+VALID 8 ms 5320
+VALID 9 ms 2682
+tested 50
+VALID 10 ms 2714
+VALID 11 ms 3511
+VALID 12 ms 3613
+tested 100
+VALID 13 ms 4842
+VALID 14 ms 5303
+tested 150
+VALID 15 ms 2330
+VALID 16 ms 5984
+VALID 17 ms 6693
+VALID 18 ms 4823
+tested 200
+VALID 19 ms 10904
+VALID 20 ms 5054
+DONE 20 / 227
+wp 1 latest 100
+wp 1 backfill 100
+wp 2 backfill 100
+mirror z2Q57jTT 3
+mirror VZyvYgwd 3
+mirror RXjzxYeD 3
+totals posts 207 mirrors 3 next_page 3 before 2026-11-14T05:42:11
+JOYA_RESULT mirror pages 2
