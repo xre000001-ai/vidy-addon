@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Experimental resumable MLSBD metadata/mirror-page index, not addon integration."""
-import argparse, concurrent.futures, datetime, html, json, re, sqlite3, time, subprocess, itertools
+import argparse, concurrent.futures, datetime, html, json, re, sqlite3, time, subprocess, random
 from html.parser import HTMLParser
 from urllib.parse import urljoin, urlparse, urlencode
 import requests
@@ -23,8 +23,8 @@ def extract_post(body):
   m=re.search(r'https?://(?:www\.)?savelinks\.me/view/([A-Za-z0-9]+)',a['url'],re.I)
   if not m:continue
   t=a['label']; q=re.search(r'\b(2160|1080|720|480|360)\s*p?\b|\b(4k|uhd)\b',t,re.I)
-  em=list(re.finditer(r'(?<![A-Za-z0-9])(?:episode|epi|ep|e)\s*[-_.: ]?\s*0*(\d{1,3})(?![A-Za-z0-9])',a['context'],re.I))
-  out.append({'id':m.group(1),'url':'https://savelinks.me/view/'+m.group(1),'label':t,'quality':(int(q.group(1)) if q and q.group(1) else 2160 if q else 0),'episode':int(em[-1].group(1)) if em else 0})
+  em=list(re.finditer(r'(?<![A-Za-z0-9])(?:episode|epi|ep|e)\s*[-_.: ]?\s*0*(\d{1,3})(?:\s*[-–]\s*(?:e|ep)?0*(\d{1,3}))?(?![A-Za-z0-9])',a['context'],re.I))
+  out.append({'id':m.group(1),'url':'https://savelinks.me/view/'+m.group(1),'label':t,'quality':(int(q.group(1)) if q and q.group(1) else 2160 if q else 0),'episode':int(em[-1].group(1)) if em else 0,'episode_end':int(em[-1].group(2) or em[-1].group(1)) if em else 0})
  return list({x['id']:x for x in out}.values())
 
 def mirror_links(body):
@@ -62,8 +62,11 @@ def other_pages(body):
  p=Links();p.feed(body or '');out=[]
  for a in p.links:
   u=urljoin(BASE+'/',a['url']);host=(urlparse(u).hostname or '').lower()
-  if re.search(r'(^|\.)(?:gdflix\.[a-z.]+|gdlink\.[a-z.]+|ddflix\.[a-z.]+|multicloudlinks\.[a-z.]+|fsldownload\.[a-z.]+|filepress\.[a-z.]+|pixeldrain\.com|bonghd\.com|driveload\.co|suprafiles\.net|9xplay\.live|openload\.co|mlsbd\.bid)$',host):
-   if u.startswith(('https://','http://')) and '?' not in u and '#' not in u:out.append({'url':u,'label':a['label'][:180]})
+  if re.search(r'(^|\.)(?:gdflix\.[a-z.]+|gdlink\.[a-z.]+|ddflix\.[a-z.]+|multicloudlinks\.[a-z.]+|fsldownload\.[a-z.]+|filepress\.[a-z.]+|pixeldrain\.com|bonghd\.com|driveload\.co|suprafiles\.(?:net|org)|9xplay\.live|openload\.co|streamango\.com|indishare\.me|film2movie\.tv|mlsbd\.bid)$',host):
+   # bonghd historically uses x_data as its stable page identifier, not a media token.
+   # Do not persist arbitrary query strings that may be signed or session-bound.
+   stable_query = ('?' not in u or (host.endswith('.bonghd.com') and re.match(r'^x_data=[A-Za-z0-9%_:+\-=]+$',urlparse(u).query)))
+   if u.startswith(('https://','http://')) and stable_query and '#' not in u:out.append({'url':u,'label':a['label'][:180]})
  return list({x['url']:x for x in out}.values())
 
 def savepost(db,p):
@@ -84,7 +87,7 @@ def fetchmirror(id):
  try:
   r=requests.get(url,headers={'Referer':BASE+'/'},timeout=12);r.raise_for_status();return parse(r.text)
  except Exception:pass
- for proxy in PROXIES[:min(8,len(PROXIES))]:
+ for proxy in random.sample(PROXIES,min(8,len(PROXIES))):
   try:
    r=subprocess.run(['curl','-fsS','--connect-timeout','5','--max-time','12','--proxy',proxy,'-A','Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/130.0.0.0 Safari/537.36','-e',BASE+'/',url],capture_output=True,text=True,timeout=14)
    if r.returncode:continue

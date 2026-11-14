@@ -10,7 +10,7 @@ for id,title,url,date,modified,links in c.execute('SELECT id,title,url,date,modi
  try:
   sav=json.loads(links)
   if not isinstance(sav,list) or not id or not title or not url.startswith('https://mlsbd.co/'):raise ValueError('invalid record')
-  shards[id%16].append({'id':id,'title':title,'url':url,'date':date,'modified':modified,'sav':[{'id':x['id'],'q':x.get('quality',0),'ep':x.get('episode',0)} for x in sav if x.get('id')],'other':other.get(id,[])})
+  shards[id%16].append({'id':id,'title':title,'url':url,'date':date,'modified':modified,'sav':[{'id':x['id'],'q':x.get('quality',0),'ep':x.get('episode',0),'ep_end':x.get('episode_end',0)} for x in sav if x.get('id')],'other':other.get(id,[])})
  except Exception:bad+=1
 if bad:raise SystemExit('REFUSE EXPORT invalid records: '+str(bad))
 if sum(map(len,shards))<1:raise SystemExit('REFUSE EXPORT empty index')

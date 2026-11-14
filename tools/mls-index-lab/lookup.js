@@ -24,13 +24,14 @@ function find(rows,q){
  const r=[];
  for(const p of rows){
   if(!matches(p,q.name,q.year,q.type,q.season,q.episode))continue;
-  let sav=(p.sav||[]).filter(x=>x && /^[a-z0-9]+$/i.test(x.id) && Number(x.q)!==480 && Number(x.q)!==360);
+  // Unknown quality stays indexed but is not presented as a verified >=720 stream.
+  let sav=(p.sav||[]).filter(x=>x && /^[a-z0-9]+$/i.test(x.id) && [720,1080,2160].includes(Number(x.q)));
   if(q.type==='series'){
    // Never select marked links for a different episode. Unknown hints are allowed
    // only when the post names one exact episode; episode-range posts need hints.
    const s=String(p.title||'').match(/\bS\d{1,2}E0*(\d{1,3})(?:\s*[-–]\s*E?0*(\d{1,3}))?/i);
    const hasRange=s && s[2] && +s[2]!==+s[1];
-   sav=sav.filter(x=>Number(x.ep)===Number(q.episode) || (!x.ep && s && !hasRange && +s[1]===Number(q.episode)));
+   sav=sav.filter(x=> (Number(x.ep)===Number(q.episode) && ((x.ep_end && Number(x.ep_end)===Number(x.ep)) || (!x.ep_end && !hasRange))) || (!x.ep && s && !hasRange && +s[1]===Number(q.episode)));
   }
   if(sav.length)r.push({id:p.id,title:p.title,url:p.url,sav});
  }

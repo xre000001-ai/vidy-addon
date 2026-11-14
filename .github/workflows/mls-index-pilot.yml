@@ -39,7 +39,7 @@ jobs:
       - name: Run unit tests
         working-directory: tools/mls-index-lab
         run: |
-          python -m unittest -v test_indexer.py
+          python -m unittest -v test_indexer.py test_refresh.py
           node test_lookup.js
       - name: Discover and verify BD proxies
         working-directory: tools/mls-index-lab
@@ -50,7 +50,7 @@ jobs:
           set -euo pipefail
           python indexer.py --db /tmp/mls-pilot/store.sqlite --proxy-list bd-results.json --pages 0 --mirror-limit 12
           python refresh.py --db /tmp/mls-pilot/store.sqlite --proxy-list bd-results.json --max-pages 10
-          python backfill.py --db /tmp/mls-pilot/store.sqlite --proxy-list bd-results.json --start 1 --end 367 --max-pages 20 --workers 4
+          python backfill.py --db /tmp/mls-pilot/store.sqlite --proxy-list bd-results.json --start 1 --end auto --max-pages 20 --workers 4
           python export_index.py --db /tmp/mls-pilot/store.sqlite --output /tmp/mls-pilot/data
           python - <<'PY'
           import json,sys
