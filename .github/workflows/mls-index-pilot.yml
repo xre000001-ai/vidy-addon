@@ -1,0 +1,55 @@
+name: MLSBD incremental index pilot
+on:
+  push:
+    branches: [mls-index-runner-test]
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: mlsbd-index-pilot
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install requests
+      - name: Restore last good pilot data
+        run: |
+          mkdir -p /tmp/mls-pilot
+          if git fetch --no-tags origin refs/heads/mls-index-sandbox-data; then
+            git show FETCH_HEAD:store.sqlite > /tmp/mls-pilot/store.sqlite
+            test -s /tmp/mls-pilot/store.sqlite
+          fi
+      - name: Discover and verify BD proxies
+        working-directory: tools/mls-index-lab
+        run: python scan_bd.py
+      - name: Update metadata and mirror references
+        working-directory: tools/mls-index-lab
+        run: |
+          set -euo pipefail
+          python indexer.py --db /tmp/mls-pilot/store.sqlite --proxy-list bd-results.json --pages 0 --mirror-limit 12
+          python backfill.py --db /tmp/mls-pilot/store.sqlite --proxy-list bd-results.json --start 1 --end 367 --max-pages 20 --workers 4
+          python export_index.py --db /tmp/mls-pilot/store.sqlite --output /tmp/mls-pilot/data
+          python - <<'PY'
+          import json,sys
+          m=json.load(open('/tmp/mls-pilot/data/manifest.json'))
+          if m['posts'] < 100: sys.exit('refuse tiny/empty index')
+          print('pilot exported',m['posts'],'posts,',m['savelinks'],'refs,',m['mirror_sets'],'mirror sets')
+          PY
+      - name: Publish to isolated pilot data branch
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git switch --orphan mls-index-sandbox-data
+          git rm -rf . >/dev/null 2>&1 || true
+          cp -r /tmp/mls-pilot/data ./data
+          cp /tmp/mls-pilot/store.sqlite ./store.sqlite
+          git add data store.sqlite
+          git commit -m 'MLSBD experimental index snapshot'
+          git push --force origin HEAD:mls-index-sandbox-data
