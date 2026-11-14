@@ -1,0 +1,14 @@
+'use strict';
+const assert=require('node:assert');const {find}=require('./lookup');
+const row=(title,sav)=>({id:1,title,url:'https://mlsbd.co/a',sav});
+const q=(name,type='movie',season=0,episode=0,year=2024)=>({name,type,season,episode,year});
+assert.equal(find([row('Alien Predator (2024)',[{id:'A',q:720}])],q('Alien')).length,0);
+assert.equal(find([row('Alien (2024) 720p',[{id:'A',q:480},{id:'B',q:720},{id:'C',q:0}])],q('Alien'))[0].sav.length,1);
+assert.equal(find([row('Alien (1990)',[{id:'A',q:720}])],q('Alien')).length,0);
+const r=row('Show (2024) S01E01-03',[{id:'A',q:720,ep:1,ep_end:1},{id:'B',q:1080,ep:2,ep_end:2},{id:'C',q:720,ep:0}]);
+assert.equal(find([row('Show (2024) S01E01-03',[{id:'A',q:720,ep:1,ep_end:3}])],q('Show','series',1,1)).length,0);
+assert.equal(find([row('Show (2024) S01E01-03',[{id:'A',q:720,ep:1}])],q('Show','series',1,1)).length,0);
+assert.deepEqual(find([r],q('Show','series',1,2))[0].sav.map(x=>x.id),['B']);
+assert.equal(find([r],q('Show','series',2,2)).length,0);
+assert.equal(find([row('Show (2024) S01E01',[{id:'A',q:720,ep:0}])],q('Show','series',1,1)).length,1);
+console.log('lookup fixture tests passed');

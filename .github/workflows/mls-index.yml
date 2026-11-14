@@ -1,0 +1,78 @@
+name: MLSBD incremental metadata index
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/mls-index.yml"
+      - "tools/mls-index-lab/**"
+  workflow_dispatch:
+  schedule:
+    - cron: "23 */2 * * *"
+permissions:
+  contents: write
+concurrency:
+  group: mlsbd-index-pilot
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install requests
+      - name: Restore last good pilot data
+        run: |
+          mkdir -p /tmp/mls-pilot
+          set +e
+          git ls-remote --exit-code --heads origin mls-index-sandbox-data >/tmp/mls-pilot/ref.txt
+          rc=$?
+          set -e
+          if [ $rc -eq 0 ]; then
+            git fetch --no-tags origin refs/heads/mls-index-sandbox-data
+            git show FETCH_HEAD:store.sqlite > /tmp/mls-pilot/store.sqlite
+            test -s /tmp/mls-pilot/store.sqlite
+            python -c "import sqlite3; d=sqlite3.connect('/tmp/mls-pilot/store.sqlite'); assert d.execute('pragma integrity_check').fetchone()[0]=='ok'; open('/tmp/mls-pilot/old-count','w').write(str(d.execute('select count(*) from posts').fetchone()[0]))"
+          elif [ $rc -ne 2 ]; then
+            echo 'Cannot verify previous data branch, abort instead of replacing it'
+            exit 1
+          fi
+      - name: Run unit tests
+        working-directory: tools/mls-index-lab
+        run: |
+          python -m unittest -v test_indexer.py test_refresh.py
+          node test_lookup.js
+      - name: Discover and verify BD proxies
+        working-directory: tools/mls-index-lab
+        run: python scan_bd.py
+      - name: Update metadata and mirror references
+        working-directory: tools/mls-index-lab
+        run: |
+          set -euo pipefail
+          python indexer.py --db /tmp/mls-pilot/store.sqlite --proxy-list bd-results.json --pages 0 --mirror-limit 12
+          python refresh.py --db /tmp/mls-pilot/store.sqlite --proxy-list bd-results.json --max-pages 10
+          python backfill.py --db /tmp/mls-pilot/store.sqlite --proxy-list bd-results.json --start 1 --end auto --max-pages 20 --workers 4
+          python export_index.py --db /tmp/mls-pilot/store.sqlite --output /tmp/mls-pilot/data
+          python - <<'PY'
+          import json,sys
+          m=json.load(open('/tmp/mls-pilot/data/manifest.json'))
+          from pathlib import Path
+          old=Path('/tmp/mls-pilot/old-count')
+          previous=int(old.read_text()) if old.exists() else 0
+          if m['posts'] < max(100,previous): sys.exit('refuse empty or shrinking index')
+          print('pilot exported',m['posts'],'posts,',m['savelinks'],'refs,',m['mirror_sets'],'mirror sets')
+          PY
+      - name: Publish to isolated pilot data branch
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git switch --orphan mls-index-sandbox-data
+          git rm -rf . >/dev/null 2>&1 || true
+          cp -r /tmp/mls-pilot/data ./data
+          cp /tmp/mls-pilot/store.sqlite ./store.sqlite
+          git add data store.sqlite
+          git commit -m 'MLSBD experimental index snapshot'
+          git push --force origin HEAD:mls-index-sandbox-data
