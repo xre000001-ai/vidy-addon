@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.159';
+const VERSION = '1.34.160';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -4054,6 +4054,7 @@ function mlsEnrich(ck, savMore, INFO, NAME, type, s, e) {
   }, 1500);
 }
 
+const MLS_PLAY_RESOLVE = require('./tools/mls-index-lab/playback_resolution_cache').create();
 async function mlsTask(nameP, infoP, type, s, e) {
   const T0 = Date.now();
   // ★ v1.28.27: **CAP ১০.৫সে মানে কার্ড হারানো** — /stream-এর বাইরের `withDeadline` ১০.২সে, তাই
@@ -4066,8 +4067,6 @@ async function mlsTask(nameP, infoP, type, s, e) {
   const CAP = Number(process.env.MLSCAP || 18000);   // ★ v1.34.172: gdflix-চেইন শেষ করতে ১০.৮সে কম পড়ত
   let INFO = null, NAME = '', RCK = '', ENR_MORE = null;         // addCard-এর জন্য বাইরের স্কোপ (v1.28.18-fix) + ক্যাশ-কি
   const CARD_BUF = [];
-  let earlyGdxResolve; const earlyGdx = new Promise(resolve => { earlyGdxResolve = resolve; });
-  let earlyGdxTimer = null;
   // Candidate cards, not automatically verified at playback time.
   // প্রমাণিত কার্ড (আসার ক্রমে) — deadline-এ হারায় না
   const SEEN_F = new Set();
@@ -4080,11 +4079,9 @@ async function mlsTask(nameP, infoP, type, s, e) {
     try {
       const u = it && it.r && it.r.direct;
       if (!u) return;
-      let base = '';
-      try { base = decodeURIComponent(new URL(u).pathname.split('/').filter(Boolean).pop() || ''); } catch (e) { base = u; }
-      const uk = base ? ('f:' + (it.r.srv || it.kind) + ':' + base.replace(/[?#].*$/, '')) : ('u:' + u);
-      if (SEEN_F.has(u) || SEEN_F.has(uk)) return;
-      SEEN_F.add(u); SEEN_F.add(uk);
+      // Different worker paths often share a truncated filename (e.g. 'My').
+      // Only the same resolved URL is a duplicate; basename is not file identity.
+      if (!require('./tools/mls-index-lab/playback_resolution_cache').markUnique(SEEN_F,u)) return;
       const qq = it.q || mlsQ(it.title) || 0;
       const size = mlsMB(it.r.size || 0);
       const audio = mlsAudio(it.title);
@@ -4101,8 +4098,6 @@ async function mlsTask(nameP, infoP, type, s, e) {
         behaviorHints: { notWebReady: false, isBingeable: !it.range && !it.seasonFile, proxyHeaders: { request: Object.assign({ 'User-Agent': UA }, it.r.srv === 'multicloud·watch' ? { Referer:'https://new.multicloudlinks.com/', Origin:'https://new.multicloudlinks.com' } : {}) }, filename: 'mlsbd-' + (qq || 'auto') + '.mkv' },
         bingeGroup: 'mls|' + mlsNorm(TTL) + '::' + (type === 'series' ? 'S' + Number(s || 1) + 'E' + Number(e || 1) : 'm')
       });
-      // Deliver a ready GDx watch card without waiting for slow unrelated mirror jobs.
-      if ((it.r.srv === 'gdx·watch' || it.r.srv === 'multicloud·watch') && !earlyGdxTimer) earlyGdxTimer = setTimeout(() => earlyGdxResolve(finalize()), 1200);
     } catch (e2) { if (DBG) console.error('[mlsd] addCard-err ' + ((e2 && e2.message) || e2)); }
   };
   const work = (async () => {
@@ -4256,9 +4251,9 @@ async function mlsTask(nameP, infoP, type, s, e) {
           const seasonOnly = type === 'series' && !Number(it.ep) && !/\bS\d{1,2}E\d/i.test(String(p.title||''));
           const consistent = r => type !== 'series' || (r.season === SE && r.episode === (range ? range.start : EP) && (r.episode_end||r.episode) === (range ? range.end : EP));
           for (const u of (x.gdx || []).slice(0, 1))
-            inner.push(require('./tools/mls-index-lab/gdx_watch').resolve(u, mlsGet, Math.max(3000, CAP - (Date.now() - T0) - 400)).then(r => { if (!r || !consistent(r) || ![720,1080,2160].includes(r.q) || (q0 && q0 !== r.q)) return null; addCard({ kind:'watch', r, title:ttlOf(p), q:r.q, range }); return {kind:'watch',r,title:ttlOf(p),q:r.q}; }).catch(() => null));
+            inner.push(MLS_PLAY_RESOLVE.get('gdx:'+u, () => require('./tools/mls-index-lab/gdx_watch').resolve(u, mlsGet, Math.max(3000, CAP - (Date.now() - T0) - 400))).then(r => { if (!r || !consistent(r) || ![720,1080,2160].includes(r.q) || (q0 && q0 !== r.q)) return null; addCard({ kind:'watch', r, title:ttlOf(p), q:r.q, range }); return {kind:'watch',r,title:ttlOf(p),q:r.q}; }).catch(() => null));
           for (const u of x.mcl.slice(0, 1))
-            inner.push(mlsWatch(u, Math.max(3000, CAP - (Date.now() - T0) - 400)).then(r => { if (!r || !consistent(r) || ![720,1080,2160].includes(r.q) || (q0 && q0 !== r.q)) return null; addCard({kind:'watch',r,title:ttlOf(p),q:r.q,range}); return {kind:'watch',r,title:ttlOf(p),q:r.q}; }).catch(() => null));
+            inner.push(MLS_PLAY_RESOLVE.get('watch:'+u, () => mlsWatch(u, Math.max(3000, CAP - (Date.now() - T0) - 400))).then(r => { if (!r || !consistent(r) || ![720,1080,2160].includes(r.q) || (q0 && q0 !== r.q)) return null; addCard({kind:'watch',r,title:ttlOf(p),q:r.q,range}); return {kind:'watch',r,title:ttlOf(p),q:r.q}; }).catch(() => null));
           // ★ v1.28.22: গেট এখন **বাকি-সময়** দেখে (আগে T0<CAP*0.45 ⇒ সার্চ ৪-৫সে নিলে gdflix কখনোই
           //   চালু হতো না ⇒ সব কার্ড multicloud-এ সীমিত)। আংশিক-কার্ড থাকায় দেরিতে শেষ হলেও ক্ষতি নেই।
           if (CAP - (Date.now() - T0) > 2400)
@@ -4274,7 +4269,7 @@ async function mlsTask(nameP, infoP, type, s, e) {
                   if (![720,1080,2160].includes(meta.q) || (q0 && q0!==meta.q)) return null;
                   actualQ=meta.q;seasonUnmarked=!!(seasonMeta && seasonMeta.unmarked);
                 }
-                const r=await mlsGd(u, Math.max(2600, CAP - (Date.now() - T0) - 400));
+                const r=await MLS_PLAY_RESOLVE.get('gd:'+u, () => mlsGd(u, Math.max(2600, CAP - (Date.now() - T0) - 400)));
                 if (r && r.ok && r.direct) addCard({kind:'gd',r,title:ttlOf(p),q:actualQ,range,seasonFile:seasonOnly,seasonUnmarked});
                 if (r && !r.ok && !range && !seasonOnly) MLS_GD_CTX.set(mlsGdId(u), { ck:RCK,INFO,NAME,type,s,e,title:ttlOf(p),q:actualQ });
                 return {kind:'gd',r,title:ttlOf(p),q:actualQ};
@@ -4298,8 +4293,11 @@ async function mlsTask(nameP, infoP, type, s, e) {
     return finalize();
   })();
   let timedOut = false;
-  const hard = new Promise(r => setTimeout(() => { timedOut = true; try { r(finalize()); } catch (e) { r([]); } }, CAP));
-  const r = await Promise.race([work.catch(e => { if (DBG) console.error('[mlsd] err ' + (e && e.message)); return []; }), earlyGdx, hard]);
+  const foregroundMs = Math.max(1000, Math.min(CAP, Number(process.env.MLS_RETURN_MS || 7600)));
+  let hardTimer;
+  const hard = new Promise(r => { hardTimer=setTimeout(() => { timedOut = true; try { r(finalize()); } catch (e) { r([]); } }, foregroundMs); });
+  const r = await Promise.race([work.catch(e => { if (DBG) console.error('[mlsd] err ' + (e && e.message)); return []; }), hard]);
+  clearTimeout(hardTimer);
   if (r && r.length && RCK) {
     try {
       const prev = MLS_RC.get(RCK);
@@ -14575,12 +14573,13 @@ async function withSources(cardsP, srcs, cfg, t0, mkey, lookupP) {
     const LONGX = BGX || SLOWX;   // ★ v1.34.173: bg **বা** slow — দুটোতেই তাড়াতাড়ি-কাট বন্ধ
     const EARLY_MS = LONGX ? 99999 : Number(process.env.VEARLY || 8000), EARLY_N = LONGX ? 1e9 : Number(process.env.VEARLYN || 60);   // ★ v1.34.149 / v1.34.173
     const VDIM_MS = LONGX ? 99999 : Number(process.env.VDIM || 8200);   // ★ v1.34.173
-    const _isProd = k => { const e = SRC_STATS.get(k); return !e || e.calls < 2 || e.cards > 0; };
+    const _isProd = k => { if (k === 'mls') return true; const e = SRC_STATS.get(k); return !e || e.calls < 2 || e.cards > 0; };
     // ★★ v1.34.158 (প্রোড `/_srcstats` প্রমাণ): **সাম্প্রতিক** উর্বরতা ধরতে হবে, আজীবন-মোট নয় —
     //   `mlb`-এর মোট ৩ কার্ড কিন্তু **১৪ বার পরপর ০**, `rt` ৬-বার ০, `tw` ২-বার ০; ওরা
     //   "উর্বর" গণ্য হয়ে আর্লি-কাট আটকে রাখছিল ⇒ প্রতিটি টাইটেল অকারণে ৮.২সে।
     //   আর সত্যিই-উর্বর: nx ২৩১/@২.৯সে · mm ১৬৭/@৪.৩সে · m4u ৮৫/@৪.৮সে · sky ১৯ · dt ১৬।
     const _recentProd = k => {
+      if (k === 'mls') return true; // No global title-to-title starvation of indexed MLSBD results.
       const e = SRC_STATS.get(k);
       if (!e || e.calls < 2) return true;                       // অচেনা সোর্স সুযোগ পায়
       if (!e.cards) return false;                               // কখনো কার্ড দেয়নি
@@ -14654,7 +14653,7 @@ async function withSources(cardsP, srcs, cfg, t0, mkey, lookupP) {
       let _deadKey = false;
       // ★ v1.34.159 (প্রোড `/_srcstats`: hm ০/১৫ @৭.৭সে · mls ০/১৫ @৬.৯সে · hd ০/১৫ @৩.৪সে):
       //   টানা ≥৬ কল শূন্য-কার্ড সোর্স foreground-এ পুরো বাজেট খায় ⇒ ছোট ক্যাপ; bg-তে পূর্ণ সুযোগ থাকে।
-      try { const _e = SRC_STATS.get(x.key); if (!(BGX || SLOWX) && _e && _e.calls >= 6 && !_e.cards && (_e.streak0 || 0) >= Number(process.env.DEADCAPN || 6)) { _base = Math.min(_base, Number(process.env.DEADCAP || 4500)); _deadKey = true; } } catch (eD) { }
+      try { const _e = SRC_STATS.get(x.key); if (x.key !== 'mls' && !(BGX || SLOWX) && _e && _e.calls >= 6 && !_e.cards && (_e.streak0 || 0) >= Number(process.env.DEADCAPN || 6)) { _base = Math.min(_base, Number(process.env.DEADCAP || 4500)); _deadKey = true; } } catch (eD) { }
       const base = srcCapFor(x.key, _base);
       const capP = new Promise(r => { _tm = setInterval(() => {
         const lim = _capSlow || Math.min(BGX ? Number(process.env.SCUTBG || 11000) : Number(process.env.SCUT || 8400), base + _LK.ms);   // ★ v1.34.173: slow-মোডে পূর্ণ বাজেট
