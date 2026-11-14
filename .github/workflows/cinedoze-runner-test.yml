@@ -1,0 +1,38 @@
+name: CineDoze network comparison
+on:
+  push:
+    branches: [cinedoze-runner-test]
+permissions:
+  contents: write
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test public pages from GitHub runner
+        run: |
+          python3 - <<'PY' | tee /tmp/cinedoze-test.txt
+          import urllib.request,urllib.error,re,time
+          urls=['https://cinedoze.tv/','https://cinedoze.tv/?s=Project+Hail+Mary','https://cinedoze.tv/movies/lenin-pandiyan-2026-dual-audio-hindi-org-tamil-amazon/','https://cinedoze.tv/links/m1volkkome/','https://mlsbd.co/','https://savelinks.me/view/iNTi2twT','https://joya9links.com/view/ltCp85X6']
+          class NoRedirect(urllib.request.HTTPRedirectHandler):
+           def redirect_request(self,*args):return None
+          op=urllib.request.build_opener(NoRedirect)
+          for u in urls:
+           try:
+            t=time.monotonic();req=urllib.request.Request(u,headers={'User-Agent':'Mozilla/5.0'});r=op.open(req,timeout=18);b=r.read(250000);print('URL',u,'HTTP',r.status,'bytes',len(b),'seconds',round(time.monotonic()-t,2),'html',b[:15])
+           except urllib.error.HTTPError as e:print('URL',u,'HTTP',e.code,'redirect',e.headers.get('Location',''))
+           except Exception as e:print('URL',u,'ERROR',type(e).__name__)
+          PY
+      - name: Publish test summary to separate test branch
+        if: always()
+        run: |
+          cp /tmp/cinedoze-test.txt /tmp/cinedoze-result.txt
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git switch --orphan cinedoze-test-results
+          git rm -rf . >/dev/null 2>&1 || true
+          cp /tmp/cinedoze-result.txt runner-result.txt
+          git add runner-result.txt
+          git commit -m 'CineDoze network test result'
+          git push --force origin HEAD:cinedoze-test-results
