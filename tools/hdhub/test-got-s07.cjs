@@ -1,0 +1,10 @@
+'use strict';
+const fs=require('fs'),vm=require('vm'),assert=require('assert');
+const src=fs.readFileSync('server.js','utf8'),block=src.slice(src.indexOf('const HD_BASE ='),src.indexOf('// ★★ v1.27.2 (ইউজার:',src.indexOf('const HD_BASE =')));
+const ctx={URL,AbortSignal,fetch,process,console,setTimeout,clearTimeout,DBG:false,NOCACHE:true,UA:'test',_shrink(){},racePool:async()=>{throw Error('unused')},pdProbe:async()=>({alive:true,total:1000})};
+vm.runInNewContext(block+'\nglobalThis.api={hdEpMap,hdSeries,setMocks:(t,d)=>{hdText=t;hdTextFast=t;hdDrive=d;}}',ctx);
+const page=fs.readFileSync('tools/hdhub/fixtures/got-s07.html','utf8'),drive=fs.readFileSync('tools/hdhub/fixtures/got-s07e02-drive.html','utf8');
+const map=ctx.api.hdEpMap(page);assert.equal(map[1][0].u,'https://hubdrive.blog/file/1699264830');assert.equal(map[2][0].u,'https://hubdrive.blog/file/1699264831');assert.equal(Object.keys(map).length,7);
+let requested=[];const text=async u=>{if(u.includes('/search.php'))return {st:200,t:JSON.stringify({hits:[{document:{imdb_id:'tt0944947',post_title:'Game of Thrones (Season 7) BluRay [Hindi] 720p',permalink:'https://hdhubinfo.com/got7/'}}]})};if(u.endsWith('/got7/'))return {st:200,t:page};if(u==='https://hubdrive.blog/file/1699264831')return {st:200,t:drive};return {st:404,t:''};};
+ctx.api.setMocks(text,async u=>{requested.push(u);return {fn:'Game.of.Thrones.S07E02.720p.mkv',cands:[{u:'https://example.com/ep2.mkv',k:'wk'}]}});
+(async()=>{let x=await ctx.api.hdSeries('tt0944947','Game of Thrones',7,2,'https://example.com',0);assert(requested.includes('https://hubcloud.pw/drive/eevhnez_2zh1xe_'),'drive ID must not truncate underscore');assert(x.length,'E02 mock stream');console.log('real GoT S07 episode map and underscore HubCloud ID regression passed')})().catch(e=>{console.error(e);process.exitCode=1});

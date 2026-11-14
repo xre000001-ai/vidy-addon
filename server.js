@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.162';
+const VERSION = '1.34.163';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -8841,7 +8841,7 @@ async function hdSeries(imdb, title, s, e, origin, maxh) {
         for (const x of pp0) for (const z of hdEpInPack(String(x.t || ''), EP)) if (!links0.some(q => q.u === z.u)) links0.push(z);
         if (!links0.length) {   // ★ v1.27.7: লেবেলহীন ড্রাইভ-লিঙ্ক ⇒ পেজ-`<title>`-এ SxxExx মিলিয়ে বাছি
           const all = [];
-          for (const x of pp0) for (const u of [...new Set(String(x.t || '').match(/https:\/\/(?:hubdrive\.(?:bar|blog)\/file|hubcloud\.[a-z]+\/drive)\/[A-Za-z0-9]+/g) || [])]) if (all.indexOf(u) < 0) all.push(u);
+          for (const x of pp0) for (const u of [...new Set(String(x.t || '').match(/https:\/\/(?:hubdrive\.(?:bar|blog)\/file|hubcloud\.[a-z]+\/drive)\/[A-Za-z0-9_-]+/g) || [])]) if (all.indexOf(u) < 0) all.push(u);
           const tak = all.slice(0, 12);   // ★ v1.27.8: লিস্ট উল্টো-সাজানো হয় (E10 আগে) ⇒ ৮-এ E01 বাদ পড়ত
           if (tak.length) {
             const tp = await Promise.all(tak.map(u => hdTextFast(u, HD_BASE + '/', Math.min(1600, left())).catch(() => ({ t: '' }))));
@@ -8893,7 +8893,7 @@ async function hdSeries(imdb, title, s, e, origin, maxh) {
     const expHubs = [];
     for (const e2 of expP) {
       const t2 = String(e2.t || '');
-      const hub2 = (t2.match(/https:\/\/hubcloud\.[a-z]+\/drive\/[A-Za-z0-9]+/) || [])[0];
+      const hub2 = (t2.match(/https:\/\/hubcloud\.[a-z]+\/drive\/[A-Za-z0-9_-]+/) || [])[0];
       const ttl2 = (t2.match(/<title>([^<]*)<\/title>/) || [])[1] || '';
       if (hub2) expHubs.push({ hub: hub2, ttl: ttl2 });
     }
@@ -8905,7 +8905,7 @@ async function hdSeries(imdb, title, s, e, origin, maxh) {
       //   শুধু 480p দেখাত (মাপা ভুল)। সব লিঙ্ক + অ্যাঙ্কর-লেবেল নিই।
       const rel = /hubcloud\.[a-z]+\/drive\//i.test(wraps[i].u)
         ? [[wraps[i].u, wraps[i].lab]]
-        : Array.from(t.matchAll(/<a\b[^>]*href="(https:\/\/hubcloud\.[a-z]+\/drive\/[A-Za-z0-9]+)"[^>]*>([\s\S]{0,60}?)<\/a>/gi)).map(m => [m[1], String(m[2]).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()]);
+        : Array.from(t.matchAll(/<a\b[^>]*href="(https:\/\/hubcloud\.[a-z]+\/drive\/[A-Za-z0-9_-]+)"[^>]*>([\s\S]{0,60}?)<\/a>/gi)).map(m => [m[1], String(m[2]).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()]);
       for (const pair of rel) {
         const hub = pair[0], lab = pair[1] || '';
         if (dseen.has(hub)) continue; dseen.add(hub);
@@ -8914,7 +8914,7 @@ async function hdSeries(imdb, title, s, e, origin, maxh) {
       // ★ v1.27.0: কিছু পেজে hubcloud লিঙ্ক <a>-এর ভেতরে থাকে না (প্লেন টেক্সট/JS) — মাপা: GoT S01E01
       //   hubdrive পেজে লিঙ্ক আছে, কিন্তু অ্যাঙ্কর-রেজেক্সে ধরা পড়ত না ⇒ 'no-hubcloud'।
       if (!rel.length) {
-        for (const h3 of [...new Set((t.match(/https:\/\/hubcloud\.[a-z]+\/drive\/[A-Za-z0-9]+/g) || []))]) {
+        for (const h3 of [...new Set((t.match(/https:\/\/hubcloud\.[a-z]+\/drive\/[A-Za-z0-9_-]+/g) || []))]) {
           if (dseen.has(h3)) continue; dseen.add(h3);
           const fi3 = hdFileOf(ttl);
           drives.push({ hub: h3, lab: ttl, ttl: ttl, h: fi3.h || 0, tag: fi3.tag || '' });
@@ -9016,7 +9016,7 @@ async function hdStreams(imdb, title, type, s, e, origin, maxh) { // v1.17.49: �
     if (DBG) console.error('[hd] search=' + (_tPost - T0) + 'ms post=' + (Date.now() - _tPost) + 'ms');
     const html = String(pg.t || '');
     const wraps = [...new Set((html.match(/https:\/\/(?:hblinks\.lol\/archives|hubdrive\.(?:bar|blog)\/file)\/[A-Za-z0-9]+/g) || []))].slice(0, 7);
-    const direct = [...new Set((html.match(/https:\/\/hubcloud\.[a-z]+\/drive\/[A-Za-z0-9]+/g) || []))].slice(0, 5);
+    const direct = [...new Set((html.match(/https:\/\/hubcloud\.[a-z]+\/drive\/[A-Za-z0-9_-]+/g) || []))].slice(0, 5);
     if (!wraps.length && !direct.length) { if (DBG) console.error('[hd] no-hub links @' + (Date.now() - T0) + 'ms'); return []; }
     if (DBG) console.error('[hd] post @' + (Date.now() - T0) + 'ms wrap=' + wraps.length + ' direct=' + direct.length);
     const drives = [];
@@ -9024,7 +9024,7 @@ async function hdStreams(imdb, title, type, s, e, origin, maxh) { // v1.17.49: �
     const mDrv = [];
     for (let i = 0; i < wpages.length; i++) {
       const t = String(wpages[i].t || '');
-      const hub = (t.match(/https:\/\/hubcloud\.[a-z]+\/drive\/[A-Za-z0-9]+/) || [])[0];
+      const hub = (t.match(/https:\/\/hubcloud\.[a-z]+\/drive\/[A-Za-z0-9_-]+/) || [])[0];
       const ttl = (t.match(/<title>([^<]*)<\/title>/) || [])[1] || '';
       if (hub) drives.push({ hub: hub, ttl: ttl });
       else for (const u2 of [...new Set((t.match(/https:\/\/hubdrive\.(?:bar|blog)\/file\/[A-Za-z0-9]+/g) || []))]) if (mDrv.indexOf(u2) < 0 && mDrv.length < 6) mDrv.push(u2);
@@ -9033,7 +9033,7 @@ async function hdStreams(imdb, title, type, s, e, origin, maxh) { // v1.17.49: �
       const ep = await Promise.all(mDrv.map(u2 => hdText(u2, HD_BASE + '/', Math.min(2000, left())).catch(() => ({ t: '' }))));
       for (const e2 of ep) {
         const t2 = String(e2.t || '');
-        const h2 = (t2.match(/https:\/\/hubcloud\.[a-z]+\/drive\/[A-Za-z0-9]+/) || [])[0];
+        const h2 = (t2.match(/https:\/\/hubcloud\.[a-z]+\/drive\/[A-Za-z0-9_-]+/) || [])[0];
         const tl2 = (t2.match(/<title>([^<]*)<\/title>/) || [])[1] || '';
         if (h2) drives.push({ hub: h2, ttl: tl2 });
       }
