@@ -23,7 +23,7 @@ jobs:
         working-directory: tools/mls-index-lab
         run: |
           set -o pipefail
-          python indexer.py --db runner.sqlite --proxy-list bd-results.json --pages 2 --mirror-limit 10 2>&1 | tee /tmp/mls-runner-index.txt
+          python indexer.py --db runner.sqlite --proxy-list bd-results.json --pages 2 --mirror-limit 3 2>&1 | tee /tmp/mls-runner-index.txt
           python - <<'PY'
           import sqlite3,sys
           c=sqlite3.connect('runner.sqlite')

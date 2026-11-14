@@ -64,9 +64,22 @@ def savepost(db,p):
  db.execute('INSERT INTO posts VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title,url=excluded.url,date=excluded.date,modified=excluded.modified,links=excluded.links',(p['id'],title,p['link'],p.get('date',''),p.get('modified',''),json.dumps(links,ensure_ascii=False)))
 
 def fetchmirror(id):
- r=requests.get('https://savelinks.me/view/'+id,headers={'Referer':BASE+'/'},timeout=16);r.raise_for_status()
- if len(r.text)<1000 or re.search(r'just a moment|checking your browser|bots not allowed',r.text,re.I):raise ValueError('challenge or incomplete page')
- return mirror_links(r.text)
+ url='https://savelinks.me/view/'+id
+ def parse(body):
+  if len(body)<1000 or re.search(r'just a moment|checking your browser|bots not allowed',body,re.I):raise ValueError('challenge or incomplete page')
+  links=mirror_links(body)
+  if not links:raise ValueError('no supported mirror links')
+  return links
+ try:
+  r=requests.get(url,headers={'Referer':BASE+'/'},timeout=12);r.raise_for_status();return parse(r.text)
+ except Exception:pass
+ for proxy in PROXIES[:min(8,len(PROXIES))]:
+  try:
+   r=subprocess.run(['curl','-fsS','--connect-timeout','5','--max-time','12','--proxy',proxy,'-A','Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/130.0.0.0 Safari/537.36','-e',BASE+'/',url],capture_output=True,text=True,timeout=14)
+   if r.returncode:continue
+   return parse(r.stdout)
+  except Exception:pass
+ raise ValueError('all mirror fetch paths failed')
 
 def main():
  global PROXIES
