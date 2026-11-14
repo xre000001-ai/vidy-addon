@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.154';
+const VERSION = '1.34.155';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -3053,6 +3053,8 @@ async function withNx(cardsP, nxP, cfg, t0) {
 //   (শুধু পোস্ট-আইডি/সেভলিংক-আইডি ২০ মিনিট), (৩) কড়া টাইটেল-মিল (নাম+বছর; সিরিজে ঠিক SxxExx),
 //   (৪) প্রতি ফাইলের **সব প্রমাণিত সার্ভার আলাদা কার্ড**, (৫) অডিও-লেবেল: ১→ভাষা, ২→Dual, ৩+→Multi।
 const MLS_BASE = 'https://mlsbd.co';
+// Warm the public metadata snapshot on startup; never block server startup.
+if (process.env.MLS_INDEX !== '0') setImmediate(() => { try { require('./tools/mls-index-lab/runtime_index').start(); } catch (_) {} });
 const mlsOn = cfg => (process.env.MLSD !== '0') && !(cfg && cfg.mls === 0);
 const MLS_C = new Map();
 const MLS_GD_LOAD = [], MLS_SAV_LOAD = [];
@@ -3663,12 +3665,23 @@ function mlsSavIds(html) {
 
 // savelinks পেজ → ঘোষিত মিরর-হোস্ট (gdflix ▼ / multicloud watch)
 const MLS_SAV = new Map(typeof MLS_SAV_LOAD !== 'undefined' ? MLS_SAV_LOAD : undefined);                    // id → {ts,val} (১০ মিনিট; শুধু মিরর-লিংকের তালিকা — ডাইরেক্ট-লিংক ক্যাশ নয়)
-async function mlsSav(id, ms) {
+const MLS_SAV_REFRESH = new Set();
+async function mlsSav(id, ms, forceFresh) {
   const km = /^(?:(joya9links\.com)\/)?([A-Za-z0-9]+)$/i.exec(String(id || ''));
   if (!km) return { gd: [], mcl: [], hosts: [] };
   const base = km[1] ? 'https://joya9links.com/' : 'https://savelinks.me/';
   const hit0 = MLS_SAV.get(id);
-  if (hit0 && Date.now() - hit0.ts < 600000 && Array.isArray(hit0.val.gdx)) return hit0.val;
+  if (!forceFresh && hit0 && Date.now() - hit0.ts < 600000 && Array.isArray(hit0.val.gdx)) return hit0.val;
+  if (!forceFresh) {
+    const seed = require('./tools/mls-index-lab/runtime_index').mirror(id);
+    if (seed) {
+      // Stable page references only; refresh in background without caching stream cards.
+      if (!MLS_SAV_REFRESH.has(id) && MLS_SAV_REFRESH.size < 30) {
+        MLS_SAV_REFRESH.add(id); setTimeout(() => mlsSav(id, 6000, true).catch(() => null).finally(() => MLS_SAV_REFRESH.delete(id)), 0);
+      }
+      return seed;
+    }
+  }
   let r = await mlsGet(base + 'view/' + km[2], { ms: Math.min(ms, 5000), referer: MLS_BASE + '/' });
   // ★ v1.29.0 (মাপা: ৬টি sav একসাথে টানলে ২টি ফাঁকা ফিরত ⇒ সিরিজে route-jobs=0 ⇒ ০ কার্ড):
   //   বডি ফাঁকা/স্টাব হলে **একবার রিট্রাই** — রেফারার ছাড়া + প্রক্সি-পথ খোলা রেখে।

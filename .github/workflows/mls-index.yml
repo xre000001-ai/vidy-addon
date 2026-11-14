@@ -54,7 +54,7 @@ jobs:
         working-directory: tools/mls-index-lab
         run: |
           set -euo pipefail
-          python indexer.py --db /tmp/mls-pilot/store.sqlite --proxy-list bd-results.json --pages 0 --mirror-limit 12
+          python indexer.py --db /tmp/mls-pilot/store.sqlite --proxy-list bd-results.json --pages 0 --mirror-limit 60
           python migrate.py /tmp/mls-pilot/store.sqlite
           python refresh.py --db /tmp/mls-pilot/store.sqlite --proxy-list bd-results.json --max-pages 10
           python backfill.py --db /tmp/mls-pilot/store.sqlite --proxy-list bd-results.json --start 1 --end auto --max-pages 20 --workers 4

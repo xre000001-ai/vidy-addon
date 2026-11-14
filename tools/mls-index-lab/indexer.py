@@ -108,7 +108,7 @@ def fetchmirror(id):
  try:
   r=requests.get(url,headers={'Referer':BASE+'/'},timeout=12);r.raise_for_status();return parse(r.text)
  except Exception:pass
- for proxy in random.sample(PROXIES,min(8,len(PROXIES))):
+ for proxy in random.sample(PROXIES,min(3,len(PROXIES))):
   try:
    r=subprocess.run(['curl','-fsS','--connect-timeout','5','--max-time','12','--proxy',proxy,'-A','Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/130.0.0.0 Safari/537.36','-e',BASE+'/',url],capture_output=True,text=True,timeout=14)
    if r.returncode:continue
@@ -142,7 +142,7 @@ def main():
    key=('joya9links.com/'+l['id']) if 'joya9links.com/' in l.get('url','') else l['id']
    if key not in last or time.time()-last[key]>86400:ids.append(key)
  ids=list(dict.fromkeys(ids));ids.sort(key=lambda x:last.get(x,0));ids=ids[:max(0,a.mirror_limit)]
- with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+ with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
   futures={pool.submit(fetchmirror,x):x for x in ids}
   for f in concurrent.futures.as_completed(futures):
    id=futures[f]

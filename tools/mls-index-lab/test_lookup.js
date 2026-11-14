@@ -18,3 +18,8 @@ assert.equal(find([vision],q('Vision Quest','series',2,6)).length,0);
 assert.equal(find([vision],q('Vision Quest','series',1,9)).length,0);
 assert.equal(find([row('VisionQuest Extra (2026) S01E08',[{id:'a',q:1080,ep:6,ep_end:6}])],q('Vision Quest','series',1,6)).length,0);
 console.log('VisionQuest previous episode / watch quality fixture passed');
+
+assert.equal(find([row('[PG-13] Superman Returns (2006) Dual Audio', [{id:'A',q:720}])],q('Superman Returns','movie',0,0,2006)).length,1);
+assert.equal(find([row('[PG-13] Superman Returns (2006) Dual Audio', [{id:'A',q:720}])],q('Superman','movie',0,0,2006)).length,0);
+assert.equal(find([row('The Batman (2022) Dual Audio',[{id:'A',q:1080}])],q('Batman','movie',0,0,2022)).length,0);
+console.log('rating prefixes and wrong-title safeguards passed');

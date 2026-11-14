@@ -2,8 +2,10 @@
 // Experimental pure search only. Does not emit cards or resolve media.
 function norm(s) { return String(s || '').normalize('NFKD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim().replace(/\s+/g,' '); }
 function matches(row,name,year,type,season,episode) {
- const want=norm(name), candidate=norm(row.title);
- const base=norm(String(row.title||'').split(/\s*\(?\b(?:19|20)\d{2}\b|\s+S\d{1,2}E\d/i)[0]);
+ // Strip only known classification prefixes; do not discard arbitrary title text.
+ const title=String(row.title||'').replace(/^\s*\[(?:PG(?:-13)?|TV-(?:MA|14|PG)|R|NC-17|G|U\/A|UA|A)\]\s*/i,'');
+ const want=norm(name), candidate=norm(title);
+ const base=norm(title.split(/\s*\(?\b(?:19|20)\d{2}\b|\s+S\d{1,2}E\d/i)[0]);
  const joined=want && base.replace(/ /g,'')===want.replace(/ /g,'');
  if (!want || !(candidate===want || candidate.startsWith(want+' ') || joined)) return false;
  const tail=joined ? '2020' : candidate.slice(want.length).trim();

@@ -1,7 +1,7 @@
 const fs=require('fs'),vm=require('vm'),assert=require('assert');
 const source=fs.readFileSync(require('path').join(__dirname,'../../server.js'),'utf8');
 const cut=(start,end)=>source.slice(source.indexOf(start),source.indexOf(end,source.indexOf(start)));
-const ctx={mlsEnt:x=>x,MLS_BASE:'https://mlsbd.co',MLS_SAV_LOAD:[],DBG:false,mlsMarkDirty(){},_shrink(){},URL,console,Date,Set,Map,Math,mlsHost:u=>new URL(u).hostname,mlsHrefs:(s,b)=>[...s.matchAll(/href="([^"]+)"/g)].map(x=>new URL(x[1],b).href),mlsGet:async (url)=>{ctx.requests.push(url);return {body:' '.repeat(4100)+'<a href="https://gdflix.dev/file/X">x</a><a href="https://new3.multicloudlinks.com/view/Y">y</a>'}},requests:[]};vm.createContext(ctx);
+const ctx={require:()=>({mirror:()=>null}),setTimeout,mlsEnt:x=>x,MLS_BASE:'https://mlsbd.co',MLS_SAV_LOAD:[],DBG:false,mlsMarkDirty(){},_shrink(){},URL,console,Date,Set,Map,Math,mlsHost:u=>new URL(u).hostname,mlsHrefs:(s,b)=>[...s.matchAll(/href="([^"]+)"/g)].map(x=>new URL(x[1],b).href),mlsGet:async (url)=>{ctx.requests.push(url);return {body:' '.repeat(4100)+'<a href="https://gdflix.dev/file/X">x</a><a href="https://new3.multicloudlinks.com/view/Y">y</a>'}},requests:[]};vm.createContext(ctx);
 vm.runInContext(cut('function mlsSavIds(html)', '// savelinks পেজ')+'\n'+cut('const MLS_SAV = new Map','// gdflix রেজলভ')+'\nglobalThis.parse=mlsSavIds;globalThis.fetchPage=mlsSav;',ctx);
 const h='<a class="Dbtn" href="https://savelinks.me/view/abc">720p</a><a class="Dbtn" href="https://joya9links.com/view/abc">1080p</a><a class="Dbtn" href="https://eviljoya9links.com/view/no">1080p</a>';
 const p=ctx.parse(h);assert.equal(p.length,2);assert.equal(p[0].id,'abc');assert.equal(p[1].id,'joya9links.com/abc');assert.equal(p[1].q,1080);
