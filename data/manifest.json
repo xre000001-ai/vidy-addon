@@ -1,0 +1,74 @@
+{
+  "schema": 1,
+  "generated_at": "2026-11-14T10:56:12.078747+00:00",
+  "posts": 36687,
+  "savelinks": 68401,
+  "mirror_sets": 622,
+  "shards": [
+    {
+      "file": "s00.json",
+      "posts": 2269
+    },
+    {
+      "file": "s01.json",
+      "posts": 2279
+    },
+    {
+      "file": "s02.json",
+      "posts": 2243
+    },
+    {
+      "file": "s03.json",
+      "posts": 2291
+    },
+    {
+      "file": "s04.json",
+      "posts": 2270
+    },
+    {
+      "file": "s05.json",
+      "posts": 2311
+    },
+    {
+      "file": "s06.json",
+      "posts": 2283
+    },
+    {
+      "file": "s07.json",
+      "posts": 2360
+    },
+    {
+      "file": "s08.json",
+      "posts": 2331
+    },
+    {
+      "file": "s09.json",
+      "posts": 2309
+    },
+    {
+      "file": "s10.json",
+      "posts": 2329
+    },
+    {
+      "file": "s11.json",
+      "posts": 2242
+    },
+    {
+      "file": "s12.json",
+      "posts": 2355
+    },
+    {
+      "file": "s13.json",
+      "posts": 2268
+    },
+    {
+      "file": "s14.json",
+      "posts": 2289
+    },
+    {
+      "file": "s15.json",
+      "posts": 2258
+    }
+  ],
+  "successful_pages": 140
+}
