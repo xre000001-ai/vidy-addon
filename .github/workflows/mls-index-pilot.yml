@@ -21,10 +21,24 @@ jobs:
       - name: Restore last good pilot data
         run: |
           mkdir -p /tmp/mls-pilot
-          if git fetch --no-tags origin refs/heads/mls-index-sandbox-data; then
+          set +e
+          git ls-remote --exit-code --heads origin mls-index-sandbox-data >/tmp/mls-pilot/ref.txt
+          rc=$?
+          set -e
+          if [ $rc -eq 0 ]; then
+            git fetch --no-tags origin refs/heads/mls-index-sandbox-data
             git show FETCH_HEAD:store.sqlite > /tmp/mls-pilot/store.sqlite
             test -s /tmp/mls-pilot/store.sqlite
+            python -c "import sqlite3; d=sqlite3.connect('/tmp/mls-pilot/store.sqlite'); assert d.execute('pragma integrity_check').fetchone()[0]=='ok'; open('/tmp/mls-pilot/old-count','w').write(str(d.execute('select count(*) from posts').fetchone()[0]))"
+          elif [ $rc -ne 2 ]; then
+            echo 'Cannot verify previous data branch, abort instead of replacing it'
+            exit 1
           fi
+      - name: Run unit tests
+        working-directory: tools/mls-index-lab
+        run: |
+          python -m unittest -v test_indexer.py
+          node test_lookup.js
       - name: Discover and verify BD proxies
         working-directory: tools/mls-index-lab
         run: python scan_bd.py
@@ -38,7 +52,10 @@ jobs:
           python - <<'PY'
           import json,sys
           m=json.load(open('/tmp/mls-pilot/data/manifest.json'))
-          if m['posts'] < 100: sys.exit('refuse tiny/empty index')
+          from pathlib import Path
+          old=Path('/tmp/mls-pilot/old-count')
+          previous=int(old.read_text()) if old.exists() else 0
+          if m['posts'] < max(100,previous): sys.exit('refuse empty or shrinking index')
           print('pilot exported',m['posts'],'posts,',m['savelinks'],'refs,',m['mirror_sets'],'mirror sets')
           PY
       - name: Publish to isolated pilot data branch

@@ -4,11 +4,13 @@ import argparse, datetime, json, pathlib, sqlite3, os
 p=argparse.ArgumentParser();p.add_argument('--db',required=True);p.add_argument('--output',required=True);a=p.parse_args()
 c=sqlite3.connect('file:'+os.path.abspath(a.db)+'?mode=ro',uri=True);dest=pathlib.Path(a.output);dest.mkdir(parents=True,exist_ok=True)
 shards=[[] for _ in range(16)]; bad=0
+try:other={id:json.loads(links) for id,links in c.execute('SELECT id,links FROM post_other')}
+except sqlite3.OperationalError:other={}
 for id,title,url,date,modified,links in c.execute('SELECT id,title,url,date,modified,links FROM posts'):
  try:
   sav=json.loads(links)
   if not isinstance(sav,list) or not id or not title or not url.startswith('https://mlsbd.co/'):raise ValueError('invalid record')
-  shards[id%16].append({'id':id,'title':title,'url':url,'date':date,'modified':modified,'sav':[{'id':x['id'],'q':x.get('quality',0),'ep':x.get('episode',0)} for x in sav if x.get('id')]})
+  shards[id%16].append({'id':id,'title':title,'url':url,'date':date,'modified':modified,'sav':[{'id':x['id'],'q':x.get('quality',0),'ep':x.get('episode',0)} for x in sav if x.get('id')],'other':other.get(id,[])})
  except Exception:bad+=1
 if bad:raise SystemExit('REFUSE EXPORT invalid records: '+str(bad))
 if sum(map(len,shards))<1:raise SystemExit('REFUSE EXPORT empty index')

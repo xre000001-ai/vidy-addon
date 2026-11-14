@@ -22,7 +22,7 @@ def main():
     r=subprocess.run(['curl','-fsS','--connect-timeout','5','--max-time','15','--proxy',px,'-A','Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/130.0.0.0 Safari/537.36','-H','Accept: application/json',url],capture_output=True,text=True,timeout=17)
     if r.returncode:continue
     j=json.loads(r.stdout)
-    if not isinstance(j,list) or not j or any(not isinstance(x,dict) or not x.get('id') or not isinstance(x.get('content'),dict) or not x.get('link') or not (x.get('title') or {}).get('rendered') for x in j):continue
+    if not isinstance(j,list) or not j or any(not isinstance(x,dict) or not x.get('id') or not isinstance(x.get('content'),dict) or not x.get('link') or not isinstance(x.get('title'),dict) for x in j):continue
     return p,j
    except Exception:pass
   return p,None

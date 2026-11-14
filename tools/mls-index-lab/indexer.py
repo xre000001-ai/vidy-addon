@@ -58,10 +58,21 @@ def wp(page,before=None):
  if not isinstance(j,list) or not j or any(not isinstance(x,dict) or not x.get('id') or not isinstance(x.get('content'),dict) for x in j):raise ValueError('invalid or empty upstream result')
  return j
 
+def other_pages(body):
+ p=Links();p.feed(body or '');out=[]
+ for a in p.links:
+  u=urljoin(BASE+'/',a['url']);host=(urlparse(u).hostname or '').lower()
+  if re.search(r'(^|\.)(?:gdflix\.[a-z.]+|gdlink\.[a-z.]+|ddflix\.[a-z.]+|multicloudlinks\.[a-z.]+|fsldownload\.[a-z.]+|filepress\.[a-z.]+|pixeldrain\.com|bonghd\.com|driveload\.co|suprafiles\.net|9xplay\.live|openload\.co|mlsbd\.bid)$',host):
+   if u.startswith(('https://','http://')) and '?' not in u and '#' not in u:out.append({'url':u,'label':a['label'][:180]})
+ return list({x['url']:x for x in out}.values())
+
 def savepost(db,p):
- title=html.unescape(p.get('title',{}).get('rendered',''));links=extract_post(p['content'].get('rendered',''))
- if not p.get('link') or not title:raise ValueError('invalid post')
+ title=html.unescape(p.get('title',{}).get('rendered',''));body=p['content'].get('rendered','');links=extract_post(body)
+ if not p.get('link') or not p.get('id'):raise ValueError('invalid post')
+ if not title.strip():title='[Untitled WP post '+str(p['id'])+']'
  db.execute('INSERT INTO posts VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title,url=excluded.url,date=excluded.date,modified=excluded.modified,links=excluded.links',(p['id'],title,p['link'],p.get('date',''),p.get('modified',''),json.dumps(links,ensure_ascii=False)))
+ db.execute('CREATE TABLE IF NOT EXISTS post_other(id INTEGER PRIMARY KEY, links TEXT)')
+ db.execute('INSERT OR REPLACE INTO post_other VALUES(?,?)',(p['id'],json.dumps(other_pages(body),ensure_ascii=False)))
 
 def fetchmirror(id):
  url='https://savelinks.me/view/'+id
@@ -101,12 +112,11 @@ def main():
   except Exception as e:
    print('wp FAILED',p,type(e).__name__,str(e)[:200],flush=True)
    if cut:break
- ids=[]
+ ids=[];last={k:v for k,v in db.execute('SELECT id,checked FROM mirrors')}
  for (links,) in db.execute('SELECT links FROM posts ORDER BY date DESC'):
   for l in json.loads(links):
-   hit=db.execute('SELECT checked FROM mirrors WHERE id=?',(l['id'],)).fetchone()
-   if not hit or time.time()-hit[0]>86400:ids.append(l['id'])
- ids=list(dict.fromkeys(ids))[:max(0,a.mirror_limit)]
+   if l['id'] not in last or time.time()-last[l['id']]>86400:ids.append(l['id'])
+ ids=list(dict.fromkeys(ids));ids.sort(key=lambda x:last.get(x,0));ids=ids[:max(0,a.mirror_limit)]
  with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
   futures={pool.submit(fetchmirror,x):x for x in ids}
   for f in concurrent.futures.as_completed(futures):
