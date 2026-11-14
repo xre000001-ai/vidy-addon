@@ -24,6 +24,27 @@ jobs:
            except urllib.error.HTTPError as e:print('URL',u,'HTTP',e.code,'redirect',e.headers.get('Location',''))
            except Exception as e:print('URL',u,'ERROR',type(e).__name__)
           PY
+      - name: Test site through freshly verified BD proxies
+        working-directory: tools/mls-index-lab
+        run: |
+          python3 -m pip install requests >/dev/null
+          python3 scan_bd.py >> /tmp/cinedoze-test.txt 2>&1
+          python3 - <<'PY' | tee -a /tmp/cinedoze-test.txt
+          import json,subprocess,concurrent.futures
+          pool=[x['proxy'] for x in json.load(open('bd-results.json'))['good']][:12]
+          targets=[('home','https://cinedoze.tv/'),('sitemap','https://cinedoze.tv/movies-sitemap.xml'),('link','https://cinedoze.tv/links/m1volkkome/')]
+          def test(job):
+           name,url,px=job
+           try:
+            r=subprocess.run(['curl','-sS','--connect-timeout','5','--max-time','12','--proxy',px,'-A','Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/130.0.0.0 Safari/537.36','-w','\n%{http_code}',url],capture_output=True,text=True,timeout=14)
+            body,status=r.stdout.rsplit('\n',1);valid=(status=='200' and (('CineDoze' in body and 'Movies' in body) if name=='home' else '<urlset' in body if name=='sitemap' else False)) or (name=='link' and status in ['301','302'])
+            return name,valid,status
+           except Exception:return name,False,'error'
+          jobs=[(n,u,px) for n,u in targets for px in pool]
+          with concurrent.futures.ThreadPoolExecutor(max_workers=12) as ex:out=list(ex.map(test,jobs))
+          for n,_ in targets:
+           a=[x for x in out if x[0]==n];print('BD_PROXY_RESULT',n,'valid',sum(x[1] for x in a),'tested',len(a),'statuses',sorted(set(x[2] for x in a)))
+          PY
       - name: Publish test summary to separate test branch
         if: always()
         run: |
