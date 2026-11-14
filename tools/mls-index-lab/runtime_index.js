@@ -28,7 +28,7 @@ async function candidates(names,year,type,season,episode,waitMs=1000){
  for(const name of names||[]){
   for(const r of find(current.rows,{name,year,type,season:Number(season||1),episode:Number(episode||1)}))byId.set(r.id,r);
  }
- return [...byId.values()].sort((a,b)=>b.id-a.id).slice(0,12).map(r=>({id:r.id,title:r.title,link:r.url,html:'',date:'',_sav:r.sav.filter(s=>!s.page || s.page==='https://savelinks.me/view/'+s.id || s.page==='https://joya9links.com/view/'+s.id).map(s=>({id:(String(s.page||'').startsWith('https://joya9links.com/view/')?'joya9links.com/':'')+s.id,q:Number(s.q)||0,ep:Number(s.ep)||0}))})).filter(p=>p._sav.length);
+ return [...byId.values()].sort((a,b)=>b.id-a.id).slice(0,12).map(r=>({id:r.id,title:r.title,link:r.url,html:'',date:'',_sav:r.sav.filter(s=>!s.page || s.page==='https://savelinks.me/view/'+s.id || s.page==='https://joya9links.com/view/'+s.id).map(s=>({id:(String(s.page||'').startsWith('https://joya9links.com/view/')?'joya9links.com/':'')+s.id,q:Number(s.q)||0,ep:Number(s.ep)||0,ep_end:Number(s.ep_end)||0}))})).filter(p=>p._sav.length);
 }
 function stats(){return {posts:current?current.rows.length:0,revision:current?current.sha.slice(0,12):'',ageSeconds:current?Math.round((Date.now()-current.at)/1000):null,loading:!!inflight};}
 module.exports={candidates,start,stats};

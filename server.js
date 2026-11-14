@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.153';
+const VERSION = '1.34.154';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -3911,23 +3911,25 @@ async function mlsWatch(link, ms, px) {
   const dec = u => mlsEnt(u);
   const cands = [];
   const push = (u, tag) => { u = dec(String(u || '').trim()); if (u && cands.every(c => c.u !== u)) cands.push({ u: u, tag: tag }); };
-  const dr1 = /https:\/\/dr1\.multidownload\.lol\/d\/[^\s"'<>\\]+/i.exec(body);
-  if (dr1) push(dr1[0] + (/[?&]/.test(dr1[0]) ? '&' : '?') + 'action=watch', 'multicloud');
-  const fsl = /https:\/\/fsldownload\.com\/d\/[A-Za-z0-9._-]+/i.exec(body);
-  if (fsl) push(fsl[0], 'FSL');
-  const dl = /https:\/\/new\.multicloudlinks\.com\/dl\/[A-Za-z0-9]+/i.exec(body);
-  if (dl) push(dl[0], 'multicloud');
-  const pl = mlsHrefs(body, base).find(u => /player\.php/i.test(u));
-  if (!cands.length && pl) {
+  // Prefer the actual player streamSrc; /dl/ is an HTML download page, not media.
+  const pl = mlsHrefs(body, base).find(u => /(^|\.)multicloudlinks\.com$/i.test(mlsHost(u)) && /player\.php/i.test(u));
+  let meta = {};
+  if (pl) {
     const pp = await mlsGet(pl, { ms: Math.min(4500, Math.max(2500, t - (Date.now() - T0))), referer: link, proxy: px });
-    const src = (/const\s+streamSrc\s*=\s*["']([^"']+)["']/.exec(String(pp.body || '')) || [])[1];
-    if (src) push(src + (/[?&]/.test(src) ? '&' : '?') + 'action=watch', 'multicloud');
+    const pb=String(pp.body || '');
+    const src = (/const\s+streamSrc\s*=\s*["']([^"']+)["']/.exec(pb) || [])[1];
+    if (src) {
+      try {const su=new URL(mlsEnt(src)); if (su.protocol==='https:' && /(^|\.)multidownload\.[a-z]+$/i.test(su.hostname)) push(su.href, 'multicloud·watch');} catch (_) {}
+    }
+    const title=mlsEnt((/<title[^>]*>([\s\S]*?)<\/title>/i.exec(pb)||[])[1]||'');
+    const qm=/(2160|1080|720|480)p\b/i.exec(title); const em=/\bS0*(\d{1,2})E0*(\d{1,4})(?!\d)/i.exec(title);
+    meta={q:qm?+qm[1]:(/\b4k\b/i.test(title)?2160:0),season:em?+em[1]:0,episode:em?+em[2]:0};
   }
   if (DBG) console.error('[mlsw] cands=' + cands.map(c => c.tag).join(','));
   for (const c of cands.slice(0, 2)) {
     const pr = await mlsProve(c.u, Math.max(2200, Math.min(4500, t - (Date.now() - T0))));
     if (DBG) console.error('[mlsw] probe ' + c.tag + ' st=' + (pr && pr.st) + ' ct=' + (pr && pr.ct) + ' ok=' + !!(pr && pr.ok));
-    if (pr && pr.ok) return { ok: true, direct: c.u, size: pr.size || 0, ct: pr.ct || '', srv: c.tag };   // ok:true = Range-প্রমাণিত
+    if (pr && pr.ok) return Object.assign({ ok: true, direct: c.u, size: pr.size || 0, ct: pr.ct || '', srv: c.tag, unverified:true }, meta);
   }
   return null;
 }
@@ -3971,7 +3973,7 @@ function mlsMakeCard(it, INFO, NAME, type, s, e) {
     return {
       name: '\u25a5 ' + (qq || 'Auto') + ' \u25a5', title: txt, description: txt, quality: String(qq || ''),
       url: u, _srv: srv, _hq: qq,
-      behaviorHints: { notWebReady: false, isBingeable: true, proxyHeaders: { request: { 'User-Agent': UA } }, filename: 'mlsbd-' + (qq || 'auto') + '.mkv' },
+      behaviorHints: { notWebReady: false, isBingeable: true, proxyHeaders: { request: Object.assign({ 'User-Agent': UA }, it.r.srv === 'multicloud·watch' ? { Referer:'https://new.multicloudlinks.com/', Origin:'https://new.multicloudlinks.com' } : {}) }, filename: 'mlsbd-' + (qq || 'auto') + '.mkv' },
       bingeGroup: 'mls|' + mlsNorm(TTL) + '::' + (type === 'series' ? 'S' + Number(s || 1) + 'E' + Number(e || 1) : 'm')
     };
   } catch (e2) { if (DBG) console.error('[mlsd] makeCard-err ' + ((e2 && e2.message) || e2)); return null; }
@@ -3999,7 +4001,7 @@ function mlsEnrich(ck, savMore, INFO, NAME, type, s, e) {
   setTimeout(async () => {
     const T0 = Date.now();
     try {
-      for (const it of savMore.slice(0, 3)) {
+      for (const it of savMore.filter(x => x.q).slice(0, 3)) {
         if (Date.now() - T0 > CAP2) break;
         let x = null;
         try { x = await mlsSav(it.id, 6000); } catch (e2) { continue; }
@@ -4073,11 +4075,11 @@ async function mlsTask(nameP, infoP, type, s, e) {
       CARD_BUF.push({
         name: '\u25a5 ' + (qq || 'Auto') + ' \u25a5', title: txt, description: txt, quality: String(qq || ''),
         url: u, _srv: srv, _hq: qq,
-        behaviorHints: { notWebReady: false, isBingeable: true, proxyHeaders: { request: { 'User-Agent': UA } }, filename: 'mlsbd-' + (qq || 'auto') + '.mkv' },
+        behaviorHints: { notWebReady: false, isBingeable: true, proxyHeaders: { request: Object.assign({ 'User-Agent': UA }, it.r.srv === 'multicloud·watch' ? { Referer:'https://new.multicloudlinks.com/', Origin:'https://new.multicloudlinks.com' } : {}) }, filename: 'mlsbd-' + (qq || 'auto') + '.mkv' },
         bingeGroup: 'mls|' + mlsNorm(TTL) + '::' + (type === 'series' ? 'S' + Number(s || 1) + 'E' + Number(e || 1) : 'm')
       });
       // Deliver a ready GDx watch card without waiting for slow unrelated mirror jobs.
-      if (it.r.srv === 'gdx·watch' && !earlyGdxTimer) earlyGdxTimer = setTimeout(() => earlyGdxResolve(finalize()), 500);
+      if ((it.r.srv === 'gdx·watch' || it.r.srv === 'multicloud·watch') && !earlyGdxTimer) earlyGdxTimer = setTimeout(() => earlyGdxResolve(finalize()), 1200);
     } catch (e2) { if (DBG) console.error('[mlsd] addCard-err ' + ((e2 && e2.message) || e2)); }
   };
   const work = (async () => {
@@ -4152,7 +4154,7 @@ async function mlsTask(nameP, infoP, type, s, e) {
       if (anyMatch) { MLS_C.set(ck, { ts: Date.now(), posts: posts }); if (MLS_C.size > 300) _shrink(MLS_C, 0.5); }
     }
     const SE = Number(s || 1), EP = Number(e || 1);
-    const okPost = p => names.some(n => mlsTitleOk(n, p.title, year, type === 'series')) && (type === 'series' ? mlsEpOk(p.title, SE, EP) : true);
+    const okPost = p => names.some(n => mlsTitleOk(n, p.title, year, type === 'series')) && (type !== 'series' || mlsEpOk(p.title, SE, EP) || (Array.isArray(p._sav) && new RegExp('(?:S0*' + SE + '(?:\\D|$))|(?:Season\\s*0*' + SE + '(?:\\D|$))', 'i').test(p.title) && p._sav.some(x => Number(x.ep) === EP && Number(x.ep_end) === EP)));
         // ★ v1.29.1 (ইউজার: "onek stream pacchi na"): আগে মিলে-যাওয়া **২টি** পোস্টই যথেষ্ট ধরা হতো —
     //   এক পোস্টে শুধু 1080/480 আর অন্যটায় 2160/720 থাকলে দুটোই হারাত। এখন ৩টি পোস্টের sav-লিংক
     //   একসাথে (রেজলভ-চেইন কিন্তু এখনো savTop=৩ ⇒ সময় বাড়ে না, শুধু কোয়ালিটি-বিকল্প বাড়ে)।
@@ -4230,19 +4232,19 @@ async function mlsTask(nameP, infoP, type, s, e) {
       for (const it of savTop.filter(x => x.p === p)) {
         if (seenSav.has(it.id)) continue;
         seenSav.add(it.id);
-        const q0 = it.q || mlsQ(p.title) || 0;
+        const q0 = Array.isArray(p._sav) ? Number(it.q)||0 : (it.q || mlsQ(p.title) || 0);
         const chain = mlsSav(it.id, 4500).then(x => {
           if (MLS_HOSTDBG.length < 20) MLS_HOSTDBG.push(x.hosts);
           const inner = [];
           const done = (r) => { if (r && r.ok === true && r.direct) addCard({ kind: kindOf(r), r: r, title: ttlOf(p), q: q0 }); return r; };
           for (const u of (x.gdx || []).slice(0, 1))
-            inner.push(require('./tools/mls-index-lab/gdx_watch').resolve(u, mlsGet, Math.max(3000, CAP - (Date.now() - T0) - 400)).then(r => { done(r); return { kind: 'watch', r: r, title: ttlOf(p), q: q0 }; }).catch(() => null));
-          for (const u of x.mcl.slice(0, 1))     // ★ watch-online (১ হপ, প্রোডে-খোলা — মাপা ২০৬)
-            inner.push(mlsWatch(u, Math.max(3000, CAP - (Date.now() - T0) - 400)).then(r => { done(r); return { kind: 'watch', r: r, title: ttlOf(p), q: q0 }; }).catch(() => null));
+            inner.push(require('./tools/mls-index-lab/gdx_watch').resolve(u, mlsGet, Math.max(3000, CAP - (Date.now() - T0) - 400)).then(r => { if (!r || (type === 'series' && (!r.season || !r.episode || r.season !== SE || r.episode !== EP)) || ![720,1080,2160].includes(r.q) || (q0 && q0 !== r.q)) return null; addCard({ kind:'watch', r, title:ttlOf(p), q:r.q }); return {kind:'watch',r,title:ttlOf(p),q:r.q}; }).catch(() => null));
+          for (const u of x.mcl.slice(0, 1))
+            inner.push(mlsWatch(u, Math.max(3000, CAP - (Date.now() - T0) - 400)).then(r => { if (!r || (type === 'series' && (!r.season || !r.episode || r.season !== SE || r.episode !== EP)) || ![720,1080,2160].includes(r.q) || (q0 && q0 !== r.q)) return null; addCard({kind:'watch',r,title:ttlOf(p),q:r.q}); return {kind:'watch',r,title:ttlOf(p),q:r.q}; }).catch(() => null));
           // ★ v1.28.22: গেট এখন **বাকি-সময়** দেখে (আগে T0<CAP*0.45 ⇒ সার্চ ৪-৫সে নিলে gdflix কখনোই
           //   চালু হতো না ⇒ সব কার্ড multicloud-এ সীমিত)। আংশিক-কার্ড থাকায় দেরিতে শেষ হলেও ক্ষতি নেই।
           if (CAP - (Date.now() - T0) > 2400)
-            for (const u of x.gd.slice(0, 1))
+            for (const u of (q0 ? x.gd : []).slice(0, 1))
               inner.push(mlsGd(u, Math.max(2600, CAP - (Date.now() - T0) - 400)).then(r => {
                 if (r && !r.ok) MLS_GD_CTX.set(mlsGdId(u), { ck: RCK, INFO: INFO, NAME: NAME, type: type, s: s, e: e, title: ttlOf(p), q: q0 });
                 done(r); return { kind: 'gd', r: r, title: ttlOf(p), q: q0 };

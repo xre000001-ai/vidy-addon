@@ -72,11 +72,27 @@ def other_pages(body):
 
 def savepost(db,p):
  title=html.unescape(p.get('title',{}).get('rendered',''));body=p['content'].get('rendered','');links=extract_post(body)
+ # A successful HTTP/JSON response can still contain a blank/challenge body.
+ # Retain the last known links rather than silently deleting the index coverage.
+ previous=db.execute('SELECT links FROM posts WHERE id=?',(p.get('id'),)).fetchone()
+ if previous and not links:
+  try:
+   old_links=json.loads(previous[0])
+   if isinstance(old_links,list) and old_links: links=old_links
+  except (ValueError,TypeError): pass
  if not p.get('link') or not p.get('id'):raise ValueError('invalid post')
  if not title.strip():title='[Untitled WP post '+str(p['id'])+']'
  db.execute('INSERT INTO posts VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title,url=excluded.url,date=excluded.date,modified=excluded.modified,links=excluded.links',(p['id'],title,p['link'],p.get('date',''),p.get('modified',''),json.dumps(links,ensure_ascii=False)))
  db.execute('CREATE TABLE IF NOT EXISTS post_other(id INTEGER PRIMARY KEY, links TEXT)')
- db.execute('INSERT OR REPLACE INTO post_other VALUES(?,?)',(p['id'],json.dumps(other_pages(body),ensure_ascii=False)))
+ other=other_pages(body)
+ if not other:
+  old=db.execute('SELECT links FROM post_other WHERE id=?',(p['id'],)).fetchone()
+  if old:
+   try:
+    prev=json.loads(old[0])
+    if isinstance(prev,list) and prev:other=prev
+   except (ValueError,TypeError):pass
+ db.execute('INSERT OR REPLACE INTO post_other VALUES(?,?)',(p['id'],json.dumps(other,ensure_ascii=False)))
 
 def fetchmirror(id):
  if id.startswith('joya9links.com/'):

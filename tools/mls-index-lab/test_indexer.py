@@ -23,6 +23,12 @@ class Test(unittest.TestCase):
   db=sqlite3.connect(':memory:');db.execute('CREATE TABLE posts(id INTEGER PRIMARY KEY,title TEXT,url TEXT,date TEXT,modified TEXT,links TEXT)')
   m.savepost(db,{'id':42,'title':{'rendered':''},'link':'https://mlsbd.co/untitled','content':{'rendered':''}})
   self.assertEqual(db.execute('select title from posts').fetchone()[0],'[Untitled WP post 42]')
+ def test_empty_response_retains_last_good_refs(self):
+  db=sqlite3.connect(':memory:');db.execute('CREATE TABLE posts(id INTEGER PRIMARY KEY,title TEXT,url TEXT,date TEXT,modified TEXT,links TEXT)')
+  a={'id':5,'title':{'rendered':'Show'},'link':'https://mlsbd.co/a','content':{'rendered':'<a href="https://savelinks.me/view/ABC">720p</a><a href="https://gdxfiles.com/file/abc">GDx</a>'}}
+  m.savepost(db,a);m.savepost(db,dict(a,content={'rendered':''}))
+  self.assertEqual(json.loads(db.execute('SELECT links FROM posts').fetchone()[0])[0]['id'],'ABC')
+  self.assertEqual(len(json.loads(db.execute('SELECT links FROM post_other').fetchone()[0])),1)
  def test_upsert_invalid_transaction(self):
   db=sqlite3.connect(':memory:');db.execute('CREATE TABLE posts(id INTEGER PRIMARY KEY,title TEXT,url TEXT,date TEXT,modified TEXT,links TEXT)')
   a={'id':1,'title':{'rendered':'Good'},'link':'https://mlsbd.co/a','content':{'rendered':'<a href="https://savelinks.me/view/AAA">720p</a>'}}
