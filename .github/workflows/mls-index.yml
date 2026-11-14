@@ -45,6 +45,7 @@ jobs:
           python -m unittest -v test_indexer.py test_refresh.py
           node test_lookup.js
           node test_runtime.js
+          node test_gdx_watch.js
           node test_joya_source.cjs
       - name: Discover and verify BD proxies
         working-directory: tools/mls-index-lab

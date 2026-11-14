@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.152';
+const VERSION = '1.34.153';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -3668,7 +3668,7 @@ async function mlsSav(id, ms) {
   if (!km) return { gd: [], mcl: [], hosts: [] };
   const base = km[1] ? 'https://joya9links.com/' : 'https://savelinks.me/';
   const hit0 = MLS_SAV.get(id);
-  if (hit0 && Date.now() - hit0.ts < 600000) return hit0.val;
+  if (hit0 && Date.now() - hit0.ts < 600000 && Array.isArray(hit0.val.gdx)) return hit0.val;
   let r = await mlsGet(base + 'view/' + km[2], { ms: Math.min(ms, 5000), referer: MLS_BASE + '/' });
   // ★ v1.29.0 (মাপা: ৬টি sav একসাথে টানলে ২টি ফাঁকা ফিরত ⇒ সিরিজে route-jobs=0 ⇒ ০ কার্ড):
   //   বডি ফাঁকা/স্টাব হলে **একবার রিট্রাই** — রেফারার ছাড়া + প্রক্সি-পথ খোলা রেখে।
@@ -3682,9 +3682,10 @@ async function mlsSav(id, ms) {
     //   ⇒ একই gdflix-রেজলভার চলে; পুরোনো পোস্টের কভারেজ অনেক বাড়ে (`hubcloud.*`-এ কিছু নেই — বাদ)।
     gd: hs.filter(u => /gdflix|ddflix|gdlink/i.test(mlsHost(u))),
     mcl: hs.filter(u => /multicloudlinks|multidownload|fsldownload/i.test(mlsHost(u))),
+    gdx: hs.filter(u => mlsHost(u) === 'gdxfiles.com' && /^\/file\/[A-Za-z0-9]+\/?$/.test(new URL(u).pathname)),
     hosts: [...new Set(hs.map(mlsHost).filter(h => h && !/savelinks|mlsbd|google|gstatic|facebook|twitter|whatsapp|t\.me/i.test(h)))]
   };
-  if (val.gd.length || val.mcl.length) { MLS_SAV.set(id, { ts: Date.now(), val: val }); mlsMarkDirty(); if (MLS_SAV.size > 200) _shrink(MLS_SAV, 0.5); }
+  if (val.gd.length || val.mcl.length || val.gdx.length) { MLS_SAV.set(id, { ts: Date.now(), val: val }); mlsMarkDirty(); if (MLS_SAV.size > 200) _shrink(MLS_SAV, 0.5); }
   return val;
 }
 
@@ -4004,6 +4005,7 @@ function mlsEnrich(ck, savMore, INFO, NAME, type, s, e) {
         try { x = await mlsSav(it.id, 6000); } catch (e2) { continue; }
         if (!x) continue;
         const jobs = [];
+        for (const u of (x.gdx || []).slice(0, 1)) jobs.push(require('./tools/mls-index-lab/gdx_watch').resolve(u, mlsGet, 7000).then(r => ({ kind: 'watch', r })).catch(() => null));
         for (const u of (x.mcl || []).slice(0, 1)) jobs.push(mlsWatch(u, 9000).then(r => ({ kind: 'watch', r: r })).catch(() => null));
         for (const u of (x.gd || []).slice(0, 1)) jobs.push(mlsGd(u, 9000).then(r => {
           if (r && !r.ok) MLS_GD_CTX.set(mlsGdId(u), { ck: ck, INFO: INFO, NAME: NAME, type: type, s: s, e: e, title: it.p ? it.p.title : '', q: it.q || 0 });
@@ -4038,7 +4040,11 @@ async function mlsTask(nameP, infoP, type, s, e) {
   //   mlsTask-এর ক্যাপ **১০.৮সে** ⇒ ঠান্ডা খোলাতেও ২-৪টি কার্ড; গরম খোলায় ৪-৭টি (~৫০০ms ক্যাশ-হিট)।
   const CAP = Number(process.env.MLSCAP || 18000);   // ★ v1.34.172: gdflix-চেইন শেষ করতে ১০.৮সে কম পড়ত
   let INFO = null, NAME = '', RCK = '', ENR_MORE = null;         // addCard-এর জন্য বাইরের স্কোপ (v1.28.18-fix) + ক্যাশ-কি
-  const CARD_BUF = [];                          // প্রমাণিত কার্ড (আসার ক্রমে) — deadline-এ হারায় না
+  const CARD_BUF = [];
+  let earlyGdxResolve; const earlyGdx = new Promise(resolve => { earlyGdxResolve = resolve; });
+  let earlyGdxTimer = null;
+  // Candidate cards, not automatically verified at playback time.
+  // প্রমাণিত কার্ড (আসার ক্রমে) — deadline-এ হারায় না
   const SEEN_F = new Set();
   const finalize = () => {
     const out = CARD_BUF.slice().sort((a, b) => (b._hq || 0) - (a._hq || 0));
@@ -4051,7 +4057,7 @@ async function mlsTask(nameP, infoP, type, s, e) {
       if (!u) return;
       let base = '';
       try { base = decodeURIComponent(new URL(u).pathname.split('/').filter(Boolean).pop() || ''); } catch (e) { base = u; }
-      const uk = base ? ('f:' + base.replace(/[?#].*$/, '')) : ('u:' + u);
+      const uk = base ? ('f:' + (it.r.srv || it.kind) + ':' + base.replace(/[?#].*$/, '')) : ('u:' + u);
       if (SEEN_F.has(u) || SEEN_F.has(uk)) return;
       SEEN_F.add(u); SEEN_F.add(uk);
       const qq = it.q || mlsQ(it.title) || 0;
@@ -4070,6 +4076,8 @@ async function mlsTask(nameP, infoP, type, s, e) {
         behaviorHints: { notWebReady: false, isBingeable: true, proxyHeaders: { request: { 'User-Agent': UA } }, filename: 'mlsbd-' + (qq || 'auto') + '.mkv' },
         bingeGroup: 'mls|' + mlsNorm(TTL) + '::' + (type === 'series' ? 'S' + Number(s || 1) + 'E' + Number(e || 1) : 'm')
       });
+      // Deliver a ready GDx watch card without waiting for slow unrelated mirror jobs.
+      if (it.r.srv === 'gdx·watch' && !earlyGdxTimer) earlyGdxTimer = setTimeout(() => earlyGdxResolve(finalize()), 500);
     } catch (e2) { if (DBG) console.error('[mlsd] addCard-err ' + ((e2 && e2.message) || e2)); }
   };
   const work = (async () => {
@@ -4227,6 +4235,8 @@ async function mlsTask(nameP, infoP, type, s, e) {
           if (MLS_HOSTDBG.length < 20) MLS_HOSTDBG.push(x.hosts);
           const inner = [];
           const done = (r) => { if (r && r.ok === true && r.direct) addCard({ kind: kindOf(r), r: r, title: ttlOf(p), q: q0 }); return r; };
+          for (const u of (x.gdx || []).slice(0, 1))
+            inner.push(require('./tools/mls-index-lab/gdx_watch').resolve(u, mlsGet, Math.max(3000, CAP - (Date.now() - T0) - 400)).then(r => { done(r); return { kind: 'watch', r: r, title: ttlOf(p), q: q0 }; }).catch(() => null));
           for (const u of x.mcl.slice(0, 1))     // ★ watch-online (১ হপ, প্রোডে-খোলা — মাপা ২০৬)
             inner.push(mlsWatch(u, Math.max(3000, CAP - (Date.now() - T0) - 400)).then(r => { done(r); return { kind: 'watch', r: r, title: ttlOf(p), q: q0 }; }).catch(() => null));
           // ★ v1.28.22: গেট এখন **বাকি-সময়** দেখে (আগে T0<CAP*0.45 ⇒ সার্চ ৪-৫সে নিলে gdflix কখনোই
@@ -4257,7 +4267,7 @@ async function mlsTask(nameP, infoP, type, s, e) {
   })();
   let timedOut = false;
   const hard = new Promise(r => setTimeout(() => { timedOut = true; try { r(finalize()); } catch (e) { r([]); } }, CAP));
-  const r = await Promise.race([work.catch(e => { if (DBG) console.error('[mlsd] err ' + (e && e.message)); return []; }), hard]);
+  const r = await Promise.race([work.catch(e => { if (DBG) console.error('[mlsd] err ' + (e && e.message)); return []; }), earlyGdx, hard]);
   if (r && r.length && RCK) {
     try {
       const prev = MLS_RC.get(RCK);
@@ -17283,6 +17293,7 @@ const server = http.createServer((req, res) => {
         else r = await mlsGet(u, { ms: ms, json: /json/i.test(u2.searchParams.get('j') || u) });
         return { st: r.st || 0, len: (r.body || '').length, via: r.via || only, ms: Date.now() - t, head: String(r.body || '').replace(/\s+/g, ' ').slice(0, 110) };
       })()
+        : kind === 'gdx' ? require('./tools/mls-index-lab/gdx_watch').resolve(u, mlsGet, 9000)
         : kind === 'gd' ? mlsGd(u, 9000)
         : kind === 'search' ? mlsPosts([u], 7000).then(a => ({ posts: a.length, titles: a.slice(0, 3).map(x => x.title.slice(0, 60)) }))
         : kind === 'sav' ? mlsSav(u, 6000)

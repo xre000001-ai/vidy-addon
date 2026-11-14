@@ -14,6 +14,8 @@ class Test(unittest.TestCase):
   x=m.other_pages('<a href="http://link.bonghd.com/?x_data=ABC%3D:1">Download</a><a href="https://pixeldrain.com/u/b">PD</a><a href="https://evil.example/?a=x">x</a>');self.assertEqual(len(x),2)
  def test_mirrors(self):
   x=m.mirror_links('<a href="https://gdflix.vip/file/a">GD</a><a href="https://pixeldrain.com/u/xyz">PD</a><a href="https://evil.example/">x</a>');self.assertEqual(len(x),2)
+ def test_gdx_mirror_is_preserved(self):
+  x=m.mirror_links('<a href="https://gdxfiles.com/file/35yt35mrv8ry">GDx</a><a href="https://evil.example/file/aaa">bad</a>');self.assertEqual([v['url'] for v in x],['https://gdxfiles.com/file/35yt35mrv8ry'])
  def test_reader_error(self):
   with patch('indexer.requests.get',return_value=Mock(status_code=200,text='{"code":401}',raise_for_status=lambda:None)):
    with self.assertRaises(ValueError):m.wp(1)

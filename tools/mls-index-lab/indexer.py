@@ -32,7 +32,7 @@ def mirror_links(body,base='https://savelinks.me/'):
  p=Links();p.feed(body or '');out=[]
  for a in p.links:
   u=urljoin(base,a['url']);h=(urlparse(u).hostname or '').lower()
-  if re.search(r'(^|\.)(?:gdflix\.[a-z.]+|gdlink\.[a-z.]+|ddflix\.[a-z.]+|multicloudlinks\.[a-z.]+|multidownload\.[a-z.]+|fsldownload\.[a-z.]+|filepress\.[a-z.]+|pixeldrain\.com)$',h):out.append({'url':u,'label':a['label'][:180]})
+  if re.search(r'(^|\.)(?:gdxfiles\.com|gdflix\.[a-z.]+|gdlink\.[a-z.]+|ddflix\.[a-z.]+|multicloudlinks\.[a-z.]+|multidownload\.[a-z.]+|fsldownload\.[a-z.]+|filepress\.[a-z.]+|pixeldrain\.com)$',h):out.append({'url':u,'label':a['label'][:180]})
  return list({x['url']:x for x in out}.values())
 
 PROXIES=[]
@@ -63,7 +63,7 @@ def other_pages(body):
  p=Links();p.feed(body or '');out=[]
  for a in p.links:
   u=urljoin(BASE+'/',a['url']);host=(urlparse(u).hostname or '').lower()
-  if re.search(r'(^|\.)(?:gdflix\.[a-z.]+|gdlink\.[a-z.]+|ddflix\.[a-z.]+|multicloudlinks\.[a-z.]+|fsldownload\.[a-z.]+|filepress\.[a-z.]+|pixeldrain\.com|bonghd\.com|driveload\.co|suprafiles\.(?:net|org)|9xplay\.live|openload\.co|streamango\.com|indishare\.me|film2movie\.tv|mlsbd\.bid)$',host):
+  if re.search(r'(^|\.)(?:gdxfiles\.com|gdflix\.[a-z.]+|gdlink\.[a-z.]+|ddflix\.[a-z.]+|multicloudlinks\.[a-z.]+|fsldownload\.[a-z.]+|filepress\.[a-z.]+|pixeldrain\.com|bonghd\.com|driveload\.co|suprafiles\.(?:net|org)|9xplay\.live|openload\.co|streamango\.com|indishare\.me|film2movie\.tv|mlsbd\.bid)$',host):
    # bonghd historically uses x_data as its stable page identifier, not a media token.
    # Do not persist arbitrary query strings that may be signed or session-bound.
    stable_query = ('?' not in u or (host.endswith('.bonghd.com') and re.match(r'^x_data=[A-Za-z0-9%_:+\-=]+$',urlparse(u).query)))
