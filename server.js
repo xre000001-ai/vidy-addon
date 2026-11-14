@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.163';
+const VERSION = '1.34.164';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -8587,7 +8587,8 @@ async function hdDrive(driveUrl, ms) { // hubcloud drive → gamerxyt → প্
   if (!gx) return { fn: nm, cands: [] };
   const p2 = await hdText(gx, 'https://hubcloud.ist/', ms);
   const txt = String(p2.t || '');
-  const pd = [...new Set((txt.match(/pixeldrain\.dev\/u\/([A-Za-z0-9]+)/g) || []).map(z => z.split('/u/')[1]))].slice(0, 3);
+  // HDHub's PixelServer placeholder negn6f is the same 404 file across unrelated episodes; it is not an episode mirror.
+  const pd = [...new Set((txt.match(/pixeldrain\.dev\/u\/([A-Za-z0-9]+)/g) || []).map(z => z.split('/u/')[1]))].filter(id => id !== 'negn6f').slice(0, 3);
   const s3 = [...new Set((txt.match(/https?:\/\/[a-z0-9.-]+\/[^"'\s<>]*X-Amz-Signature=[A-Za-z0-9%]+/g) || []).map(z => z.replace(/&amp;/g, '&')))].slice(0, 1);
   const wk = [...new Set((txt.match(/https:\/\/[a-z0-9.-]*workers\.dev\/[^"'\s<>]*/g) || []))].filter(u => !/\.m3u8/i.test(u)).slice(0, 1);
   // ★ v1.27.1: "Server : 10Gbps" = `gpdl.hubcloud.<tld>/?id=<hash>` → 302 → `<host>.workers.dev/?id=…`
