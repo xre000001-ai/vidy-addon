@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.180';
+const VERSION = '1.34.181';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -1361,7 +1361,7 @@ function pxsState(key) {
 }
 function pxsRec(key, px, ok, ms) {
   const st = pxsState(key), e = st.m.get(px) || { ok: 0, fail: 0, ms: 0, lastOk: 0, lastFail: 0, ban: 0, cons: 0 };
-  if (ok) { e.ok++; e.cons = 0; e.ms = e.ms ? Math.round(e.ms * 0.65 + ms * 0.35) : ms; e.lastOk = Date.now(); }
+  if (ok) { e.ok++; e.cons = 0; e.ban = 0; e.ms = e.ms ? Math.round(e.ms * 0.65 + ms * 0.35) : ms; e.lastOk = Date.now(); }
   else { e.fail++; e.cons++; e.lastFail = Date.now(); if (e.cons >= 2) e.ban = Date.now() + 90000; } // ২ ব্যর্থতায় ৯০সে কোয়ারেন্টিন
   st.m.set(px, e);
   if (st.m.size > 700) { const k0 = st.m.keys().next().value; st.m.delete(k0); }
@@ -1395,8 +1395,13 @@ function pxsGet(url, opt) {
   const st = pxsState(key); if (!st.url) st.url = url;
   // ★ v1.22.0: সোর্সের **নিজের পুল** আগে, তারপর সেই কী-র পুরোনো স্কোর, তারপর গ্লোবাল exploration
   const _sk = srcKeyFor(key);
-  const _own = spoolPick(_sk, n, o.seedPx);
-  const cands = _own.length ? _own.concat(pxsPick(key, n, o.seedPx).filter(px => _own.indexOf(px) < 0)).slice(0, Math.max(n, 4)) : pxsPick(key, n, o.seedPx);
+  const scanN = Math.max(n, 4) * 3;
+  const _own = spoolPick(_sk, scanN, o.seedPx);
+  const candidates = _own.length ? _own.concat(pxsPick(key, scanN, o.seedPx).filter(px => _own.indexOf(px) < 0)) : pxsPick(key, scanN, o.seedPx);
+  // Exploration from the global pool must not silently undo either source's
+  // cooldown. Explicit sticky seed is retained for IP-bound sessions.
+  const now = Date.now(), sourcePool = srcPool(_sk), keyPool = pxsState(key).m;
+  const cands = candidates.filter(px => px === o.seedPx || !((sourcePool.get(px) || {}).ban > now || (keyPool.get(px) || {}).ban > now)).slice(0, Math.max(n, 4));
   if (!cands.length) return Promise.reject(new Error('pxs-empty'));
   if (DBG && process.env.VPXDBG) console.error('[pxsrc] ' + key + ' → ' + cands.join(','));
   return new Promise((resolve, reject) => {
@@ -1543,10 +1548,11 @@ const SRC_PROBE = {
   ott: { u: () => OTT_HOSTS[0] + '/vod/search?page=1&keyword=inception', min: 60, mark: /vod|[\{]/i }
 };
 function spoolFresh(e) { return !!e && (e.ok || 0) > 0 && (!e.ban || e.ban <= Date.now()) && (Date.now() - (e.ts || 0) < Number(process.env.SPFRESH || 600000)); }
-let spoolBusy = false;
+let spoolBusy = false, spoolSourceCursor = 0;
 async function spoolCheck(k, px) { // এক নোড → ওই সোর্সের আসল API-কল, মার্কার+দৈর্ঘ্য যাচাই
   const spec = SRC_PROBE[k]; if (!spec) return false;
   const t0 = Date.now();
+  const before = srcPool(k).get(px); if (before) before.checkAt = t0;
   try {
     if (spec.prep) { try { await spec.prep(); } catch (e) { } }   // v1.28.0: mlb-mirror taazaa kore nei
     const b = await proxiedGet(px, spec.u(), Number(process.env.SPTMO || 5000));
@@ -1566,9 +1572,13 @@ async function spoolTrain() {
     const _serving = Date.now() - LAST_STREAM_AT < 3000;   // ★ v1.34.38: আগে ব্যস্ত থাকলেই পুরো চক্র বাদ ⇒ ট্র্যাফিকের সময় পুল কখনোই তাজা হতো না (মাপা fresh: hd=1, m4u=0)
     // serving চললে নতুন-প্রার্থী যাচাই বাদ (phase-১ skip), কিন্তু reverify ছোট আকারে চলুক
     // ১) তাজা-নোড কম হলে নতুন প্রার্থী **সমান্তরালে** যাচাই (লক্ষ্য ৯ নোড/সোর্স)
-    for (const k of (_serving ? [] : Object.keys(SRC_PROBE))) {
+    const sourceKeys = Object.keys(SRC_PROBE);
+    for (let si = 0; !_serving && si < sourceKeys.length; si++) {
+      if (Date.now() - LAST_STREAM_AT < 3000 || Date.now() < MMR_ACTIVE_UNTIL) break;
+      const k = sourceKeys[spoolSourceCursor % sourceKeys.length];
+      spoolSourceCursor = (spoolSourceCursor + 1) % sourceKeys.length;
       const m = srcPool(k);
-      const fresh = [...m.values()].filter(e => spoolFresh(e)).length;
+      const fresh = [...m.values()].filter(e => spoolFresh(e) && !e.seeded).length;
       if (fresh >= Number(process.env.SPMIN || 216)) continue;
       const cands = [];
       for (const px of VIDY_OK.keys()) if (!m.has(px)) cands.push(px);                          // (ক) vidy-প্রমাণিত নোড
@@ -1576,7 +1586,7 @@ async function spoolTrain() {
       for (const c of POOL) if (!m.has(c.px) && cands.indexOf(c.px) < 0) cands.push(c.px);       // (গ) পুল
       for (const px of PX_RAW) if (cands.length < 600 && !m.has(px) && cands.indexOf(px) < 0) cands.push(px);
       const usable = cands.filter(px => Date.now() - (SPOOL_TRIED.get(k + '|' + px) || 0) > 10 * 60 * 1000);
-      const batch = usable.slice(0, process.uptime() < 150 ? Number(process.env.SPBATCHBOOT || 32) : Number(process.env.SPBATCH || 80));
+      const batch = usable.slice(0, process.uptime() < 150 ? Number(process.env.SPBATCHBOOT || 8) : Number(process.env.SPBATCH || 12));
       if (!batch.length) continue;
       const res = await Promise.all(batch.map(px => spoolCheck(k, px)));
       if (DBG) console.error('[spool] ' + k + ' tried=' + batch.length + ' ok=' + res.filter(Boolean).length + ' fresh=' + [...srcPool(k).values()].filter(e => spoolFresh(e)).length + '/' + SPOOL_TGT);
@@ -1585,8 +1595,8 @@ async function spoolTrain() {
     const oldest = [];
     for (const [k, m] of SPOOL) {
       if (!SRC_PROBE[k]) continue; // dynamic result keys have no active trainer
-      const arr = [...m.entries()].filter(([, e]) => !(e.ban > Date.now())).sort((a, b) => (a[1].ts || 0) - (b[1].ts || 0));
-      for (const [px, e] of arr.slice(0, 2)) oldest.push([k, px, e.ts || 0]);
+      const arr = [...m.entries()].filter(([, e]) => (e.ok || 0) > 0 && !(e.ban > Date.now())).sort((a, b) => (a[1].checkAt || a[1].ts || 0) - (b[1].checkAt || b[1].ts || 0));
+      for (const [px, e] of arr.slice(0, 2)) oldest.push([k, px, e.checkAt || e.ts || 0]);
     }
     oldest.sort((a, b) => a[2] - b[2]);
     await Promise.all(oldest.slice(0, _serving ? Number(process.env.SPREVS || 16) : Number(process.env.SPREV || 96)).map(([k, px]) => spoolCheck(k, px)));   // v1.34.38: serving-এ ছোট reverify
@@ -3266,7 +3276,10 @@ async function mlsPxCheck(px) {
     const t0 = Date.now();
     const c = await mlsCurl(u, { ms: Number(process.env.MLSPXMS || 6000), json: true, proxy: sc });
     if (c && c.st >= 200 && c.st < 400 && mlsOkJsonStrict(c.body)) {
-      mlsPxRec(/^http:\/\//.test(sc) ? px : sc, true, Date.now() - t0); return true;
+      const learned = /^http:\/\//.test(sc) ? px : sc;
+      mlsPxRec(learned, true, Date.now() - t0);
+      if (learned !== px) MLS_PX_OK.delete(px); // replace the failed bare alias, not a second entry
+      return true;
     }
   }
   mlsPxRec(px, false, 0); return false;
@@ -3292,7 +3305,7 @@ async function mlsPxTrain() {
     while (examined < Math.min(N, MLS_PX_CANDS.length) && batch.length < limit) {
       const px = MLS_PX_CANDS[(mlsPxCursor + examined) % MLS_PX_CANDS.length];
       examined++;
-      if (!MLS_PX_OK.has(px)) batch.push(px);
+      if (!MLS_PX_OK.has(px) && !mlsPxSchemes(px).some(sc => MLS_PX_OK.has(sc))) batch.push(px);
     }
     mlsPxCursor = MLS_PX_CANDS.length ? (mlsPxCursor + examined) % MLS_PX_CANDS.length : 0;
     if (!batch.length) return;
@@ -17764,7 +17777,7 @@ const server = http.createServer((req, res) => {
       for (const k of [...new Set([...Object.keys(SRC_PROBE || {}), 'm4u', 'hd', 'hm', 'sky', 'az', 'ott', 'mm', 'vidy', 'vsp', 'nx', 'tw', 'rt'])]) {
         const m = SPOOL.get(k); const arr = m ? [...m.entries()] : [];
         const fresh = arr.filter(([, e]) => spoolFresh(e));
-        out[k] = { verified: fresh.filter(([, e]) => !e.seeded).length, fresh: fresh.length, seeded: fresh.filter(([, e]) => !!e.seeded).length, banned: arr.filter(([, e]) => e.ban > now).length, total: arr.length, best: fresh.slice().sort((a, b) => (a[1].ms || 9999) - (b[1].ms || 9999)).slice(0, 3).map(x => x[0] + ' ' + x[1].ms + 'ms') };
+        out[k] = { runtimeSuccess: fresh.filter(([, e]) => !e.seeded).length, probePassed: fresh.filter(([, e]) => !e.seeded && e.pv === probeVer(k)).length, fresh: fresh.length, seeded: fresh.filter(([, e]) => !!e.seeded).length, banned: arr.filter(([, e]) => e.ban > now).length, total: arr.length, best: fresh.slice().sort((a, b) => (a[1].ms || 9999) - (b[1].ms || 9999)).slice(0, 3).map(x => x[0] + ' ' + x[1].ms + 'ms') };
       }
       out._vidy = { retained: VIDY_OK.size, fresh: [...VIDY_OK.values()].filter(e => e.ts && now - e.ts < Number(process.env.PXFRESH || 240000)).length, pool: POOL.length, homepageBench: PX_SITE.size };
       out._multimovies = { pool: MM_POOL.length, homepageBench: MM_SITE.size, resolverFresh: [...MM_RESOLVE_OK.values()].filter(t => now - t < 600000).length, cooling: [...MM_COOL.values()].filter(t => t > now).length };
