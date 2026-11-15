@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.181';
+const VERSION = '1.34.182';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -3432,9 +3432,48 @@ function mlsRec(u, st, len, via) {
   try { MLS_LAST.set(mlsHost(u), { st: st, len: len, via: via, ts: Date.now() }); if (MLS_LAST.size > 30) MLS_LAST.clear(); } catch (e) { }
 }
 
+// Link pages discovered through the index still need fresh resolution. Race a
+// direct curl with one general HTTP proxy; neither path changes MLSBD-site
+// confidence. Preserve the effective redirect URL for relative links.
+let mlsLinkRaceActive = 0;
+async function mlsIndexedLinkRace(u, opt) {
+  const host = mlsHost(u);
+  if (opt.proxy || opt.json) return null; // explicit/IP-bound sessions use their existing path
+  if (!/(^|\.)(savelinks\.me|joya9links\.com|(?:gdflix|ddflix|gdlink)\.[a-z.]+|gdxfiles\.com|(?:multicloudlinks|multidownload|fsldownload)\.[a-z.]+)$/i.test(host)) return null;
+  if (mlsLinkRaceActive >= Number(process.env.MLSLINKRACEMAX || 8)) return null;
+  const key = 'mlslink:' + host, now = Date.now();
+  const explicit = opt.proxy ? (Array.isArray(opt.proxy) ? opt.proxy : [opt.proxy]) : [];
+  const cand = [...new Set(explicit.concat(pxsPick(key, 12), mlsPxFor(host)))];
+  const state = PXS.get(key);
+  const px = cand.find(p => p && !((state && state.m.get(p) || {}).ban > now));
+  const time = Math.max(1500, Math.min(3500, opt.ms || 3500));
+  const valid = r => {
+    const b = String(r && r.body || '');
+    return r && r.st >= 200 && r.st < 400 && b.length >= 200 && !/Just a moment|Enable JavaScript and cookies|_cf_chl_opt|cf-error-details/i.test(b.slice(0, 4000)) && /<html|<!doctype|<title|streamSrc|<form|href\s*=/i.test(b);
+  };
+  mlsLinkRaceActive++;
+  try {
+    const go = async p => {
+      const t = Date.now();
+      const r = await mlsCurl(u, {ms:time, json:!!opt.json, referer:opt.referer, proxy:p || undefined}).catch(() => null);
+      const ok = valid(r);
+      if (p) pxsRec(key, p, ok, Date.now() - t);
+      if (!ok) throw new Error('invalid-link-page');
+      mlsRec(u, r.st, r.body.length, p ? 'link-proxy' : 'link-direct');
+      return {st:r.st, body:r.body, url:r.eu || u, via:p ? 'link-proxy' : 'link-direct', px:p || undefined};
+    };
+    const tasks = px ? [go(null), go(px)] : [go(null)];
+    // The losing curl is still running: keep the slot until both settle.
+    Promise.allSettled(tasks).then(() => { mlsLinkRaceActive--; });
+    return await Promise.any(tasks).catch(() => null);
+  } catch (_) { mlsLinkRaceActive--; return null; }
+}
+
 async function mlsGetRaw(u, opt) {
   opt = opt || {};
   const ms = Math.max(1500, opt.ms || 6000), T0 = Date.now();
+  const indexedLink = await mlsIndexedLinkRace(u, opt);
+  if (indexedLink) return indexedLink;
   // ★ মাপা: mlsbd.co-র CF গেট **শুধু** সাধারণ UA-তে ৪০৩ দেয়; পূর্ণ Chrome-fingerprint
   //   (sec-ch-ua + Accept-Language + mlsbd-referer) দিলে সরাসরি ২০০ (curl-এও প্রমাণিত)।
   const hdr = {
