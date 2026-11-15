@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.176';
+const VERSION = '1.34.177';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -806,7 +806,7 @@ function mmScore(px, bootMs) { // v1.15.29 revise: the MM pool's OWN score (mmSc
 function mmValidBody(url, body) {
   const text = String(body || '').trimStart();
   if (!text || /^<(?:!doctype|html)/i.test(text)) return false;
-  if (/\/api\/(?:resolve|source\/\d+)(?:[?#]|$)/i.test(url)) {
+  if (/\/api\/(?:resolve|source\/\d+|tv\/\d+\/\d+\/\d+)(?:[?#]|$)/i.test(url)) {
     try { const j = JSON.parse(text); return !!j && typeof j === 'object' && !Array.isArray(j); } catch (_) { return false; }
   }
   return /^#EXTM3U(?:\s|$)/i.test(text);
@@ -838,7 +838,7 @@ function mmRacePool(url, n, timeoutMs, accept) { // racePool's twin over the mul
     for (const c of cands) {
       const tP = Date.now();
       const hd = { Referer: VB_REF };
-      if (mmRousav(url) || /\/api\/resolve(?:[?#]|$)/i.test(url)) hd.Origin = 'https://vidbolt.xyz';
+      if (mmRousav(url) || /\/api\/(?:resolve|source\/\d+|tv\/\d+\/\d+\/\d+)(?:[?#]|$)/i.test(url)) hd.Origin = 'https://vidbolt.xyz';
       proxiedGet(c.px, url, timeoutMs, hd).then(body => { if (!mmValidBody(url, body) || (accept && !accept(body))) { MM_RACE_ST.invalid++; const e = new Error('mm-invalid-body'); e.neutral = /\/api\/resolve(?:[?#]|$)/i.test(url) && mmResolveEmpty(body); throw e; } pxRecMM(c.px, true, Date.now() - tP); if (/\/api\/resolve(?:[?#]|$)/i.test(url)) MM_RESOLVE_OK.set(c.px, Date.now()); if (done) return; done = true; MM_RACE_ST.won++; clearTimeout(to); resolve({ body, px: c.px }); })
         .catch(e => { if (!e || !e.neutral) pxRecMM(c.px, false, 0); if (++fails === cands.length && !done) { done = true; MM_RACE_ST.failed++; clearTimeout(to); reject(new Error('mm-pool-exhausted')); } });
     }
@@ -7422,6 +7422,16 @@ async function mmNova(tmdbId, isSeries, season, episode, ms) {
     return rows.filter(Boolean);
   } catch (_) { return []; }
 }
+// Snapshot successful providers at a shared deadline; never replace them with
+// a failed/late provider. No stream-card cache or cross-request state.
+async function mmHarvestProviders(promises, ms) {
+  const out = promises.map(() => []);
+  const tasks = promises.map((p, i) => Promise.resolve(p).then(v => { if (Array.isArray(v)) out[i] = v; }, () => {}));
+  let timer;
+  await Promise.race([Promise.all(tasks), new Promise(resolve => { timer = setTimeout(resolve, Math.max(1, ms)); })]);
+  clearTimeout(timer);
+  return out.map(v => v.slice());
+}
 async function mmStreams(tmdbId, title, type, s, e, origin, maxh, rel) { // v1.15.54: rel=MM-মিডিয়া-সার্ভার-রিলে // v1.15.28: Multimovies source — vidout index + vidbolt resolve; origin: mini-master URLs; maxh: MM-রেজোলিউশন-ছাঁকনি (v1.15.39, 0=সব)
   if (!tmdbId) return [];
   const t3 = Date.now(); const WOB = 7000; const left = () => Math.max(300, WOB - (Date.now() - t3)); // v1.17.47: ৮.২সে ক্যাপের ভিতরে সেটেল
@@ -7432,31 +7442,33 @@ async function mmStreams(tmdbId, title, type, s, e, origin, maxh, rel) { // v1.1
     const orionP = mmOrionMovie(tmdbId, origin, left(), isSeries, s, e).catch(() => []); // exact episode; parallel with other providers
     const novaP = mmNova(tmdbId, isSeries, s, e, left()).catch(() => []);
     const subsP = woSubs(tmdbId, type, s, e, 2500).catch(() => []); // v1.15.99: সমান্তরালে সাবটাইটেল ফেচ (শেষে ব্লক না করা)
-    const idxTxt = await mmFetchIndex(u, isSeries, e, left());
-    let servers = [];
-    if (idxTxt) {
-      if (isSeries) { const d = (() => { try { return JSON.parse(idxTxt); } catch { return null; } })(); const ep = String(parseInt(e, 10) || 1); if (d && typeof d[ep] === 'string') servers = [d[ep]]; } // the exact episode only
-      else { const txt = idxTxt.trim(); if (txt && /^https?:/.test(txt)) servers = txt.split('\n').map(z => z.trim()).filter(z => /^https?:\/\//.test(z)).slice(0, 6); } // v1.15.51: সব-সার্ভার-লাইন (আগে শুধু-১ম-লাইন — বাকি single-audio-সার্ভার হারাত)
-    }
-    servers = servers.slice(0, 6);
-    const seen = new Set();
-    const raws = servers.map(url => ({ h: 0, url, ref: WO_REF, mp4: 0, lang: '', aud: '', mini: 0, autoRef: /(?:homechefrecipes\.sbs|contentpublishing\.site)|\.urlset\//i.test(url) }));
-    for (const x of raws) seen.add(x.url + '|0|');
-    // Read index master only to enumerate its declared tracks; preserve the original
-    // card on timeout/failure and never treat an addon-IP failure as dead content.
-    const indexMasters = await Promise.all(servers.map(u => mmIndexMaster(u, Math.min(3000, left()))));
-    for (let i = 0; i < servers.length; i++) {
-      const body = indexMasters[i] || '';
-      if (body.indexOf('#EXTM3U') < 0) continue;
-      for (const v of mmExpandMaster(body, servers[i], WO_REF, '')) {
-        const k = v.url + '|' + v.h + 'm|' + v.alang;
-        if (!seen.has(k)) { seen.add(k); raws.push(v); }
+    // Each provider runs independently. A hung index, master or resolver must
+    // not discard cards already obtained from another provider at the outer
+    // response deadline. A single common deadline bounds the entire harvest.
+    const indexServersP = (async () => {
+      const idxTxt = await mmFetchIndex(u, isSeries, e, left());
+      let servers = [];
+      if (idxTxt) {
+        if (isSeries) { const d = (() => { try { return JSON.parse(idxTxt); } catch { return null; } })(); const ep = String(parseInt(e, 10) || 1); if (d && typeof d[ep] === 'string') servers = [d[ep]]; }
+        else { const txt = idxTxt.trim(); if (txt && /^https?:/.test(txt)) servers = txt.split('\n').map(z => z.trim()).filter(z => /^https?:\/\//.test(z)).slice(0, 6); }
       }
+      return servers.slice(0, 6);
+    })().catch(() => []);
+    const indexP = indexServersP.then(servers => servers.map(url => ({ h: 0, url, ref: WO_REF, mp4: 0, lang: '', aud: '', mini: 0, autoRef: /(?:homechefrecipes\.sbs|contentpublishing\.site)|\.urlset\//i.test(url) })));
+    const indexExpandP = indexServersP.then(async servers => {
+      const masters = await Promise.all(servers.map(u => mmIndexMaster(u, Math.min(3000, left()))));
+      const rows = [];
+      for (let i = 0; i < servers.length; i++) if (String(masters[i] || '').includes('#EXTM3U')) rows.push(...mmExpandMaster(masters[i], servers[i], WO_REF, ''));
+      return rows;
+    }).catch(() => []);
+    const harvested = await mmHarvestProviders([indexP, indexExpandP, vbP, orionP, novaP], Math.max(1, 7200 - (Date.now() - t3)));
+    const raws = [], seen = new Set();
+    for (const list of harvested) for (const v of list) {
+      if (!v || !v.url) continue;
+      const k = v.url + '|' + (v.h | 0) + (v.mini ? 'm' : '') + '|' + (v.alang || '');
+      if (!seen.has(k)) { seen.add(k); raws.push(v); }
     }
-    try { const vbl = await vbP; for (const v of (vbl || [])) { if (!v || !v.url) continue; const vk2 = v.url + '|' + (v.h | 0) + (v.mini ? 'm' : '') + '|' + (v.alang || ''); if (seen.has(vk2)) continue; seen.add(vk2); raws.push(v); } } catch { } // vidbolt merge — dedup per url+height so per-quality minis all survive
-    try { for (const v of await orionP) { const k = v.url + '|' + (v.h | 0) + (v.mini ? 'm' : '') + '|' + (v.alang || ''); if (!seen.has(k)) { seen.add(k); raws.push(v); } } } catch (_) {}
-    try { for (const v of await novaP) { const k = v.url + '|' + (v.h | 0) + '|'; if (!seen.has(k)) { seen.add(k); raws.push(v); } } } catch (_) {}
-    if (DBG) console.error('[mm] ' + tmdbId + '/' + (isSeries ? 'S' + (s || 1) + 'E' + (e || 1) : 'movie') + ' servers=' + servers.length + ' variants=' + raws.length + ' @' + (Date.now() - t3) + 'ms');
+    if (DBG) console.error('[mm] ' + tmdbId + '/' + (isSeries ? 'S' + (s || 1) + 'E' + (e || 1) : 'movie') + ' providers=' + harvested.filter(x => x.length).length + ' variants=' + raws.length + ' @' + (Date.now() - t3) + 'ms');
     const fvars = maxh ? raws.filter(x => !x.h || x.h <= maxh) : raws; // v1.15.39: config-রেজোলিউশন-ফিল্টার — অজানা-উচ্চতা (0) সবসময়-থাকে
     const vars = fvars.slice().sort((a, b) => b.h - a.h); // v1.15.51: 12→16 // v1.15.88: 16→20 (কোয়ালিটি×ভাষা মেট্রিক্স — ১৬-এ ৪৮০p-সারি কেটে যেত) // v1.15.91: ২০ → ৬০ (১৩ ভাষা × ৩-৪ কোয়ালিটি = ৩৯-৫২ কার্ড ধরা পড়ুক)
     if (!vars.length) return [];
