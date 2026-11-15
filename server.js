@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.211';
+const VERSION = '1.34.212';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -4578,7 +4578,7 @@ async function mlsTask(nameP, infoP, type, s, e, requestId) {
     const rj = flat.filter(Boolean);
     diag('mlsd', 'sav=' + seenSav.size + ' route-jobs=' + rj.length + ' @' + (Date.now() - T0) + 'ms'
       + (DBG ? '' : ' paths=' + JSON.stringify([...MLS_GOOD.entries()].map(([h, v]) => h + '=' + v))));
-    diag('mlsd', 'cards=' + CARD_BUF.length + ' routes=' + JSON.stringify(CARD_BUF.map(x => x.srv).slice(0, 5)) + ' @' + (Date.now() - T0) + 'ms');
+    diag('mlsd', 'cards=' + CARD_BUF.length + ' routes=' + JSON.stringify(CARD_BUF.map(x => x._srv).slice(0, 5)) + ' @' + (Date.now() - T0) + 'ms');
     return finalize();
   })();
   let timedOut = false;

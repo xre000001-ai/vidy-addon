@@ -56,11 +56,18 @@ jobs:
           PY
           pids=()
           for worker in 1 2 3 4 5 6; do
-            python -u tools/mlbd-index/backfill.py --db /tmp/mlbd-index/store.sqlite --limit 150 --delay 1.5 >"/tmp/mlbd-index/worker-$worker.log" 2>&1 &
+            # Leave time to publish a consistent checkpoint before the job timeout.
+            timeout --signal=TERM --kill-after=10s 1050s python -u tools/mlbd-index/backfill.py --db /tmp/mlbd-index/store.sqlite --limit 150 --delay 1.5 >"/tmp/mlbd-index/worker-$worker.log" 2>&1 &
             pids+=("$!")
           done
           rc=0
-          for pid in "${pids[@]}"; do wait "$pid" || rc=1; done
+          for pid in "${pids[@]}"; do
+            worker_rc=0
+            wait "$pid" || worker_rc=$?
+            # A bounded worker may leave a claimed job; reset it below before publication.
+            if [ "$worker_rc" = 124 ]; then echo 'Worker reached checkpoint budget';
+            elif [ "$worker_rc" != 0 ]; then rc=1; fi
+          done
           for f in /tmp/mlbd-index/worker-*.log; do echo "=== $f ==="; tail -40 "$f"; done
           [ "$rc" = 0 ] || { echo 'Worker failed; preserving last published snapshot'; exit 1; }
           python - <<'PY'
