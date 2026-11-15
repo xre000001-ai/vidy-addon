@@ -4,15 +4,15 @@ on:
     branches: [main]
     paths: [".github/workflows/movielinkbd-index.yml", "tools/mlbd-index/**"]
   workflow_dispatch:
-  schedule:
-    - cron: '*/10 * * * *'
 permissions:
   contents: write
 concurrency:
   group: movielinkbd-reference-index
-  cancel-in-progress: false
+  cancel-in-progress: true
 jobs:
   index:
+    # Automatic builds are paused; only an explicit manual dispatch can run.
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
