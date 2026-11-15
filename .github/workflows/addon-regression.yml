@@ -26,6 +26,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+      - run: python -m pip install requests
       - run: node --check server.js
       - run: |
           for f in tools/stream-tests/*.cjs tools/mls-index-lab/test-*.cjs tools/mlbd-index/test_*.cjs; do node "$f" || exit 1; done
