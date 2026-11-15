@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.170';
+const VERSION = '1.34.171';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -7842,12 +7842,26 @@ function azSubsFor(pType, idStr) { // '/subtitles/series/tmdb209867:1:1' → [{i
   if (!/^tmdb\d+$/.test(pp0[0] || '')) return [];
   const k = pType + ':' + pp0[0].slice(4) + ':' + (pType === 'series' ? (Number(pp0[1] || 1) + 'x' + Number(pp0[2] || 1)) : 'm');
   const hit = AZ_SUBS.get(k);
-  return hit ? hit.v.map(x => ({ id: x.lang, url: x.url, lang: x.lang })) : [];
+  return hit ? hit.v.map(x => ({ id: x.id || ('az-' + x.lang), url: x.url, lang: x.lang })) : [];
 }
 function azQOf(mt) { // ★ v1.34.21: মাস্টার-প্লেলিস্ট → সর্বোচ্চ-উচ্চতা (প্রস্থ-শ্রেণি, OTT-সমান)
   let qq = 0;
-  if (mt && String(mt).indexOf('#EXTM') >= 0) for (const m3 of String(mt).matchAll(/RESOLUTION=(\d+)x(\d+)/g)) { const w2 = Number(m3[1]); const c2 = w2 >= 3600 ? 2160 : w2 >= 1900 ? 1080 : w2 >= 1200 ? 720 : w2 >= 640 ? 480 : 360; if (c2 > qq) qq = c2; }
+  if (mt && /^#EXTM3U(?:\s|$)/i.test(String(mt).trimStart())) for (const m3 of String(mt).matchAll(/RESOLUTION=(\d+)x(\d+)/gi)) { const height = Number(m3[2]); if (height > qq && height <= 8640) qq = height; }
   return qq;
+}
+function azSubtitleTracks(pl) {
+    // Keep every distinct source track, including forced, SDH and regional
+    // variants. Prefer the site's default/full track instead of picking the
+    // first forced track and silently discarding the rest.
+    const seenSubs = new Set();
+    return (Array.isArray(pl.subtitles) ? pl.subtitles : []).map((t, i) => {
+      if (!t || !/^https?:\/\//i.test(String(t.file || ''))) return null;
+      const lang = String(t.language || t.lang || 'und').trim().toLowerCase();
+      if (!/^[a-z]{2,3}(?:-[a-z0-9]{2,8})?$/i.test(lang)) return null;
+      return { id: 'az-' + i, lang, url: t.file, _default: !!t.default, _forced: String(t.forced || '').toLowerCase() === 'yes' };
+    }).filter(t => { if (!t || seenSubs.has(t.url)) return false; seenSubs.add(t.url); return true; })
+      .sort((a, b) => Number(b._default) - Number(a._default) || Number(a._forced) - Number(b._forced))
+      .slice(0, 100).map(({id, lang, url}) => ({id, lang, url}));
 }
 async function azStreams(tmdbId, type, s, e, azq) { // সার্চ→সিজন/বছর-সচেতন-ম্যাচ→watch-পাতা→vidstack-HLS→কার্ড (মাত্র-২-পুল-কল; কার্ড-মেমো ৩০মিন)
   const t3 = Date.now();
@@ -7930,25 +7944,27 @@ async function azStreams(tmdbId, type, s, e, azq) { // সার্চ→সি�
     //   ব্যর্থ হলে প্রক্সি-রেসে আরেকবার — আসল সর্বোচ্চ উচ্চতাই লেবেল হবে (beamup-ইগ্রেসে সরাসরি
     //   মাস্টার না-এলে আগে অন্ধভাবে 720 বসে মেমোতে ৩০মিন আটকে থাকত)।
     let q = 0;
-    // Explicit quality filters require actual playlist metadata; otherwise keep
-    // Auto and avoid a list-time media request. Never invent a 720p label.
-    if (Array.isArray(azq) && azq.length) {
+    // The highest resolution is taken from the actual source master, never guessed.
+    {
       const remaining = Math.max(0, 8900 - (Date.now() - t3));
       if (remaining >= 400) {
         try {
-          const r = await fetch(pl.src, { headers: { 'User-Agent': UA, Referer: AZ_BASE + '/' }, signal: AbortSignal.timeout(Math.min(1800, remaining)) });
-          if (r.ok) q = azQOf(await r.text());
+          const ms = Math.min(2400, remaining);
+          const valid = text => /^#EXTM3U(?:\s|$)/i.test(String(text || '').trimStart());
+          const headers = { 'User-Agent': UA, Referer: AZ_BASE + '/' };
+          const direct = fetch(pl.src, { headers, signal: AbortSignal.timeout(ms) }).then(r => r.ok ? r.text() : '').then(t => { if (!valid(t)) throw Error('invalid-playlist'); return t; });
+          const viaPool = racePool(pl.src, 6, ms, 'az-media', valid, headers).then(r => r.body);
+          q = azQOf(await Promise.any([direct, viaPool]));
         } catch (_) {}
       }
     }
     if (Array.isArray(azq) && azq.length && azq.indexOf(q) < 0) { if (DBG) console.error('[az] ' + T0 + ' q=' + q + ' ছাঁকা'); return []; }
     const epLine = isTv ? '\u29e0 S' + (s || 1) + 'E' + ep : '\u29e0 Movie';
     const txt = '\u29c9 ' + T0 + ' |\n' + epLine + '\n\u229e AniZone \u2317 Subbed';
-    const seenL = new Set();
-    const subs = (Array.isArray(pl.subtitles) ? pl.subtitles : []).filter(t4 => t4 && /^https?:/.test(t4.file || '')).map(t4 => ({ lang: String(t4.language || t4.lang || 'en').toLowerCase().slice(0, 2), url: t4.file, fmt: String(t4.format || '').toLowerCase() })).filter(t4 => { if (seenL.has(t4.lang)) return false; seenL.add(t4.lang); return true; }).sort((a, b) => (/^(srt|vtt)$/.test(a.fmt) ? 0 : 1) - (/^(srt|vtt)$/.test(b.fmt) ? 0 : 1)).slice(0, 4).map(t4 => ({ lang: t4.lang, url: t4.url })); // ভাষা-প্রতি-এক-ট্র্যাক; SRT/VTT-আগে (অ্যাপ-সামঞ্জস্য)
-    if (subs.length) AZ_SUBS.set((isTv ? 'series' : 'movie') + ':' + tmdbId + ':' + (isTv ? (s || 1) + 'x' + ep : 'm'), { ts: Date.now(), v: subs }); // /subtitles-রিসোর্স-চ্যানেল
+    const subs = azSubtitleTracks(pl);
+    if (subs.length) AZ_SUBS.set((isTv ? 'series' : 'movie') + ':' + tmdbId + ':' + (isTv ? (s || 1) + 'x' + ep : 'm'), { ts: Date.now(), v: subs });
     if (DBG) console.error('[az] ' + type + ':' + tmdbId + ' কার্ড=১ q=' + q + ' slug=' + hit.slug + ' subs=' + subs.length + ' @' + (Date.now() - t3) + 'ms');
-    return [{ name: '\u25a5 ' + (q || 'Auto') + ' \u25a5', quality: q ? String(q) : '', url: pl.src, title: txt, description: txt, _lang: 'Japanese', behaviorHints: { filename: 'anizone.m3u8' }, bingeGroup: 'az|' + T0.toLowerCase() + '::' }]; // ★ v1.34.24: _lang
+    return [{ name: '\u25a5 ' + (q || 'Unknown') + ' \u25a5', quality: q ? String(q) : '', url: pl.src, title: txt, description: txt, subtitles: subs, _lang: 'Japanese', behaviorHints: { filename: 'anizone.m3u8' }, bingeGroup: 'az|' + T0.toLowerCase() + '::' }]; // ★ v1.34.24: _lang
   } catch (e2) { if (DBG) console.error('[az] ' + tmdbId + ' ERR ' + String(e2 && e2.message).slice(0, 60) + ' @' + (Date.now() - t3) + 'ms'); return []; }
 }
 // ---------- v1.15.40-local: Movies4u (M4U) — lookup.php-সার্চ + hubcloud→gamerxyt→FSL-R2 সরাসরি-MKV ----------
@@ -15737,7 +15753,7 @@ function fmtCardText(c, hint) {
   return c;
 }
 const fmtCards = (cards, hint) => { if (!Array.isArray(cards)) return cards; for (const c of cards) fmtCardText(c, hint); return cards; };
-const stripCards = cards => (cards || []).map(c => { const { _hq, _lang, _pack, _mlsRange, _mlsSeasonFile, _mlsUnmarked, _exoTwin, _srv, _src, _dl, _direct, quality, headers, subtitles, ...r } = c || {}; if (headers && /^mm\|/.test(String(r.bingeGroup || ''))) r.headers = headers; return r; }); // v1.34.71: _src/_dl/_direct-o strip (age API-output-e leak hoto; fmtCards _src agei pore ney)
+const stripCards = cards => (cards || []).map(c => { const { _hq, _lang, _pack, _mlsRange, _mlsSeasonFile, _mlsUnmarked, _exoTwin, _srv, _src, _dl, _direct, quality, headers, subtitles, ...r } = c || {}; if (headers && /^mm\|/.test(String(r.bingeGroup || ''))) r.headers = headers; if (Array.isArray(subtitles) && /^az\|/.test(String(r.bingeGroup || ''))) r.subtitles = subtitles; return r; }); // v1.34.71: _src/_dl/_direct-o strip (age API-output-e leak hoto; fmtCards _src agei pore ney)
 // ---------- v1.15.52: সব-সোর্সের-কার্ড-এক-ফরম্যাটে (ইউজার: "প্রতি-সোর্সের-কার্ড-ফরম্যাট-এমনি-চাই") — decorate()-এর-ভিডি-ফরম্যাট:
 // ⧉ Title | Year |  /  ⧠ Movie|SsEe  /  ⊞ Server ⌗ Audio — mbxr-চাইল্ড-ইতিমধ্যে-এই-ফরম্যাটে-প্রমাণিত; বাকি-সোর্স-এখানে-বসে
 const YEAR_CACHE = new Map();
@@ -18281,19 +18297,39 @@ cards => { Promise.all([raceObjP(infoP, 1500), raceObjP(nmP, 1500)]).then(([info
     if ((m = p.match(/^\/subtitles\/(movie|series)\/([^/]+?)(?:\.json)?$/))) {
       const t0 = Date.now();
       const done2 = arr => { logReq(p, Date.now() - t0, (arr || []).length); sendJson(res, 200, { subtitles: arr || [] }); };
-      const ottArr0 = ottSubsFor(m[1], m[2]); // v1.15.72: AsianTV-সাব-চ্যানেল
-      const azArr0 = azSubsFor(m[1], m[2]); // v1.15.76: AniZone-সাব-চ্যানেল
-      const ownSubs0 = ottArr0.concat(azArr0);
-      if (!NEXBASE) return done2(ownSubs0);
-      // ক্যাশ-ম্যানেজমেন্ট-mbSubs-এর-ভেতরে (SUBS_CACHE) — রুট-শুধু-আকৃতি-ম্যাপ-করে
+      // Resolve AniZone subtitles independently of the stream route and accept
+      // both Stremio IMDb IDs and tmdb IDs. Stream cards carry the same tracks.
       (async () => {
-        const pp0 = String(m[2]).split(':'); // [id, s?, e?] — s:e-আগেই-আলাদা (অনুবাদে-হারায়-না)
-        let id2 = pp0[0];
-        if (/^tmdb\d+$/.test(id2)) { const iv = await tmdbToImdb(id2.slice(4), m[1] === 'series' ? 'tv' : 'movie'); if (!iv) return done2(ownSubs0); id2 = iv; } // Nuvio-tmdb-আইডি (ম্যাপ-ব্যর্থ-হলেও-ott-সাব-বাঁচে)
-        const isTv = m[1] === 'series';
-        const canon = await mbSubs(id2, isTv ? 'tv' : 'movie', Number(pp0[1] || 1), Number(pp0[2] || 1)).catch(() => []); // আসল-s:e (ব্যর্থ-হলেও-ott-সাব-বাঁচে)
-        done2(canon.map(x => ({ id: x.lang, url: x.url, lang: x.lang })).concat(ownSubs0)); // রিসোর্স-আকৃতি (স্ট্রিমিও-নেটিভ) + AsianTV + AniZone
-      })().catch(e2 => { if (DBG) console.error('[nxdbg] subs ERR: ' + String(e2 && e2.message).slice(0, 60)); done2(ownSubs0); });
+        const kind = m[1], idPath = m[2], pp0 = String(idPath).split(':');
+        const isTv = kind === 'series', sn = Number(pp0[1] || 1), ep = Number(pp0[2] || 1);
+        const azTask = (async () => {
+          if (cfg && cfg.az === 0) return [];
+          let tid = /^tmdb\d+$/.test(pp0[0]) ? Number(pp0[0].slice(4)) : 0;
+          if (!tid && /^tt\d+$/.test(pp0[0])) {
+            const info = await findTmdbInfo(pp0[0], kind).catch(() => null);
+            tid = info && Number(info.id) || 0;
+          }
+          if (!tid) return [];
+          const key = 'tmdb' + tid + (isTv ? ':' + sn + ':' + ep : '');
+          let items = azSubsFor(kind, key);
+          if (!items.length) {
+            await azStreams(tid, isTv ? 'tv' : 'movie', sn, ep, []).catch(() => []);
+            items = azSubsFor(kind, key);
+          }
+          return items;
+        })().catch(() => []);
+        const mbTask = (async () => {
+          if (!NEXBASE) return [];
+          let id2 = pp0[0];
+          if (/^tmdb\d+$/.test(id2)) id2 = await tmdbToImdb(id2.slice(4), isTv ? 'tv' : 'movie');
+          if (!id2) return [];
+          const canon = await mbSubs(id2, isTv ? 'tv' : 'movie', sn, ep).catch(() => []);
+          return canon.map(x => ({ id: x.lang, url: x.url, lang: x.lang }));
+        })().catch(() => []);
+        const bounded = p => Promise.race([p, new Promise(r => { const t = setTimeout(() => r([]), 9000); t.unref(); })]);
+        const [az, mb] = await Promise.all([bounded(azTask), bounded(mbTask)]);
+        done2(mb.concat(ottSubsFor(kind, idPath), az));
+      })().catch(e2 => { if (DBG) console.error('[subs] ERR: ' + String(e2 && e2.message).slice(0, 60)); done2([]); });
       return;
     }
     sendJson(res, 404, { error: 'not found' });

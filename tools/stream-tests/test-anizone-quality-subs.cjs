@@ -1,0 +1,12 @@
+'use strict';
+const fs=require('fs'),vm=require('vm'),assert=require('assert');
+const src=fs.readFileSync('server.js','utf8');
+const a=src.indexOf('function azSubsFor('),b=src.indexOf('async function azStreams(',a);assert(a>=0&&b>a);
+const ctx={AZ_SUBS:new Map(),String,Number,Set,Array};vm.createContext(ctx);vm.runInContext(src.slice(a,b)+';globalThis.q=azQOf;globalThis.tracks=azSubtitleTracks;globalThis.get=azSubsFor',ctx);
+assert.equal(ctx.q('#EXTM3U\n#EXT-X-STREAM-INF:RESOLUTION=640x360\n#EXT-X-STREAM-INF:RESOLUTION=1920x1080\n#EXT-X-STREAM-INF:RESOLUTION=1280x720\n'),1080);
+assert.equal(ctx.q('#EXTM3U\n#EXT-X-STREAM-INF:RESOLUTION=2560x1440'),1440);assert.equal(ctx.q('<html>RESOLUTION=1920x1080'),0);assert.equal(ctx.q('#EXTM3U\n#EXTINF:10'),0);
+const pl={subtitles:[{file:'https://example.org/forced.srt',language:'en',forced:'yes'},{file:'https://example.org/full.srt',language:'en',default:true},{file:'https://example.org/es419.srt',language:'es-419'},{file:'https://example.org/es.srt',language:'es'},{file:'https://example.org/forced.srt',language:'en'},{file:'javascript:alert(1)',language:'en'}]};
+const tracks=ctx.tracks(pl);assert.equal(tracks.length,4);assert.equal(tracks[0].url,'https://example.org/full.srt');assert.equal(tracks[3].url,'https://example.org/forced.srt');assert(tracks.some(x=>x.lang==='es-419'));assert.equal(new Set(tracks.map(x=>x.id)).size,4);
+ctx.AZ_SUBS.set('movie:1311031:m',{v:tracks});const out=ctx.get('movie','tmdb1311031');assert.equal(out.length,4);assert.equal(out[0].id,'az-1');
+const stripStart=src.indexOf('const stripCards ='),stripEnd=src.indexOf('// ---------- v1.15.52:',stripStart);assert(stripStart>=0&&stripEnd>stripStart);const c2={};vm.createContext(c2);vm.runInContext(src.slice(stripStart,stripEnd)+';globalThis.strip=stripCards',c2);let stripped=c2.strip([{bingeGroup:'az|a',subtitles:tracks,quality:'1080'},{bingeGroup:'other',subtitles:tracks}]);assert.equal(stripped[0].subtitles.length,4);assert(!stripped[1].subtitles);
+console.log('AniZone actual highest resolution, all original subtitles and card preservation passed');
