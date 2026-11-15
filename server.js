@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.198';
+const VERSION = '1.34.199';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -4161,7 +4161,7 @@ function mlsMakeCard(it, INFO, NAME, type, s, e) {
     const qq = it.q || mlsQ(it.title) || 0;
     const size = mlsMB(it.r.size || 0);
     const audio = mlsAudio(it.title);
-    const srv = it.kind === 'watch' ? ((it.r && it.r.srv) || 'multicloud') : (/r2\.dev/.test(u) ? 'gdflix' : 'gdflix·worker');
+    const srv = it.kind === 'watch' ? ((it.r && it.r.srv) || 'multicloud') : (/r2\.dev/.test(u) ? 'gdflix' : /\.workers\.dev(?:\/|$)/i.test(u) ? 'gdflix·worker' : 'gdflix·direct');
     const I = INFO || {};
     const YR = (I.year || I.releaseInfo) ? (parseInt(String(I.year || I.releaseInfo), 10) || 0) : 0;
     const TTL = String(I.name || NAME || '').trim();
@@ -4261,7 +4261,7 @@ async function mlsTask(nameP, infoP, type, s, e, requestId) {
       const qq = it.q || mlsQ(it.title) || 0;
       const size = mlsMB(it.r.size || 0);
       const audio = mlsAudio(it.title);
-      const srv = it.kind === 'watch' ? ((it.r && it.r.srv) || 'multicloud') : (/r2\.dev/.test(u) ? 'gdflix' : 'gdflix·worker');
+      const srv = it.kind === 'watch' ? ((it.r && it.r.srv) || 'multicloud') : (/r2\.dev/.test(u) ? 'gdflix' : /\.workers\.dev(?:\/|$)/i.test(u) ? 'gdflix·worker' : 'gdflix·direct');
       const I = INFO || {};
       const YR = (I.year || I.releaseInfo) ? (parseInt(String(I.year || I.releaseInfo), 10) || 0) : 0;
       const TTL = String(I.name || NAME || '').trim();

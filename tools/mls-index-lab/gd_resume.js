@@ -7,7 +7,7 @@ function find(html) {
     try {
       const raw=m[2].replace(/&amp;/gi,'&').replace(/&#0*38;/gi,'&').replace(/&#x0*26;/gi,'&');
       const u=new URL(raw);
-      if(u.protocol!=='https:' || !/^cloud-dl\.[a-z0-9]+\.workers\.dev$/i.test(u.hostname) || u.username || u.password || u.port) continue;
+      if(u.protocol!=='https:' || !(/^(?:cloud-dl|fast)\.[a-z0-9]+\.workers\.dev$/i.test(u.hostname) || /^east\.aws-eu\.xyz$/i.test(u.hostname)) || u.username || u.password || u.port) continue;
       const path=decodeURIComponent(u.pathname);
       if (!/\.(?:mkv|mp4|m4v|avi|webm)$/i.test(path)) continue;
       return u.href;
