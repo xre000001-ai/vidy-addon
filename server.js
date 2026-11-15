@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.190';
+const VERSION = '1.34.191';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -4026,7 +4026,14 @@ async function mlsGd(link, ms, px) {
   const C = MLS_GD.get(id);
   if (C && C.ok && Date.now() - C.ts < 1800000) return { ok: true, direct: C.direct, size: C.size || 0, ct: C.ct || '', route: 'cache', link: link };
   if (C && C.done && !C.ok && Date.now() - C.ts < 900000) return { ok: false, route: 'known-dead', link: link };
-  const r = await mlsGdOnce(link, Math.min(ms || 4000, 5200), (C && C.tokUrl) ? { tok: C.tokUrl, cloud: C.cloud, px: C.px } : null);
+  const started=Date.now(), budget=Math.min(ms || 4000, 8500);
+  let r = await mlsGdOnce(link, Math.min(budget, 5200), (C && C.tokUrl) ? { tok: C.tokUrl, cloud: C.cloud, px: C.px } : null);
+  // A queued GDFlix response is not a final failure. Continue the same
+  // token/proxy session in foreground while the source has time remaining;
+  // otherwise Promise.all settles early and misses a first-tap card.
+  if (r && r.route === 'queued' && r.tokUrl && r.cloud && budget-(Date.now()-started)>900) {
+    r=await mlsGdPoll(r.tokUrl,r.cloud,budget-(Date.now()-started),r.px);
+  }
   if (r && (r.ok || r.done)) { MLS_GD.set(id, Object.assign({ ts: Date.now() }, r)); return Object.assign({ link: link }, r); }
   if (r && r.route === 'queued') MLS_GD.set(id, { ts: Date.now(), tokUrl: r.tokUrl, cloud: r.cloud, px: r.px });
   mlsGdBg(link, id);                                 // বাকিটা ব্যাকগ্রাউন্ডে
@@ -4463,9 +4470,9 @@ async function mlsTask(nameP, infoP, type, s, e, requestId) {
     return finalize();
   })();
   let timedOut = false;
-  const foregroundMs = Math.max(1000, Math.min(CAP, Number(process.env.MLS_RETURN_MS || 7600)));
+  const foregroundMs = Math.max(1000, Math.min(CAP, Number(process.env.MLS_RETURN_MS || 9000)));
   const gate = require('./tools/mls-index-lab/partial_deadline').create({
-    started:T0, maxMs:foregroundMs, minMs:Math.min(foregroundMs,Number(process.env.MLS_PARTIAL_MIN_MS || 5000)),
+    started:T0, maxMs:foregroundMs, minMs:Math.min(foregroundMs,Number(process.env.MLS_PARTIAL_MIN_MS || 9000)),
     quietMs:Number(process.env.MLS_PARTIAL_QUIET_MS || 1000), snapshot:()=>({count:CARD_BUF.length,lastCard:lastMlsCardAt})
   });
   const hard = gate.promise.then(() => { timedOut = true; return finalize(); });

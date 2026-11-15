@@ -58,6 +58,7 @@ jobs:
           node test-multicloud-fast.cjs
           node test-link-page-proxy-race.cjs
           node test-gd-session-proxy.cjs
+          node test-gd-foreground-queue.cjs
       - name: Discover and verify BD proxies
         working-directory: tools/mls-index-lab
         run: python scan_bd.py
