@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.168';
+const VERSION = '1.34.169';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -2771,7 +2771,7 @@ const NXDEADLINE = Math.max(Number(process.env.NXDEADLINE || 0), 22000);   // �
 // ★★ v1.34.140 (প্রোড-মাপা ১২-১১-২০২৬): এজ-গেটওয়ে ~১২সে-তে **৫০৪** দেয় (`error code: 504`) ⇒ ওই
 //   ট্যাপে ইউজার **শূন্য কার্ড** পায় (মাপা: tmdb916224 ও tt0903747:1:1 ৫০৪; ১১.৩–১২.২সে-র উত্তর পাস করে)।
 //   তাই মোট বাজেট ১১.৫সে → **৯.৮সে** (unify+send সহ ~১০.৩সে) — নিরাপদ দূরত্ব। `SDL` env দিয়ে টিউনযোগ্য।
-const SDL_MS = Number(process.env.SDL || 8600)  /* ★ v1.34.159: ৮৬০০-এ grace যোগ হয়ে ১১.৩সে হয়ে যাচ্ছিল */;   // ★ v1.34.149: ৭৬০০ → ৬৭০০ (মাপা: ৬.৫সে-কাটে কার্ড ২৫→২৪, সময় ৭.৪→৬.৬সে)   // ★ v1.34.148: 8200 → 7600 — প্রোড-মাপা: লোডে `lastreq.el` ৯.৪সে-তে ঠেলছিল, দুটি ট্যাপ ১২.৬–১৩.২সে-এ ৫০৪ খেয়েছিল
+const SDL_MS = Number(process.env.SDL || 10000)  /* ★ v1.34.159: ৮৬০০-এ grace যোগ হয়ে ১১.৩সে হয়ে যাচ্ছিল */;   // ★ v1.34.149: ৭৬০০ → ৬৭০০ (মাপা: ৬.৫সে-কাটে কার্ড ২৫→২৪, সময় ৭.৪→৬.৬সে)   // ★ v1.34.148: 8200 → 7600 — প্রোড-মাপা: লোডে `lastreq.el` ৯.৪সে-তে ঠেলছিল, দুটি ট্যাপ ১২.৬–১৩.২সে-এ ৫০৪ খেয়েছিল
 const NXEXTRA = Math.max(Number(process.env.NXEXTRA || 0), 12000); // v1.15.25 (ইউজার: "আগে শেষ হলে আগেই রেজাল্ট, না হলে ১২সে পর্যন্ত"): NetHex-এর-জন্য-১২সে-পর্যন্ত-ধরে-রাখো — রেডি-হলে-রেস-আগেই-জেতে, instant-অক্ষত
 const NXCOLDX = Math.max(Number(process.env.NXCOLDX || 0), 9500); // ★ v1.17.52: ১২সে-এ NetHex প্রায়ই ক্যাপের পরে ফিরত ⇒ ফসল থেকে ঝরে যেত // v1.15.25: ১২সে-ইউজার-সীমা (কার্ড-থাকলেও-না-শেষ-হলে-১২সে-পর্যন্ত-ধরো; শেষ-হলে-আগেই)
 const NXHARD = Math.max(Number(process.env.NXHARD || 0), 7000);   // ★ v1.34.140: 12000 → 9000 (SDL-এর ভিতরে; নইলে ৫০৪) // v1.15.25 (ইউজার-নির্দেশ): ফাঁকা-কার্ডে-পূর্ণ-১২সে-বরাদ্দ — স্ট্রিম-উত্তর-সর্বোচ্চ-১২সে (আগে-শেষ=আগে-ফল)
@@ -4317,7 +4317,7 @@ async function mlsTask(nameP, infoP, type, s, e) {
     return finalize();
   })();
   let timedOut = false;
-  const foregroundMs = Math.max(1000, Math.min(CAP, Number(process.env.MLS_RETURN_MS || 7600)));
+  const foregroundMs = Math.max(1000, Math.min(CAP, Number(process.env.MLS_RETURN_MS || 8800)));
   let hardTimer;
   const hard = new Promise(r => { hardTimer=setTimeout(() => { timedOut = true; try { r(finalize()); } catch (e) { r([]); } }, foregroundMs); });
   const r = await Promise.race([work.catch(e => { if (DBG) console.error('[mlsd] err ' + (e && e.message)); return []; }), hard]);
@@ -14658,23 +14658,23 @@ async function withSources(cardsP, srcs, cfg, t0, mkey, lookupP) {
       if (cutFlag) return;
       const el2 = Date.now() - t0;
       const _hc = SLOWX ? Number(process.env.SCUTSLOW || 25000)
-        : (BGX ? Math.min(Number(process.env.SCUTBG || 11000), HARD_CAP_MS + Math.min(_LK.ms, 1500)) : Math.min(Number(process.env.SCUT || 8400), HARD_CAP_MS + Math.min(_LK.ms, 1500)));   // ★ v1.34.173: slow-মোডে VCAP-ও ডিঙায়   // ★ v1.26.3: লুকআপ-সময়সহ (লাইভ)
+        : (BGX ? Math.min(Number(process.env.SCUTBG || 11000), HARD_CAP_MS + Math.min(_LK.ms, 1500)) : Math.min(Number(process.env.SCUT || 9500), HARD_CAP_MS + Math.min(_LK.ms, 1500)));   // ★ v1.34.173: slow-মোডে VCAP-ও ডিঙায়   // ★ v1.26.3: লুকআপ-সময়সহ (লাইভ)
       if (el2 >= _hc) { cutFlag = true; timedCut = true; try { fireCut(true); } catch (e) { } } // ক্যাপ: যা এসেছে তাই
       if (cutFlag && DBG) console.error('[cut] el=' + el2 + ' lit=' + lit + ' settled=' + settled + '/' + live.length + ' reason=' + (el2 >= _hc ? 'hard' : (el2 >= EARLY_MS && lit >= EARLY_N ? 'early' : (el2 >= Number(process.env.VDIM || 9500) && settled >= Math.ceil(live.length * Number(process.env.VDIMR || 0.7)) ? 'dim' : 'other'))));
       else if (el2 >= MIN_WAIT_MS && settled >= live.length) { cutFlag = true; try { fireCut(true); } catch (e) { } } // সব সেটেল → আর অপেক্ষা নয়
       // ★★ v1.34.149: **যথেষ্ট-হলে-থামো** — মাপা: প্রতিটি ট্যাপ পুরো ৭.৪সে বাজেট খেত, অথচ mm/rt/tw/m4u
       //   ~৪.৫সে-তেই নিজের কার্ড দিয়ে দেয়। এখন ৪.৬সে-তে ≥১৪ কার্ড হলে উত্তর দিই; বাকিগুলো ব্যাকগ্রাউন্ডে
       //   শেষ হয়ে ক্যাশে জমে ⇒ রিফ্রেশে তাৎক্ষণিক ও **আরও বেশি** (মনোটোনিক)।
-      else if (el2 >= EARLY_MS && lit >= EARLY_N && !_runningProd()) { cutFlag = true; timedCut = true; try { fireCut(true); } catch (e) { } }
+      else if (process.env.SOURCE_EARLY === '1' && el2 >= EARLY_MS && lit >= EARLY_N && !_runningProd()) { cutFlag = true; timedCut = true; try { fireCut(true); } catch (e) { } }
       // ★★ v1.34.160 (প্রোড-প্রমাণ: fg ২৯/৪৭/৪৩/৪০ বনাম পূর্ণ-হারভেস্ট ৩১/৪৭/৪৩/৪০ ⇒ ফোরগ্রাউন্ড
       //   ইতিমধ্যেই ৯৪–১০০% ধরছে; তবু দেরি হচ্ছিল কেবল ধীর-উর্বর সোর্সের জন্য অপেক্ষায়)।
       //   এখন **যথেষ্ট-হয়ে-গেলে-থামো**: `EPROD` (৫.২সে) পেরোলে ও `EPN` (২২) কার্ড হয়ে গেলে আর অপেক্ষা নয় —
       //   বাকিটা ব্যাকগ্রাউন্ড-হারভেস্ট/রিফ্রেশে যোগ হয় (monotonic) ⇒ প্রথম ট্যাপ দ্রুত, তালিকা অসম্পূর্ণ নয়।
-      else if (!LONGX && el2 >= Number(process.env.EPROD || 8400) && lit >= Number(process.env.EPN || 40)) { cutFlag = true; timedCut = true; try { fireCut(true); } catch (e) { } }   // ★ v1.34.173: bg/slow-এ এই কাট ছিল না — তাই ৮সে-এ ফিরত
+      else if (process.env.SOURCE_EARLY === '1' && !LONGX && el2 >= Number(process.env.EPROD || 8400) && lit >= Number(process.env.EPN || 40)) { cutFlag = true; timedCut = true; try { fireCut(true); } catch (e) { } }   // ★ v1.34.173: bg/slow-এ এই কাট ছিল না — তাই ৮সে-এ ফিরত
       // ★★ v1.34.149: **কম-লাভের-সীমা** — মাপা: বেশ কিছু সোর্স ৭–৮.৪সে নিয়ে **০ কার্ড** দেয় (rt/mlb/nx/mm/m4u/sky/hm/hd/mls)
       //   অথচ তারাই পুরো উত্তর ৭.৪সে-তে টেনে ধরে। এখন ৭০% সোর্স সেটেল হলে বাকিদের জন্য অপেক্ষা করি না।
-      else if (el2 >= VDIM_MS && settled >= Math.ceil(live.length * Number(process.env.VDIMR || 0.7)) && !_runningProd()) { cutFlag = true; timedCut = true; try { fireCut(true); } catch (e) { } }
-      else if (el2 >= MIN_WAIT_MS && _prodAllDone()) { cutFlag = true; try { fireCut(true); } catch (e) { } } // ★ v1.33.0: যারা কার্ড দেয় সবাই শেষ ⇒ ঝুলন্ত-শূন্যদের জন্য অপেক্ষা নয়
+      else if (process.env.SOURCE_EARLY === '1' && el2 >= VDIM_MS && settled >= Math.ceil(live.length * Number(process.env.VDIMR || 0.7)) && !_runningProd()) { cutFlag = true; timedCut = true; try { fireCut(true); } catch (e) { } }
+      else if (process.env.SOURCE_EARLY === '1' && el2 >= MIN_WAIT_MS && _prodAllDone()) { cutFlag = true; try { fireCut(true); } catch (e) { } } // ★ v1.33.0: যারা কার্ড দেয় সবাই শেষ ⇒ ঝুলন্ত-শূন্যদের জন্য অপেক্ষা নয়
     }, 60);
     if (_watch.unref) _watch.unref();
     // ★ v1.17.56: **গৌণ-সোর্সের নিজস্ব ছোট-ক্যাপ** — ott/tw/rt/az বসে-থাকলে পুরো উত্তর ১১.৫সে-দেয়ালে
@@ -14686,7 +14686,7 @@ async function withSources(cardsP, srcs, cfg, t0, mkey, lookupP) {
     const SRC_CAP_ALL = Number(process.env.SCAP || 12000);
     const SRC_CAP_MAP = Object.fromEntries(Object.keys(SRC_CAP_DEF).map(k => [k, SRC_CAP_ALL]));   // v1.27.19: hm 8200-race + mlb 8200-বাজেটের জন্য ক্যাপ বাড়ানো // v1.26.1: toonworld-এর রেজলভারই ৭.৫সে নেয় (মাপা) — ৮.৫সে-ক্যাপে ওটা সবসময় কাটা পড়ত // ★ v1.22.3: prod-মাপা — এই সোর্সগুলো prod-এ ৭-৮সে নেয়, আগের ক্যাপে তারা সবসময় 'cut' হতো
     const _capSlow = SLOWX ? Number(process.env.SCUTSLOW || 25000) : 0;   // ★ v1.34.173: slow-মোডে per-source ক্যাপও খুলে যায়
-    const SRC_CAP_MS = Number(process.env.VSCAP || 8400)   /* ★ v1.34.157: ৭২০০ → SCUT-সমান (নাহলে প্রতি-সোর্স ৭.২সে-তেই কাটা পড়ত, mls-এর নিজস্ব বাজেট ১০.৮সে হওয়ায় সে কখনোই সুযোগ পেত না) */;   // ★ v1.34.140: 12000 → 9200 (SDL-এর ভিতরে)   // ★ v1.33.0: ৪৬০০ → ১২০০০ (ইউজার: হার্ড-ক্যাপ ১২সে) // ★ v1.32.0: 5200→4600 (লক্ষ্য ≈৫সে) // v1.17.58: 9.3s-cap-e prod-e 10.2-10.6s hoi (edge-er kache) // ★ v1.17.52: প্রতি-সোর্স-ক্যাপ — একটি ঝুলন্ত সোর্স (ott/tw/nx) পুরো তালিকাকে ক্যাপে টেনে নিত
+    const SRC_CAP_MS = Number(process.env.VSCAP || 9500)   /* ★ v1.34.157: ৭২০০ → SCUT-সমান (নাহলে প্রতি-সোর্স ৭.২সে-তেই কাটা পড়ত, mls-এর নিজস্ব বাজেট ১০.৮সে হওয়ায় সে কখনোই সুযোগ পেত না) */;   // ★ v1.34.140: 12000 → 9200 (SDL-এর ভিতরে)   // ★ v1.33.0: ৪৬০০ → ১২০০০ (ইউজার: হার্ড-ক্যাপ ১২সে) // ★ v1.32.0: 5200→4600 (লক্ষ্য ≈৫সে) // v1.17.58: 9.3s-cap-e prod-e 10.2-10.6s hoi (edge-er kache) // ★ v1.17.52: প্রতি-সোর্স-ক্যাপ — একটি ঝুলন্ত সোর্স (ott/tw/nx) পুরো তালিকাকে ক্যাপে টেনে নিত
     const track = x => { // ★ v1.17.52: টাইমার ক্লিয়ার হয় — নইলে সেটেল হওয়া সোর্সের জন্যও ভুল '[srccap]' ছাপ পড়ত
       let _tm = null;
       // ★ v1.26.3 (আগের ফিক্সটা ভুল ছিল — লগ-প্রমাণ: `[srccap]` সবসময় base মানে ফায়ার করত):
@@ -14695,10 +14695,10 @@ async function withSources(cardsP, srcs, cfg, t0, mkey, lookupP) {
       let _deadKey = false;
       // ★ v1.34.159 (প্রোড `/_srcstats`: hm ০/১৫ @৭.৭সে · mls ০/১৫ @৬.৯সে · hd ০/১৫ @৩.৪সে):
       //   টানা ≥৬ কল শূন্য-কার্ড সোর্স foreground-এ পুরো বাজেট খায় ⇒ ছোট ক্যাপ; bg-তে পূর্ণ সুযোগ থাকে।
-      try { const _e = SRC_STATS.get(x.key); if (x.key !== 'mls' && x.key !== 'hd' && !(BGX || SLOWX) && _e && _e.calls >= 6 && !_e.cards && (_e.streak0 || 0) >= Number(process.env.DEADCAPN || 6)) { _base = Math.min(_base, Number(process.env.DEADCAP || 4500)); _deadKey = true; } } catch (eD) { }
+      try { const _e = SRC_STATS.get(x.key); if (process.env.SOURCE_DEADCAP === '1' && x.key !== 'mls' && x.key !== 'hd' && !(BGX || SLOWX) && _e && _e.calls >= 6 && !_e.cards && (_e.streak0 || 0) >= Number(process.env.DEADCAPN || 6)) { _base = Math.min(_base, Number(process.env.DEADCAP || 4500)); _deadKey = true; } } catch (eD) { }
       const base = srcCapFor(x.key, _base);
       const capP = new Promise(r => { _tm = setInterval(() => {
-        const lim = _capSlow || Math.min(BGX ? Number(process.env.SCUTBG || 11000) : Number(process.env.SCUT || 8400), base + _LK.ms);   // ★ v1.34.173: slow-মোডে পূর্ণ বাজেট
+        const lim = _capSlow || Math.min(BGX ? Number(process.env.SCUTBG || 11000) : Number(process.env.SCUT || 9500), base + _LK.ms);   // ★ v1.34.173: slow-মোডে পূর্ণ বাজেট
         if (Date.now() - t0 >= lim) { clearInterval(_tm);
           // ★★ v1.34.163: **মৃত-সোর্সের ক্যাপ ⇒ risultati partial নয়** — নাহলে প্রতিটি উত্তর
           //   `$partial` হতো (কারণ hd/hm/mlb/rt সবসময় ক্যাপ হয়) ⇒ ক্যাশ ১৮০সে + প্রতি ট্যাপে
@@ -14722,7 +14722,7 @@ async function withSources(cardsP, srcs, cfg, t0, mkey, lookupP) {
        সব সোর্সের উপরের সীমা এখানে **SCUT (৮.৪সে)** দিয়ে বাঁধা ছিল, bg/slow-মোডে (১১সে/২৫সে) যা
        কখনো বাড়ত না ⇒ `outsP` ৮.৪সে-তে সব সোর্সকে null করে দিত, আর mlb (১৮সে)/hm (১৩.৬সে)/
        mls (১৪সে)/rt (২০সে) কখনোই ক্যাশে পৌঁছাত না। এখন মোড-অনুযায়ী সীমা। */
-    const _cap0 = SLOWX ? Number(process.env.SCUTSLOW || 25000) : (BGX ? Number(process.env.SCUTBG || 11000) : Number(process.env.SCUT || 8400));
+    const _cap0 = SLOWX ? Number(process.env.SCUTSLOW || 25000) : (BGX ? Number(process.env.SCUTBG || 11000) : Number(process.env.SCUT || 9500));
     const uniLeft0 = Math.max(0, Math.min(Math.max(NXDEADLINE, _cap0), _cap0) + _LK.ms - (Date.now() - t0)); // ★ v1.34.173
     // ★ v1.17.29: **nx (MovieBox)-এর নিজস্ব কাট-ঘড়ি** — child-এর রিজলভ ৪–৮ সে নেয়, তাই সাধারণ
     //   হারভেস্ট-কাটে (৪.১ সে) কেটে যেত ⇒ "MovieBox নেই" দেখাত। এখন nx পায় `NX_FIRST_MS` পর্যন্ত
@@ -14730,7 +14730,7 @@ async function withSources(cardsP, srcs, cfg, t0, mkey, lookupP) {
     // ★ v1.17.34: **অভিযোজিত-উইন্ডো বাতিল** (মাপা: প্রোডে ৬.২সে-ও MB আনত না, শুধু উত্তর
     //   ৭–৮সে হয়ে যেত)। এখন সবসময় ৫.১সে — MB দেরিতে এলে ব্যাকগ্রাউন্ডে ক্যাশে জমে, আর
     //   ওই ফল `$partial` হয় ⇒ আমাদের /stream-ক্যাশ ১২সে-তেই মেয়াদোত্তীর্ণ ⇒ দ্বিতীয় ট্যাপে MB পুরো।
-    const nxFirstWait = Math.min(Number(process.env.NXW || 6400), Number(process.env.SCUT || 8400)); // v1.34.29: ঠান্ডা-bench-এ child-resolve 9-10.5s লাগে (মাপা) ⇒ 9s-কাটে প্রথম-খোলায় MB ঝরত; 10.2s (12s-ক্যাপের ভিতরে, streams>speed) // ★ v1.22.2: prod-এ MB ৯.২সে ধরে উত্তর টানত (মাপা ৯.৪সে) ⇒ ৭সে // v1.17.52: ৭.২সে-এ MB প্রায়ই কাটা পড়ত // v1.17.47: MB আর কাটা পড়বে না (আগে ৫.১সে)
+    const nxFirstWait = Math.min(Number(process.env.NXW || 9000), Number(process.env.SCUT || 9500)); // v1.34.29: ঠান্ডা-bench-এ child-resolve 9-10.5s লাগে (মাপা) ⇒ 9s-কাটে প্রথম-খোলায় MB ঝরত; 10.2s (12s-ক্যাপের ভিতরে, streams>speed) // ★ v1.22.2: prod-এ MB ৯.২সে ধরে উত্তর টানত (মাপা ৯.৪সে) ⇒ ৭সে // v1.17.52: ৭.২সে-এ MB প্রায়ই কাটা পড়ত // v1.17.47: MB আর কাটা পড়বে না (আগে ৫.১সে)
     const nxCutP = new Promise(r => setTimeout(() => r(true), Math.max(0, Math.min(uniLeft0, nxFirstWait - (Date.now() - t0)))));
     // ★ v1.26.1: প্রতিটা সোর্স-প্রমিসের ফল **যে-সময়েই আসুক** স্ট্যাশে জমা (কাটা পড়লেও)
     if (SKEY) live.forEach(x => { try { x.p.then(v => stashPut(SKEY, x.key, v)).catch(() => { }); } catch (e) { } });
@@ -14742,7 +14742,7 @@ async function withSources(cardsP, srcs, cfg, t0, mkey, lookupP) {
   }
   // ★ v1.32.0: vidy-কার্ডের অপেক্ষাও ছোট (আগে ১০.৬সে ⇒ Mirzapur-এ ৮সে উত্তর)। মাপা: vidy কার্ড
   //   ২–৪সে-তেই আসে; দেরিতে-আসা সার্ভার ব্যাকগ্রাউন্ডে ক্যাশে জমে, পরের খোলে পুরো।
-  const cLeft = Math.max(500, Math.min(Number(process.env.SCUT || 8400), Number(process.env.VPICK || 9000) + 1200) + Math.min(_LK.ms, 800) - (Date.now() - t0)); // ★ v1.34.27: রুট-অপেক্ষা getSources-এর আসল বাজেটের (9s) সঙ্গে মিলল — আগে 4200 ধরে vidy 5.4s-এ কাটা পড়ত
+  const cLeft = Math.max(500, Math.min(Number(process.env.SCUT || 9500), Number(process.env.VPICK || 9000) + 1200) + Math.min(_LK.ms, 800) - (Date.now() - t0)); // ★ v1.34.27: রুট-অপেক্ষা getSources-এর আসল বাজেটের (9s) সঙ্গে মিলল — আগে 4200 ধরে vidy 5.4s-এ কাটা পড়ত
   const cards = await Promise.race([
     cardsP.catch(e => { if (DBG) console.error('[srcdbg] cardsP died: ' + String(e && e.message || e).slice(0, 90)); return []; }),
     new Promise(r => setTimeout(() => r([]), cLeft))
@@ -14755,7 +14755,7 @@ async function withSources(cardsP, srcs, cfg, t0, mkey, lookupP) {
     // v1.14.6 ঐক্যবদ্ধ-১ম-ক্লিক-সময়সীমা (ইউজার-টপ-অগ্রাধিকার: প্রতি-নির্বাচিত-সোর্স-১ম-ক্লিকেই):
     // সব-লাইভ-সোর্স-একই-পরম-সীমা ~৯.৬সে (রুট-সেফটি ১১.৯সে/এজ-কাট ১২সে-র-ভেতরে) — যে-সোর্স-আগে-সেটল
     // উত্তর-তার-পরেই (দ্রুত-ক্ষেত্রে ২-৫সে), ধীর-সোর্স-কাটা-পড়ার-আগে-সর্বোচ্চ-সময়-পায়।
-    const uniLeft = Math.max(0, Math.min(NXDEADLINE, Number(process.env.SCUT || 8400)) - el); // v1.17.52 // v1.15.99: ৯.৬সে যাতে Beamup প্রক্সির ১২সে কাটঅফের আগে সবসময় ২+ সেকেন্ড হাতে থাকে
+    const uniLeft = Math.max(0, Math.min(NXDEADLINE, Number(process.env.SCUT || 9500)) - el); // v1.17.52 // v1.15.99: ৯.৬সে যাতে Beamup প্রক্সির ১২সে কাটঅফের আগে সবসময় ২+ সেকেন্ড হাতে থাকে
     // v1.15.3: সোর্স-ত্রুটি (রিবিল্ড/নেটওয়ার্ক) ≠ সত্যিকারের-খালি — আংশিক-গণ্য হোক (errFlag উপরে ঘোষিত)
     if (DBG) console.error('[ws] RID=' + t0 + ' outs-await-start @' + (Date.now() - t0));
     const outs = await outsP;

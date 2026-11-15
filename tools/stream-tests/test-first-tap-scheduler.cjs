@@ -1,0 +1,7 @@
+'use strict';
+const fs=require('fs'),vm=require('vm'),assert=require('assert');
+const src=fs.readFileSync('server.js','utf8');const a=src.indexOf('async function withSources('),b=src.indexOf('// ---------- sources ----------',a);assert(a>=0&&b>a);
+const env={SCUT:'700',VSCAP:'700',NXW:'600',SPAT:'20',VFLOOR:'10',VEARLY:'30',VEARLYN:'1',VDIM:'30',VDIMR:'0.5',EPROD:'30',EPN:'1',DEADCAP:'50'};
+const ctx={console,process:{env},Promise,Map,Set,Object,Number,Date,Math,String,Array,setTimeout,setInterval,clearInterval,DBG:false,NXDEADLINE:22000,VRC_TTL:0,SRC_CAP_DEF:{mls:12000,dt:12000,nx:12000},SRC_STATS:new Map([['dt',{calls:12,cards:0,streak0:12}]]),srcCapFor:(k,b)=>b,srcStatRec:()=>{},diag:()=>{},stashPut:()=>{},stashGet:()=>null,LR:{sr:[]},PART_WHY:{nulls:0,err:0,timed:0,stash:0,pend:0,rtw:0},qToList:()=>[],qPass:()=>true,nxLangPass:()=>true,rtLangPass:()=>true};vm.createContext(ctx);vm.runInContext(src.slice(a,b)+';globalThis.run=withSources;',ctx);
+const delay=(ms,val)=>new Promise(r=>setTimeout(()=>r(val),ms));
+(async()=>{const start=Date.now(),out=await ctx.run(Promise.resolve([]),[{key:'mls',p:delay(35,[{url:'mls'}])},{key:'dt',p:delay(300,[{url:'dt'}])},{key:'nx',p:delay(450,[{url:'nx'}])}],{},start,'',null);assert.deepEqual(Array.from(out,x=>x.url),['mls','dt','nx']);assert(Date.now()-start>=400,'must not globally cut delayed producers');console.log('first-tap scheduler waits for previously-empty source and MovieBox');})().catch(e=>{console.error(e);process.exit(1)});
