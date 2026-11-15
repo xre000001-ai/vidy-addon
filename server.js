@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.167';
+const VERSION = '1.34.168';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -2995,13 +2995,13 @@ function nxFor(type, id, s, e) { // starts the parallel fetch immediately; null 
   if (/^tt\d+$/.test(id)) return nxStreams(id, type, s, e);
   return tmdbToImdb(id, type).then(v => v ? nxStreams(v, type, s, e) : []);
 }
-function twRtPrewarm(nameP, type, s, e) { // v1.14.5 series tap → পরের-২-এপিসোড-রেজলভার-আগেই-গরম (ঠান্ধা-এপিসোড-রেজলভ ৮সে+ → binge-২য়-ক্লিক-তাৎক্ষণিক)
-  if ((!TWBASE && !RTBASE) || type !== 'series') return;
+function twRtPrewarm(nameP, type, s, e, cfg) { // v1.14.5 series tap → পরের-২-এপিসোড-রেজলভার-আগেই-গরম (ঠান্ধা-এপিসোড-রেজলভ ৮সে+ → binge-২য়-ক্লিক-তাৎক্ষণিক)
+  if ((!TWBASE && !RTBASE) || type !== 'series' || NOCACHE) return; // Future card warmups are discarded when card caching is disabled.
   setTimeout(() => { Promise.resolve(nameP).then(nm => {
     if (!nm) return;
     for (let k = 1; k <= 2; k++) {
-      if (TWBASE) twrStreams(TWBASE, 'toonworld', nm, 'series', s, e + k, 1).catch(() => {});
-      if (RTBASE) twrStreams(RTBASE, 'raretoons', nm, 'series', s, e + k, 1).catch(() => {});
+      if (TWBASE && !(cfg && cfg.tw === 0)) twrStreams(TWBASE, 'toonworld', nm, 'series', s, e + k, 1).catch(() => {});
+      if (RTBASE && !(cfg && cfg.rt === 0)) twrStreams(RTBASE, 'raretoons', nm, 'series', s, e + k, 1).catch(() => {});
     }
   }).catch(() => {}); }, 1200);
 }
@@ -3010,7 +3010,7 @@ function dtPrewarm(nameP, infoP, type, s, e, origin, cfg) { // ★ v1.34.28: ser
   setTimeout(() => { for (let k = 1; k <= 2; k++) { try { dtTask(nameP, infoP, 'series', s, e + k, origin).catch(() => {}); } catch (e2) { } } }, 1500);
 }
 function nxPrewarm(type, id, s, e) { // series tap → quietly fetch the next 3 episodes' NetHex into NXCACHE (binge tap-2 = instant)
-  if (!NEXBASE) return;
+  if (!NEXBASE || NOCACHE) return; // NXCACHE reads/writes are disabled: avoid wasting three child resolves per tap.
   // v1.11.2: মূল-ট্যাপের-resolve-পুল-থেকে-প্রথম-কামড়-নেয় (সঙ্গে-সঙ্গে-৪-resolve-প্লাবন-ঠান্ডা-E1-ধীর-করত) — ৯০০ms-দেরি
   setTimeout(() => {
     for (let k = 1; k <= 3; k++) {
@@ -4126,7 +4126,7 @@ async function mlsTask(nameP, infoP, type, s, e) {
     const junkNm = v => !v || v.length < 2 || /^episode\s*#/i.test(v) || /^(unknown|untitled|n\/?a)$/i.test(v);
     const nmInfo = cleanNm(info && info.name);
     let nmPx = '';
-    const pxWait = nmInfo ? 1500 : 2600;                  // info ফাঁকা ⇒ মেটা-কলকে একটু বেশি সময়
+    const pxWait = !junkNm(nmInfo) ? 150 : 2600; // Start indexed discovery promptly when a usable primary name exists.
     try { nmPx = cleanNm(await Promise.race([Promise.resolve(nameP).catch(() => ''), new Promise(r => setTimeout(() => r(''), pxWait))])); } catch (e) { nmPx = ''; }
     const names = [...new Set([nmInfo, nmPx].filter(v => !junkNm(v)))];
     if (!names.length) { if (DBG) console.error('[mlsd] no-name info=' + nmInfo + ' px=' + nmPx); return []; }
@@ -4147,7 +4147,11 @@ async function mlsTask(nameP, infoP, type, s, e) {
     // A partial/failed index fetch never replaces the last good index or live-search fallback.
     if (!posts && process.env.MLS_INDEX !== '0') {
       try {
-        const indexed = await require('./tools/mls-index-lab/runtime_index').candidates(names, year, type, SE0, EP0, 1000);
+        let indexed = await require('./tools/mls-index-lab/runtime_index').candidates(names, year, type, SE0, EP0, 1000);
+        if (!indexed.length && !nmPx && nameP) {
+          const alias = cleanNm(await Promise.race([Promise.resolve(nameP).catch(() => ''), new Promise(r => setTimeout(() => r(''), 900))]));
+          if (!junkNm(alias) && !names.includes(alias)) { names.push(alias); indexed = await require('./tools/mls-index-lab/runtime_index').candidates(names, year, type, SE0, EP0, 1000); }
+        }
         if (indexed.length) posts = indexed;
       } catch (_) { /* preserve existing live-search path */ }
     }
@@ -8788,6 +8792,25 @@ function hdPickMirrors(list, limit) {
   }
   return selected;
 }
+// Retry a failed/blank catalog page within the same request; never cache cards.
+// Only an actual episode map or pack wrapper is accepted as useful content.
+async function hdEpisodePage(url, ms) {
+  const useful = r => { const t=String((r && r.t)||''); return Object.keys(hdEpMap(t)).length>0 || hdPackWraps(t).length>0; };
+  const first = await hdText(url, HD_BASE + '/', ms).catch(() => ({st:0,t:''}));
+  if (useful(first)) return first;
+  const retry = await hdText(url, HD_BASE + '/', Math.min(ms, 1800)).catch(() => ({st:0,t:''}));
+  return useful(retry) ? retry : first;
+}
+
+// A 200 challenge/stub is not an episode wrapper. Retry once in the same tap.
+async function hdEpisodeWrapper(url, ms) {
+  const useful = r => /https:\/\/(?:hubdrive\.(?:bar|blog)\/file|hubcloud\.[a-z]+\/drive)\/[A-Za-z0-9_-]+/i.test(String((r && r.t)||''));
+  const first = await hdText(url, HD_BASE + '/', ms).catch(() => ({st:0,t:''}));
+  if (useful(first) || /hubcloud\.[a-z]+\/drive\//i.test(url)) return first;
+  const retry = await hdText(url, HD_BASE + '/', Math.min(ms,1800)).catch(() => ({st:0,t:''}));
+  return useful(retry) ? retry : first;
+}
+
 async function hdSeries(imdb, title, s, e, origin, maxh) {
   const T0 = Date.now(); const B = Number(process.env.HDS || 8600); /* v1.27.0: মাপা ৪.০–৬.০সে (hubdrive-হপসহ) */ const left = () => Math.max(600, B - (Date.now() - T0));
   const SE = parseInt(s, 10) || 1, EP = parseInt(e, 10) || 1;
@@ -8799,6 +8822,7 @@ async function hdSeries(imdb, title, s, e, origin, maxh) {
     if (!hit) {
       const qb = 'query_by=post_title,category,stars,director,imdb_id&query_by_weights=4,2,2,2,4&sort_by=sort_by_date:desc';
       let docs = [];
+      const titleSearch = title && imdb ? hdText(HD_BASE + '/search.php?type=post&' + qb + '&limit=24&q=' + encodeURIComponent(String(title).replace(/\s*\(.*$/, '')), HD_BASE + '/', Math.min(2400, left())).catch(() => ({t:''})) : null;
       const r1 = await hdText(HD_BASE + '/search.php?type=post&' + qb + '&limit=20&q=' + encodeURIComponent(imdb || title || ''), HD_BASE + '/', Math.min(2400, left()));
       try { docs = (JSON.parse(r1.t).hits || []).map(x => x.document || x); } catch (er) { }
       // সিজন-মিল: "Season 4" / "S04" / "Season 4 Vol 1" — IMDb-মিল আগে, না-পেলে টাইটেল-মিল
@@ -8816,7 +8840,7 @@ async function hdSeries(imdb, title, s, e, origin, maxh) {
       };
       if (!pick) pick = docs.find(d => d && d.permalink && String(d.imdb_id || '') === imdb && tOk(d) && !sOther(d));
       if (!pick && title) {   // ★ v1.27.0: IMDb-ইনডেক্সে নেই (যেমন Friends) ⇒ টাইটেল+সিজন-স্ক্যান
-        const r2 = await hdText(HD_BASE + '/search.php?type=post&' + qb + '&limit=24&q=' + encodeURIComponent(String(title).replace(/\s*\(.*$/, '')), HD_BASE + '/', Math.min(2400, left()));
+        const r2 = titleSearch ? await titleSearch : await hdText(HD_BASE + '/search.php?type=post&' + qb + '&limit=24&q=' + encodeURIComponent(String(title).replace(/\s*\(.*$/, '')), HD_BASE + '/', Math.min(2400, left()));
         let d2 = []; try { d2 = (JSON.parse(r2.t).hits || []).map(x => x.document || x); } catch (er) { }
         const tOk2 = d => hdTitleOk(d && d.post_title, title);
         pick = d2.find(d => d && d.permalink && sRe.test(String(d.post_title || '')) && tOk2(d))
@@ -8836,7 +8860,7 @@ async function hdSeries(imdb, title, s, e, origin, maxh) {
         hdStore(HD_S, key, hit);
       }
     }
-    let pg = await hdText(hit.url, HD_BASE + '/', Math.min(2800, left()));
+    let pg = await hdEpisodePage(hit.url, Math.min(2800, left()));
     let map = hdEpMap(String(pg.t || ''));
     // ★★★ v1.27.3 (মাপা): সার্চ ভুল/দুর্বল পোস্ট বেছে নেয় (Heist-এ "La Casa… 720p" পোস্টে ep-সারি নেই, কিন্তু
     //   `money-heist-season-1-hindi-webrip-all-episodes`-এ E01…E13 সারি আছে)। ep-map-এ EP না থাকলে
@@ -8892,7 +8916,7 @@ async function hdSeries(imdb, title, s, e, origin, maxh) {
     // ★ v1.27.1: প্যাক-স্তর সমান্তরালে আনি — ep-সারির ড্রাইভ মৃত হলেও প্যাকের ভেতরের লিঙ্ক বাঁচাতে পারে
     const packW = hdPackWraps(String(pg.t || '')).slice(0, 3);
     const [wpages, packPages] = await Promise.all([
-      Promise.all(wraps.map(w => hdText(w.u, HD_BASE + '/', Math.min(2600, left())).catch(() => ({ t: '' })))),
+      Promise.all(wraps.map(w => hdEpisodeWrapper(w.u, Math.min(2600, left())).catch(() => ({ t: '' })))),
       Promise.all(packW.map(w => hdText(w.u, HD_BASE + '/', Math.min(2400, left())).catch(() => ({ t: '' }))))
     ]);
     // ★★★ v1.27.0: এপিসোড-র্যাপার (`hblinks.lol/archives/N`) ভেতরে hubcloud লিঙ্ক **রাখে না** —
@@ -14671,7 +14695,7 @@ async function withSources(cardsP, srcs, cfg, t0, mkey, lookupP) {
       let _deadKey = false;
       // ★ v1.34.159 (প্রোড `/_srcstats`: hm ০/১৫ @৭.৭সে · mls ০/১৫ @৬.৯সে · hd ০/১৫ @৩.৪সে):
       //   টানা ≥৬ কল শূন্য-কার্ড সোর্স foreground-এ পুরো বাজেট খায় ⇒ ছোট ক্যাপ; bg-তে পূর্ণ সুযোগ থাকে।
-      try { const _e = SRC_STATS.get(x.key); if (x.key !== 'mls' && !(BGX || SLOWX) && _e && _e.calls >= 6 && !_e.cards && (_e.streak0 || 0) >= Number(process.env.DEADCAPN || 6)) { _base = Math.min(_base, Number(process.env.DEADCAP || 4500)); _deadKey = true; } } catch (eD) { }
+      try { const _e = SRC_STATS.get(x.key); if (x.key !== 'mls' && x.key !== 'hd' && !(BGX || SLOWX) && _e && _e.calls >= 6 && !_e.cards && (_e.streak0 || 0) >= Number(process.env.DEADCAPN || 6)) { _base = Math.min(_base, Number(process.env.DEADCAP || 4500)); _deadKey = true; } } catch (eD) { }
       const base = srcCapFor(x.key, _base);
       const capP = new Promise(r => { _tm = setInterval(() => {
         const lim = _capSlow || Math.min(BGX ? Number(process.env.SCUTBG || 11000) : Number(process.env.SCUT || 8400), base + _LK.ms);   // ★ v1.34.173: slow-মোডে পূর্ণ বাজেট
@@ -14842,7 +14866,7 @@ async function withSources(cardsP, srcs, cfg, t0, mkey, lookupP) {
     try {
       const SLOW = ['rt', 'mlb', 'mls', 'hm', 'vsp'];
       const _slowMiss = live.some((x2, i2) => SLOW.indexOf(x2.key) >= 0 && (!outs[i2] || !outs[i2].length));
-      if (_slowMiss && SKEY) {
+      if (VRC_TTL > 0 && _slowMiss && SKEY) {
         const _k5 = '/stream/' + String(SKEY).replace(/^\/?(stream\/)?/, '');
         const _due = Date.now() + Number(process.env.SLOWRETRY || 15000);   // ★ v1.34.175: ৪৫সে খুব দেরি (রেজলভার-ক্যাশ ৬সে-তেই উষ্ণ)
         SLOW_RETRY.set(SKEY, _due);
@@ -16822,7 +16846,7 @@ setInterval(() => {
 }, 25000).unref?.();
 function bgStreamFetch(su, depth, slow) {
   try {
-    if (process.env.BGSTREAM === '0' || !su || depth > 2) return;
+    if (VRC_TTL <= 0 || process.env.BGSTREAM === '0' || !su || depth > 2) return; // No response cache: full background harvest cannot be served.
     const key = String(su).split('?')[0];
     if (key.indexOf('/stream/') < 0) return;
     const now = Date.now();
@@ -17153,7 +17177,7 @@ const server = http.createServer((req, res) => {
     // ★ v1.17.43: ডায়াগনস্টিক বাইপাস — `?fresh=1` থাকলে /stream-ক্যাশ পড়া-লেখা দুটোই বন্ধ।
     //   (ক্যাশ-কী=pathname ⇒ `cb` দিয়ে আর ফ্রেশ-মাপা যেত না; আগের কিছু "ফ্রেশ" পরিমাপ আসলে ক্যাশ-হিট ছিল।)
     const FRESH = (() => { try { return new URL(req.url, 'http://x').searchParams.get('fresh') === '1'; } catch (e) { return false; } })();
-    try { if (!FRESH) warmPut(p); } catch (eW) { }   // ★ v1.34.149: প্রি-ওয়ার্মার-রিং
+    try { if (VRC_TTL > 0 && !FRESH) warmPut(p); } catch (eW) { }   // ★ v1.34.149: প্রি-ওয়ার্মার-রিং
     if (!FRESH && req.method === 'GET' && (p.startsWith('/stream/') || p.startsWith('/probe/stream/'))) {
       const hit = sresGet(sresKey(p, cfg));
       if (hit) {
@@ -18133,7 +18157,7 @@ cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'movie', s: 0, e: 0 }
       const ottP = !(cfg && cfg.ott === 0) ? ottStreams(Number(m[1]), 'tv', Number(m[2] || 1), Number(m[3] || 1), cfg && cfg.ottq || []).catch(() => []) : null; // v1.15.72: AsianTV
       const azP = !(cfg && cfg.az === 0) ? azStreams(Number(m[1]), 'tv', Number(m[2] || 1), Number(m[3] || 1), cfg && cfg.azq || []).catch(() => []) : null; // v1.15.76: AniZone
       if (nxOn) nxPrewarm('series', String(m[1]), Number(m[2] || 1), Number(m[3] || 1));
-      twRtPrewarm(tp, 'series', Number(m[2] || 1), Number(m[3] || 1));
+      twRtPrewarm(tp, 'series', Number(m[2] || 1), Number(m[3] || 1), cfg);
       dtPrewarm(tp, infoP, 'series', Number(m[2] || 1), Number(m[3] || 1), originOf(req), cfg); // ★ v1.34.28
       kickSubs('tmdb' + m[1], 'series', Number(m[2] || 1), Number(m[3] || 1), cfg);
       const lookP = Promise.all([typeof tp !== 'undefined' ? tp : null, typeof nmP !== 'undefined' ? nmP : null, typeof infoP !== 'undefined' ? infoP : null].filter(Boolean)).catch(() => []); // v1.26.2
@@ -18189,7 +18213,7 @@ cards => { if (DBG) console.error('[rt] RID=' + t0 + ' cards-ready @' + (Date.no
       const ottP = !(cfg && cfg.ott === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? ottStreams(info.id, 'tv', Number(m[2]), Number(m[3]), cfg && cfg.ottq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.72: AsianTV
       const azP = !(cfg && cfg.az === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? azStreams(info.id, 'tv', Number(m[2]), Number(m[3]), cfg && cfg.azq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.76: AniZone
       if (nxOn) nxPrewarm('series', m[1], Number(m[2]), Number(m[3]));
-      twRtPrewarm(nmP, 'series', Number(m[2]), Number(m[3]));
+      twRtPrewarm(nmP, 'series', Number(m[2]), Number(m[3]), cfg);
       dtPrewarm(nmP, infoP, 'series', Number(m[2]), Number(m[3]), originOf(req), cfg); // ★ v1.34.28
       kickSubs(m[1], 'series', Number(m[2]), Number(m[3]), cfg);
       const lookP = Promise.all([typeof tp !== 'undefined' ? tp : null, typeof nmP !== 'undefined' ? nmP : null, typeof infoP !== 'undefined' ? infoP : null].filter(Boolean)).catch(() => []); // v1.26.2
@@ -18218,7 +18242,7 @@ cards => { Promise.all([raceObjP(infoP, 1500), raceObjP(nmP, 1500)]).then(([info
       const ottP = !(cfg && cfg.ott === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? ottStreams(info.id, 'tv', 1, 1, cfg && cfg.ottq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.72: AsianTV
       const azP = !(cfg && cfg.az === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? azStreams(info.id, 'tv', 1, 1, cfg && cfg.azq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.76: AniZone
       if (nxOn) nxPrewarm('series', m[1], 1, 1);
-      twRtPrewarm(nmP, 'series', 1, 1);
+      twRtPrewarm(nmP, 'series', 1, 1, cfg);
       dtPrewarm(nmP, infoP, 'series', 1, 1, originOf(req), cfg); // ★ v1.34.28
       kickSubs(m[1], 'series', 1, 1, cfg);
       const lookP = Promise.all([typeof tp !== 'undefined' ? tp : null, typeof nmP !== 'undefined' ? nmP : null, typeof infoP !== 'undefined' ? infoP : null].filter(Boolean)).catch(() => []); // v1.26.2
