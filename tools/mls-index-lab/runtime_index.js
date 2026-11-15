@@ -16,6 +16,7 @@ async function load(){
  const shaRes=await fetch('https://api.github.com/repos/'+repo+'/commits/mls-index-sandbox-data',{headers:{'User-Agent':'Vidy-MLSBD-Index','Accept':'application/vnd.github+json'},signal:AbortSignal.timeout(7000)});
  if(!shaRes.ok)throw Error('index reference unavailable');
  const sha=(await shaRes.json()).sha;if(!/^[a-f0-9]{40}$/.test(sha||''))throw Error('invalid index revision');
+ if(current && !current.bootstrap && current.sha===sha){current.at=Date.now();return current;}
  const base='https://raw.githubusercontent.com/'+repo+'/'+sha+'/data/';
  const get=async file=>{const r=await fetch(base+file,{signal:AbortSignal.timeout(15000)});if(!r.ok)throw Error('index shard unavailable');return r.json()};
  const manifest=await get('manifest.json');
@@ -29,7 +30,7 @@ async function load(){
  current={rows,mirrors,sha,at:Date.now()};return current;
 }
 function start(){
- if(inflight || Date.now()-lastAttempt<(current?120000:15000) || (current && Date.now()-current.at<1800000))return inflight;
+ if(inflight || Date.now()-lastAttempt<(current?120000:15000) || (current && Date.now()-current.at<300000))return inflight;
  lastAttempt=Date.now();inflight=load().catch(()=>null).finally(()=>{inflight=null});return inflight;
 }
 async function candidates(names,year,type,season,episode,waitMs=1000){
