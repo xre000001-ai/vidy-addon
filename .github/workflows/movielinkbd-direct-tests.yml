@@ -2,7 +2,7 @@ name: MovieLinkBD direct resolver tests
 on:
   push:
     branches: [main]
-    paths: ["server.js", "tools/mlbd-index/direct_search.cjs", "tools/mlbd-index/partial_results.cjs", "tools/mlbd-index/test_direct.cjs", "tools/mlbd-index/worker_link.cjs", "tools/mlbd-index/proxy_validation.cjs", "tools/mlbd-index/series_identity.cjs", "tools/mlbd-index/movie_identity.cjs", ".github/workflows/movielinkbd-direct-tests.yml"]
+    paths: ["server.js", "tools/mlbd-index/direct_search.cjs", "tools/mlbd-index/partial_results.cjs", "tools/mlbd-index/test_direct.cjs", "tools/mlbd-index/worker_link.cjs", "tools/mlbd-index/proxy_validation.cjs", "tools/mlbd-index/series_identity.cjs", "tools/mlbd-index/movie_identity.cjs", "tools/mlbd-index/bounded_queue.cjs", "tools/mlbd-index/test_queue.cjs", ".github/workflows/movielinkbd-direct-tests.yml"]
   workflow_dispatch:
 permissions:
   contents: read
@@ -14,4 +14,4 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - run: node --check server.js && node tools/mlbd-index/test_direct.cjs
+      - run: node --check server.js && node tools/mlbd-index/test_direct.cjs && node tools/mlbd-index/test_queue.cjs

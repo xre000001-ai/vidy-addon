@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.220';
+const VERSION = '1.34.221';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -8431,18 +8431,28 @@ let MLBD_BASE = '', MLBD_BASE_TS = 0, MLBD_BASE_WEAK = false; // WEAK = যা�
 const MLBD_PATH_C = new Map();  // 'name|year|type' → {path, ts}   (স্থির-আইডি)
 const MLBD_FILE_C = new Map();  // path → {toks:[], ts}              (স্থির-টোকেন)
 function mlbdNorm(s) { return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); }
-const MLBD_WL = { n: 0, q: [] }; // ★ v1.27.12: মুভিলিংক-সাইটে একসাথে সর্বোচ্চ ৪টি রিকোয়েস্ট (নিজেদের সকেট-চাপ এড়াতে)
-async function mlbdLimit(fn) {
-  const MAX = Number(process.env.MLBDC || 4);
-  while (MLBD_WL.n >= MAX) await new Promise(r => MLBD_WL.q.push(r));
-  MLBD_WL.n++;
-  try { return await fn(); } finally { MLBD_WL.n--; const nx2 = MLBD_WL.q.shift(); if (nx2) nx2(); }
-}
+const MLBD_WL = require('./tools/mlbd-index/bounded_queue.cjs').create({limit:Math.max(1,Math.min(8,Number(process.env.MLBDC || 4))),maxQueue:24,waitMs:2500});
+async function mlbdLimit(fn,ms) { return MLBD_WL.run(fn,ms); }
+const MLBD_NET_METRICS={curlOk:0,curlFail:0,proxyOk:0,queueTimeout:0,mirrorStarted:0};
 // কখনো-throw-নয়: নেটওয়ার্ক-ব্যর্থতায় একবার রিট্রাই, শেষ-ব্যর্থতায় st:0 (কলার তখন [] ফেরায়)
 async function mlbdGet(u, opt) {
   opt = opt || {};
   const T0 = Date.now(), BUD = Math.max(900, opt.ms || 6000);   // ★ মোট-বাজেট (রিট্রাই মিলিয়ে)
   const delays = [200, 600, 1300];
+  // Production curl can reach the current mirror even when Node's direct
+  // connection or the proxy circuit breaker cannot. Validate page semantics.
+  const curlTry = async () => {
+    let h='';try{h=new URL(u).hostname}catch(_){}
+    if(!/(^|\.)movielinkbd\.(?:com|at|app|cc)$/i.test(h))return null;
+    const left=BUD-(Date.now()-T0);if(left<900)return null;
+    try {
+      const r=await mlbdLimit(()=>mlsCurl(u,{ms:Math.min(3200,left),referer:'https://movielinkbd.com/'}),left);
+      if(r && r.st===200 && require('./tools/mlbd-index/proxy_validation.cjs').valid(r.body,u)){
+        MLBD_NET_METRICS.curlOk++;hostOK(u);return {st:200,loc:'',body:r.body,url:r.eu||u};
+      }
+    } catch (_) {}
+    MLBD_NET_METRICS.curlFail++;return null;
+  };
   // ★ v1.28.0 (ইউজার: "ডেডিকেটেড প্রক্সি পুল"): আগে সাধারণ vsp-পুল থেকে এক-এক-করে নোড নেওয়া হত;
   //   এখন মিরর-হোস্টে যাচাই-করা **নিজের পুল** (`mlb`) থেকে 3-নোডের রেস; ফল পুলে ফেরত-জমা।
   const pxTry = async () => {
@@ -8450,12 +8460,13 @@ async function mlbdGet(u, opt) {
     try {
       const x = await racePool(u, 3, Math.max(1500, Math.min(opt.ms || 6000, 3500)), 'mlb', body => require('./tools/mlbd-index/proxy_validation.cjs').valid(body,u));
       const txt = String((x && x.body) || '');
-      if (txt.length > 200) { diag('mlbd', 'px-ok ' + String(u).replace(/^https?:\/\//, '').slice(0, 44) + ' via ' + (x.px || '?')); return { st: 200, loc: '', body: txt }; }
+      if (txt.length > 200) { MLBD_NET_METRICS.proxyOk++; diag('mlbd', 'px-ok ' + String(u).replace(/^https?:\/\//, '').slice(0, 44) + ' via ' + (x.px || '?')); return { st: 200, loc: '', body: txt }; }
     } catch (e2) { }
     return null;
   };
   for (let at = 0; at < 4; at++) {
-    if (hostBad(u)) {                              // ★ হোস্ট-ইতিমাসে-ব্যর্থ ⇒ ডায়রেক্ট-চেষ্টা বাদ, সরাসরি-প্রক্সি
+    if (hostBad(u)) {
+      const direct=await curlTry(); if(direct)return direct;
       const pr = await pxTry();
       if (pr) { hostOK(u); return pr; }
       return { st: 0, loc: '', body: '' };
@@ -8480,9 +8491,11 @@ async function mlbdGet(u, opt) {
           return { st: r.status, loc: loc, body: body, url: url };
         }
         return { st: 0, loc: '', body: '' };
-      });
+      },Math.max(1,BUD-(Date.now()-T0)));
     } catch (e) {
+      if (e && e.message==='mlbd-queue-timeout') { MLBD_NET_METRICS.queueTimeout++; return {st:0,loc:'',body:''}; }
       hostFail(u);
+      if (at === 0) { const direct=await curlTry(); if(direct)return direct; }
       if (at === 3 || Date.now() - T0 > BUD) {                   // ★ এক-কলের মোট-সময় budget-এ সীমিত
         diag('mlbd', 'get-fail ' + String(u).replace(/^https?:\/\//, '').slice(0, 70) + ' :: ' + ((e && (e.cause && (e.cause.code || e.cause.message) || e.message)) || e) + ' @' + (Date.now() - T0) + 'ms');
         if (DBG) console.error('[mlbd] get-fail ' + String(u).slice(0, 60) + ' :: ' + (e && (e.message || e)) + ' | ' + ((e && e.cause && (e.cause.code || e.cause.message)) || '') + ' @' + (Date.now() - T0) + 'ms');
@@ -8498,7 +8511,15 @@ async function mlbdGet(u, opt) {
   }
   return { st: 0, loc: '', body: '' };
 }
+let MLBD_MIRROR_FLIGHT = null;
 async function mlbdMirror(force) {
+  if (!force && MLBD_BASE && Date.now()-MLBD_BASE_TS < (MLBD_BASE_WEAK ? 600000 : 10800000)) return MLBD_BASE;
+  if (MLBD_MIRROR_FLIGHT) return MLBD_MIRROR_FLIGHT;
+  MLBD_NET_METRICS.mirrorStarted++;
+  const p=mlbdMirrorOnce(force); MLBD_MIRROR_FLIGHT=p;
+  try { return await p; } finally { if(MLBD_MIRROR_FLIGHT===p)MLBD_MIRROR_FLIGHT=null; }
+}
+async function mlbdMirrorOnce(force) {
   // যাচাই-করা মিরর ৩ ঘণ্টা; শুধু-seed (WEAK) ১০ মিনিট — নইলে মৃত-বেস আটকে থাকত
   if (!force && MLBD_BASE && Date.now() - MLBD_BASE_TS < (MLBD_BASE_WEAK ? 10 * 60e3 : 3 * 3600e3)) return MLBD_BASE;
   for (const seed of MLBD_SEEDS) {
@@ -8785,7 +8806,8 @@ async function mlbdStreams(name, year, type, s, e, cap) {
   const left = () => Math.max(400, B - (Date.now() - T0));
   const hard = new Promise(r => setTimeout(() => r(null), B + 250));
   const work = (async () => {
-    let base = await mlbdMirror(); if (!base) { diag('mlbd', 'no-mirror-base'); return []; }
+    diag('mlbd','start queue='+JSON.stringify(MLBD_WL.stats()));
+    let base = await mlbdMirror(); diag('mlbd','mirror-ready @'+(Date.now()-T0)+'ms'); if (!base) { diag('mlbd', 'no-mirror-base'); return []; }
     const SE = parseInt(s, 10) || 1, EP = parseInt(e, 10) || 1;
     const ck = mlbdNorm(name) + '|' + (year || '') + '|' + type + (type === 'series' ? '|S' + SE + 'E' + EP : '');
     // ★ v1.27.14 (ইউজার: "thik season e thik ep dicche toh"): একই সিজন/টাইটেলের **একাধিক পোস্ট-পেজ**
@@ -17813,7 +17835,7 @@ const server = http.createServer((req, res) => {
       RT_INFLIGHT.set(kRT, pr);
       res = w;
     }
-    if (p === '/_health') { const _vf = [...VIDY_OK.values()].filter(v => v.ts && Date.now() - v.ts < Number(process.env.PXFRESH || 240000)).length; return sendJson(res, 200, { ok: 1, cg: CG_ST, cgDead: CG_DEAD.size, cgSrc: Object.fromEntries([...CG_SRC].map(([k, v]) => [k, { ok: v.ok, fail: v.fail, down: v.down > Date.now() ? Math.round((v.down - Date.now()) / 1000) : 0 }])), version: VERSION, cache: CACHE_ST, bg: BG_ST, pwhy: PART_WHY, up: Math.round(process.uptime()), deploy: 'v' + VERSION, mmpool: { size: MM_POOL.length, bench: MM_SITE.size, resolverFresh: [...MM_RESOLVE_OK.values()].filter(t => Date.now() - t < 600000).length, resolverChecks: MM_RESOLVE_BENCH_STATS, cooling: [...MM_COOL.values()].filter(t => t > Date.now()).length, race: MM_RACE_ST }, pool: POOL.length, pxbench: POOL.filter(c => PX_SITE.has(c.px)).length, pxbf: PX_BF.size, memo: memo.size, gw: (typeof GW !== 'undefined' ? GW.size : -1), nx: NEXBASE ? 1 : 0, nxpool: NXBENCH, nxwaves: NXWAVES, nxsize: NXSIZE, tw: TWBASE ? 1 : 0, rt: RTBASE ? 1 : 0, mls: (process.env.MLSD !== '0') ? 1 : 0, mlsindex: require('./tools/mls-index-lab/runtime_index').stats(), mlslinks: Object.assign({active:mlsLinkRaceActive}, MLS_LINK_METRICS), vsp: VSP_POOL.length, vy: VIDY_OK.size, vyfresh: _vf, vhg: (typeof VHG !== 'undefined' ? VHG : 0), pxpl: (typeof PXPL !== 'undefined' ? PXPL.size : 0), rtmq: RT_MQ_ST, dti: (typeof DT_IDX !== 'undefined' ? DT_IDX : 0), dtst: (typeof DT_ST !== 'undefined' ? DT_ST : 0), dtsh: (typeof DT_SH !== 'undefined' ? { on: DT_SH.on, src: DT_SH.src, pre: DT_SH.pre, loaded: DT_SH.loaded, hits: DT_SH.hits, miss: DT_SH.miss, cache: (typeof DT_SH_CACHE !== 'undefined' ? DT_SH_CACHE.size : 0), err: DT_SH.err, units: (DT_SH.man && DT_SH.man.units) || null, slugs: (DT_SH.man && DT_SH.man.slugs || []).length } : 0), lastreq: { el: LR.el, n: LR.total, pend: LR.pend, p: LR.path, sr: (LR.sr || []).map(x => x[0] + ':' + x[1] + '@' + x[2]) } }); } // v1.34.95, v1.34.105 // ★ v1.21.9: vy=verified vidy নোড, vyfresh=৪মিন-তাজা // v1.15.71: vsp=Vidsrc-পুল-আকার // v1.15.18: pxbench=সাইট-প্রমাণিত-বেঞ্চ (v1.15.8: nxpool=MB-বেঞ্চ)
+    if (p === '/_health') { const _vf = [...VIDY_OK.values()].filter(v => v.ts && Date.now() - v.ts < Number(process.env.PXFRESH || 240000)).length; return sendJson(res, 200, { ok: 1, cg: CG_ST, cgDead: CG_DEAD.size, cgSrc: Object.fromEntries([...CG_SRC].map(([k, v]) => [k, { ok: v.ok, fail: v.fail, down: v.down > Date.now() ? Math.round((v.down - Date.now()) / 1000) : 0 }])), version: VERSION, cache: CACHE_ST, bg: BG_ST, pwhy: PART_WHY, up: Math.round(process.uptime()), deploy: 'v' + VERSION, mmpool: { size: MM_POOL.length, bench: MM_SITE.size, resolverFresh: [...MM_RESOLVE_OK.values()].filter(t => Date.now() - t < 600000).length, resolverChecks: MM_RESOLVE_BENCH_STATS, cooling: [...MM_COOL.values()].filter(t => t > Date.now()).length, race: MM_RACE_ST }, pool: POOL.length, pxbench: POOL.filter(c => PX_SITE.has(c.px)).length, pxbf: PX_BF.size, memo: memo.size, gw: (typeof GW !== 'undefined' ? GW.size : -1), nx: NEXBASE ? 1 : 0, nxpool: NXBENCH, nxwaves: NXWAVES, nxsize: NXSIZE, tw: TWBASE ? 1 : 0, rt: RTBASE ? 1 : 0, mls: (process.env.MLSD !== '0') ? 1 : 0, mlsindex: require('./tools/mls-index-lab/runtime_index').stats(), mlslinks: Object.assign({active:mlsLinkRaceActive}, MLS_LINK_METRICS), mlbdRuntime: {queue:MLBD_WL.stats(),net:MLBD_NET_METRICS,mirrorReady:!!MLBD_BASE,mirrorFlight:!!MLBD_MIRROR_FLIGHT,mirrorBlocked:!!(MLBD_BASE && hostBad(MLBD_BASE))}, vsp: VSP_POOL.length, vy: VIDY_OK.size, vyfresh: _vf, vhg: (typeof VHG !== 'undefined' ? VHG : 0), pxpl: (typeof PXPL !== 'undefined' ? PXPL.size : 0), rtmq: RT_MQ_ST, dti: (typeof DT_IDX !== 'undefined' ? DT_IDX : 0), dtst: (typeof DT_ST !== 'undefined' ? DT_ST : 0), dtsh: (typeof DT_SH !== 'undefined' ? { on: DT_SH.on, src: DT_SH.src, pre: DT_SH.pre, loaded: DT_SH.loaded, hits: DT_SH.hits, miss: DT_SH.miss, cache: (typeof DT_SH_CACHE !== 'undefined' ? DT_SH_CACHE.size : 0), err: DT_SH.err, units: (DT_SH.man && DT_SH.man.units) || null, slugs: (DT_SH.man && DT_SH.man.slugs || []).length } : 0), lastreq: { el: LR.el, n: LR.total, pend: LR.pend, p: LR.path, sr: (LR.sr || []).map(x => x[0] + ':' + x[1] + '@' + x[2]) } }); } // v1.34.95, v1.34.105 // ★ v1.21.9: vy=verified vidy নোড, vyfresh=৪মিন-তাজা // v1.15.71: vsp=Vidsrc-পুল-আকার // v1.15.18: pxbench=সাইট-প্রমাণিত-বেঞ্চ (v1.15.8: nxpool=MB-বেঞ্চ)
     if (p === '/_mem') { /* ★ v1.28.1: মেমোরি-ডিয়াগনস্টিক — OOM-ক্ষতির কারন খুঁজতে (প্রমাণ: ব্যাটারি-চালাকালে node 896MB-তে kernel-OOM-kill) */
       const m = process.memoryUsage(); const sz = o => { try { return o instanceof Map ? o.size : (Array.isArray(o) ? o.length : -1); } catch (e) { return -1; } };
       // ★ v1.28.3-M4: সীমা + purge-পরিসংখ্যান (কতবার, কোন স্তরে) — প্রোডে "মেমরি ফুল" কেন, একনজরে
