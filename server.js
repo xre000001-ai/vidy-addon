@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.208';
+const VERSION = '1.34.209';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -3436,29 +3436,32 @@ function mlsRec(u, st, len, via) {
 // Link pages discovered through the index still need fresh resolution. Race a
 // direct curl with one general HTTP proxy; neither path changes MLSBD-site
 // confidence. Preserve the effective redirect URL for relative links.
-let mlsLinkRaceActive = 0;
+let mlsLinkRaceActive = 0, mlsLinkTurn = 0;
+const MLS_LINK_METRICS = {races:0,slotSkipped:0,directOk:0,proxyOk:0,directFail:0,proxyFail:0};
 async function mlsIndexedLinkRace(u, opt) {
   const host = mlsHost(u);
   if (opt.proxy || opt.json) return null; // explicit/IP-bound sessions use their existing path
   if (!/(^|\.)(savelinks\.me|joya9links\.com|(?:gdflix|ddflix|gdlink)\.[a-z.]+|gdxfiles\.com|(?:multicloudlinks|multidownload|fsldownload)\.[a-z.]+)$/i.test(host)) return null;
-  if (mlsLinkRaceActive >= Number(process.env.MLSLINKRACEMAX || 8)) return null;
+  if (mlsLinkRaceActive >= Number(process.env.MLSLINKRACEMAX || 8)) { MLS_LINK_METRICS.slotSkipped++; return null; }
   const key = 'mlslink:' + host, now = Date.now();
-  const explicit = opt.proxy ? (Array.isArray(opt.proxy) ? opt.proxy : [opt.proxy]) : [];
-  const cand = [...new Set(explicit.concat(pxsPick(key, 12), mlsPxFor(host)))];
   const state = PXS.get(key);
-  const proxies = cand.filter(p => p && !((state && state.m.get(p) || {}).ban > now)).slice(0, 2);
+  const proxies = require('./tools/mls-index-lab/link_proxy_select').select({
+    ranked:pxsPick(key, 12), extra:mlsPxFor(host), entries:state && state.m,
+    now, turn:mlsLinkTurn++, count:2
+  });
   const time = Math.max(1500, Math.min(3500, opt.ms || 3500));
   const valid = r => {
     const b = String(r && r.body || '');
     return r && r.st >= 200 && r.st < 400 && b.length >= 200 && !/Just a moment|Enable JavaScript and cookies|_cf_chl_opt|cf-error-details/i.test(b.slice(0, 4000)) && /<html|<!doctype|<title|streamSrc|<form|href\s*=/i.test(b);
   };
-  mlsLinkRaceActive++;
+  mlsLinkRaceActive++; MLS_LINK_METRICS.races++;
   try {
     const go = async p => {
       const t = Date.now();
       const r = await mlsCurl(u, {ms:time, json:!!opt.json, referer:opt.referer, proxy:p || undefined}).catch(() => null);
       const ok = valid(r) && (typeof opt.accept !== 'function' || !!opt.accept(String(r.body || ''),r.eu || u));
-      if (p) pxsRec(key, p, ok, Date.now() - t);
+      if (p) { pxsRec(key, p, ok, Date.now() - t); MLS_LINK_METRICS[ok?'proxyOk':'proxyFail']++; }
+      else MLS_LINK_METRICS[ok?'directOk':'directFail']++;
       if (!ok) throw new Error('invalid-or-unexpected-link-page');
       mlsRec(u, r.st, r.body.length, p ? 'link-proxy' : 'link-direct');
       return {st:r.st, body:r.body, url:r.eu || u, via:p ? 'link-proxy' : 'link-direct', px:p || undefined};
@@ -17754,7 +17757,7 @@ const server = http.createServer((req, res) => {
       RT_INFLIGHT.set(kRT, pr);
       res = w;
     }
-    if (p === '/_health') { const _vf = [...VIDY_OK.values()].filter(v => v.ts && Date.now() - v.ts < Number(process.env.PXFRESH || 240000)).length; return sendJson(res, 200, { ok: 1, cg: CG_ST, cgDead: CG_DEAD.size, cgSrc: Object.fromEntries([...CG_SRC].map(([k, v]) => [k, { ok: v.ok, fail: v.fail, down: v.down > Date.now() ? Math.round((v.down - Date.now()) / 1000) : 0 }])), version: VERSION, cache: CACHE_ST, bg: BG_ST, pwhy: PART_WHY, up: Math.round(process.uptime()), deploy: 'v' + VERSION, mmpool: { size: MM_POOL.length, bench: MM_SITE.size, resolverFresh: [...MM_RESOLVE_OK.values()].filter(t => Date.now() - t < 600000).length, resolverChecks: MM_RESOLVE_BENCH_STATS, cooling: [...MM_COOL.values()].filter(t => t > Date.now()).length, race: MM_RACE_ST }, pool: POOL.length, pxbench: POOL.filter(c => PX_SITE.has(c.px)).length, pxbf: PX_BF.size, memo: memo.size, gw: (typeof GW !== 'undefined' ? GW.size : -1), nx: NEXBASE ? 1 : 0, nxpool: NXBENCH, nxwaves: NXWAVES, nxsize: NXSIZE, tw: TWBASE ? 1 : 0, rt: RTBASE ? 1 : 0, mls: (process.env.MLSD !== '0') ? 1 : 0, mlsindex: require('./tools/mls-index-lab/runtime_index').stats(), vsp: VSP_POOL.length, vy: VIDY_OK.size, vyfresh: _vf, vhg: (typeof VHG !== 'undefined' ? VHG : 0), pxpl: (typeof PXPL !== 'undefined' ? PXPL.size : 0), rtmq: RT_MQ_ST, dti: (typeof DT_IDX !== 'undefined' ? DT_IDX : 0), dtst: (typeof DT_ST !== 'undefined' ? DT_ST : 0), dtsh: (typeof DT_SH !== 'undefined' ? { on: DT_SH.on, src: DT_SH.src, pre: DT_SH.pre, loaded: DT_SH.loaded, hits: DT_SH.hits, miss: DT_SH.miss, cache: (typeof DT_SH_CACHE !== 'undefined' ? DT_SH_CACHE.size : 0), err: DT_SH.err, units: (DT_SH.man && DT_SH.man.units) || null, slugs: (DT_SH.man && DT_SH.man.slugs || []).length } : 0), lastreq: { el: LR.el, n: LR.total, pend: LR.pend, p: LR.path, sr: (LR.sr || []).map(x => x[0] + ':' + x[1] + '@' + x[2]) } }); } // v1.34.95, v1.34.105 // ★ v1.21.9: vy=verified vidy নোড, vyfresh=৪মিন-তাজা // v1.15.71: vsp=Vidsrc-পুল-আকার // v1.15.18: pxbench=সাইট-প্রমাণিত-বেঞ্চ (v1.15.8: nxpool=MB-বেঞ্চ)
+    if (p === '/_health') { const _vf = [...VIDY_OK.values()].filter(v => v.ts && Date.now() - v.ts < Number(process.env.PXFRESH || 240000)).length; return sendJson(res, 200, { ok: 1, cg: CG_ST, cgDead: CG_DEAD.size, cgSrc: Object.fromEntries([...CG_SRC].map(([k, v]) => [k, { ok: v.ok, fail: v.fail, down: v.down > Date.now() ? Math.round((v.down - Date.now()) / 1000) : 0 }])), version: VERSION, cache: CACHE_ST, bg: BG_ST, pwhy: PART_WHY, up: Math.round(process.uptime()), deploy: 'v' + VERSION, mmpool: { size: MM_POOL.length, bench: MM_SITE.size, resolverFresh: [...MM_RESOLVE_OK.values()].filter(t => Date.now() - t < 600000).length, resolverChecks: MM_RESOLVE_BENCH_STATS, cooling: [...MM_COOL.values()].filter(t => t > Date.now()).length, race: MM_RACE_ST }, pool: POOL.length, pxbench: POOL.filter(c => PX_SITE.has(c.px)).length, pxbf: PX_BF.size, memo: memo.size, gw: (typeof GW !== 'undefined' ? GW.size : -1), nx: NEXBASE ? 1 : 0, nxpool: NXBENCH, nxwaves: NXWAVES, nxsize: NXSIZE, tw: TWBASE ? 1 : 0, rt: RTBASE ? 1 : 0, mls: (process.env.MLSD !== '0') ? 1 : 0, mlsindex: require('./tools/mls-index-lab/runtime_index').stats(), mlslinks: Object.assign({active:mlsLinkRaceActive}, MLS_LINK_METRICS), vsp: VSP_POOL.length, vy: VIDY_OK.size, vyfresh: _vf, vhg: (typeof VHG !== 'undefined' ? VHG : 0), pxpl: (typeof PXPL !== 'undefined' ? PXPL.size : 0), rtmq: RT_MQ_ST, dti: (typeof DT_IDX !== 'undefined' ? DT_IDX : 0), dtst: (typeof DT_ST !== 'undefined' ? DT_ST : 0), dtsh: (typeof DT_SH !== 'undefined' ? { on: DT_SH.on, src: DT_SH.src, pre: DT_SH.pre, loaded: DT_SH.loaded, hits: DT_SH.hits, miss: DT_SH.miss, cache: (typeof DT_SH_CACHE !== 'undefined' ? DT_SH_CACHE.size : 0), err: DT_SH.err, units: (DT_SH.man && DT_SH.man.units) || null, slugs: (DT_SH.man && DT_SH.man.slugs || []).length } : 0), lastreq: { el: LR.el, n: LR.total, pend: LR.pend, p: LR.path, sr: (LR.sr || []).map(x => x[0] + ':' + x[1] + '@' + x[2]) } }); } // v1.34.95, v1.34.105 // ★ v1.21.9: vy=verified vidy নোড, vyfresh=৪মিন-তাজা // v1.15.71: vsp=Vidsrc-পুল-আকার // v1.15.18: pxbench=সাইট-প্রমাণিত-বেঞ্চ (v1.15.8: nxpool=MB-বেঞ্চ)
     if (p === '/_mem') { /* ★ v1.28.1: মেমোরি-ডিয়াগনস্টিক — OOM-ক্ষতির কারন খুঁজতে (প্রমাণ: ব্যাটারি-চালাকালে node 896MB-তে kernel-OOM-kill) */
       const m = process.memoryUsage(); const sz = o => { try { return o instanceof Map ? o.size : (Array.isArray(o) ? o.length : -1); } catch (e) { return -1; } };
       // ★ v1.28.3-M4: সীমা + purge-পরিসংখ্যান (কতবার, কোন স্তরে) — প্রোডে "মেমরি ফুল" কেন, একনজরে

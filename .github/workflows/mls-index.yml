@@ -65,6 +65,7 @@ jobs:
           node test-multicloud-pixel.cjs
           node test-link-page-proxy-race.cjs
           node test-link-proxy-fallback.cjs
+          node test-link-proxy-select.cjs
           node test-gd-session-proxy.cjs
           node test-gd-foreground-queue.cjs
           node test-gd-index-race.cjs
