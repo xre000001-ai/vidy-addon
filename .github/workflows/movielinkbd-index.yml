@@ -1,0 +1,70 @@
+name: MovieLinkBD reference index
+on:
+  push:
+    branches: [main]
+    paths: [".github/workflows/movielinkbd-index.yml", "tools/mlbd-index/**"]
+  workflow_dispatch:
+  schedule:
+    - cron: '11 * * * *'
+permissions:
+  contents: write
+concurrency:
+  group: movielinkbd-reference-index
+  cancel-in-progress: false
+jobs:
+  index:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install requests
+      - name: Test index builder
+        run: python -m unittest -v tools/mlbd-index/test_basic.py
+      - name: Restore latest database
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/mlbd-index
+          set +e
+          git ls-remote --exit-code --heads origin movielinkbd-index-data > /tmp/mlbd-index/ref
+          rc=$?
+          set -e
+          if [ "$rc" = 0 ]; then
+            git fetch --no-tags origin refs/heads/movielinkbd-index-data
+            git rev-parse FETCH_HEAD > /tmp/mlbd-index/old-sha
+            git show FETCH_HEAD:store.sqlite > /tmp/mlbd-index/store.sqlite
+            python -c "import sqlite3; d=sqlite3.connect('/tmp/mlbd-index/store.sqlite'); assert d.execute('pragma integrity_check').fetchone()[0]=='ok'"
+          elif [ "$rc" != 2 ]; then
+            echo 'Cannot verify old data branch; refusing to overwrite' >&2; exit 1
+          fi
+      - name: Discover and backfill references
+        run: |
+          set -euo pipefail
+          python tools/mlbd-index/init.py /tmp/mlbd-index/store.sqlite
+          python -u tools/mlbd-index/discover.py /tmp/mlbd-index/store.sqlite
+          python -u tools/mlbd-index/backfill.py --db /tmp/mlbd-index/store.sqlite --limit 180 --delay 1.5
+      - name: Validate and summarize
+        run: |
+          python - <<'PY'
+          import sqlite3,json,datetime
+          d=sqlite3.connect('/tmp/mlbd-index/store.sqlite')
+          assert d.execute('pragma integrity_check').fetchone()[0]=='ok'
+          assert not d.execute("select count(*) from server_refs where url like '%?%' or url not like '/file/%' and url not like 'https://hubcloud.%/drive/%' and url not like 'https://instantcloud.org/file/%'").fetchone()[0]
+          tables=['posts','refs','episode_refs','server_refs']
+          o={'status':'experimental-incomplete', 'generated_utc':datetime.datetime.now(datetime.timezone.utc).isoformat(), 'counts':{t:d.execute('select count(*) from '+t).fetchone()[0] for t in tables}, 'title_jobs':dict(d.execute('select state,count(*) from jobs group by state')), 'file_jobs':dict(d.execute('select state,count(*) from file_jobs group by state')), 'state':dict(d.execute('select key,value from state'))}
+          print(json.dumps(o,indent=2));open('/tmp/mlbd-index/status.json','w').write(json.dumps(o,indent=2))
+          PY
+      - name: Publish isolated data branch
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git switch --orphan movielinkbd-index-data
+          git rm -rf . >/dev/null 2>&1 || true
+          cp /tmp/mlbd-index/store.sqlite /tmp/mlbd-index/status.json .
+          git add store.sqlite status.json
+          git commit -m 'MovieLinkBD incremental reference snapshot'
+          old_sha=$(cat /tmp/mlbd-index/old-sha 2>/dev/null || true)
+          git push --force-with-lease=refs/heads/movielinkbd-index-data:"$old_sha" origin HEAD:movielinkbd-index-data
