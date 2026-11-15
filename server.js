@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.174';
+const VERSION = '1.34.175';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -806,7 +806,7 @@ function mmScore(px, bootMs) { // v1.15.29 revise: the MM pool's OWN score (mmSc
 function mmValidBody(url, body) {
   const text = String(body || '').trimStart();
   if (!text || /^<(?:!doctype|html)/i.test(text)) return false;
-  if (/\/api\/resolve(?:[?#]|$)/i.test(url)) {
+  if (/\/api\/(?:resolve|source\/\d+)(?:[?#]|$)/i.test(url)) {
     try { const j = JSON.parse(text); return !!j && typeof j === 'object' && !Array.isArray(j); } catch (_) { return false; }
   }
   return /^#EXTM3U(?:\s|$)/i.test(text);
@@ -2775,7 +2775,7 @@ process.on('unhandledRejection', e => { if (DBG) console.error('[urej] ' + Strin
 process.on('uncaughtException', e => { try { diag('crash', 'uncaught: ' + String((e && (e.stack || e.message)) || e).slice(0, 170)); } catch (_) { } if (DBG) console.error('[ucex] ' + String((e && (e.stack || e.message)) || e).slice(0, 160)); }); // v1.15.6 রাউন্ড-৪৩: স্ট্রে-promise-রিজেকশন-এ-প্রসেস-মরা-বন্ধ (Node-১৫+ ডিফল্ট-ক্র্যাশ) — লগ-অনলি, পরিষেবা-চলতে-থাকে
 // v1.11.8: NEXBASE-বাইরে-থেকে-দেওয়া-যায়; না-দিলে-ভেন্ডর-করা-MovieBox(nethex)-চাইল্ড-নিজেই-বুট-হয় (এক-অ্যাপ-ডিপ্লয়)
 let NEXBASE = (process.env.NEXBASE || '').replace(/\/$/, '');
-const NXDEADLINE = Math.max(Number(process.env.NXDEADLINE || 0), 22000);   // ★ v1.34.174: slow-মোডে _cap0=২৫সে, uniLeft0-এ Math.min(Math.max(NXDEADLINE,_cap0), _cap0)
+const NXDEADLINE = Math.max(Number(process.env.NXDEADLINE || 0), 22000);   // ★ v1.34.175: slow-মোডে _cap0=২৫সে, uniLeft0-এ Math.min(Math.max(NXDEADLINE,_cap0), _cap0)
 // ★ v1.34.132 (মাপা-বাগ): /stream-এর আউটার deadline আগে 11.5s ছিল — Beamup edge ~12s-এ নিজেই HTML 504 দেয়
 //   (prod-এ Odyssey-তে 12.47s → `error code: 504`, ইউজার কার্ডের বদলে এরর-পেজ পেত)। এখন 10.4s (env `SDL`),
 //   তারপর ~০.৮সে পোস্ট-প্রসেসিং ধরে সবসময় ≤11.2s — কার্ড হারানোর চেয়ে আগে উত্তর-নিশ্চিত।
@@ -7259,7 +7259,7 @@ async function hmStreamsRaw(tmdbId, title, type, s, e, origin, maxh) {
       const r1 = await hmText(HMB + '/wp-json/wp/v2/search?search=' + encodeURIComponent(T) + '&per_page=5', rq);
       if (!(r1.t && r1.st < 400)) diag('hm', 'rest st=' + r1.st + ' bytes=' + (r1.t || '').length);
       try { const a = JSON.parse(r1.t); if (Array.isArray(a)) posts = a.map(x => String(x.url || '')).filter(u => /^https:\/\/(?:[a-z0-9-]+\.)?hindmovie\.[a-z]{2,6}\/[a-z0-9][a-z0-9\-]*\/?$/i.test(u));
-        diag('hm', 'rest n=' + (Array.isArray(a) ? a.length : -1) + ' kept=' + (posts ? posts.length : -1) + ' raw=' + (Array.isArray(a) && a[0] ? String(a[0].url).slice(0, 60) : ''));   // ★ v1.34.174 ডায়াগনস্টিক
+        diag('hm', 'rest n=' + (Array.isArray(a) ? a.length : -1) + ' kept=' + (posts ? posts.length : -1) + ' raw=' + (Array.isArray(a) && a[0] ? String(a[0].url).slice(0, 60) : ''));   // ★ v1.34.175 ডায়াগনস্টিক
       } catch (eD) { diag('hm', 'rest-parse-fail ' + String(eD && eD.message).slice(0, 40)); }
       if (!posts || !posts.length) {
         const r2 = await hmText(HMB + '/?s=' + encodeURIComponent(T), Math.min(4300, Math.max(rq, left())));
@@ -7368,13 +7368,38 @@ async function hmStreamsRaw(tmdbId, title, type, s, e, origin, maxh) {
   } catch (e2) { diag('hm', 'THROW ' + String(e2 && e2.message).slice(0, 90)); if (DBG) console.error('[hm] ERR ' + String(e2 && e2.message).slice(0, 60)); return []; }
 }
 
+// VidBolt's Orion provider exposes its own resolver. Use it independently of
+// the rotating /api/resolve response, without fabricating language tracks.
+async function mmOrionMovie(tmdbId, origin, ms) {
+  if (!/^\d+$/.test(String(tmdbId || ''))) return [];
+  const key = '0f461eaa465bb2a7acd037425217f2f209ef540a3171e1ac';
+  const url = 'https://api.movy.lol/api/source/' + tmdbId + '?api_key=' + key + '&apikey=' + key;
+  const timeout = Math.max(500, Math.min(4500, ms || 4500));
+  const valid = text => { try { const j = JSON.parse(String(text || '')); return Array.isArray(j.sources) && j.sources.some(s => s && mmRousav(s.url)); } catch (_) { return false; } };
+  const headers = { 'User-Agent': UA, Referer: VB_REF, Origin: 'https://vidbolt.xyz', Accept: 'application/json' };
+  try {
+    const direct = fetch(url, { headers, signal: AbortSignal.timeout(timeout) }).then(r => r.ok ? r.text() : '').then(t => { if (!valid(t)) throw Error('orion-invalid'); return t; });
+    const own = mmRacePool(url, 6, timeout, valid).then(r => r.body);
+    const shared = racePool(url, 5, timeout, 'mm-orion', valid, headers).then(r => r.body);
+    const json = JSON.parse(await Promise.any([direct, own, shared]));
+    const results = await Promise.all(json.sources.filter(x => x && mmRousav(x.url)).slice(0, 4).map(async x => {
+      const master = await mmPoolText(x.url, Math.min(3000, timeout));
+      if (!master || !/#EXT-X-STREAM-INF/i.test(master)) return [];
+      const subs = mmNativeSubs(master, x.url, origin);
+      const auto = { h: 0, url: x.url, ref: VB_REF, mp4: 0, lang: '', aud: '', mini: 0, subtitles: subs };
+      return [auto, ...mmExpandMaster(master, x.url, VB_REF, '').map(v => Object.assign(v, { subtitles: subs }))];
+    }));
+    return results.flat();
+  } catch (_) { return []; }
+}
 async function mmStreams(tmdbId, title, type, s, e, origin, maxh, rel) { // v1.15.54: rel=MM-মিডিয়া-সার্ভার-রিলে // v1.15.28: Multimovies source — vidout index + vidbolt resolve; origin: mini-master URLs; maxh: MM-রেজোলিউশন-ছাঁকনি (v1.15.39, 0=সব)
   if (!tmdbId) return [];
   const t3 = Date.now(); const WOB = 7000; const left = () => Math.max(300, WOB - (Date.now() - t3)); // v1.17.47: ৮.২সে ক্যাপের ভিতরে সেটেল
   try {
     const isSeries = type === 'series';
     const u = isSeries ? (WOBASE + '/hls/tv/' + tmdbId + '/S' + (parseInt(s, 10) || 1) + '.json') : (WOBASE + '/hls/movie/' + tmdbId);
-    const vbP = mmVidbolt(tmdbId, isSeries, s, e, left(), origin).catch(() => []); // parallel — index present or not
+    const vbP = mmVidbolt(tmdbId, isSeries, s, e, left(), origin).catch(() => []);
+    const orionP = isSeries ? Promise.resolve([]) : mmOrionMovie(tmdbId, origin, left()).catch(() => []); // parallel — index present or not
     const subsP = woSubs(tmdbId, type, s, e, 2500).catch(() => []); // v1.15.99: সমান্তরালে সাবটাইটেল ফেচ (শেষে ব্লক না করা)
     const idxTxt = await mmFetchIndex(u, isSeries, e, left());
     let servers = [];
@@ -7398,6 +7423,7 @@ async function mmStreams(tmdbId, title, type, s, e, origin, maxh, rel) { // v1.1
       }
     }
     try { const vbl = await vbP; for (const v of (vbl || [])) { if (!v || !v.url) continue; const vk2 = v.url + '|' + (v.h | 0) + (v.mini ? 'm' : '') + '|' + (v.alang || ''); if (seen.has(vk2)) continue; seen.add(vk2); raws.push(v); } } catch { } // vidbolt merge — dedup per url+height so per-quality minis all survive
+    try { for (const v of await orionP) { const k = v.url + '|' + (v.h | 0) + (v.mini ? 'm' : '') + '|' + (v.alang || ''); if (!seen.has(k)) { seen.add(k); raws.push(v); } } } catch (_) {}
     if (DBG) console.error('[mm] ' + tmdbId + '/' + (isSeries ? 'S' + (s || 1) + 'E' + (e || 1) : 'movie') + ' servers=' + servers.length + ' variants=' + raws.length + ' @' + (Date.now() - t3) + 'ms');
     const fvars = maxh ? raws.filter(x => !x.h || x.h <= maxh) : raws; // v1.15.39: config-রেজোলিউশন-ফিল্টার — অজানা-উচ্চতা (0) সবসময়-থাকে
     const vars = fvars.slice().sort((a, b) => b.h - a.h); // v1.15.51: 12→16 // v1.15.88: 16→20 (কোয়ালিটি×ভাষা মেট্রিক্স — ১৬-এ ৪৮০p-সারি কেটে যেত) // v1.15.91: ২০ → ৬০ (১৩ ভাষা × ৩-৪ কোয়ালিটি = ৩৯-৫২ কার্ড ধরা পড়ুক)
@@ -14771,9 +14797,9 @@ async function withSources(cardsP, srcs, cfg, t0, mkey, lookupP) {
     const BGX = !!(cfg && cfg.__bg);
     const SLOWX = !!(cfg && cfg.__slow);   // ★ v1.34.171: ধীর-সোর্স (RareToons ~২০সে) ⇒ লম্বা উইন্ডো
     const SPAT_MS = BGX ? (SLOWX ? 26000 : 11000) : Number(process.env.SPAT || 4200);
-    const LONGX = BGX || SLOWX;   // ★ v1.34.174: bg **বা** slow — দুটোতেই তাড়াতাড়ি-কাট বন্ধ
-    const EARLY_MS = LONGX ? 99999 : Number(process.env.VEARLY || 8000), EARLY_N = LONGX ? 1e9 : Number(process.env.VEARLYN || 60);   // ★ v1.34.149 / v1.34.174
-    const VDIM_MS = LONGX ? 99999 : Number(process.env.VDIM || 8200);   // ★ v1.34.174
+    const LONGX = BGX || SLOWX;   // ★ v1.34.175: bg **বা** slow — দুটোতেই তাড়াতাড়ি-কাট বন্ধ
+    const EARLY_MS = LONGX ? 99999 : Number(process.env.VEARLY || 8000), EARLY_N = LONGX ? 1e9 : Number(process.env.VEARLYN || 60);   // ★ v1.34.149 / v1.34.175
+    const VDIM_MS = LONGX ? 99999 : Number(process.env.VDIM || 8200);   // ★ v1.34.175
     const _isProd = k => { if (k === 'mls') return true; const e = SRC_STATS.get(k); return !e || e.calls < 2 || e.cards > 0; };
     // ★★ v1.34.158 (প্রোড `/_srcstats` প্রমাণ): **সাম্প্রতিক** উর্বরতা ধরতে হবে, আজীবন-মোট নয় —
     //   `mlb`-এর মোট ৩ কার্ড কিন্তু **১৪ বার পরপর ০**, `rt` ৬-বার ০, `tw` ২-বার ০; ওরা
@@ -14817,7 +14843,7 @@ async function withSources(cardsP, srcs, cfg, t0, mkey, lookupP) {
       if (cutFlag) return;
       const el2 = Date.now() - t0;
       const _hc = SLOWX ? Number(process.env.SCUTSLOW || 25000)
-        : (BGX ? Math.min(Number(process.env.SCUTBG || 11000), HARD_CAP_MS + Math.min(_LK.ms, 1500)) : Math.min(Number(process.env.SCUT || 9500), HARD_CAP_MS + Math.min(_LK.ms, 1500)));   // ★ v1.34.174: slow-মোডে VCAP-ও ডিঙায়   // ★ v1.26.3: লুকআপ-সময়সহ (লাইভ)
+        : (BGX ? Math.min(Number(process.env.SCUTBG || 11000), HARD_CAP_MS + Math.min(_LK.ms, 1500)) : Math.min(Number(process.env.SCUT || 9500), HARD_CAP_MS + Math.min(_LK.ms, 1500)));   // ★ v1.34.175: slow-মোডে VCAP-ও ডিঙায়   // ★ v1.26.3: লুকআপ-সময়সহ (লাইভ)
       if (el2 >= _hc) { cutFlag = true; timedCut = true; try { fireCut(true); } catch (e) { } } // ক্যাপ: যা এসেছে তাই
       if (cutFlag && DBG) console.error('[cut] el=' + el2 + ' lit=' + lit + ' settled=' + settled + '/' + live.length + ' reason=' + (el2 >= _hc ? 'hard' : (el2 >= EARLY_MS && lit >= EARLY_N ? 'early' : (el2 >= Number(process.env.VDIM || 9500) && settled >= Math.ceil(live.length * Number(process.env.VDIMR || 0.7)) ? 'dim' : 'other'))));
       else if (el2 >= MIN_WAIT_MS && settled >= live.length) { cutFlag = true; try { fireCut(true); } catch (e) { } } // সব সেটেল → আর অপেক্ষা নয়
@@ -14829,7 +14855,7 @@ async function withSources(cardsP, srcs, cfg, t0, mkey, lookupP) {
       //   ইতিমধ্যেই ৯৪–১০০% ধরছে; তবু দেরি হচ্ছিল কেবল ধীর-উর্বর সোর্সের জন্য অপেক্ষায়)।
       //   এখন **যথেষ্ট-হয়ে-গেলে-থামো**: `EPROD` (৫.২সে) পেরোলে ও `EPN` (২২) কার্ড হয়ে গেলে আর অপেক্ষা নয় —
       //   বাকিটা ব্যাকগ্রাউন্ড-হারভেস্ট/রিফ্রেশে যোগ হয় (monotonic) ⇒ প্রথম ট্যাপ দ্রুত, তালিকা অসম্পূর্ণ নয়।
-      else if (process.env.SOURCE_EARLY === '1' && !LONGX && el2 >= Number(process.env.EPROD || 8400) && lit >= Number(process.env.EPN || 40)) { cutFlag = true; timedCut = true; try { fireCut(true); } catch (e) { } }   // ★ v1.34.174: bg/slow-এ এই কাট ছিল না — তাই ৮সে-এ ফিরত
+      else if (process.env.SOURCE_EARLY === '1' && !LONGX && el2 >= Number(process.env.EPROD || 8400) && lit >= Number(process.env.EPN || 40)) { cutFlag = true; timedCut = true; try { fireCut(true); } catch (e) { } }   // ★ v1.34.175: bg/slow-এ এই কাট ছিল না — তাই ৮সে-এ ফিরত
       // ★★ v1.34.149: **কম-লাভের-সীমা** — মাপা: বেশ কিছু সোর্স ৭–৮.৪সে নিয়ে **০ কার্ড** দেয় (rt/mlb/nx/mm/m4u/sky/hm/hd/mls)
       //   অথচ তারাই পুরো উত্তর ৭.৪সে-তে টেনে ধরে। এখন ৭০% সোর্স সেটেল হলে বাকিদের জন্য অপেক্ষা করি না।
       else if (process.env.SOURCE_EARLY === '1' && el2 >= VDIM_MS && settled >= Math.ceil(live.length * Number(process.env.VDIMR || 0.7)) && !_runningProd()) { cutFlag = true; timedCut = true; try { fireCut(true); } catch (e) { } }
@@ -14844,20 +14870,20 @@ async function withSources(cardsP, srcs, cfg, t0, mkey, lookupP) {
     // ★★ v1.33.0: **সব সোর্স = একই ১২সে ঘর** (ইউজার-নির্দেশ)। এক সোর্সের ছোট ক্যাপ আর নেই।
     const SRC_CAP_ALL = Number(process.env.SCAP || 12000);
     const SRC_CAP_MAP = Object.fromEntries(Object.keys(SRC_CAP_DEF).map(k => [k, SRC_CAP_ALL]));   // v1.27.19: hm 8200-race + mlb 8200-বাজেটের জন্য ক্যাপ বাড়ানো // v1.26.1: toonworld-এর রেজলভারই ৭.৫সে নেয় (মাপা) — ৮.৫সে-ক্যাপে ওটা সবসময় কাটা পড়ত // ★ v1.22.3: prod-মাপা — এই সোর্সগুলো prod-এ ৭-৮সে নেয়, আগের ক্যাপে তারা সবসময় 'cut' হতো
-    const _capSlow = SLOWX ? Number(process.env.SCUTSLOW || 25000) : 0;   // ★ v1.34.174: slow-মোডে per-source ক্যাপও খুলে যায়
+    const _capSlow = SLOWX ? Number(process.env.SCUTSLOW || 25000) : 0;   // ★ v1.34.175: slow-মোডে per-source ক্যাপও খুলে যায়
     const SRC_CAP_MS = Number(process.env.VSCAP || 9500)   /* ★ v1.34.157: ৭২০০ → SCUT-সমান (নাহলে প্রতি-সোর্স ৭.২সে-তেই কাটা পড়ত, mls-এর নিজস্ব বাজেট ১০.৮সে হওয়ায় সে কখনোই সুযোগ পেত না) */;   // ★ v1.34.140: 12000 → 9200 (SDL-এর ভিতরে)   // ★ v1.33.0: ৪৬০০ → ১২০০০ (ইউজার: হার্ড-ক্যাপ ১২সে) // ★ v1.32.0: 5200→4600 (লক্ষ্য ≈৫সে) // v1.17.58: 9.3s-cap-e prod-e 10.2-10.6s hoi (edge-er kache) // ★ v1.17.52: প্রতি-সোর্স-ক্যাপ — একটি ঝুলন্ত সোর্স (ott/tw/nx) পুরো তালিকাকে ক্যাপে টেনে নিত
     const track = x => { // ★ v1.17.52: টাইমার ক্লিয়ার হয় — নইলে সেটেল হওয়া সোর্সের জন্যও ভুল '[srccap]' ছাপ পড়ত
       let _tm = null;
       // ★ v1.26.3 (আগের ফিক্সটা ভুল ছিল — লগ-প্রমাণ: `[srccap]` সবসময় base মানে ফায়ার করত):
       //   `_LK.ms` মাইক্রোটাস্কে সেট হয়, আর ক্যাপের মান ৪০–৬০ms পর **ফায়ার করার সময়** পড়া হয়।
-      let _base = _capSlow || Math.min(SRC_CAP_MS, SRC_CAP_MAP[x.key] || SRC_CAP_MS);   // ★ v1.34.174
+      let _base = _capSlow || Math.min(SRC_CAP_MS, SRC_CAP_MAP[x.key] || SRC_CAP_MS);   // ★ v1.34.175
       let _deadKey = false;
       // ★ v1.34.159 (প্রোড `/_srcstats`: hm ০/১৫ @৭.৭সে · mls ০/১৫ @৬.৯সে · hd ০/১৫ @৩.৪সে):
       //   টানা ≥৬ কল শূন্য-কার্ড সোর্স foreground-এ পুরো বাজেট খায় ⇒ ছোট ক্যাপ; bg-তে পূর্ণ সুযোগ থাকে।
       try { const _e = SRC_STATS.get(x.key); if (process.env.SOURCE_DEADCAP === '1' && x.key !== 'mls' && x.key !== 'hd' && !(BGX || SLOWX) && _e && _e.calls >= 6 && !_e.cards && (_e.streak0 || 0) >= Number(process.env.DEADCAPN || 6)) { _base = Math.min(_base, Number(process.env.DEADCAP || 4500)); _deadKey = true; } } catch (eD) { }
       const base = srcCapFor(x.key, _base);
       const capP = new Promise(r => { _tm = setInterval(() => {
-        const lim = _capSlow || Math.min(BGX ? Number(process.env.SCUTBG || 11000) : Number(process.env.SCUT || 9500), base + _LK.ms);   // ★ v1.34.174: slow-মোডে পূর্ণ বাজেট
+        const lim = _capSlow || Math.min(BGX ? Number(process.env.SCUTBG || 11000) : Number(process.env.SCUT || 9500), base + _LK.ms);   // ★ v1.34.175: slow-মোডে পূর্ণ বাজেট
         if (Date.now() - t0 >= lim) { clearInterval(_tm);
           // ★★ v1.34.163: **মৃত-সোর্সের ক্যাপ ⇒ risultati partial নয়** — নাহলে প্রতিটি উত্তর
           //   `$partial` হতো (কারণ hd/hm/mlb/rt সবসময় ক্যাপ হয়) ⇒ ক্যাশ ১৮০সে + প্রতি ট্যাপে
@@ -14877,12 +14903,12 @@ async function withSources(cardsP, srcs, cfg, t0, mkey, lookupP) {
       }, () => { clearInterval(_tm); errFlag = true; settled++; _doneSet.add(x.key); if (DBG) console.error('[srcsettle] ' + x.key + ' ERR @' + (Date.now() - t0) + 'ms (' + settled + '/' + live.length + ')'); return null; });
     };
     LR = { at: Date.now(), path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ-রিকোয়েস্টের ডায়াগনস্টিক
-    /* ★★★ v1.34.174 (মূল-আবিষ্কার): এই একটি লাইনই "সব স্ট্রিম পাই না"-র আসল যন্ত্র —
+    /* ★★★ v1.34.175 (মূল-আবিষ্কার): এই একটি লাইনই "সব স্ট্রিম পাই না"-র আসল যন্ত্র —
        সব সোর্সের উপরের সীমা এখানে **SCUT (৮.৪সে)** দিয়ে বাঁধা ছিল, bg/slow-মোডে (১১সে/২৫সে) যা
        কখনো বাড়ত না ⇒ `outsP` ৮.৪সে-তে সব সোর্সকে null করে দিত, আর mlb (১৮সে)/hm (১৩.৬সে)/
        mls (১৪সে)/rt (২০সে) কখনোই ক্যাশে পৌঁছাত না। এখন মোড-অনুযায়ী সীমা। */
     const _cap0 = SLOWX ? Number(process.env.SCUTSLOW || 25000) : (BGX ? Number(process.env.SCUTBG || 11000) : Number(process.env.SCUT || 9500));
-    const uniLeft0 = Math.max(0, Math.min(Math.max(NXDEADLINE, _cap0), _cap0) + _LK.ms - (Date.now() - t0)); // ★ v1.34.174
+    const uniLeft0 = Math.max(0, Math.min(Math.max(NXDEADLINE, _cap0), _cap0) + _LK.ms - (Date.now() - t0)); // ★ v1.34.175
     // ★ v1.17.29: **nx (MovieBox)-এর নিজস্ব কাট-ঘড়ি** — child-এর রিজলভ ৪–৮ সে নেয়, তাই সাধারণ
     //   হারভেস্ট-কাটে (৪.১ সে) কেটে যেত ⇒ "MovieBox নেই" দেখাত। এখন nx পায় `NX_FIRST_MS` পর্যন্ত
     //   (বাকিরা আগের মতোই); ক্যাশ-হিট হলে (৩০ মিন) আগেই ফেরে ⇒ দ্রুত।
@@ -15598,7 +15624,7 @@ function parseCfgFromObj(o) {
     if (o.mls === 0 || o.mls === '0') c.mls = 0; // v1.34.63: MLSBD master (UI emitted it, parser dropped it)
     if (o.mlsr !== undefined && o.mlsr !== null && o.mlsr !== '') { const msv = parseInt(o.mlsr, 10) || 0; if ([0, 480, 720, 1080, 2160].indexOf(msv) >= 0) c.mlsr = msv; }
     if (o.dt === 0 || o.dt === '0') c.dt = 0; // v1.34.63: Deadtoons master
-    /* ★★★ v1.34.174 (মূল-বাগ, মাপা): এই ফাংশন শুধু নাম-ধরা ফিল্ড কপি করে — `__bg`/`__slow`
+    /* ★★★ v1.34.175 (মূল-বাগ, মাপা): এই ফাংশন শুধু নাম-ধরা ফিল্ড কপি করে — `__bg`/`__slow`
        কখনো কপি হতো না ⇒ `cfg.__bg` সবসময় undefined ⇒ **v1.34.151-এর "bg = ১১সে পূর্ণ-হারভেস্ট"
        এবং v1.34.171-এর "২৬সে ধীর-উইন্ডো" — দুটোই মৃত কোড ছিল**। ফলে bg-ফেচ হলেও সেটি ফোরগ্রাউন্ডের
        মতোই ৮.৪সে-তে কাটা পড়ত, আর mlb/hm/mls/rt-এর দেরিতে-আসা কার্ড ক্যাশে পৌঁছাত না। */
