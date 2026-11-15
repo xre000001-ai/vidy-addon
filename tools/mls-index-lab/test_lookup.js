@@ -37,3 +37,6 @@ assert.equal(find([season],q('Take Charge of My Heart Again','series',1,1)).leng
 const mixed=row('Show (2024) S01 Netflix',[{id:'unknown',q:1080,ep:0},{id:'ep2',q:720,ep:2,ep_end:2}]);
 assert.equal(find([mixed],q('Show','series',1,1)).length,0);
 console.log('season-only discovery and mixed episode safety passed');
+
+// Derived metadata cache must not pin stale title data or stream cards.
+const mutable=row('First (2024)',[{id:'z',q:720}]);assert.equal(find([mutable],q('First')).length,1);mutable.title='Second (2024)';assert.equal(find([mutable],q('First')).length,0);assert.equal(find([mutable],q('Second')).length,1);mutable.sav=[{id:'new',q:1080}];assert.equal(find([mutable],q('Second'))[0].sav[0].id,'new');console.log('normalized title cache invalidates on mutation and never caches link/card data');

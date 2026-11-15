@@ -1,12 +1,21 @@
 'use strict';
 // Experimental pure search only. Does not emit cards or resolve media.
 function norm(s) { return String(s || '').normalize('NFKD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim().replace(/\s+/g,' '); }
+// Cache derived title metadata, not stream cards or URLs. Weak keys allow old
+// snapshots to be collected after index refresh; title mutation invalidates it.
+const META=new WeakMap(), NAMES=new Map();
+function nameNorm(name){const k=String(name||'');if(NAMES.has(k))return NAMES.get(k);const v=norm(k);if(NAMES.size>=512)NAMES.delete(NAMES.keys().next().value);NAMES.set(k,v);return v;}
+function titleMeta(row){
+ const raw=String(row.title||'');const old=META.get(row);if(old && old.raw===raw)return old;
+ const title=raw.replace(/^\s*\[(?:PG(?:-13)?|TV-(?:MA|14|PG)|R|NC-17|G|U\/A|UA|A)\]\s*/i,'');
+ const candidate=norm(title),base=norm(title.split(/\s*\(?\b(?:19|20)\d{2}\b|\s+S\d{1,2}E\d/i)[0]);
+ const val={raw,title,candidate,baseJoined:base.replace(/ /g,'')};META.set(row,val);return val;
+}
 function matches(row,name,year,type,season,episode) {
  // Strip only known classification prefixes; do not discard arbitrary title text.
- const title=String(row.title||'').replace(/^\s*\[(?:PG(?:-13)?|TV-(?:MA|14|PG)|R|NC-17|G|U\/A|UA|A)\]\s*/i,'');
- const want=norm(name), candidate=norm(title);
- const base=norm(title.split(/\s*\(?\b(?:19|20)\d{2}\b|\s+S\d{1,2}E\d/i)[0]);
- const joined=want && base.replace(/ /g,'')===want.replace(/ /g,'');
+ const {title,candidate,baseJoined}=titleMeta(row);
+ const want=nameNorm(name);
+ const joined=want && baseJoined===want.replace(/ /g,'');
  if (!want || !(candidate===want || candidate.startsWith(want+' ') || joined)) return false;
  const tail=joined ? '2020' : candidate.slice(want.length).trim();
  // Short/one-word names must not match unrelated titles sharing the first word.
