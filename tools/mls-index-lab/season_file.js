@@ -17,4 +17,13 @@ function seasonFile(title, season, opts={}) {
  if(norm(base.slice(0,y.index))!==norm(opts.name))return null;
  return {season:1,quality,title:t,unmarked:true};
 }
-module.exports={seasonFile};
+function matchMirror(result, season, names, year, titleMatches) {
+ if(!result || !result.filename || !Array.isArray(names))return null;
+ for (const name of names) {
+  if(!titleMatches(name,result.filename,year,true)) continue;
+  const m=seasonFile(result.filename,season,{name,year});
+  if(m && m.quality===Number(result.q)) return m;
+ }
+ return null;
+}
+module.exports={seasonFile,matchMirror};
