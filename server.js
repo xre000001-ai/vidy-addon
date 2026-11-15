@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.221';
+const VERSION = '1.34.222';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -8432,7 +8432,7 @@ const MLBD_PATH_C = new Map();  // 'name|year|type' → {path, ts}   (স্থ�
 const MLBD_FILE_C = new Map();  // path → {toks:[], ts}              (স্থির-টোকেন)
 function mlbdNorm(s) { return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); }
 const MLBD_WL = require('./tools/mlbd-index/bounded_queue.cjs').create({limit:Math.max(1,Math.min(8,Number(process.env.MLBDC || 4))),maxQueue:24,waitMs:2500});
-async function mlbdLimit(fn,ms) { return MLBD_WL.run(fn,ms); }
+async function mlbdLimit(fn,ms,taskMs) { return MLBD_WL.run(fn,ms,taskMs); }
 const MLBD_NET_METRICS={curlOk:0,curlFail:0,proxyOk:0,queueTimeout:0,mirrorStarted:0};
 // কখনো-throw-নয়: নেটওয়ার্ক-ব্যর্থতায় একবার রিট্রাই, শেষ-ব্যর্থতায় st:0 (কলার তখন [] ফেরায়)
 async function mlbdGet(u, opt) {
@@ -8446,7 +8446,7 @@ async function mlbdGet(u, opt) {
     if(!/(^|\.)movielinkbd\.(?:com|at|app|cc)$/i.test(h))return null;
     const left=BUD-(Date.now()-T0);if(left<900)return null;
     try {
-      const r=await mlbdLimit(()=>mlsCurl(u,{ms:Math.min(3200,left),referer:'https://movielinkbd.com/'}),left);
+      const r=await mlbdLimit(()=>mlsCurl(u,{ms:Math.min(3200,left),referer:'https://movielinkbd.com/'}),left,Math.min(4000,left+250));
       if(r && r.st===200 && require('./tools/mlbd-index/proxy_validation.cjs').valid(r.body,u)){
         MLBD_NET_METRICS.curlOk++;hostOK(u);return {st:200,loc:'',body:r.body,url:r.eu||u};
       }
@@ -8464,6 +8464,10 @@ async function mlbdGet(u, opt) {
     } catch (e2) { }
     return null;
   };
+  // Known-good production transport, before undici or proxy fallback.
+  if (/(^|\.)movielinkbd\.(?:com|at|app|cc)$/i.test((()=>{try{return new URL(u).hostname}catch(_){return ''}})())) {
+    const direct=await curlTry(); if(direct)return direct;
+  }
   for (let at = 0; at < 4; at++) {
     if (hostBad(u)) {
       const direct=await curlTry(); if(direct)return direct;
@@ -8472,12 +8476,12 @@ async function mlbdGet(u, opt) {
       return { st: 0, loc: '', body: '' };
     }
     try {
-      return await mlbdLimit(async () => {
+      return await mlbdLimit(async (signal) => {
         let url = u;                                   // ★ 301/302 (movielinkbd.com → mirror) নিজেই ফলো করি
         for (let hop = 0; hop < 3; hop++) {
           const r = await fetch(url, {
             headers: Object.assign({ 'User-Agent': UA, 'Accept': 'text/html,application/xhtml+xml,*/*' }, opt.headers || {}),
-            redirect: 'manual', signal: AbortSignal.timeout(Math.max(800, Math.min(opt.ms || 6000, 3200)))
+            redirect: 'manual', signal
           });
           const loc = r.headers.get('location') || '';
           if ((r.status === 301 || r.status === 302 || r.status === 303 || r.status === 307 || r.status === 308) && loc) {
@@ -8485,13 +8489,13 @@ async function mlbdGet(u, opt) {
             continue;
           }
           let body = '';
-          if (opt.body !== false) { try { body = await r.text(); } catch (e) { } }
+          if (opt.body !== false) { try { body = await r.text(); } catch (e) { } } else if (r.body) { try { await r.body.cancel(); } catch (_) {} }
           hostOK(u);
           if (r.status !== 200) diag('mlbd', 'http ' + r.status + ' ' + String(url).replace(/^https?:\/\//, '').slice(0, 70) + ' len=' + body.length);
           return { st: r.status, loc: loc, body: body, url: url };
         }
         return { st: 0, loc: '', body: '' };
-      },Math.max(1,BUD-(Date.now()-T0)));
+      },Math.max(1,BUD-(Date.now()-T0)),Math.max(1,Math.min(3500,BUD-(Date.now()-T0))));
     } catch (e) {
       if (e && e.message==='mlbd-queue-timeout') { MLBD_NET_METRICS.queueTimeout++; return {st:0,loc:'',body:''}; }
       hostFail(u);
