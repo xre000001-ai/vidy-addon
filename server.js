@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.189';
+const VERSION = '1.34.190';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -4225,6 +4225,7 @@ async function mlsTask(nameP, infoP, type, s, e, requestId) {
   const CAP = Number(process.env.MLSCAP || 18000);   // ★ v1.34.172: gdflix-চেইন শেষ করতে ১০.৮সে কম পড়ত
   let INFO = null, NAME = '', RCK = '', ENR_MORE = null;         // addCard-এর জন্য বাইরের স্কোপ (v1.28.18-fix) + ক্যাশ-কি
   const CARD_BUF = [];
+  let lastMlsCardAt = 0;
   // Candidate cards, not automatically verified at playback time.
   // প্রমাণিত কার্ড (আসার ক্রমে) — deadline-এ হারায় না
   const SEEN_F = new Set();
@@ -4256,6 +4257,7 @@ async function mlsTask(nameP, infoP, type, s, e, requestId) {
         behaviorHints: { notWebReady: false, isBingeable: !it.range && !it.seasonFile, proxyHeaders: { request: Object.assign({ 'User-Agent': UA }, it.r.srv === 'multicloud·watch' ? { Referer:'https://new.multicloudlinks.com/', Origin:'https://new.multicloudlinks.com' } : {}) }, filename: 'mlsbd-' + (qq || 'auto') + '.mkv' },
         bingeGroup: 'mls|' + mlsNorm(TTL) + '::' + (type === 'series' ? 'S' + Number(s || 1) + 'E' + Number(e || 1) : 'm')
       });
+      lastMlsCardAt = Date.now();
     } catch (e2) { if (DBG) console.error('[mlsd] addCard-err ' + ((e2 && e2.message) || e2)); }
   };
   const work = (async () => {
@@ -4461,11 +4463,14 @@ async function mlsTask(nameP, infoP, type, s, e, requestId) {
     return finalize();
   })();
   let timedOut = false;
-  const foregroundMs = Math.max(1000, Math.min(CAP, Number(process.env.MLS_RETURN_MS || 8800)));
-  let hardTimer;
-  const hard = new Promise(r => { hardTimer=setTimeout(() => { timedOut = true; try { r(finalize()); } catch (e) { r([]); } }, foregroundMs); });
+  const foregroundMs = Math.max(1000, Math.min(CAP, Number(process.env.MLS_RETURN_MS || 7600)));
+  const gate = require('./tools/mls-index-lab/partial_deadline').create({
+    started:T0, maxMs:foregroundMs, minMs:Math.min(foregroundMs,Number(process.env.MLS_PARTIAL_MIN_MS || 5000)),
+    quietMs:Number(process.env.MLS_PARTIAL_QUIET_MS || 1000), snapshot:()=>({count:CARD_BUF.length,lastCard:lastMlsCardAt})
+  });
+  const hard = gate.promise.then(() => { timedOut = true; return finalize(); });
   const r = await Promise.race([work.catch(e => { if (DBG) console.error('[mlsd] err ' + (e && e.message)); return []; }), hard]);
-  clearTimeout(hardTimer);
+  gate.cancel();
   if (r && r.length && RCK) {
     try {
       const prev = MLS_RC.get(RCK);

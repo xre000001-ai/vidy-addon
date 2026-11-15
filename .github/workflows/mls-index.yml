@@ -47,6 +47,7 @@ jobs:
           node test_lookup.js
           node test-obsession-identity.cjs
           node test-movie-watch-identity.cjs
+          node test-partial-deadline.cjs
           node test_season_file.js
           node test_playback_resolution_cache.js
           node test_parallel.cjs
