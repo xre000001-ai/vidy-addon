@@ -5,6 +5,7 @@ const src=fs.readFileSync(path.join(__dirname,'../../server.js'),'utf8');
 const a=src.indexOf('function mlbdNorm('),b=src.indexOf('const MLBD_WL',a),c=src.indexOf('function mlbdSeasonOf('),d=src.indexOf('function mlbdAbs(',c);
 assert(a>=0&&b>a&&c>=0&&d>c);const ctx={};vm.createContext(ctx);vm.runInContext(src.slice(a,b)+src.slice(c,d)+';globalThis.picks=mlbdPicks',ctx);
 (async()=>{
+ const i=src.indexOf('function suggName(imdb)'),j=src.indexOf('function nameForTmdb(',i);const namesCtx={memoGet:()=>null,memoSet:()=>{},dedupe:(_,f)=>f(),pooledGet:async()=>JSON.stringify({d:[{id:'tt999',l:'Wrong',q:'TV series'},{id:'tt27668559',l:'Queen of Tears',q:'TV mini-series'}]})};vm.createContext(namesCtx);vm.runInContext(src.slice(i,j)+';globalThis.run=suggName',namesCtx);assert.equal(await namesCtx.run('tt27668559'),'Queen of Tears');assert.equal(await namesCtx.run('tt111'),'');
  assert(worker.find('<a href="https://fsl.mks-lukatube.workers.dev/video/file?x=1&amp;y=2">'));assert.equal(worker.find('https://fsl.mks-lukatube.workers.dev.evil.test/a'),'');assert.equal(worker.find('https://elsewhere.workers.dev/video'),'');
  assert.equal(search.key('Queen of Tears'),'te');assert.equal(search.key('éclair'),'ec');assert.equal(search.key('a'),'');
  const rows=[['Avengers Endgame: Encore (2026)','avengers-endgame-2026','','movie','2026',0],['Avengers: Endgame (2019)','avengers-endgame-2019','','movie','2019',0],['Avengers: Endgame (2019)','../../evil','','movie','2019',0],['Avengers: Endgame (2019)','unsafe','','download18plus','2019',1]];

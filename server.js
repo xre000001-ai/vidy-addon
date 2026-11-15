@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.214';
+const VERSION = '1.34.215';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -2735,7 +2735,7 @@ function suggName(imdb) { // দ্রুত-টাইটেল (rt/tw-র-জ�
   const hit = memoGet(key, 86400000);
   if (hit !== undefined && hit !== null) return Promise.resolve(hit);
   return dedupe(key, () => pooledGet('https://v2.sg.media-imdb.com/suggestion/' + encodeURIComponent(String(imdb)[2]) + '/' + encodeURIComponent(imdb) + '.json', 8000).then(b => {
-    const hit2 = (JSON.parse(b).d || []).find(x => x && x.l && ['TV series', 'TV mini series', 'feature', 'movie', 'TV movie'].indexOf(String(x.q || '')) >= 0) || {};
+    const hit2 = (JSON.parse(b).d || []).find(x => x && x.l && String(x.id || '') === String(imdb) && ['TV series', 'TV mini series', 'TV mini-series', 'feature', 'movie', 'TV movie'].indexOf(String(x.q || '')) >= 0) || {};
     const nm = hit2.l || '';
     if (nm) memoSet(key, nm);
     return nm;
