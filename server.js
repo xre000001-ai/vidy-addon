@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.207';
+const VERSION = '1.34.208';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -3446,7 +3446,7 @@ async function mlsIndexedLinkRace(u, opt) {
   const explicit = opt.proxy ? (Array.isArray(opt.proxy) ? opt.proxy : [opt.proxy]) : [];
   const cand = [...new Set(explicit.concat(pxsPick(key, 12), mlsPxFor(host)))];
   const state = PXS.get(key);
-  const px = cand.find(p => p && !((state && state.m.get(p) || {}).ban > now));
+  const proxies = cand.filter(p => p && !((state && state.m.get(p) || {}).ban > now)).slice(0, 2);
   const time = Math.max(1500, Math.min(3500, opt.ms || 3500));
   const valid = r => {
     const b = String(r && r.body || '');
@@ -3457,14 +3457,13 @@ async function mlsIndexedLinkRace(u, opt) {
     const go = async p => {
       const t = Date.now();
       const r = await mlsCurl(u, {ms:time, json:!!opt.json, referer:opt.referer, proxy:p || undefined}).catch(() => null);
-      const ok = valid(r);
+      const ok = valid(r) && (typeof opt.accept !== 'function' || !!opt.accept(String(r.body || ''),r.eu || u));
       if (p) pxsRec(key, p, ok, Date.now() - t);
-      if (!ok) throw new Error('invalid-link-page');
-      if (typeof opt.accept === 'function' && !opt.accept(String(r.body || ''),r.eu || u)) throw new Error('unexpected-link-page-content');
+      if (!ok) throw new Error('invalid-or-unexpected-link-page');
       mlsRec(u, r.st, r.body.length, p ? 'link-proxy' : 'link-direct');
       return {st:r.st, body:r.body, url:r.eu || u, via:p ? 'link-proxy' : 'link-direct', px:p || undefined};
     };
-    const tasks = px ? [go(null), go(px)] : [go(null)];
+    const tasks = [go(null), ...proxies.map(go)];
     // The losing curl is still running: keep the slot until both settle.
     Promise.allSettled(tasks).then(() => { mlsLinkRaceActive--; });
     return await Promise.any(tasks).catch(() => null);

@@ -1,0 +1,7 @@
+'use strict';
+const fs=require('fs'),vm=require('vm'),assert=require('assert');const s=fs.readFileSync(require('path').join(__dirname,'../../server.js'),'utf8');const a=s.indexOf('let mlsLinkRaceActive = 0;'),b=s.indexOf('async function mlsGetRaw(',a);assert(a>=0&&b>a);
+let calls=[],records=[];const wait=(ms,v)=>new Promise(r=>setTimeout(()=>r(v),ms));
+const page=x=>'<html><title>GDFlix | '+x+'</title>'+('x'.repeat(220))+'</html>';
+const c={Date,Map,Set,Promise,Math,Number,String,Error,process:{env:{}},PXS:new Map(),mlsHost:u=>new URL(u).hostname,URL,pxsPick:()=>['badproxy','goodproxy','thirdproxy'],mlsPxFor:()=>[],pxsRec:(...args)=>records.push(args),mlsRec:()=>{},mlsCurl:(u,o)=>{calls.push(o.proxy||'direct');return wait(o.proxy==='goodproxy'?15:1,{st:200,body:page(o.proxy==='goodproxy'?'MATCH':'WRONG'),eu:u})}};
+vm.createContext(c);vm.runInContext(s.slice(a,b)+';globalThis.race=mlsIndexedLinkRace',c);
+(async()=>{const r=await c.race('https://gdflix.dev/file/abc',{ms:3000,accept:t=>t.includes('MATCH')});assert(r&&r.via==='link-proxy');assert(calls.includes('goodproxy'));assert(!calls.includes('thirdproxy'),'only two proxies per page');assert(records.some(x=>x[1]==='badproxy'&&x[2]===false),'wrong content cannot teach proxy success');assert(records.some(x=>x[1]==='goodproxy'&&x[2]===true));console.log('Second proxy can rescue valid page; reject wrong-content proxy and cap fanout')})().catch(e=>{console.error(e);process.exitCode=1});
