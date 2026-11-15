@@ -1,0 +1,33 @@
+name: Addon offline regression
+on:
+  push:
+    paths:
+      - 'server.js'
+      - 'tools/stream-tests/**'
+      - 'tools/mls-index-lab/**'
+      - 'tools/mlbd-index/**'
+      - '.github/workflows/addon-regression.yml'
+  pull_request:
+    paths:
+      - 'server.js'
+      - 'tools/stream-tests/**'
+      - 'tools/mls-index-lab/**'
+      - 'tools/mlbd-index/**'
+      - '.github/workflows/addon-regression.yml'
+  workflow_dispatch:
+jobs:
+  offline-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: node --check server.js
+      - run: |
+          for f in tools/stream-tests/*.cjs tools/mls-index-lab/test-*.cjs tools/mlbd-index/test_*.cjs; do node "$f" || exit 1; done
+      - run: python -m unittest discover -s tools/mls-index-lab -p 'test*.py' -q
+      - run: python -m unittest discover -s tools/mlbd-index -p 'test*.py' -q

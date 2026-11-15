@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.224';
+const VERSION = '1.34.225';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -7383,11 +7383,15 @@ async function hmText(u, ms, ref) { // ডিরেক্ট → ব্যর্
   const SLOW = 600;                                   // এর-ভিতরে-না-এলে-পুল-ও-দৌড়ায়
   const early = hostBad(u) ? null : await Promise.race([d, new Promise(r => setTimeout(() => r(null), SLOW))]);   // v1.27.25
   let r0 = early;
-  if (!r0) {                                          // ★ পুল-ব্যর্থ-হলেও ডায়রেক্ট-ফেচ **বাতিল হয় না** (আগে এখানে-ঝুকে সফল-ডায়রেক্ট-ফেচ বাদ পড়ত)
-    const pr = await Promise.race([d, poolP(Math.floor(ms * 0.85))]);
-    if (pr && pr.t && pr.st < 400) return fin(pr);
-    const dr = await d;                               // bounded by ms
-    r0 = (dr && dr.t) ? dr : (pr || dr || { st: 0, t: '', err: true, el: 0 });
+  if (!r0 || !r0.t || r0.st >= 400) {
+    // Failure is not a race winner: wait for whichever transport first returns
+    // a usable response, not whichever promise settles first.
+    const pool = poolP(Math.floor(ms * 0.85));
+    const usable = p => p.then(v => { if (v && v.t && v.st < 400) return v; throw new Error('hm-transport-failed'); });
+    const winner = await Promise.any([usable(d), usable(pool)]).catch(() => null);
+    if (winner) return fin(winner);
+    const dr = await d;
+    r0 = (dr && dr.t) ? dr : (early || dr || { st: 0, t: '', err: true, el: 0 });
   }
   if (r0.t && r0.st < 400) return fin(r0);
   if (r0.err && ms > 1600 && (r0.el || 0) < 900) {      // দ্রুত-ব্যর্থতা (রিসেট/রিফিউজ) ⇒ এক-রিট্রাই
