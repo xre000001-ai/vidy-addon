@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.177';
+const VERSION = '1.34.178';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -381,6 +381,9 @@ let MM_POOL = []; try { for (const c of JSON.parse(fs.readFileSync(MM_FILE, 'utf
 const MM_RUN = new Map(), MM_LASTOK = new Map(), MM_COOL = new Map(), MM_SITE = new Set(), MM_MISS = new Map();
 const MM_RACE_ST = { runs: 0, won: 0, invalid: 0, failed: 0, timeout: 0 };
 const MM_RESOLVE_OK = new Map(); // proxies verified on real resolver responses, independent of homepage bench
+const MM_RESOLVE_CHECKED = new Map();
+const MM_RESOLVE_BENCH_STATS = { checked: 0, valid: 0, empty: 0, failed: 0 };
+let MM_RESOLVE_CHECK_BUSY = false, MM_DISC_ACTIVE = 0, MM_RESOLVE_LAST_WAVE = 0;
 
 const VB_REF = 'https://vidbolt.xyz/';
 // v1.15.88: অডিও-ভাষা-কোড → ইংরেজি-নাম (mml-ভাষা-ছাঁকনির সাথে মেলানোর জন্য)।
@@ -792,9 +795,35 @@ async function mmCheckerWave() { // pxCheckerWave's twin — bench = vidbolt rea
     for (let i = MM_POOL.length - 1; i >= 0 && MM_POOL.length > 600; i--) if (t2 - (MM_LASTOK.get(MM_POOL[i].px) || t2) > 600000) { const g = MM_POOL.splice(i, 1)[0]; cutN++; MM_RUN.delete(g.px); MM_LASTOK.delete(g.px); MM_COOL.delete(g.px); MM_SITE.delete(g.px); MM_MISS.delete(g.px); } // v1.34.64: floor 3x
     if (cutN) mmSave(); // v1.15.29 revise: write only when members were cut (no idle disk churn)
     if (DBG) console.error('[mmchk] pool=' + MM_POOL.length + ' bench=' + MM_POOL.filter(c => MM_SITE.has(c.px)).length);
-  } finally { mmChkBusy = false; }
+  } finally { mmChkBusy = false; Promise.resolve(mmResolverBenchWave()).catch(() => {}); }
 }
 function mmCheckerStart() { const loop = () => { setTimeout(() => { Promise.resolve(mmCheckerWave()).catch(() => { }).finally(loop); }, 8000); }; loop(); }
+mmResolverBenchStart();
+// The general homepage bench is not a resolver bench. Verify the actual API
+// independently, with bounded work and no negative scoring of other MM hosts.
+// An empty source array proves only API reachability, not a usable source draw.
+async function mmResolverBenchWave() {
+  if (MM_RESOLVE_CHECK_BUSY || mmChkBusy || MM_DISC_ACTIVE || Date.now() < MMR_ACTIVE_UNTIL || !MM_POOL.length || Date.now() - MM_RESOLVE_LAST_WAVE < 30000) return;
+  MM_RESOLVE_CHECK_BUSY = true; MM_RESOLVE_LAST_WAVE = Date.now();
+  try {
+    const now = Date.now();
+    const candidates = MM_POOL.filter(c => MM_SITE.has(c.px) && (MM_COOL.get(c.px) || 0) <= now)
+      .sort((a,b) => (MM_RESOLVE_CHECKED.get(a.px) || 0) - (MM_RESOLVE_CHECKED.get(b.px) || 0)).slice(0, 12);
+    await Promise.all(candidates.map(async c => {
+      MM_RESOLVE_CHECKED.set(c.px, now); MM_RESOLVE_BENCH_STATS.checked++;
+      try {
+        const body = await proxiedGet(c.px, 'https://vidbolt.xyz/api/resolve?type=movie&id=550', 4500, {Referer: VB_REF, Origin: 'https://vidbolt.xyz', Accept: 'application/json'});
+        if (mmResolveHasSources(body)) { MM_RESOLVE_OK.set(c.px, Date.now()); MM_RESOLVE_BENCH_STATS.valid++; }
+        else if (mmResolveEmpty(body)) MM_RESOLVE_BENCH_STATS.empty++;
+        else MM_RESOLVE_BENCH_STATS.failed++;
+      } catch (_) { MM_RESOLVE_BENCH_STATS.failed++; }
+    }));
+  } finally { MM_RESOLVE_CHECK_BUSY = false; }
+}
+function mmResolverBenchStart() {
+  const loop = () => { const t = setTimeout(() => { Promise.resolve(mmResolverBenchWave()).catch(() => {}).finally(loop); }, 30000); if (t.unref) t.unref(); };
+  loop();
+}
 function mmScore(px, bootMs) { // v1.15.29 revise: the MM pool's OWN score (mmScore over MM_RUN — vidy's pxScore/PX_RUN untouched; full pool isolation)
   const h = MM_RUN.get(px);
   if (!h) return bootMs || 9999;
@@ -7434,6 +7463,7 @@ async function mmHarvestProviders(promises, ms) {
 }
 async function mmStreams(tmdbId, title, type, s, e, origin, maxh, rel) { // v1.15.54: rel=MM-মিডিয়া-সার্ভার-রিলে // v1.15.28: Multimovies source — vidout index + vidbolt resolve; origin: mini-master URLs; maxh: MM-রেজোলিউশন-ছাঁকনি (v1.15.39, 0=সব)
   if (!tmdbId) return [];
+  MM_DISC_ACTIVE++;
   const t3 = Date.now(); const WOB = 7000; const left = () => Math.max(300, WOB - (Date.now() - t3)); // v1.17.47: ৮.২সে ক্যাপের ভিতরে সেটেল
   try {
     const isSeries = type === 'series';
@@ -7501,7 +7531,7 @@ async function mmStreams(tmdbId, title, type, s, e, origin, maxh, rel) { // v1.1
         ...(cardSubs.length ? { subtitles: cardSubs } : {})
       };
     });
-  } catch (e2) { if (DBG) console.error('[mm] ERR ' + String(e2 && e2.message).slice(0, 70) + ' @' + (Date.now() - t3) + 'ms'); return []; }
+  } catch (e2) { if (DBG) console.error('[mm] ERR ' + String(e2 && e2.message).slice(0, 70) + ' @' + (Date.now() - t3) + 'ms'); return []; } finally { MM_DISC_ACTIVE--; }
 }
 // ---------- v1.15.71: Vidsrc (EasyPlay-apk রেসিপি) — vidsrc.ir → vs_src → player(apiToken এমবেডেড) → api&stream_urls (ChaCha20-WASM প্রতি-৫মিনিট) → /pl-হোস্টগুলো; সব-হপ IP-বাউন্ড → নিজস্ব /24-পিনড-প্রক্সি-পুল + পূর্ণ-রিলে (/vsp/t|c|s) ----------
 const VSP_FILE = path.join(__dirname, 'vidy_vsp_pool.json');
@@ -17524,7 +17554,7 @@ const server = http.createServer((req, res) => {
       RT_INFLIGHT.set(kRT, pr);
       res = w;
     }
-    if (p === '/_health') { const _vf = [...VIDY_OK.values()].filter(v => v.ts && Date.now() - v.ts < Number(process.env.PXFRESH || 240000)).length; return sendJson(res, 200, { ok: 1, cg: CG_ST, cgDead: CG_DEAD.size, cgSrc: Object.fromEntries([...CG_SRC].map(([k, v]) => [k, { ok: v.ok, fail: v.fail, down: v.down > Date.now() ? Math.round((v.down - Date.now()) / 1000) : 0 }])), version: VERSION, cache: CACHE_ST, bg: BG_ST, pwhy: PART_WHY, up: Math.round(process.uptime()), deploy: 'v' + VERSION, mmpool: { size: MM_POOL.length, bench: MM_SITE.size, cooling: [...MM_COOL.values()].filter(t => t > Date.now()).length, race: MM_RACE_ST }, pool: POOL.length, pxbench: POOL.filter(c => PX_SITE.has(c.px)).length, pxbf: PX_BF.size, memo: memo.size, gw: (typeof GW !== 'undefined' ? GW.size : -1), nx: NEXBASE ? 1 : 0, nxpool: NXBENCH, nxwaves: NXWAVES, nxsize: NXSIZE, tw: TWBASE ? 1 : 0, rt: RTBASE ? 1 : 0, mls: (process.env.MLSD !== '0') ? 1 : 0, mlsindex: require('./tools/mls-index-lab/runtime_index').stats(), vsp: VSP_POOL.length, vy: VIDY_OK.size, vyfresh: _vf, vhg: (typeof VHG !== 'undefined' ? VHG : 0), pxpl: (typeof PXPL !== 'undefined' ? PXPL.size : 0), rtmq: RT_MQ_ST, dti: (typeof DT_IDX !== 'undefined' ? DT_IDX : 0), dtst: (typeof DT_ST !== 'undefined' ? DT_ST : 0), dtsh: (typeof DT_SH !== 'undefined' ? { on: DT_SH.on, src: DT_SH.src, pre: DT_SH.pre, loaded: DT_SH.loaded, hits: DT_SH.hits, miss: DT_SH.miss, cache: (typeof DT_SH_CACHE !== 'undefined' ? DT_SH_CACHE.size : 0), err: DT_SH.err, units: (DT_SH.man && DT_SH.man.units) || null, slugs: (DT_SH.man && DT_SH.man.slugs || []).length } : 0), lastreq: { el: LR.el, n: LR.total, pend: LR.pend, p: LR.path, sr: (LR.sr || []).map(x => x[0] + ':' + x[1] + '@' + x[2]) } }); } // v1.34.95, v1.34.105 // ★ v1.21.9: vy=verified vidy নোড, vyfresh=৪মিন-তাজা // v1.15.71: vsp=Vidsrc-পুল-আকার // v1.15.18: pxbench=সাইট-প্রমাণিত-বেঞ্চ (v1.15.8: nxpool=MB-বেঞ্চ)
+    if (p === '/_health') { const _vf = [...VIDY_OK.values()].filter(v => v.ts && Date.now() - v.ts < Number(process.env.PXFRESH || 240000)).length; return sendJson(res, 200, { ok: 1, cg: CG_ST, cgDead: CG_DEAD.size, cgSrc: Object.fromEntries([...CG_SRC].map(([k, v]) => [k, { ok: v.ok, fail: v.fail, down: v.down > Date.now() ? Math.round((v.down - Date.now()) / 1000) : 0 }])), version: VERSION, cache: CACHE_ST, bg: BG_ST, pwhy: PART_WHY, up: Math.round(process.uptime()), deploy: 'v' + VERSION, mmpool: { size: MM_POOL.length, bench: MM_SITE.size, resolverFresh: [...MM_RESOLVE_OK.values()].filter(t => Date.now() - t < 600000).length, resolverChecks: MM_RESOLVE_BENCH_STATS, cooling: [...MM_COOL.values()].filter(t => t > Date.now()).length, race: MM_RACE_ST }, pool: POOL.length, pxbench: POOL.filter(c => PX_SITE.has(c.px)).length, pxbf: PX_BF.size, memo: memo.size, gw: (typeof GW !== 'undefined' ? GW.size : -1), nx: NEXBASE ? 1 : 0, nxpool: NXBENCH, nxwaves: NXWAVES, nxsize: NXSIZE, tw: TWBASE ? 1 : 0, rt: RTBASE ? 1 : 0, mls: (process.env.MLSD !== '0') ? 1 : 0, mlsindex: require('./tools/mls-index-lab/runtime_index').stats(), vsp: VSP_POOL.length, vy: VIDY_OK.size, vyfresh: _vf, vhg: (typeof VHG !== 'undefined' ? VHG : 0), pxpl: (typeof PXPL !== 'undefined' ? PXPL.size : 0), rtmq: RT_MQ_ST, dti: (typeof DT_IDX !== 'undefined' ? DT_IDX : 0), dtst: (typeof DT_ST !== 'undefined' ? DT_ST : 0), dtsh: (typeof DT_SH !== 'undefined' ? { on: DT_SH.on, src: DT_SH.src, pre: DT_SH.pre, loaded: DT_SH.loaded, hits: DT_SH.hits, miss: DT_SH.miss, cache: (typeof DT_SH_CACHE !== 'undefined' ? DT_SH_CACHE.size : 0), err: DT_SH.err, units: (DT_SH.man && DT_SH.man.units) || null, slugs: (DT_SH.man && DT_SH.man.slugs || []).length } : 0), lastreq: { el: LR.el, n: LR.total, pend: LR.pend, p: LR.path, sr: (LR.sr || []).map(x => x[0] + ':' + x[1] + '@' + x[2]) } }); } // v1.34.95, v1.34.105 // ★ v1.21.9: vy=verified vidy নোড, vyfresh=৪মিন-তাজা // v1.15.71: vsp=Vidsrc-পুল-আকার // v1.15.18: pxbench=সাইট-প্রমাণিত-বেঞ্চ (v1.15.8: nxpool=MB-বেঞ্চ)
     if (p === '/_mem') { /* ★ v1.28.1: মেমোরি-ডিয়াগনস্টিক — OOM-ক্ষতির কারন খুঁজতে (প্রমাণ: ব্যাটারি-চালাকালে node 896MB-তে kernel-OOM-kill) */
       const m = process.memoryUsage(); const sz = o => { try { return o instanceof Map ? o.size : (Array.isArray(o) ? o.length : -1); } catch (e) { return -1; } };
       // ★ v1.28.3-M4: সীমা + purge-পরিসংখ্যান (কতবার, কোন স্তরে) — প্রোডে "মেমরি ফুল" কেন, একনজরে
