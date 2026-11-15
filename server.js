@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.201';
+const VERSION = '1.34.202';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -3979,10 +3979,38 @@ function mlsGdBg(fileUrl, id) {
 }
 
 const MLS_GD_FILE_FLIGHT = new Map();
+const MLS_GD_CLOUD_FLIGHT = new Map();
 function mlsGdFilePage(link, ms) {
   const key=String(link||'');
   if (MLS_GD_FILE_FLIGHT.has(key)) return MLS_GD_FILE_FLIGHT.get(key);
-  const p=Promise.resolve().then(()=>mlsGet(key,{ms:Math.min(ms||4000,4000)})).finally(()=>MLS_GD_FILE_FLIGHT.delete(key));
+  // The index holds stable GDFlix file IDs. Race the normal file page with
+  // the provider's known cloud-page path; it may already include both the
+  // file title and Cloud Resume video, avoiding an entire serial HTTP hop.
+  const p=Promise.resolve().then(async()=>{
+    const budget=Math.min(ms||4000,4000);
+    const file=mlsGet(key,{ms:budget});
+    let u; try { u=new URL(key); } catch (_) {}
+    const m=u && u.protocol==='https:' && /^(?:gdflix\.com|gdflix\.dev)$/i.test(u.hostname) && /^\/file\/([a-z0-9]+)\/?$/i.exec(u.pathname);
+    if(!m || u.search || u.hash) return file;
+    const cloud='https://new9.gdflix.io/cloud/'+String(Date.now()).slice(0,10)+'/'+m[1];
+    let cp=MLS_GD_CLOUD_FLIGHT.get(m[1]);
+    if(!cp) {
+      cp=Promise.resolve().then(()=>mlsGet(cloud,{ms:budget,referer:key}));
+      MLS_GD_CLOUD_FLIGHT.set(m[1],cp);
+      cp.finally(()=>setTimeout(()=>{if(MLS_GD_CLOUD_FLIGHT.get(m[1])===cp)MLS_GD_CLOUD_FLIGHT.delete(m[1]);},3000)).catch(()=>{});
+    }
+    const ready=cp.then(r=>{
+      const body=String(r && r.body||'');
+      if (!/<title[^>]*>\s*GDFlix\s*\|/i.test(body) || !require('./tools/mls-index-lab/gd_resume').find(body)) throw Error('no-ready-cloud-video');
+      return r;
+    });
+    // A challenge/empty file page must not beat a usable Cloud Resume page.
+    const validFile=Promise.resolve(file).then(r=>{
+      if (!r || !/<title[^>]*>\s*GDFlix\s*\|/i.test(String(r.body||''))) throw Error('invalid-gd-file-page');
+      return r;
+    });
+    return Promise.any([ready,validFile]).catch(()=>file);
+  }).finally(()=>MLS_GD_FILE_FLIGHT.delete(key));
   MLS_GD_FILE_FLIGHT.set(key,p); return p;
 }
 
@@ -3995,6 +4023,11 @@ async function mlsGdOnce(fileUrl, ms, resume) {
   let origin = 'https://new7.gdflix.io';
   try { origin = new URL(g.url || fileUrl).origin; } catch (e) { }
   const grab = (txt, re) => (re.exec(String(txt || '')) || [])[0] || '';
+  const readyVideo = require('./tools/mls-index-lab/gd_resume').find(body);
+  if (readyVideo) {
+    const pv = await mlsProve(readyVideo, 2400);
+    if (pv && pv.ok) return {ok:true,direct:readyVideo,size:pv.size||0,ct:pv.ct||'',route:'cloud-resume-fast'};
+  }
   let direct = grab(body, /https:\/\/cloud-dl\.[a-z0-9]+\.workers\.dev\/[^\s"'<>\\]+/i)
     || grab(body, /https:\/\/pub-[a-z0-9]+\.r2\.dev\/[^\s"'<>\\]+/i);
   if (direct) {                                    // ইনলাইন-লিংক থাকলে সরাসরি
@@ -4009,7 +4042,7 @@ async function mlsGdOnce(fileUrl, ms, resume) {
   else if (/^https:\/\/gdflix\.com/i.test(origin)) origin = 'https://new7.gdflix.io';
   let cloud = grab(body, /https?:\/\/[^"'\s<>]+\/cloud\/\d+\/[A-Za-z0-9]+/);
   cloud = cloud ? cloud.replace(/^https?:\/\/[^\/]+/i, origin) : (origin + '/cloud/' + String(Date.now()).slice(0, 10) + '/' + id);
-  const cp = await mlsGet(cloud, { ms: Math.max(1800, Math.min(2600, ms - (Date.now() - T0))) });
+  const cp = await (MLS_GD_CLOUD_FLIGHT.get(id) || mlsGet(cloud, { ms: Math.max(1800, Math.min(2600, ms - (Date.now() - T0))) }));
   // The cloud page may already contain a usable video worker. Do not start a
   // fresh POST/poll job when the website has an existing Cloud Resume link.
   // ZIP/unknown pages fall through to the original generation flow unchanged.
