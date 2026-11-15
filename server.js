@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.171';
+const VERSION = '1.34.172';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -7842,14 +7842,30 @@ function azSubsFor(pType, idStr) { // '/subtitles/series/tmdb209867:1:1' → [{i
   if (!/^tmdb\d+$/.test(pp0[0] || '')) return [];
   const k = pType + ':' + pp0[0].slice(4) + ':' + (pType === 'series' ? (Number(pp0[1] || 1) + 'x' + Number(pp0[2] || 1)) : 'm');
   const hit = AZ_SUBS.get(k);
-  return hit ? hit.v.map(x => ({ id: x.id || ('az-' + x.lang), url: x.url, lang: x.lang })) : [];
+  return hit ? hit.v.map(x => ({ id: x.id || ('az-' + x.lang), url: x.url, lang: x.lang, ...(x.label ? { label: x.label } : {}) })) : [];
 }
 function azQOf(mt) { // ★ v1.34.21: মাস্টার-প্লেলিস্ট → সর্বোচ্চ-উচ্চতা (প্রস্থ-শ্রেণি, OTT-সমান)
   let qq = 0;
-  if (mt && /^#EXTM3U(?:\s|$)/i.test(String(mt).trimStart())) for (const m3 of String(mt).matchAll(/RESOLUTION=(\d+)x(\d+)/gi)) { const height = Number(m3[2]); if (height > qq && height <= 8640) qq = height; }
+  if (mt && /^#EXTM3U(?:\s|$)/i.test(String(mt).trimStart())) for (const m3 of String(mt).matchAll(/RESOLUTION=(\d+)x(\d+)/gi)) {
+    const w = Number(m3[1]), h = Number(m3[2]);
+    // Cinema widescreen is often cropped (1920x800), not 800p quality.
+    const tier = w >= 3600 || h >= 2000 ? 2160 : w >= 2500 || h >= 1400 ? 1440 : w >= 1900 || h >= 1000 ? 1080 : w >= 1200 || h >= 700 ? 720 : w >= 1000 || h >= 450 ? 480 : 360;
+    if (tier > qq) qq = tier;
+  }
   return qq;
 }
-function azSubtitleTracks(pl) {
+// ISO 639-2 codes are understood by Stremio/Android subtitle pickers.
+const AZ_LANG3 = {en:'eng',hi:'hin',ar:'ara',bg:'bul',cs:'ces',da:'dan',de:'deu',el:'ell',es:'spa',et:'est',fi:'fin',fr:'fra',he:'heb',hr:'hrv',hu:'hun',it:'ita',ja:'jpn',km:'khm',kz:'kaz',kk:'kaz',lt:'lit',lv:'lav',mn:'mon',nl:'nld',no:'nor',pl:'pol',pt:'por',ro:'ron',ru:'rus',sl:'slv',sv:'swe',ta:'tam',te:'tel',tr:'tur',uk:'ukr',vi:'vie',th:'tha',zh:'zho',id:'ind',ko:'kor',bn:'ben',al:'sqi',sq:'sqi',sk:'slk',sr:'srp',ms:'msa',fil:'fil'};
+function azSubtitleURL(raw, origin) {
+  try {
+    const u = new URL(String(raw));
+    if (u.protocol !== 'https:' || !/(?:^|\.)(?:vid-cdn\.xyz|xin-cdn\.xyz)$/i.test(u.hostname) || !/\/subtitles\//i.test(u.pathname)) return String(raw);
+    const ext = ((u.pathname.match(/\.(srt|vtt|ass|ssa)$/i) || [])[1] || '').toLowerCase();
+    if (!ext || !origin) return String(raw);
+    return origin + '/azsub/' + Buffer.from(u.href).toString('base64url') + '/subtitle.' + ext;
+  } catch (_) { return String(raw); }
+}
+function azSubtitleTracks(pl, origin) {
     // Keep every distinct source track, including forced, SDH and regional
     // variants. Prefer the site's default/full track instead of picking the
     // first forced track and silently discarding the rest.
@@ -7858,12 +7874,12 @@ function azSubtitleTracks(pl) {
       if (!t || !/^https?:\/\//i.test(String(t.file || ''))) return null;
       const lang = String(t.language || t.lang || 'und').trim().toLowerCase();
       if (!/^[a-z]{2,3}(?:-[a-z0-9]{2,8})?$/i.test(lang)) return null;
-      return { id: 'az-' + i, lang, url: t.file, _default: !!t.default, _forced: String(t.forced || '').toLowerCase() === 'yes' };
+      return { id: 'az-' + i, lang: AZ_LANG3[lang.split('-')[0]] || lang, label: String(t.title || lang).slice(0, 100), url: azSubtitleURL(t.file, origin), _default: !!t.default, _forced: String(t.forced || '').toLowerCase() === 'yes' };
     }).filter(t => { if (!t || seenSubs.has(t.url)) return false; seenSubs.add(t.url); return true; })
       .sort((a, b) => Number(b._default) - Number(a._default) || Number(a._forced) - Number(b._forced))
-      .slice(0, 100).map(({id, lang, url}) => ({id, lang, url}));
+      .slice(0, 100).map(({id, lang, label, url}) => ({id, lang, label, url}));
 }
-async function azStreams(tmdbId, type, s, e, azq) { // সার্চ→সিজন/বছর-সচেতন-ম্যাচ→watch-পাতা→vidstack-HLS→কার্ড (মাত্র-২-পুল-কল; কার্ড-মেমো ৩০মিন)
+async function azStreams(tmdbId, type, s, e, azq, origin) { // সার্চ→সিজন/বছর-সচেতন-ম্যাচ→watch-পাতা→vidstack-HLS→কার্ড (মাত্র-২-পুল-কল; কার্ড-মেমো ৩০মিন)
   const t3 = Date.now();
   try {
     const isTv0 = type === 'series' || type === 'tv';
@@ -7958,10 +7974,12 @@ async function azStreams(tmdbId, type, s, e, azq) { // সার্চ→সি�
         } catch (_) {}
       }
     }
+    const qUnverified = !q;
+    if (qUnverified) q = 1080; // user-requested fallback, disclosed in description
     if (Array.isArray(azq) && azq.length && azq.indexOf(q) < 0) { if (DBG) console.error('[az] ' + T0 + ' q=' + q + ' ছাঁকা'); return []; }
     const epLine = isTv ? '\u29e0 S' + (s || 1) + 'E' + ep : '\u29e0 Movie';
     const txt = '\u29c9 ' + T0 + ' |\n' + epLine + '\n\u229e AniZone \u2317 Subbed';
-    const subs = azSubtitleTracks(pl);
+    const subs = azSubtitleTracks(pl, origin);
     if (subs.length) AZ_SUBS.set((isTv ? 'series' : 'movie') + ':' + tmdbId + ':' + (isTv ? (s || 1) + 'x' + ep : 'm'), { ts: Date.now(), v: subs });
     if (DBG) console.error('[az] ' + type + ':' + tmdbId + ' কার্ড=১ q=' + q + ' slug=' + hit.slug + ' subs=' + subs.length + ' @' + (Date.now() - t3) + 'ms');
     return [{ name: '\u25a5 ' + (q || 'Unknown') + ' \u25a5', quality: q ? String(q) : '', url: pl.src, title: txt, description: txt, subtitles: subs, _lang: 'Japanese', behaviorHints: { filename: 'anizone.m3u8' }, bingeGroup: 'az|' + T0.toLowerCase() + '::' }]; // ★ v1.34.24: _lang
@@ -17181,6 +17199,28 @@ const server = http.createServer((req, res) => {
       mmr: qs.get('mmr') || undefined, rtsrv: qs.get('rtsrv') ? qs.get('rtsrv').split(',') : undefined, rt: qs.get('rt') === '0' ? 0 : undefined, m4u: qs.get('m4u') === '0' ? 0 : undefined, m4ur: qs.get('m4ur') || undefined, sky: qs.get('sky') === '0' ? 0 : undefined, skyr: qs.get('skyr') || undefined, bf: qs.get('bf') === '0' ? 0 : undefined, bfr: qs.get('bfr') || undefined, mm: qs.get('mm') === '0' ? 0 : undefined, mmrelay: qs.get('mmrelay') === '1' ? 1 : undefined, mmdirect: qs.get('mmdirect') === '1' ? 1 : undefined, vsp: qs.get('vsp') === '0' ? 0 : undefined, vspq: qs.get('vspq') || undefined, ott: qs.get('ott') === '0' ? 0 : undefined, ottq: qs.get('ottq') || undefined, az: qs.get('az') === '0' ? 0 : undefined, azq: qs.get('azq') || undefined, rtl: qs.get('rtl') ? qs.get('rtl').split(',') : undefined, nxq: qs.get('nxq') || undefined, nxl: qs.get('nxl') ? qs.get('nxl').split(',') : undefined, rtq: qs.get('rtq') || undefined, mmq: qs.get('mmq') || undefined, m4uq: qs.get('m4uq') || undefined, skyq: qs.get('skyq') || undefined, bfq: qs.get('bfq') || undefined, twl: qs.get('twl') ? qs.get('twl').split(',') : undefined, mml: qs.get('mml') ? qs.get('mml').split(',') : undefined, m4ul: qs.get('m4ul') ? qs.get('m4ul').split(',') : undefined, skyl: qs.get('skyl') ? qs.get('skyl').split(',') : undefined, bfl: qs.get('bfl') ? qs.get('bfl').split(',') : undefined, vspl: qs.get('vspl') ? qs.get('vspl').split(',') : undefined, ottl: qs.get('ottl') ? qs.get('ottl').split(',') : undefined, azl: qs.get('azl') ? qs.get('azl').split(',') : undefined });
     }
     if (!cfg) cfg = Object.assign({}, DEFAULT_CFG, { g: [], srv: [] });
+    // Small text-only AniZone subtitle relay: source CDN sends an AniZone-only
+    // CORS header and octet-stream, which prevents external web clients loading it.
+    { const sm = p.match(/^\/azsub\/([A-Za-z0-9_-]{10,3000})\/subtitle\.(srt|vtt|ass|ssa)$/i);
+      if (sm) {
+        if (req.method === 'OPTIONS') { res.writeHead(204, { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, HEAD, OPTIONS' }); return res.end(); }
+        if (req.method !== 'GET' && req.method !== 'HEAD') return sendJson(res, 405, {error:'method not allowed'});
+        return void (async () => {
+          try {
+            const raw = Buffer.from(sm[1], 'base64url').toString('utf8');
+            const u = new URL(raw), ext = sm[2].toLowerCase();
+            if (u.protocol !== 'https:' || !/(?:^|\.)(?:vid-cdn\.xyz|xin-cdn\.xyz)$/i.test(u.hostname) || !/\/subtitles\//i.test(u.pathname) || !u.pathname.toLowerCase().endsWith('.' + ext)) return sendJson(res, 400, {error:'invalid subtitle'});
+            const r = await fetch(u.href, { headers: { 'User-Agent': UA, Referer: AZ_BASE + '/' }, redirect:'manual', signal:AbortSignal.timeout(7000) });
+            if (!r.ok || Number(r.headers.get('content-length') || 0) > 5000000) return sendJson(res, 502, {error:'subtitle unavailable'});
+            const body = Buffer.from(await r.arrayBuffer());
+            if (body.length > 5000000) return sendJson(res, 502, {error:'subtitle too large'});
+            const ct = ext === 'vtt' ? 'text/vtt; charset=utf-8' : ext === 'srt' ? 'application/x-subrip; charset=utf-8' : 'text/plain; charset=utf-8';
+            res.writeHead(200, { 'content-type':ct, 'content-length':body.length, 'access-control-allow-origin':'*', 'cache-control':'private, max-age=300', 'x-content-type-options':'nosniff' });
+            return res.end(req.method === 'HEAD' ? undefined : body);
+          } catch (_) { return sendJson(res, 502, {error:'subtitle unavailable'}); }
+        })();
+      }
+    }
     // ★ v1.27.3: vidy/MovieBox রিলে (প্লেলিস্ট-টেক্সট বা 302)
     { const rlM = p.match(/^\/rel\/([vm])\/([A-Za-z0-9_=-]{8,4000})$/);
       if (rlM) return void relServe(req, res, rlM[1], rlM[2]); }
@@ -18169,7 +18209,7 @@ const server = http.createServer((req, res) => {
       const bfP = BF_ENABLED && !(cfg && cfg.bf === 0) ? bfStreams(Number(m[1]), '', 'movie', 0, 0, originOf(req), cfg && cfg.bfr || 0, '', cfg && cfg.bfexo === 0 ? 0 : 1).catch(() => []) : null; // BollyFlix
       const vspP = !(cfg && cfg.vsp === 0) ? vspStreams(Number(m[1]), 'movie', 0, 0, cfg && cfg.vspq || []).catch(() => []) : null; // v1.15.71: Vidsrc
       const ottP = !(cfg && cfg.ott === 0) ? ottStreams(Number(m[1]), 'movie', 0, 0, cfg && cfg.ottq || []).catch(() => []) : null; // v1.15.72: AsianTV
-      const azP = !(cfg && cfg.az === 0) ? azStreams(Number(m[1]), 'movie', 0, 0, cfg && cfg.azq || []).catch(() => []) : null; // v1.15.76: AniZone
+      const azP = !(cfg && cfg.az === 0) ? azStreams(Number(m[1]), 'movie', 0, 0, cfg && cfg.azq || [], originOf(req)).catch(() => []) : null; // v1.15.76: AniZone
       kickSubs('tmdb' + m[1], 'movie', null, null, cfg);
       const lookP = Promise.all([typeof tp !== 'undefined' ? tp : null, typeof nmP !== 'undefined' ? nmP : null, typeof infoP !== 'undefined' ? infoP : null].filter(Boolean)).catch(() => []); // v1.26.2
       const mlbP = mlbdOn(cfg) ? mlbdTask(tp, infoP, 'movie', 0, 0, (cfg && cfg.mlbr) || 0) : null;
@@ -18195,7 +18235,7 @@ cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'movie', s: 0, e: 0 }
       const bfP = BF_ENABLED && !(cfg && cfg.bf === 0) ? bfStreams(Number(m[1]), '', 'series', Number(m[2] || 1), Number(m[3] || 1), originOf(req), cfg && cfg.bfr || 0, '', cfg && cfg.bfexo === 0 ? 0 : 1).catch(() => []) : null; // BollyFlix
       const vspP = !(cfg && cfg.vsp === 0) ? vspStreams(Number(m[1]), 'tv', Number(m[2] || 1), Number(m[3] || 1), cfg && cfg.vspq || []).catch(() => []) : null; // v1.15.71: Vidsrc
       const ottP = !(cfg && cfg.ott === 0) ? ottStreams(Number(m[1]), 'tv', Number(m[2] || 1), Number(m[3] || 1), cfg && cfg.ottq || []).catch(() => []) : null; // v1.15.72: AsianTV
-      const azP = !(cfg && cfg.az === 0) ? azStreams(Number(m[1]), 'tv', Number(m[2] || 1), Number(m[3] || 1), cfg && cfg.azq || []).catch(() => []) : null; // v1.15.76: AniZone
+      const azP = !(cfg && cfg.az === 0) ? azStreams(Number(m[1]), 'tv', Number(m[2] || 1), Number(m[3] || 1), cfg && cfg.azq || [], originOf(req)).catch(() => []) : null; // v1.15.76: AniZone
       if (nxOn) nxPrewarm('series', String(m[1]), Number(m[2] || 1), Number(m[3] || 1));
       twRtPrewarm(tp, 'series', Number(m[2] || 1), Number(m[3] || 1), cfg);
       dtPrewarm(tp, infoP, 'series', Number(m[2] || 1), Number(m[3] || 1), originOf(req), cfg); // ★ v1.34.28
@@ -18225,7 +18265,7 @@ cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'series', s: Number(m
       const bfP = BF_ENABLED && !(cfg && cfg.bf === 0) ? Promise.all([raceObjP(infoP, 1500), raceObjP(nmP, 1500)]).then(([info, nm]) => ((info && info.id > 0) || nm) ? bfStreams((info && info.id) || 0, (info && info.name) || nm || '', 'movie', 0, 0, originOf(req), cfg && cfg.bfr || 0, m[1], cfg && cfg.bfexo === 0 ? 0 : 1).catch(() => []) : []).catch(() => []) : null; // BollyFlix
       const vspP = !(cfg && cfg.vsp === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? vspStreams(info.id, 'movie', 0, 0, cfg && cfg.vspq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.71: Vidsrc
       const ottP = !(cfg && cfg.ott === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? ottStreams(info.id, 'movie', 0, 0, cfg && cfg.ottq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.72: AsianTV
-      const azP = !(cfg && cfg.az === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? azStreams(info.id, 'movie', 0, 0, cfg && cfg.azq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.76: AniZone
+      const azP = !(cfg && cfg.az === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? azStreams(info.id, 'movie', 0, 0, cfg && cfg.azq || [], originOf(req)).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.76: AniZone
       kickSubs(m[1], 'movie', null, null, cfg);
       const lookP = Promise.all([typeof tp !== 'undefined' ? tp : null, typeof nmP !== 'undefined' ? nmP : null, typeof infoP !== 'undefined' ? infoP : null].filter(Boolean)).catch(() => []); // v1.26.2
       const mlbP = mlbdOn(cfg) ? mlbdTask(nmP, infoP, 'movie', 0, 0, (cfg && cfg.mlbr) || 0) : null;
@@ -18251,7 +18291,7 @@ cards => { if (DBG) console.error('[rt] RID=' + t0 + ' cards-ready @' + (Date.no
       const hdP = !(cfg && cfg.hd === 0) ? (infoP ? infoP.then(info => hdStreams(m[1], (info && info.name) || '', 'tv', Number(m[2]), Number(m[3]), originOf(req), (cfg && cfg.hdq && cfg.hdq.length ? Math.max.apply(null, cfg.hdq) : (cfg && cfg.hdr || 0)))) : hdStreams(m[1], '', 'tv', Number(m[2]), Number(m[3]), originOf(req), (cfg && cfg.hdq && cfg.hdq.length ? Math.max.apply(null, cfg.hdq) : (cfg && cfg.hdr || 0)))).catch(() => []) : null; // v1.17.51: HDHub4u-সিরিজ      const bfP = BF_ENABLED && !(cfg && cfg.bf === 0) ? Promise.all([raceObjP(infoP, 1500), raceObjP(nmP, 1500)]).then(([info, nm]) => ((info && info.id > 0) || nm) ? bfStreams((info && info.id) || 0, (info && info.name) || nm || '', 'series', Number(m[2]), Number(m[3]), originOf(req), cfg && cfg.bfr || 0, m[1], cfg && cfg.bfexo === 0 ? 0 : 1).catch(() => []) : []).catch(() => []) : null; // BollyFlix
       const vspP = !(cfg && cfg.vsp === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? vspStreams(info.id, 'tv', Number(m[2]), Number(m[3]), cfg && cfg.vspq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.71: Vidsrc
       const ottP = !(cfg && cfg.ott === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? ottStreams(info.id, 'tv', Number(m[2]), Number(m[3]), cfg && cfg.ottq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.72: AsianTV
-      const azP = !(cfg && cfg.az === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? azStreams(info.id, 'tv', Number(m[2]), Number(m[3]), cfg && cfg.azq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.76: AniZone
+      const azP = !(cfg && cfg.az === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? azStreams(info.id, 'tv', Number(m[2]), Number(m[3]), cfg && cfg.azq || [], originOf(req)).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.76: AniZone
       if (nxOn) nxPrewarm('series', m[1], Number(m[2]), Number(m[3]));
       twRtPrewarm(nmP, 'series', Number(m[2]), Number(m[3]), cfg);
       dtPrewarm(nmP, infoP, 'series', Number(m[2]), Number(m[3]), originOf(req), cfg); // ★ v1.34.28
@@ -18280,7 +18320,7 @@ cards => { Promise.all([raceObjP(infoP, 1500), raceObjP(nmP, 1500)]).then(([info
       const hdP = !(cfg && cfg.hd === 0) ? (infoP ? infoP.then(info => hdStreams(m[1], (info && info.name) || '', 'tv', 1, 1, originOf(req), (cfg && cfg.hdq && cfg.hdq.length ? Math.max.apply(null, cfg.hdq) : (cfg && cfg.hdr || 0)))) : hdStreams(m[1], '', 'tv', 1, 1, originOf(req), (cfg && cfg.hdq && cfg.hdq.length ? Math.max.apply(null, cfg.hdq) : (cfg && cfg.hdr || 0)))).catch(() => []) : null; // v1.17.51: HDHub4u-সিরিজ      const bfP = BF_ENABLED && !(cfg && cfg.bf === 0) ? Promise.all([raceObjP(infoP, 1500), raceObjP(nmP, 1500)]).then(([info, nm]) => ((info && info.id > 0) || nm) ? bfStreams((info && info.id) || 0, (info && info.name) || nm || '', 'series', 1, 1, originOf(req), cfg && cfg.bfr || 0, m[1], cfg && cfg.bfexo === 0 ? 0 : 1).catch(() => []) : []).catch(() => []) : null; // BollyFlix
       const vspP = !(cfg && cfg.vsp === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? vspStreams(info.id, 'tv', 1, 1, cfg && cfg.vspq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.71: Vidsrc
       const ottP = !(cfg && cfg.ott === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? ottStreams(info.id, 'tv', 1, 1, cfg && cfg.ottq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.72: AsianTV
-      const azP = !(cfg && cfg.az === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? azStreams(info.id, 'tv', 1, 1, cfg && cfg.azq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.76: AniZone
+      const azP = !(cfg && cfg.az === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? azStreams(info.id, 'tv', 1, 1, cfg && cfg.azq || [], originOf(req)).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.76: AniZone
       if (nxOn) nxPrewarm('series', m[1], 1, 1);
       twRtPrewarm(nmP, 'series', 1, 1, cfg);
       dtPrewarm(nmP, infoP, 'series', 1, 1, originOf(req), cfg); // ★ v1.34.28
@@ -18294,7 +18334,7 @@ cards => { Promise.all([raceObjP(infoP, 1500), raceObjP(nmP, 1500)]).then(([info
         e => { logReq(p + ' [no-s:e]', Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }
     // ── subtitles-রিসোর্স (MovieBox-সাবটাইটেল-ট্র্যাক — এমবেডেড-চাইল্ডের-/subtitles-প্রক্সি) ──
-    if ((m = p.match(/^\/subtitles\/(movie|series)\/([^/]+?)(?:\.json)?$/))) {
+    if ((m = p.match(/^\/subtitles\/(movie|series)\/([^/]+?)(?:\/[^/]+?)?(?:\.json)?$/))) {
       const t0 = Date.now();
       const done2 = arr => { logReq(p, Date.now() - t0, (arr || []).length); sendJson(res, 200, { subtitles: arr || [] }); };
       // Resolve AniZone subtitles independently of the stream route and accept
@@ -18313,7 +18353,7 @@ cards => { Promise.all([raceObjP(infoP, 1500), raceObjP(nmP, 1500)]).then(([info
           const key = 'tmdb' + tid + (isTv ? ':' + sn + ':' + ep : '');
           let items = azSubsFor(kind, key);
           if (!items.length) {
-            await azStreams(tid, isTv ? 'tv' : 'movie', sn, ep, []).catch(() => []);
+            await azStreams(tid, isTv ? 'tv' : 'movie', sn, ep, [], originOf(req)).catch(() => []);
             items = azSubsFor(kind, key);
           }
           return items;
