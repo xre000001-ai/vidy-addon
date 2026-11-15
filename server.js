@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.223';
+const VERSION = '1.34.224';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -8526,6 +8526,7 @@ async function mlbdMirror(force) {
 async function mlbdMirrorOnce(force) {
   // যাচাই-করা মিরর ৩ ঘণ্টা; শুধু-seed (WEAK) ১০ মিনিট — নইলে মৃত-বেস আটকে থাকত
   if (!force && MLBD_BASE && Date.now() - MLBD_BASE_TS < (MLBD_BASE_WEAK ? 10 * 60e3 : 3 * 3600e3)) return MLBD_BASE;
+  let weakSeed = '';
   for (const seed of MLBD_SEEDS) {
     let r = null;
     try { r = await mlbdGet(seed, { ms: 4500 }); } catch (e) { continue; }
@@ -8534,10 +8535,17 @@ async function mlbdMirrorOnce(force) {
     for (const c of cands) {                          // ঘোষিত-মিরর: **যাচাই করে** নিই
       try { const t = await mlbdGet(c + '/', { ms: 3500, body: false }); if (t.st === 200) { MLBD_BASE = require('./tools/mlbd-index/proxy_validation.cjs').canonicalMirror(t.url || c,c); MLBD_BASE_TS = Date.now(); MLBD_BASE_WEAK = false; if (DBG) console.error('[mlbd] base=' + c); return MLBD_BASE; } } catch (e) { }
     }
-    MLBD_BASE = seed.replace(/\/$/, ''); MLBD_BASE_TS = Date.now(); MLBD_BASE_WEAK = true; // মিরর-লিংক না-থাকলে নিজেই
-    if (DBG) console.error('[mlbd] base(seed)=' + MLBD_BASE);
-    return MLBD_BASE;
+    // The apex can be a landing page that returns popular results for every
+    // search. Do not stop discovery just because that page answered HTTP 200.
+    // Prefer an actual redirected mirror, or continue probing the other seeds.
+    const canonical = require('./tools/mlbd-index/proxy_validation.cjs').canonicalMirror(r.url || '', '');
+    if (canonical && canonical !== new URL(seed).origin) {
+      MLBD_BASE=canonical; MLBD_BASE_TS=Date.now(); MLBD_BASE_WEAK=false; return MLBD_BASE;
+    }
+    if (!weakSeed) weakSeed=seed.replace(/\/$/, '');
   }
+  if (MLBD_BASE && !MLBD_BASE_WEAK) return MLBD_BASE;
+  if (weakSeed) { MLBD_BASE=weakSeed; MLBD_BASE_TS=Date.now(); MLBD_BASE_WEAK=true; }
   return MLBD_BASE;
 }
 function mlbdDec(b64, seedHex, rounds) { // সাইটের নিজের dec(): XOR-LCG (প্রোটোটাইপে byte-exact প্রমাণিত)
@@ -8897,6 +8905,10 @@ async function mlbdStreams(name, year, type, s, e, cap) {
         if (b2 && b2 !== base) { base = b2; items = await mlbdSearch(base, name, Math.min(4200, left())).catch(() => []); }
       }
       let picks = mlbdPicks(items, name, year, type, SE, EP);
+      if (!picks.length && MLBD_BASE_WEAK && left()>3000) {
+        const fresh=await mlbdMirror(true);
+        if (fresh && fresh!==base) {base=fresh;const retry=await mlbdSearch(base,name,Math.min(3500,left())).catch(()=>[]);picks=mlbdPicks(retry,name,year,type,SE,EP);}
+      }
       // The site's bounded suggestion snapshot is only a fallback: it can be
       // incomplete, so the regular search remains authoritative when it works.
       if (!picks.length && left()>2500) {
