@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.187';
+const VERSION = '1.34.188';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -4018,7 +4018,7 @@ async function mlsGdOnce(fileUrl, ms, resume) {
   let tok = '';
   try { tok = new URL(String(j.url).replace(/\\\//g, '/'), cloud).href; } catch (e) { tok = ''; }
   if (!tok) return { ok: false, route: 'post-nourl' };
-  return await mlsGdPoll(tok, cloud, Math.max(1200, Math.min(2200, ms - (Date.now() - T0))), cp.px);
+  return await mlsGdPoll(tok, cloud, Math.max(1200, Math.min(4200, ms - (Date.now() - T0))), cp.px);
 }
 
 async function mlsGd(link, ms, px) {
