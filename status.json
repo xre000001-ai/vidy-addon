@@ -1,0 +1,21 @@
+{
+  "status": "experimental-incomplete",
+  "generated_utc": "2026-11-15T15:09:40.919399+00:00",
+  "counts": {
+    "posts": 6348,
+    "refs": 7096,
+    "episode_refs": 5263,
+    "server_refs": 806
+  },
+  "title_jobs": {
+    "done": 765,
+    "pending": 5583
+  },
+  "file_jobs": {
+    "done": 765,
+    "pending": 7137
+  },
+  "state": {
+    "listing_cursor": "181"
+  }
+}
