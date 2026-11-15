@@ -1,0 +1,14 @@
+'use strict';
+const assert=require('assert'),{match}=require('./gdx_match');
+const opts={type:'series',names:['Phoolsajya'],year:2026,postYear:2026,season:1,episode:4,range:null,seasonOnly:true,q0:1080,titleMatches:(want,cand)=>cand.toLowerCase().includes(want.toLowerCase())};
+const pack={ok:true,filename:'CineDoze.TV-Phoolsajya (2026) MLSBD.Co-S01 Bengali Platform8 1080p.mkv',q:1080,season:0,episode:0};
+assert.deepEqual(match(pack,opts),{seasonFile:true,seasonUnmarked:false});
+assert.equal(match({...pack,filename:pack.filename.replace('S01','S02')},opts),null);
+assert.equal(match({...pack,filename:pack.filename.replace('Phoolsajya','Other')},opts),null);
+assert.equal(match({...pack,q:480},opts),null);assert.equal(match({...pack,q:720},opts),null);
+const exact={...pack,filename:'Phoolsajya (2026) S01E04 1080p.mkv',season:1,episode:4,episode_end:4};
+assert.deepEqual(match(exact,{...opts,seasonOnly:false}),{seasonFile:false,seasonUnmarked:false});
+assert.equal(match({...exact,episode:3,episode_end:3},{...opts,seasonOnly:false}),null);
+const range={start:3,end:5};assert(match({...exact,episode:3,episode_end:5},{...opts,seasonOnly:false,range}));assert(!match({...exact,episode:3,episode_end:4},{...opts,seasonOnly:false,range}));
+assert(match({...pack,season:0,episode:0},{...opts,type:'movie',seasonOnly:false}));assert(!match({...pack,filename:'Other (2026) 1080p.mkv'},{...opts,type:'movie',seasonOnly:false}));
+console.log('GDX match: exact episode, pack labeling, title, quality and season safety passed');

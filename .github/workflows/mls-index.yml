@@ -54,6 +54,7 @@ jobs:
           node test_runtime.js
           node test_bootstrap.js
           node test_gdx_watch.js
+          node test-gdx-match.cjs
           node test_joya_source.cjs
           node test-multicloud-fast.cjs
           node test-link-page-proxy-race.cjs
