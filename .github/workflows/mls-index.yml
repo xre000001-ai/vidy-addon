@@ -51,6 +51,7 @@ jobs:
           node test_bootstrap.js
           node test_gdx_watch.js
           node test_joya_source.cjs
+          node test-multicloud-fast.cjs
       - name: Discover and verify BD proxies
         working-directory: tools/mls-index-lab
         run: python scan_bd.py

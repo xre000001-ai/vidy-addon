@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.178';
+const VERSION = '1.34.179';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -853,6 +853,11 @@ function mmRacePool(url, n, timeoutMs, accept) { // racePool's twin over the mul
     const verified = use.filter(c => now - (MM_RESOLVE_OK.get(c.px) || 0) < 600000)
       .sort((a, b) => (MM_RESOLVE_OK.get(b.px) || 0) - (MM_RESOLVE_OK.get(a.px) || 0));
     verified.slice(0, Math.max(1, Math.ceil(n / 2))).forEach(push);
+    // A generic homepage timeout can cool a node that just succeeded on the
+    // resolver. If no normal verified node remains, allow one very recent
+    // resolver success as an exploratory slot, retaining normal fallbacks.
+    if (!verified.length) srt.filter(c => (MM_COOL.get(c.px) || 0) > now && now - (MM_RESOLVE_OK.get(c.px) || 0) < 60000)
+      .sort((a, b) => (MM_RESOLVE_OK.get(b.px) || 0) - (MM_RESOLVE_OK.get(a.px) || 0)).slice(0, 1).forEach(push);
   }
   const bench = use.filter(c => MM_SITE.has(c.px));
   bench.slice(0, Math.max(1, Math.ceil(n / 3))).forEach(push);
@@ -3978,7 +3983,7 @@ async function mlsGdPackMeta(link, ms) {
 //   → ওই URL-এ `&action=watch` দিলে **২০৬ + video/matroska + Content-Range** (প্রমাণিত: ৭৬৪MB)।
 //   (প্লেইন URL ৩০২ করে `&action=download`-এ ⇒ প্লেয়ারে চলে না।) তাই action=watch বাধ্যতামূলক।
 //   ব্যাকআপ: `player.php/?v=<id>` → `const streamSrc = …`, `fsldownload.com/d/…`, `new.multicloudlinks.com/dl/<id>`
-async function mlsWatch(link, ms, px) {
+async function mlsWatchSlow(link, ms, px) {
   const T0 = Date.now();
   const t = Math.max(3000, Math.min(7000, ms || 6000));
   const v = await mlsGet(link, { ms: Math.min(t, 5000), referer: 'https://savelinks.me/', proxy: px });
@@ -4014,6 +4019,35 @@ async function mlsWatch(link, ms, px) {
     if (pr && pr.ok) return Object.assign({ ok: true, direct: c.u, size: pr.size || 0, ct: pr.ct || '', srv: c.tag, unverified:true }, meta);
   }
   return null;
+}
+
+// MultiCloud view IDs map to a stable player URL. Race that exact-ID path
+// with the existing discovery path; invalid or empty fast results cannot win.
+async function mlsWatchFast(link, ms, px) {
+  let view; try { view = new URL(link); } catch (_) { return null; }
+  if (view.protocol !== 'https:' || !/(^|\.)multicloudlinks\.com$/i.test(view.hostname)) return null;
+  const match = /^\/view\/([a-z0-9]+)\/?$/i.exec(view.pathname); if (!match || view.search || view.hash) return null;
+  const player = 'https://new.multicloudlinks.com/player.php/?v=' + encodeURIComponent(match[1]);
+  const t0 = Date.now(), budget = Math.max(3000, Math.min(7000, ms || 6000));
+  try {
+    const p = await mlsGet(player, {ms: Math.min(4500, budget), referer: link, proxy: px});
+    const body = String(p && p.body || '');
+    const src = (/const\s+streamSrc\s*=\s*["']([^"']+)["']/.exec(body) || [])[1];
+    const title = mlsEnt((/<title[^>]*>([\s\S]*?)<\/title>/i.exec(body) || [])[1] || '');
+    const qm = /(2160|1080|720|480)p\b/i.exec(title); const em = /\bS0*(\d{1,2})E0*(\d{1,4})(?!\d)(?:[-–]E?0*(\d{1,4}))?/i.exec(title);
+    const q = qm ? +qm[1] : (/\b4k\b/i.test(title) ? 2160 : 0);
+    if (![720,1080,2160].includes(q) || !title || !src) return null;
+    const u = new URL(mlsEnt(src));
+    if (u.protocol !== 'https:' || !/(^|\.)multidownload\.[a-z]+$/i.test(u.hostname)) return null;
+    const pr = await mlsProve(u.href, Math.max(1000, Math.min(4500, budget - (Date.now() - t0))));
+    if (!pr || !pr.ok) return null;
+    return {ok:true,direct:u.href,size:pr.size||0,ct:pr.ct||'',srv:'multicloud·watch',unverified:true,q,season:em?+em[1]:0,episode:em?+em[2]:0,episode_end:em?+(em[3]||em[2]):0,filename:title,fastWatch:true};
+  } catch (_) { return null; }
+}
+async function mlsWatch(link, ms, px) {
+  const valid = p => Promise.resolve(p).then(v => { if (!v || !v.ok || !v.direct) throw Error('empty-watch'); return v; });
+  try { return await Promise.any([valid(mlsWatchFast(link, ms, px)), valid(mlsWatchSlow(link, ms, px))]); }
+  catch (_) { return null; }
 }
 
 // অডিও-লেবেল: [Hindi-English] → Dual · [Hindi-Tamil-Telugu-Jap] → Multi (ইউজার-নিয়ম)
@@ -4312,7 +4346,7 @@ async function mlsTask(nameP, infoP, type, s, e) {
           const inner = [];
           const range = (Number(it.ep)>0 && Number(it.ep_end)>Number(it.ep)) ? {start:Number(it.ep),end:Number(it.ep_end)} : null;
           const seasonOnly = type === 'series' && !Number(it.ep) && !/\bS\d{1,2}E\d/i.test(String(p.title||''));
-          const consistent = r => type !== 'series' || (r.season === SE && r.episode === (range ? range.start : EP) && (r.episode_end||r.episode) === (range ? range.end : EP));
+          const consistent = r => !!r && (!r.fastWatch || names.some(n => mlsTitleOk(n, r.filename, year, type === 'series'))) && (type !== 'series' || (r.season === SE && r.episode === (range ? range.start : EP) && (r.episode_end||r.episode) === (range ? range.end : EP)));
           for (const u of (x.gdx || []).slice(0, 1))
             inner.push(MLS_PLAY_RESOLVE.get('gdx:'+u, () => require('./tools/mls-index-lab/gdx_watch').resolve(u, mlsGet, Math.max(3000, CAP - (Date.now() - T0) - 400))).then(r => { if (!r || !consistent(r) || ![720,1080,2160].includes(r.q) || (q0 && q0 !== r.q)) return null; addCard({ kind:'watch', r, title:ttlOf(p), q:r.q, range }); return {kind:'watch',r,title:ttlOf(p),q:r.q}; }).catch(() => null));
           for (const u of x.mcl.slice(0, 1))
