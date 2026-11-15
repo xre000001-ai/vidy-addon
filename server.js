@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.172';
+const VERSION = '1.34.173';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -7864,6 +7864,19 @@ function azSubtitleURL(raw, origin) {
     if (!ext || !origin) return String(raw);
     return origin + '/azsub/' + Buffer.from(u.href).toString('base64url') + '/subtitle.' + ext;
   } catch (_) { return String(raw); }
+}
+async function azFetchSubtitle(url, ext) {
+  const valid = text => {
+    const x = String(text || '');
+    if (!x || x.length > 5000000 || /^\s*<(?:!doctype|html)/i.test(x)) return false;
+    return ext === 'ass' || ext === 'ssa' ? /\[Script Info\]|\[Events\]/i.test(x) : ext === 'vtt' ? /^\s*(?:\uFEFF)?WEBVTT/i.test(x) : /\d{2}:\d{2}:\d{2}[,.]\d{3}\s*-->/m.test(x);
+  };
+  const direct = fetch(url, { headers: { 'User-Agent': UA, Referer: AZ_BASE + '/' }, redirect:'manual', signal:AbortSignal.timeout(6500) }).then(async r => {
+    if (!r.ok || Number(r.headers.get('content-length') || 0) > 5000000) throw Error('subtitle-http');
+    const text = await r.text(); if (!valid(text)) throw Error('invalid-subtitle'); return text;
+  });
+  const proxy = racePool(url, 8, 6500, 'az-subtitle', valid, { Referer: AZ_BASE + '/' }).then(r => r.body);
+  return Buffer.from(await Promise.any([direct, proxy]), 'utf8');
 }
 function azSubtitleTracks(pl, origin) {
     // Keep every distinct source track, including forced, SDH and regional
@@ -17210,10 +17223,7 @@ const server = http.createServer((req, res) => {
             const raw = Buffer.from(sm[1], 'base64url').toString('utf8');
             const u = new URL(raw), ext = sm[2].toLowerCase();
             if (u.protocol !== 'https:' || !/(?:^|\.)(?:vid-cdn\.xyz|xin-cdn\.xyz)$/i.test(u.hostname) || !/\/subtitles\//i.test(u.pathname) || !u.pathname.toLowerCase().endsWith('.' + ext)) return sendJson(res, 400, {error:'invalid subtitle'});
-            const r = await fetch(u.href, { headers: { 'User-Agent': UA, Referer: AZ_BASE + '/' }, redirect:'manual', signal:AbortSignal.timeout(7000) });
-            if (!r.ok || Number(r.headers.get('content-length') || 0) > 5000000) return sendJson(res, 502, {error:'subtitle unavailable'});
-            const body = Buffer.from(await r.arrayBuffer());
-            if (body.length > 5000000) return sendJson(res, 502, {error:'subtitle too large'});
+            const body = await azFetchSubtitle(u.href, ext);
             const ct = ext === 'vtt' ? 'text/vtt; charset=utf-8' : ext === 'srt' ? 'application/x-subrip; charset=utf-8' : 'text/plain; charset=utf-8';
             res.writeHead(200, { 'content-type':ct, 'content-length':body.length, 'access-control-allow-origin':'*', 'cache-control':'private, max-age=300', 'x-content-type-options':'nosniff' });
             return res.end(req.method === 'HEAD' ? undefined : body);
