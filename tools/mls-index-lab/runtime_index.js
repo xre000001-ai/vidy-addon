@@ -44,7 +44,7 @@ async function candidates(names,year,type,season,episode,waitMs=1000){
 }
 function mirror(id){
  const entry=current && current.mirrors && current.mirrors[id];
- if(!entry || !Array.isArray(entry.pages) || !Number.isFinite(entry.checked) || (Date.now()/1000-entry.checked)>7*86400 || entry.checked>Date.now()/1000+300)return null;
+ if(!entry || !Array.isArray(entry.pages) || !Number.isFinite(entry.checked) || (Date.now()/1000-entry.checked)>30*86400 || entry.checked>Date.now()/1000+300)return null;
  const out={gd:[],mcl:[],gdx:[],hosts:[]};
  for(const raw of entry.pages){try{const u=new URL(raw);const h=u.hostname.toLowerCase();if(u.protocol!=='https:'||u.search||u.hash)continue;
   if(h==='gdxfiles.com' && /^\/file\/[a-z0-9]+\/?$/i.test(u.pathname))out.gdx.push(u.href);

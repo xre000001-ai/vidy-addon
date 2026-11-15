@@ -106,11 +106,11 @@ def fetchmirror(id):
   if not links:raise ValueError('no supported mirror links')
   return links
  try:
-  r=requests.get(url,headers={'Referer':BASE+'/'},timeout=12);r.raise_for_status();return parse(r.text)
+  r=requests.get(url,headers={'Referer':BASE+'/'},timeout=8);r.raise_for_status();return parse(r.text)
  except Exception:pass
- for proxy in random.sample(PROXIES,min(3,len(PROXIES))):
+ for proxy in random.sample(PROXIES,min(1,len(PROXIES))):
   try:
-   r=subprocess.run(['curl','-fsS','--connect-timeout','5','--max-time','12','--proxy',proxy,'-A','Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/130.0.0.0 Safari/537.36','-e',BASE+'/',url],capture_output=True,text=True,timeout=14)
+   r=subprocess.run(['curl','-fsS','--connect-timeout','4','--max-time','7','--proxy',proxy,'-A','Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/130.0.0.0 Safari/537.36','-e',BASE+'/',url],capture_output=True,text=True,timeout=9)
    if r.returncode:continue
    return parse(r.stdout)
   except Exception:pass
@@ -133,7 +133,7 @@ def select_mirror_ids(rows,last,attempts,now,limit,retry_seconds=3600):
 
 def main():
  global PROXIES
- ap=argparse.ArgumentParser();ap.add_argument('--db',default='index.sqlite');ap.add_argument('--pages',type=int,default=2);ap.add_argument('--mirror-limit',type=int,default=10);ap.add_argument('--proxy-list');a=ap.parse_args()
+ ap=argparse.ArgumentParser();ap.add_argument('--db',default='index.sqlite');ap.add_argument('--pages',type=int,default=2);ap.add_argument('--mirror-limit',type=int,default=10);ap.add_argument('--proxy-list');ap.add_argument('--mirror-only',action='store_true');ap.add_argument('--workers',type=int,default=6);a=ap.parse_args()
  if a.proxy_list:
   data=json.load(open(a.proxy_list));PROXIES=[x['proxy'] for x in sorted(data['good'],key=lambda x:x['ms'])]
  db=sqlite3.connect(a.db);db.executescript('CREATE TABLE IF NOT EXISTS posts(id INTEGER PRIMARY KEY,title TEXT,url TEXT,date TEXT,modified TEXT,links TEXT); CREATE TABLE IF NOT EXISTS mirrors(id TEXT PRIMARY KEY, data TEXT, checked INTEGER); CREATE TABLE IF NOT EXISTS mirror_attempts(id TEXT PRIMARY KEY, attempted INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS state(k TEXT PRIMARY KEY,v TEXT);')
@@ -141,7 +141,7 @@ def main():
   x=db.execute('SELECT v FROM state WHERE k=?',(k,)).fetchone();return x[0] if x else None
  def setstate(k,v):db.execute('INSERT OR REPLACE INTO state VALUES(?,?)',(k,str(v)))
  if not state('before'):setstate('before',datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S'));setstate('next_page',1);db.commit()
- for p,cut in [(1,None)]+[(int(state('next_page'))+i,state('before')) for i in range(a.pages)]:
+ for p,cut in ([] if a.mirror_only else [(1,None)]+[(int(state('next_page'))+i,state('before')) for i in range(a.pages)]):
   try:
    data=wp(p,cut)
    with db:
@@ -154,7 +154,7 @@ def main():
  last={k:v for k,v in db.execute('SELECT id,checked FROM mirrors')}
  attempts={k:v for k,v in db.execute('SELECT id,attempted FROM mirror_attempts')}
  ids=select_mirror_ids((r[0] for r in db.execute('SELECT links FROM posts ORDER BY date DESC')),last,attempts,time.time(),a.mirror_limit)
- with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
+ with concurrent.futures.ThreadPoolExecutor(max_workers=max(1,min(24,a.workers))) as pool:
   futures={pool.submit(fetchmirror,x):x for x in ids}
   for f in concurrent.futures.as_completed(futures):
    id=futures[f]

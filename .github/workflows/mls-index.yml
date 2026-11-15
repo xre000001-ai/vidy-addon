@@ -32,6 +32,7 @@ jobs:
           set -e
           if [ $rc -eq 0 ]; then
             git fetch --no-tags origin refs/heads/mls-index-sandbox-data
+            git rev-parse FETCH_HEAD > /tmp/mls-pilot/old-sha
             git show FETCH_HEAD:store.sqlite > /tmp/mls-pilot/store.sqlite
             test -s /tmp/mls-pilot/store.sqlite
             python -c "import sqlite3; d=sqlite3.connect('/tmp/mls-pilot/store.sqlite'); assert d.execute('pragma integrity_check').fetchone()[0]=='ok'; open('/tmp/mls-pilot/old-count','w').write(str(d.execute('select count(*) from posts').fetchone()[0]))"
@@ -52,6 +53,8 @@ jobs:
           node test_gdx_watch.js
           node test_joya_source.cjs
           node test-multicloud-fast.cjs
+          node test-link-page-proxy-race.cjs
+          node test-gd-session-proxy.cjs
       - name: Discover and verify BD proxies
         working-directory: tools/mls-index-lab
         run: python scan_bd.py
@@ -59,7 +62,7 @@ jobs:
         working-directory: tools/mls-index-lab
         run: |
           set -euo pipefail
-          python indexer.py --db /tmp/mls-pilot/store.sqlite --proxy-list bd-results.json --pages 0 --mirror-limit 120
+          python indexer.py --db /tmp/mls-pilot/store.sqlite --proxy-list bd-results.json --pages 0 --mirror-limit 1000 --workers 20
           python migrate.py /tmp/mls-pilot/store.sqlite
           python refresh.py --db /tmp/mls-pilot/store.sqlite --proxy-list bd-results.json --max-pages 10
           python backfill.py --db /tmp/mls-pilot/store.sqlite --proxy-list bd-results.json --start 1 --end auto --max-pages 20 --workers 4
@@ -84,4 +87,5 @@ jobs:
           cp /tmp/mls-pilot/store.sqlite ./store.sqlite
           git add data store.sqlite
           git commit -m 'MLSBD experimental index snapshot'
-          git push --force origin HEAD:mls-index-sandbox-data
+          old_sha=$(cat /tmp/mls-pilot/old-sha 2>/dev/null || true)
+          git push --force-with-lease=refs/heads/mls-index-sandbox-data:"$old_sha" origin HEAD:mls-index-sandbox-data
