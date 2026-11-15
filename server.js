@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.196';
+const VERSION = '1.34.197';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -3130,7 +3130,8 @@ const mlsMarkDirty = () => { MLS_CACHE_DIRTY = true; };
     const d = JSON.parse(require('fs').readFileSync(MLS_CACHE_FILE, 'utf8'));
     const now = Date.now();
     for (const [k, v] of (d.cards || [])) if (v && v.cards && v.cards.length && now - v.ts < 21600000) MLS_RC.set(k, v);
-    for (const [k, v] of (d.gd || [])) if (v && v.ok && now - v.ts < 21600000) MLS_GD_LOAD.push([k, v]);
+    // Never restore expiring generated media URLs from disk.
+    // Queued generation sessions remain in-memory; do not restore stale proxy sessions.
     for (const [k, v] of (d.sav || [])) if (v && v.val && now - v.ts < 3600000) MLS_SAV_LOAD.push([k, v]);
     if (DBG) console.error('[mlsd] cache-load cards=' + MLS_RC.size + ' gd=' + MLS_GD_LOAD.length + ' sav=' + MLS_SAV_LOAD.length);
   } catch (e) { }
@@ -3143,7 +3144,7 @@ setInterval(() => {
     const out = {
       ts: Date.now(),
       cards: pick(MLS_RC, 150, v => v && v.cards && v.cards.length),
-      gd: pick(MLS_GD, 150, v => v && (v.ok || v.tokUrl)),
+      gd: pick(MLS_GD, 150, v => v && !v.direct && v.tokUrl),
       sav: pick(MLS_SAV, 200, v => v && v.val && (v.val.gd.length || v.val.mcl.length))
     };
     require('fs').writeFileSync(MLS_CACHE_FILE, JSON.stringify(out));
@@ -4008,6 +4009,14 @@ async function mlsGdOnce(fileUrl, ms, resume) {
   let cloud = grab(body, /https?:\/\/[^"'\s<>]+\/cloud\/\d+\/[A-Za-z0-9]+/);
   cloud = cloud ? cloud.replace(/^https?:\/\/[^\/]+/i, origin) : (origin + '/cloud/' + String(Date.now()).slice(0, 10) + '/' + id);
   const cp = await mlsGet(cloud, { ms: Math.max(1800, Math.min(2600, ms - (Date.now() - T0))) });
+  // The cloud page may already contain a usable video worker. Do not start a
+  // fresh POST/poll job when the website has an existing Cloud Resume link.
+  // ZIP/unknown pages fall through to the original generation flow unchanged.
+  const resumeDirect = require('./tools/mls-index-lab/gd_resume').find(cp.body);
+  if (resumeDirect) {
+    const pv = await mlsProve(resumeDirect, 2400);
+    if (pv && pv.ok) return {ok:true,direct:resumeDirect,size:pv.size||0,ct:pv.ct||'',route:'cloud-resume'};
+  }
   const key = (/formData\.append\("key",\s*"([a-f0-9]{20,})"\)/.exec(cp.body || '') || [])[1]
     || (/name="key"\s+value="([a-f0-9]+)"/.exec(cp.body || '') || [])[1];
   if (!key) return { ok: false, route: 'nokey' };
