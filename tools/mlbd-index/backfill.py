@@ -5,6 +5,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 import requests
 from claim import claim
+from ratelimit import is_paused,pause
 D=Path(__file__).resolve().parent
 p=argparse.ArgumentParser();p.add_argument('--db',default=str(D/'sample-index.sqlite'));p.add_argument('--limit',type=int,default=120);p.add_argument('--delay',type=float,default=1.5);args=p.parse_args()
 db=sqlite3.connect(args.db,timeout=30);db.execute('pragma foreign_keys=ON');db.executescript('''
@@ -17,6 +18,8 @@ CREATE INDEX IF NOT EXISTS file_jobs_pending ON file_jobs(state,attempts,depth);
 with db:
  db.execute("INSERT OR IGNORE INTO jobs(kind,path,post_id) SELECT 'title',path,id FROM posts")
  db.execute("INSERT OR IGNORE INTO file_jobs(path,ref_id,depth) SELECT path,id,0 FROM refs")
+if is_paused(db):
+ print('site cooldown active; backfill paused',flush=True);db.close();raise SystemExit(0)
 s=requests.Session();s.headers.update({'User-Agent':'MovieLinkBDIndexResearch/0.1 (reference-only; slow crawler)','Accept':'text/html,application/xhtml+xml'})
 seed=s.get('https://movielinkbd.com/',timeout=10,allow_redirects=False)
 if seed.status_code!=200:raise SystemExit('Mirror discovery failed; preserve last good index')
@@ -33,7 +36,7 @@ def fetch(path):
   try:
    r=s.get(base+path,timeout=12,allow_redirects=False);next_at=time.monotonic()+max(1,args.delay)
    if r.status_code in (429,503):
-    print('server rate-limited',r.status_code,'Retry-After',r.headers.get('Retry-After','not specified'),'pausing run',flush=True);return None,'rate-limit'
+    print('server rate-limited',r.status_code,'cooldown until',pause(db,r.headers.get('Retry-After')),'pausing run',flush=True);return None,'rate-limit'
    if r.status_code in (301,302,303,307,308):
     from urllib.parse import urljoin
     target=urlparse(urljoin(base+path,r.headers.get('Location','')))
@@ -70,7 +73,7 @@ def server_links(body):
 
 for n in range(max(0,args.limit)):
  # Claim under an SQLite write lock; workers cannot take the same job.
- if (D / '.stop-rate-limit').exists():print('shared rate-limit pause',flush=True);break
+ if (D / '.stop-rate-limit').exists() or is_paused(db):print('shared rate-limit pause',flush=True);break
  kind,job=claim(db,bool(n%2))
  if job is None:print('queue exhausted',flush=True);break
  path,ident,depth=job;body,status=fetch(path);now=int(time.time())

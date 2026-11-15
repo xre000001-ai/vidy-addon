@@ -5,7 +5,7 @@ on:
     paths: [".github/workflows/movielinkbd-index.yml", "tools/mlbd-index/**"]
   workflow_dispatch:
   schedule:
-    - cron: '11 * * * *'
+    - cron: '*/10 * * * *'
 permissions:
   contents: write
 concurrency:
@@ -55,7 +55,7 @@ jobs:
               db.execute("update file_jobs set state='pending' where state='running'")
           PY
           pids=()
-          for worker in 1 2 3; do
+          for worker in 1 2 3 4 5 6; do
             python -u tools/mlbd-index/backfill.py --db /tmp/mlbd-index/store.sqlite --limit 150 --delay 1.5 >"/tmp/mlbd-index/worker-$worker.log" 2>&1 &
             pids+=("$!")
           done

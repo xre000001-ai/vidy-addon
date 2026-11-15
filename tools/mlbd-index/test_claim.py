@@ -2,7 +2,12 @@ import concurrent.futures, sqlite3, tempfile, unittest, os, sys
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parent))
 from claim import claim
+from ratelimit import until
 class ClaimTest(unittest.TestCase):
+ def test_retry_after_floor(self):
+  self.assertEqual(until('5',1000),1900)
+  self.assertEqual(until('3600',1000),4600)
+  self.assertEqual(until(None,1000),1900)
  def test_parallel_exactly_once(self):
   with tempfile.TemporaryDirectory() as d:
    path=os.path.join(d,'x.sqlite');db=sqlite3.connect(path)
