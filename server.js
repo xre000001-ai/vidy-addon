@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.197';
+const VERSION = '1.34.198';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -4452,20 +4452,20 @@ async function mlsTask(nameP, infoP, type, s, e, requestId) {
           // ★ v1.28.22: গেট এখন **বাকি-সময়** দেখে (আগে T0<CAP*0.45 ⇒ সার্চ ৪-৫সে নিলে gdflix কখনোই
           //   চালু হতো না ⇒ সব কার্ড multicloud-এ সীমিত)। আংশিক-কার্ড থাকায় দেরিতে শেষ হলেও ক্ষতি নেই।
           if (CAP - (Date.now() - T0) > 2400)
-            for (const u of ((q0 || range || seasonOnly || type === 'movie') ? x.gd : []).slice(0, 1))
+            for (const u of x.gd.slice(0, 1))
               inner.push((async () => {
                 let actualQ=q0;
                 let seasonUnmarked=false;
                 // Start metadata validation and media generation together; shared file-page
                 // request is coalesced. Do not emit until validation completes successfully.
-                const needsMeta=!!(range || seasonOnly || (!q0 && type === 'movie'));
+                const needsMeta=!!(range || seasonOnly || !q0);
                 const metaP=needsMeta ? mlsGdPackMeta(u,4000) : Promise.resolve(null);
                 const resolveP=MLS_PLAY_RESOLVE.get('gd:'+u, () => mlsGd(u, Math.max(2600, CAP - (Date.now() - T0) - 400))).catch(()=>null);
                 if (needsMeta) {
                   const meta=await metaP;
                   const postYear=+(String(p.title||'').match(/\b(?:19|20)\d{2}\b/)||[])[0]||0;
                   const seasonMeta=seasonOnly && names.map(n=>require('./tools/mls-index-lab/season_file').seasonFile(meta.title,SE,{name:n,year:postYear})).find(Boolean);
-                  if (range ? !consistent(meta) : seasonOnly ? (!seasonMeta || !names.some(n=>mlsTitleOk(n,meta.title,year,true))) : !verifiedMovieName(meta.title)) return null;
+                  if (range ? !consistent(meta) : seasonOnly ? (!seasonMeta || !names.some(n=>mlsTitleOk(n,meta.title,year,true))) : type === 'series' ? (!consistent(meta) || !names.some(n=>mlsTitleOk(n,meta.title,year,true))) : !verifiedMovieName(meta.title)) return null;
                   if (![720,1080,2160].includes(meta.q) || (q0 && q0!==meta.q)) return null;
                   actualQ=meta.q;seasonUnmarked=!!(seasonMeta && seasonMeta.unmarked);
                 }
