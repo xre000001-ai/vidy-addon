@@ -1,0 +1,6 @@
+'use strict';
+const fs=require('fs'),vm=require('vm'),assert=require('assert');
+const s=fs.readFileSync('server.js','utf8');let a=s.indexOf('function mmMasterForm('),b=s.indexOf('function mmMasterTags(',a);const ctx={URL,Buffer};vm.createContext(ctx);vm.runInContext(s.slice(a,b)+';globalThis.form=mmMasterForm',ctx);
+const pl='#EXTM3U\n#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",NAME="English",LANGUAGE="en",URI="sub.m3u8"\n#EXT-X-STREAM-INF:RESOLUTION=1920x1080,AUDIO="aac",SUBTITLES="subs"\nvideo.m3u8\n';const base='https://img.rousav.tech/a/master.m3u8?api_key=x';const video='https://img.rousav.tech/a/video.m3u8?api_key=x';const audio='#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aac",NAME="Greek",URI="https://img.rousav.tech/a/audio.m3u8?api_key=x"';let out=ctx.form(pl,base,video,audio,'https://addon.test','');assert(out.includes('TYPE=SUBTITLES'));assert(out.includes('SUBTITLES="subs"'));assert(out.includes('/mma/'));assert.equal((out.match(/TYPE=AUDIO/g)||[]).length,1);
+out=ctx.form(pl.replace(/#EXT-X-MEDIA:TYPE=SUBTITLES[^\n]*\n/,''),base,video,audio,'https://addon.test','');assert(!out.includes('SUBTITLES="subs"'));
+console.log('MM single-audio master preserves linked source subtitle group');

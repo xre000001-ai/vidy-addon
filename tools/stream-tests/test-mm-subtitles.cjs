@@ -1,0 +1,6 @@
+'use strict';
+const fs=require('fs'),vm=require('vm'),assert=require('assert');const s=fs.readFileSync('server.js','utf8');
+let a=s.indexOf('function mmSourceSubs('),b=s.indexOf('async function mmVidbolt(',a);assert(a>=0&&b>a);
+let ctx={AZ_LANG3:{en:'eng',hi:'hin'},URL};vm.createContext(ctx);vm.runInContext(s.slice(a,b)+';globalThis.f=mmSourceSubs',ctx);
+const x=ctx.f({subtitles:[{url:'https://example.test/en.vtt',lang:'en',label:'English'},{url:'https://example.test/en.vtt',lang:'en'},{url:'javascript:alert(1)',lang:'en'},{file:'https://example.test/hi.srt',language:'hi'}]});assert.equal(x.length,2);assert.equal(x[0].lang,'eng');assert.equal(x[1].lang,'hin');assert.equal(ctx.f({}).length,0);
+a=s.indexOf('const stripCards =');b=s.indexOf('// ---------- v1.15.52:',a);assert(a>=0&&b>a);ctx={};vm.createContext(ctx);vm.runInContext(s.slice(a,b)+';globalThis.f=stripCards',ctx);const result=ctx.f([{bingeGroup:'mm|x',subtitles:x},{bingeGroup:'az|x',subtitles:x},{bingeGroup:'else|x',subtitles:x}]);assert.equal(result[0].subtitles.length,2);assert.equal(result[1].subtitles.length,2);assert(!result[2].subtitles);console.log('MM source-only subtitle normalization and output preservation passed');
