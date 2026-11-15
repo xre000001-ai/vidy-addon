@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.217';
+const VERSION = '1.34.218';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -8587,8 +8587,7 @@ function mlbdPicks(items, name, year, type, season, ep) { // ★ v1.27.14: স�
   // When an exact title exists, do not union lookalike titles as mirrors.
   if (type === 'movie') {
     if (year) cands = cands.filter(x => !x.year || x.year === String(year));
-    const exact=cands.filter(x=>mlbdNorm(x.title)===W);
-    if(exact.length)cands=exact;
+    cands=cands.filter(x=>require('./tools/mlbd-index/movie_identity.cjs').same(name,x.title));
   }
   if (type !== 'movie') {                       // ★ v1.27.12: MovieLinkBD-তে **প্রতি সিজন আলাদা পেজ**
     // Prefix matches may be unrelated spin-offs: e.g. Friends Sex and Games,
@@ -17996,7 +17995,12 @@ const server = http.createServer((req, res) => {
         const _freshN = [...VIDY_OK.values()].filter(v => v.ts && Date.now() - v.ts < FR).length;
         return { fresh: fresh, proven: proven, fresh30m: [...VIDY_OK.values()].filter(v => v.ts && Date.now() - v.ts < 1800000).length, verifiedPerMin: Math.round((_freshN / mins) * 10) / 10, att: att, ok: okc, yield: att ? Math.round(1000 * okc / att) / 10 : 0, full: poolsFull() };
       })();
-      const _t = Object.assign({ fill: poolsFill(), scan: _scan, live: PTUN.size, cool: PTUN_COOL.size, subnets: (() => { const m = new Map(); for (const px of VIDY_OK.keys()) { const k = sub24(px); m.set(k, (m.get(k) || 0) + 1); } return { distinct: m.size, nodes: VIDY_OK.size }; })(), snban: SNBAN.size, cap: VCAP.size, aff: [...PXAFF.entries()].map(([k, m]) => k + ':' + m.size).join(',') }, TST);
+      const _sourceFresh = {};
+      for (const k of Object.keys(SRC_PROBE)) {
+        const vals=[...srcPool(k).values()].filter(e=>spoolFresh(e));
+        _sourceFresh[k]={verifiedThisRuntime:vals.filter(e=>!e.seeded).length,seeded:vals.filter(e=>e.seeded).length};
+      }
+      const _t = Object.assign({ fill: poolsFill(), sourceFresh: _sourceFresh, scan: _scan, live: PTUN.size, cool: PTUN_COOL.size, subnets: (() => { const m = new Map(); for (const px of VIDY_OK.keys()) { const k = sub24(px); m.set(k, (m.get(k) || 0) + 1); } return { distinct: m.size, nodes: VIDY_OK.size }; })(), snban: SNBAN.size, cap: VCAP.size, aff: [...PXAFF.entries()].map(([k, m]) => k + ':' + m.size).join(',') }, TST);
       for (const k2 of ['srv', 'sw']) if (_t[k2]) _t[k2] = Object.assign({ rate: (_t[k2].ok + '/' + _t[k2].req) }, _t[k2]);
       return sendJson(res, 200, { keys: Object.keys(out).length, pool: POOL.length, site: PX_SITE.size, tun: _t, src: out });
     }
