@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.205';
+const VERSION = '1.34.206';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -4165,12 +4165,12 @@ async function mlsWatchFast(link, ms, px) {
     return {ok:true,direct:u.href,size:pr.size||0,ct:pr.ct||'',srv:'multicloud·watch',unverified:true,q,season:em?+em[1]:0,episode:em?+em[2]:0,episode_end:em?+(em[3]||em[2]):0,filename:title,fastWatch:true};
   } catch (_) { return null; }
 }
-async function mlsWatch(link, ms, px) {
+async function mlsWatch(link, ms, px, accept) {
   // A faster response without quality or filename cannot pass the task's
   // identity checks. Reject it *inside* the race so a slower valid branch
   // can still win instead of being silently discarded after Promise.any.
   const valid = p => Promise.resolve(p).then(v => {
-    if (!v || !v.ok || !v.direct || ![720,1080,2160].includes(Number(v.q)) || !String(v.filename || '').trim()) throw Error('incomplete-watch');
+    if (!v || !v.ok || !v.direct || ![720,1080,2160].includes(Number(v.q)) || !String(v.filename || '').trim() || (accept && !accept(v))) throw Error('unusable-watch');
     return v;
   });
   try { return await Promise.any([valid(mlsWatchFast(link, ms, px)), valid(mlsWatchSlow(link, ms, px))]); }
@@ -4487,16 +4487,22 @@ async function mlsTask(nameP, infoP, type, s, e, requestId) {
             }).catch(() => null));
           // A season file can be one combined video; validate its filename and
           // label it as such rather than requiring an individual SxxExx marker.
-          const addMultiResult = r => {
-            if (!r || ![720,1080,2160].includes(r.q) || (q0 && q0 !== r.q)) return null;
+          const multiMatch = r => {
+            if (!r || ![720,1080,2160].includes(r.q) || (q0 && q0 !== r.q) || !names.some(n => mlsTitleOk(n, r.filename, year, type === 'series'))) return null;
             const postYear=+(String(p.title||'').match(/\b(?:19|20)\d{2}\b/)||[])[0]||0;
-            const sm=seasonOnly ? require('./tools/mls-index-lab/season_file').matchMirror(r,SE,names,postYear,mlsTitleOk) : null;
-            if (seasonOnly ? !sm : !consistent(r)) return null;
-            addCard({kind:'watch',r,title:ttlOf(p),q:r.q,range,seasonFile:!!sm,seasonUnmarked:!!(sm && sm.unmarked)});
+            return seasonOnly ? require('./tools/mls-index-lab/season_file').matchMirror(r,SE,names,postYear,mlsTitleOk) : (consistent(r) ? {matched:true} : null);
+          };
+          const addMultiResult = r => {
+            const match=multiMatch(r); if (!match) return null;
+            addCard({kind:'watch',r,title:ttlOf(p),q:r.q,range,seasonFile:!!seasonOnly,seasonUnmarked:!!(seasonOnly && match.unmarked)});
             return {kind:'watch',r,title:ttlOf(p),q:r.q};
           };
-          for (const u of x.mcl.slice(0, 1))
-            inner.push(MLS_PLAY_RESOLVE.get('watch:'+u, () => mlsWatch(u, Math.max(3000, CAP - (Date.now() - T0) - 400))).then(addMultiResult).catch(() => null));
+          for (const u of x.mcl.slice(0, 1)) {
+            // Different requests can have different episode/quality/identity constraints.
+            // Never coalesce or reuse a winner selected for a different task.
+            const scope=JSON.stringify([type,SE,EP,year,names,q0,range,seasonOnly,String(p.title||'')]);
+            inner.push(MLS_PLAY_RESOLVE.get('watch:'+u+':'+scope, () => mlsWatch(u, Math.max(3000, CAP - (Date.now() - T0) - 400), undefined, multiMatch)).then(addMultiResult).catch(() => null));
+          }
           // Pixeldrain is a distinct mirror, not a replacement for Watch Online.
           for (const u of x.mcl.slice(0, 1))
             inner.push(MLS_PLAY_RESOLVE.get('mcl-pixel:'+u, () => require('./tools/mls-index-lab/multicloud_pixel').resolve(u, mlsGet, Math.max(3000, CAP - (Date.now() - T0) - 400))).then(addMultiResult).catch(() => null));

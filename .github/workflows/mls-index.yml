@@ -57,6 +57,8 @@ jobs:
           node test-gdx-match.cjs
           node test_joya_source.cjs
           node test-multicloud-fast.cjs
+          node test-multicloud-race.cjs
+          node test-watch-task-race.cjs
           node test-link-page-proxy-race.cjs
           node test-gd-session-proxy.cjs
           node test-gd-foreground-queue.cjs
