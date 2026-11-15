@@ -36,6 +36,7 @@ def mirror_links(body,base='https://savelinks.me/'):
  return list({x['url']:x for x in out}.values())
 
 PROXIES=[]
+MIRROR_PROXIES=[]
 TURN=0
 
 def wp(page,before=None):
@@ -108,7 +109,8 @@ def fetchmirror(id):
  try:
   r=requests.get(url,headers={'Referer':BASE+'/'},timeout=8);r.raise_for_status();return parse(r.text)
  except Exception:pass
- for proxy in random.sample(PROXIES,min(1,len(PROXIES))):
+ mirror_proxies=list(dict.fromkeys(MIRROR_PROXIES+PROXIES))
+ for proxy in random.sample(mirror_proxies,min(2,len(mirror_proxies))):
   try:
    r=subprocess.run(['curl','-fsS','--connect-timeout','4','--max-time','7','--proxy',proxy,'-A','Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/130.0.0.0 Safari/537.36','-e',BASE+'/',url],capture_output=True,text=True,timeout=9)
    if r.returncode:continue
@@ -132,10 +134,17 @@ def select_mirror_ids(rows,last,attempts,now,limit,retry_seconds=3600):
  return candidates[:max(0,limit)]
 
 def main():
- global PROXIES
- ap=argparse.ArgumentParser();ap.add_argument('--db',default='index.sqlite');ap.add_argument('--pages',type=int,default=2);ap.add_argument('--mirror-limit',type=int,default=10);ap.add_argument('--proxy-list');ap.add_argument('--mirror-only',action='store_true');ap.add_argument('--workers',type=int,default=6);a=ap.parse_args()
+ global PROXIES,MIRROR_PROXIES
+ ap=argparse.ArgumentParser();ap.add_argument('--db',default='index.sqlite');ap.add_argument('--pages',type=int,default=2);ap.add_argument('--mirror-limit',type=int,default=10);ap.add_argument('--proxy-list');ap.add_argument('--mirror-proxy-pool',help='General proxy candidates for downstream mirror pages only');ap.add_argument('--mirror-only',action='store_true');ap.add_argument('--workers',type=int,default=6);a=ap.parse_args()
  if a.proxy_list:
   data=json.load(open(a.proxy_list));PROXIES=[x['proxy'] for x in sorted(data['good'],key=lambda x:x['ms'])]
+ if a.mirror_proxy_pool:
+  with open(a.mirror_proxy_pool) as f: general=json.load(f)
+  if not isinstance(general,list):raise ValueError('invalid mirror proxy pool')
+  for node in general:
+   value=str(node.get('px','')) if isinstance(node,dict) else ''
+   if re.fullmatch(r'(?:https?://|socks5h?://|socks4a?://)?[A-Za-z0-9.:-]+:\d{1,5}',value):
+    MIRROR_PROXIES.append(value if '://' in value else 'http://'+value)
  db=sqlite3.connect(a.db);db.executescript('CREATE TABLE IF NOT EXISTS posts(id INTEGER PRIMARY KEY,title TEXT,url TEXT,date TEXT,modified TEXT,links TEXT); CREATE TABLE IF NOT EXISTS mirrors(id TEXT PRIMARY KEY, data TEXT, checked INTEGER); CREATE TABLE IF NOT EXISTS mirror_attempts(id TEXT PRIMARY KEY, attempted INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS state(k TEXT PRIMARY KEY,v TEXT);')
  def state(k):
   x=db.execute('SELECT v FROM state WHERE k=?',(k,)).fetchone();return x[0] if x else None

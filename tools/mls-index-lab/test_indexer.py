@@ -23,6 +23,15 @@ class Test(unittest.TestCase):
   x=m.mirror_links('<a href="https://gdflix.vip/file/a">GD</a><a href="https://pixeldrain.com/u/xyz">PD</a><a href="https://evil.example/">x</a>');self.assertEqual(len(x),2)
  def test_gdx_mirror_is_preserved(self):
   x=m.mirror_links('<a href="https://gdxfiles.com/file/35yt35mrv8ry">GDx</a><a href="https://evil.example/file/aaa">bad</a>');self.assertEqual([v['url'] for v in x],['https://gdxfiles.com/file/35yt35mrv8ry'])
+ def test_general_proxy_is_only_used_for_downstream_mirror(self):
+  body='<html>'+('x'*1100)+'<a href="https://gdxfiles.com/file/ABC123">GDx</a></html>'
+  with patch.object(m,'MIRROR_PROXIES',['http://general.test:8080']), patch.object(m,'PROXIES',[]), patch('indexer.requests.get',side_effect=RuntimeError('direct blocked')), patch('indexer.subprocess.run',return_value=Mock(returncode=0,stdout=body)) as curl:
+   links=m.fetchmirror('XYZ123');self.assertEqual(links[0]['url'],'https://gdxfiles.com/file/ABC123')
+   args=curl.call_args.args[0];self.assertIn('http://general.test:8080',args);self.assertIn('https://savelinks.me/view/XYZ123',args)
+  # Main site proxy selection remains separate from the general mirror pool.
+  with patch.object(m,'MIRROR_PROXIES',['http://general.test:8080']),patch.object(m,'PROXIES',[]),patch('indexer.requests.get',return_value=Mock(status_code=200,text='{"code":401}',raise_for_status=lambda:None)),patch('indexer.subprocess.run') as curl:
+   with self.assertRaises(ValueError):m.wp(1)
+   curl.assert_not_called()
  def test_reader_error(self):
   with patch('indexer.requests.get',return_value=Mock(status_code=200,text='{"code":401}',raise_for_status=lambda:None)):
    with self.assertRaises(ValueError):m.wp(1)
