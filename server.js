@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.202';
+const VERSION = '1.34.203';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -3988,14 +3988,15 @@ function mlsGdFilePage(link, ms) {
   // file title and Cloud Resume video, avoiding an entire serial HTTP hop.
   const p=Promise.resolve().then(async()=>{
     const budget=Math.min(ms||4000,4000);
-    const file=mlsGet(key,{ms:budget});
+    const acceptGdTitle=body=>/<title[^>]*>\s*GDFlix\s*\|/i.test(String(body||''));
+    const file=mlsGet(key,{ms:budget,accept:acceptGdTitle});
     let u; try { u=new URL(key); } catch (_) {}
     const m=u && u.protocol==='https:' && /^(?:gdflix\.com|gdflix\.dev)$/i.test(u.hostname) && /^\/file\/([a-z0-9]+)\/?$/i.exec(u.pathname);
     if(!m || u.search || u.hash) return file;
     const cloud='https://new9.gdflix.io/cloud/'+String(Date.now()).slice(0,10)+'/'+m[1];
     let cp=MLS_GD_CLOUD_FLIGHT.get(m[1]);
     if(!cp) {
-      cp=Promise.resolve().then(()=>mlsGet(cloud,{ms:budget,referer:key}));
+      cp=Promise.resolve().then(()=>mlsGet(cloud,{ms:budget,referer:key,accept:acceptGdTitle}));
       MLS_GD_CLOUD_FLIGHT.set(m[1],cp);
       cp.finally(()=>setTimeout(()=>{if(MLS_GD_CLOUD_FLIGHT.get(m[1])===cp)MLS_GD_CLOUD_FLIGHT.delete(m[1]);},3000)).catch(()=>{});
     }
@@ -4043,6 +4044,10 @@ async function mlsGdOnce(fileUrl, ms, resume) {
   let cloud = grab(body, /https?:\/\/[^"'\s<>]+\/cloud\/\d+\/[A-Za-z0-9]+/);
   cloud = cloud ? cloud.replace(/^https?:\/\/[^\/]+/i, origin) : (origin + '/cloud/' + String(Date.now()).slice(0, 10) + '/' + id);
   const cp = await (MLS_GD_CLOUD_FLIGHT.get(id) || mlsGet(cloud, { ms: Math.max(1800, Math.min(2600, ms - (Date.now() - T0))) }));
+  // The speculative cloud GET can win on a different host/path than the
+  // file-page redirect. POST must use the exact same validated key session.
+  const actualCloud = require('./tools/mls-index-lab/gd_session').cloudUrl(cp && cp.url, id);
+  if (actualCloud) cloud = actualCloud;
   // The cloud page may already contain a usable video worker. Do not start a
   // fresh POST/poll job when the website has an existing Cloud Resume link.
   // ZIP/unknown pages fall through to the original generation flow unchanged.
