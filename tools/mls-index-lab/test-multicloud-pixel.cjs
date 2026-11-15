@@ -1,0 +1,13 @@
+'use strict';
+const assert=require('assert'),{resolve}=require('./multicloud_pixel');
+const view='https://new2.multicloudlinks.com/view/b2z57g', mirror='https://pixeldra.multicloudlinks.com/?pid=validToken123';
+const page=`<a href='${mirror}'>Pixeldrain Mirror</a>`;
+const data=(name='Lanterns (2026) S01E05 1080p.mkv',id='rnSiYP5q')=>`<meta property="og:url" content="https://pixeldrain.com/u/${id}"><script>window.viewer_data = ${JSON.stringify({type:'file',api_response:{id,name,size:12345}})};</script>`;
+let calls=[];let html=data();const get=async u=>{calls.push(u);return u===view?{body:page,url:view}:{body:html,url:'https://pixeldrain.com/u/rnSiYP5q'}};
+(async()=>{let r=await resolve(view,get,6000);assert.equal(r.direct,'https://pixeldrain.com/api/file/rnSiYP5q');assert.equal(r.episode,5);assert.equal(r.season,1);assert.equal(r.q,1080);assert.equal(r.srv,'multicloud·pixeldrain');
+html=data('Lanterns S01E05 480p.mkv');assert.equal(await resolve(view,get,6000),null);
+html=data('Lanterns S01E05 1080p.zip');assert.equal(await resolve(view,get,6000),null);
+html=data('Lanterns S01E05 1080p.mkv','wrongid');assert.equal(await resolve(view,get,6000),null);
+assert.equal(await resolve('https://multicloudlinks.com.evil.test/view/a',get,6000),null);
+const bad=async u=>({body:`<a href="https://pixeldra.multicloudlinks.com.evil.test/?pid=abcdef">pixel</a>`,url:u});assert.equal(await resolve(view,bad,6000),null);
+console.log('MultiCloud Pixeldrain extraction, identity, quality, extension and host tests passed')})().catch(e=>{console.error(e);process.exitCode=1});
