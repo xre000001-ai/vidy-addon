@@ -1,0 +1,12 @@
+'use strict';
+const assert = require('assert');
+const fs = require('fs');
+const s = fs.readFileSync(require('path').join(__dirname, '../../server.js'), 'utf8');
+const begin = s.indexOf('async function azStreams(');
+const end = s.indexOf('// ---------- v1.15.40-local:', begin);
+assert(begin >= 0 && end > begin);
+const az = s.slice(begin, end);
+assert(!/AZ_CARD\s*\.\s*(get|set|has)\s*\(/.test(az), 'AniZone must not read or write stream-card cache');
+assert(/AZ_SUBS\.set\(/.test(az), 'subtitle support must remain');
+assert(/azGet\(/.test(az), 'fresh source discovery must remain');
+console.log('AniZone stream-card cache disabled; subtitles and discovery retained');

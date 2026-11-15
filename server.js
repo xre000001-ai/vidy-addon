@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.169';
+const VERSION = '1.34.170';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -5576,6 +5576,32 @@ async function twrFetch(base, tag, title, type, s, e, t3) { // ★ v1.34.25: ব
   }
 }
 
+// Retry the same public index through independent delivery hosts. Only exact
+// requested episode records or URL lines can win; error pages cannot win.
+async function mmFetchIndex(url, isSeries, episode, ms) {
+  const urls = [url];
+  const root = 'https://raw.githubusercontent.com/Watchout2025/api/refs/heads/main/';
+  if (url.startsWith(root)) {
+    const suffix = url.slice(root.length);
+    urls.push('https://raw.githack.com/Watchout2025/api/main/' + suffix,
+              'https://cdn.jsdelivr.net/gh/Watchout2025/api@main/' + suffix);
+  }
+  const valid = text => {
+    if (isSeries) { try { const j = JSON.parse(text); return !!j && typeof j[String(parseInt(episode, 10) || 1)] === 'string' && /^https?:\/\//i.test(j[String(parseInt(episode, 10) || 1)]); } catch (_) { return false; } }
+    return /^https?:\/\//i.test(String(text || '').trim());
+  };
+  const requests = urls.map(u => woFetch(u, ms).then(r => r && r.ok ? r.text() : '').then(t => { if (!valid(t)) throw Error('index-empty'); return t; }));
+  try { return await Promise.any(requests); } catch (_) { return ''; }
+}
+// Concurrently try the original referer and an independent source pool; a failed
+// CDN request must not suppress the playable original master fallback.
+async function mmIndexMaster(url, ms) {
+  const timeout = Math.max(300, ms | 0);
+  const valid = t => /^#EXTM3U(?:\s|$)/i.test(String(t || '').trimStart());
+  const direct = woFetch(url, timeout).then(r => r && r.ok ? r.text() : '').then(t => { if (!valid(t)) throw Error('invalid-master'); return t; });
+  const proxy = racePool(url, 6, timeout, 'mm-master', valid, { Referer: WO_REF, 'User-Agent': UA }).then(r => r.body);
+  try { return await Promise.any([direct, proxy]); } catch (_) { return ''; }
+}
 // ---------- বহু-সোর্স-মার্জ (withNx-এর-সাধারণ-রূপ — একই-অনুগ্রহ-বাজেট, সব-সোর্স-একসাথে-রেস) ----------
 function woFetch(url, ms) { // v1.15.28: multimovies CDN fetch — the WO_REF Referer is the key
   return fetch(url, { headers: { 'User-Agent': UA, Referer: WO_REF, Accept: '*/*' }, signal: AbortSignal.timeout(ms || 7000) });
@@ -7286,8 +7312,7 @@ async function mmStreams(tmdbId, title, type, s, e, origin, maxh, rel) { // v1.1
     const u = isSeries ? (WOBASE + '/hls/tv/' + tmdbId + '/S' + (parseInt(s, 10) || 1) + '.json') : (WOBASE + '/hls/movie/' + tmdbId);
     const vbP = mmVidbolt(tmdbId, isSeries, s, e, left()).catch(() => []); // parallel — index present or not
     const subsP = woSubs(tmdbId, type, s, e, 2500).catch(() => []); // v1.15.99: সমান্তরালে সাবটাইটেল ফেচ (শেষে ব্লক না করা)
-    const idxRes = await woFetch(u, left()).catch(() => null);
-    const idxTxt = idxRes && idxRes.ok ? await idxRes.text().catch(() => '') : '';
+    const idxTxt = await mmFetchIndex(u, isSeries, e, left());
     let servers = [];
     if (idxTxt) {
       if (isSeries) { const d = (() => { try { return JSON.parse(idxTxt); } catch { return null; } })(); const ep = String(parseInt(e, 10) || 1); if (d && typeof d[ep] === 'string') servers = [d[ep]]; } // the exact episode only
@@ -7299,7 +7324,7 @@ async function mmStreams(tmdbId, title, type, s, e, origin, maxh, rel) { // v1.1
     for (const x of raws) seen.add(x.url + '|0|');
     // Read index master only to enumerate its declared tracks; preserve the original
     // card on timeout/failure and never treat an addon-IP failure as dead content.
-    const indexMasters = await Promise.all(servers.map(u => woFetch(u, Math.min(2200, left())).then(r => r && r.ok ? r.text() : '').catch(() => '')));
+    const indexMasters = await Promise.all(servers.map(u => mmIndexMaster(u, Math.min(3000, left()))));
     for (let i = 0; i < servers.length; i++) {
       const body = indexMasters[i] || '';
       if (body.indexOf('#EXTM3U') < 0) continue;
@@ -7828,16 +7853,7 @@ async function azStreams(tmdbId, type, s, e, azq) { // সার্চ→সি�
   const t3 = Date.now();
   try {
     const isTv0 = type === 'series' || type === 'tv';
-    const ckey = (isTv0 ? 'tv' : 'mv') + ':' + tmdbId + ':' + (isTv0 ? (s || 1) + 'x' + (e || 1) : 'm');
-    const ch = AZ_CARD.get(ckey); // তাৎক্ষণিক-রিপ্লে — চেইন-পুনরায়-নয় (উইন্ডো-কাটা-জাতীয়-অস্থিরতা-নির্মূল)
-    if (ch && Date.now() - ch.ts < (ch.pq === false ? 300000 : 1800000)) { // ★ v1.34.21: প্রোব-ব্যর্থ এন্ট্রি মাত্র ৫মিন
-      // Do not re-probe cached playlist.
-      if (Array.isArray(azq) && azq.length && azq.indexOf(ch.q) < 0) { if (DBG) console.error('[az] মেমো q=' + ch.q + ' ছাঁকা'); return []; }
-      if (Array.isArray(ch.subs) && ch.subs.length) AZ_SUBS.set((isTv0 ? 'series' : 'movie') + ':' + tmdbId + ':' + (isTv0 ? (s || 1) + 'x' + Number(e || 1) : 'm'), { ts: Date.now(), v: ch.subs });
-      if (DBG) console.error('[az] মেমো-হিট ' + ckey + ' q=' + ch.q);
-      const txt0 = (ch.txt || '');
-      return [{ name: '▥ ' + (ch.q || 'Auto') + ' ▥', quality: ch.q ? String(ch.q) : '', url: ch.url, title: txt0, description: txt0, _lang: 'Japanese', behaviorHints: { filename: 'anizone.m3u8' }, bingeGroup: 'az|' + (ch.title0 || '') + '::' }]; // ★ v1.34.24: _lang
-    }
+    // Stream-card caching is disabled; page metadata and playback caches remain separate.
     const T0 = await nameForTmdb(tmdbId, type).catch(() => '');
     if (!T0) return [];
     const isTv = type === 'series' || type === 'tv';
@@ -7913,9 +7929,18 @@ async function azStreams(tmdbId, type, s, e, azq) { // সার্চ→সি�
     // ★★ v1.34.21 (ইউজার: "1080 holeo 720 lekha ase, filter korle badh hoia Jai"): মাস্টার-প্রোব সরাসরি
     //   ব্যর্থ হলে প্রক্সি-রেসে আরেকবার — আসল সর্বোচ্চ উচ্চতাই লেবেল হবে (beamup-ইগ্রেসে সরাসরি
     //   মাস্টার না-এলে আগে অন্ধভাবে 720 বসে মেমোতে ৩০মিন আটকে থাকত)।
-    let q = 0; // Unknown quality; do not fetch the media playlist.
-    const pq = q > 0;
-    // Unknown remains Auto; no media request to infer resolution.
+    let q = 0;
+    // Explicit quality filters require actual playlist metadata; otherwise keep
+    // Auto and avoid a list-time media request. Never invent a 720p label.
+    if (Array.isArray(azq) && azq.length) {
+      const remaining = Math.max(0, 8900 - (Date.now() - t3));
+      if (remaining >= 400) {
+        try {
+          const r = await fetch(pl.src, { headers: { 'User-Agent': UA, Referer: AZ_BASE + '/' }, signal: AbortSignal.timeout(Math.min(1800, remaining)) });
+          if (r.ok) q = azQOf(await r.text());
+        } catch (_) {}
+      }
+    }
     if (Array.isArray(azq) && azq.length && azq.indexOf(q) < 0) { if (DBG) console.error('[az] ' + T0 + ' q=' + q + ' ছাঁকা'); return []; }
     const epLine = isTv ? '\u29e0 S' + (s || 1) + 'E' + ep : '\u29e0 Movie';
     const txt = '\u29c9 ' + T0 + ' |\n' + epLine + '\n\u229e AniZone \u2317 Subbed';
@@ -7923,7 +7948,6 @@ async function azStreams(tmdbId, type, s, e, azq) { // সার্চ→সি�
     const subs = (Array.isArray(pl.subtitles) ? pl.subtitles : []).filter(t4 => t4 && /^https?:/.test(t4.file || '')).map(t4 => ({ lang: String(t4.language || t4.lang || 'en').toLowerCase().slice(0, 2), url: t4.file, fmt: String(t4.format || '').toLowerCase() })).filter(t4 => { if (seenL.has(t4.lang)) return false; seenL.add(t4.lang); return true; }).sort((a, b) => (/^(srt|vtt)$/.test(a.fmt) ? 0 : 1) - (/^(srt|vtt)$/.test(b.fmt) ? 0 : 1)).slice(0, 4).map(t4 => ({ lang: t4.lang, url: t4.url })); // ভাষা-প্রতি-এক-ট্র্যাক; SRT/VTT-আগে (অ্যাপ-সামঞ্জস্য)
     if (subs.length) AZ_SUBS.set((isTv ? 'series' : 'movie') + ':' + tmdbId + ':' + (isTv ? (s || 1) + 'x' + ep : 'm'), { ts: Date.now(), v: subs }); // /subtitles-রিসোর্স-চ্যানেল
     if (DBG) console.error('[az] ' + type + ':' + tmdbId + ' কার্ড=১ q=' + q + ' slug=' + hit.slug + ' subs=' + subs.length + ' @' + (Date.now() - t3) + 'ms');
-    AZ_CARD.set(ckey, { ts: Date.now(), q, pq, url: pl.src, subs, title0: T0.toLowerCase(), txt });
     return [{ name: '\u25a5 ' + (q || 'Auto') + ' \u25a5', quality: q ? String(q) : '', url: pl.src, title: txt, description: txt, _lang: 'Japanese', behaviorHints: { filename: 'anizone.m3u8' }, bingeGroup: 'az|' + T0.toLowerCase() + '::' }]; // ★ v1.34.24: _lang
   } catch (e2) { if (DBG) console.error('[az] ' + tmdbId + ' ERR ' + String(e2 && e2.message).slice(0, 60) + ' @' + (Date.now() - t3) + 'ms'); return []; }
 }
