@@ -1,9 +1,10 @@
 'use strict';
 // Only take the actual, explicitly-labelled Cloud Resume link when its
 // filename is a video. A ZIP page still goes through the existing resolver.
-function find(html) {
+function find(html, finalPage=false) {
   for (const m of String(html||'').matchAll(/<a\b[^>]*\bhref\s*=\s*(["'])([\s\S]*?)\1[^>]*>([\s\S]*?)<\/a\s*>/gi)) {
-    if (!/\bcloud\s+resume\s+download\b/i.test(m[3].replace(/<[^>]*>/g,' '))) continue;
+    const label=m[3].replace(/<[^>]*>/g,' ');
+    if (!(finalPage ? /\b(?:download|cloud|resume)\b/i : /\bcloud\s+resume\s+download\b/i).test(label)) continue;
     try {
       const raw=m[2].replace(/&amp;/gi,'&').replace(/&#0*38;/gi,'&').replace(/&#x0*26;/gi,'&');
       const u=new URL(raw);

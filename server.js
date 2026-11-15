@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.199';
+const VERSION = '1.34.200';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -3936,7 +3936,8 @@ async function mlsGdPoll(tokUrl, cloud, ms, px) {
       if (!fin) return { ok: false, route: 'redirect-bad' };
       const fp = px ? await mlsCurl(fin, { ms: 3200, proxy: px, referer: cloud }) : await mlsGet(fin, { ms: 3200 });
       const grab = re => (re.exec(String((fp && fp.body) || '')) || [])[0] || '';
-      const direct = grab(/https:\/\/cloud-dl\.[a-z0-9]+\.workers\.dev\/[^\s"'<>\\]+/i)
+      const direct = require('./tools/mls-index-lab/gd_resume').find((fp && fp.body) || '', true)
+        || grab(/https:\/\/cloud-dl\.[a-z0-9]+\.workers\.dev\/[^\s"'<>\\]+/i)
         || grab(/https:\/\/pub-[a-z0-9]+\.r2\.dev\/[^\s"'<>\\]+/i)
         || grab(/https:\/\/instant\.[a-z0-9.]+\/[^\s"'<>\\]+/i);
       if (!direct) return { ok: false, route: 'nodirect' };   // v1.34.62: transient (final-page shape/session) -- NOT done-poison

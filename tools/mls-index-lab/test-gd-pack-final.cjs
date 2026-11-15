@@ -1,0 +1,5 @@
+'use strict';
+const fs=require('fs'),vm=require('vm'),assert=require('assert'),p=require('path');const src=fs.readFileSync(p.join(__dirname,'../../server.js'),'utf8');const a=src.indexOf('async function mlsGdPoll('),b=src.indexOf('function mlsGdBg(',a);assert(a>=0&&b>a);
+const href='https://east.aws-eu.xyz/hash/1337xHD.Vip-Queen of Tears (2024) S01E01-02 1080p.mkv?bytes=2000000000';
+const ctx={require:()=>require('./gd_resume'),URL,Date,Math,Promise,String,JSON,setTimeout,DBG:false,mlsCurl:async()=>({body:JSON.stringify({done:true,redirect:'/cloud/1/2/id'})}),mlsGet:async()=>({body:`<a href="${href}">Cloud Resume Download</a>`}),mlsProve:async()=>({ok:true})};vm.createContext(ctx);vm.runInContext(src.slice(a,b)+'\nglobalThis.poll=mlsGdPoll;',ctx);
+(async()=>{const r=await ctx.poll('https://new9.gdflix.io/cloud/1/id?token=abc','https://new9.gdflix.io/cloud/1/id',4000);assert(r.ok);assert.equal(r.direct,new URL(href).href);assert(r.direct.includes('S01E01-02'));console.log('Queen of Tears combined episode final-page alternate host and complete URL passed')})().catch(e=>{console.error(e);process.exitCode=1});
