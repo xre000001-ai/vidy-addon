@@ -1,0 +1,17 @@
+name: MovieLinkBD direct resolver tests
+on:
+  push:
+    branches: [main]
+    paths: ["server.js", "tools/mlbd-index/direct_search.cjs", "tools/mlbd-index/partial_results.cjs", "tools/mlbd-index/test_direct.cjs", ".github/workflows/movielinkbd-direct-tests.yml"]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: node --check server.js && node tools/mlbd-index/test_direct.cjs

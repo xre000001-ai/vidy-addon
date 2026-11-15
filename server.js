@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.212';
+const VERSION = '1.34.213';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -8583,6 +8583,13 @@ function mlbdEpRange(t) { // "S04 [Ep 01-08]" → [1,8] ; সিরিজ-পো
 function mlbdPicks(items, name, year, type, season, ep) { // ★ v1.27.14: স্কোর-ক্রমে **সব** যোগ্য পেজ (একই টাইটেলের একাধিক পেজ থাকে)
   const W = mlbdNorm(name); if (!W) return [];
   let cands = items.filter(x => (type === 'movie' ? x.type === 'movie' : x.type === 'series'));
+  // A movie's known release year must not match a different year's sequel.
+  // When an exact title exists, do not union lookalike titles as mirrors.
+  if (type === 'movie') {
+    if (year) cands = cands.filter(x => !x.year || x.year === String(year));
+    const exact=cands.filter(x=>mlbdNorm(x.title)===W);
+    if(exact.length)cands=exact;
+  }
   if (type !== 'movie') {                       // ★ v1.27.12: MovieLinkBD-তে **প্রতি সিজন আলাদা পেজ**
     const want = parseInt(season, 10) || 1;
     const withS = cands.filter(x => mlbdSeasonOf(x.title) === want);
@@ -8845,7 +8852,14 @@ async function mlbdStreams(name, year, type, s, e, cap) {
         const b2 = await mlbdMirror(true);
         if (b2 && b2 !== base) { base = b2; items = await mlbdSearch(base, name, Math.min(4200, left())).catch(() => []); }
       }
-      const picks = mlbdPicks(items, name, year, type, SE, EP);
+      let picks = mlbdPicks(items, name, year, type, SE, EP);
+      // The site's bounded suggestion snapshot is only a fallback: it can be
+      // incomplete, so the regular search remains authoritative when it works.
+      if (!picks.length && left()>2500) {
+        const alt=await require('./tools/mlbd-index/direct_search.cjs').search(base,name,mlbdGet,Math.min(4000,left()));
+        picks=mlbdPicks(alt,name,year,type,SE,EP);
+        diag('mlbd','suggest-fallback rows='+alt.length+' picks='+picks.length);
+      }
       diag('mlbd', 'picks=' + picks.length + ' ' + String((picks[0] || {}).title || '').slice(0, 40));
       if (DBG) console.error('[mlbd] picks=' + picks.length + ' ' + picks.slice(0, 5).map(x => String(x.title).slice(0, 34)).join(' ‖ '));
       if (!picks.length) { if (DBG) console.error('[mlbd] no-title-match n=' + items.length + ' @' + (Date.now() - T0) + 'ms'); return []; }
@@ -8859,7 +8873,7 @@ async function mlbdStreams(name, year, type, s, e, cap) {
     const LAB = res.lab || {};
     const capN = Number(cap || 0);
     const qOf = t => (LAB[t] && LAB[t].q) || 0;
-    let tokAll = res.toks.slice();
+    let tokAll = res.toks.filter(t => qOf(t)!==480);
     if (capN) tokAll = tokAll.filter(t => { const q = qOf(t); return !q || q <= capN; });
     tokAll.sort((a, b) => (qOf(b) - qOf(a)) || (res.toks.indexOf(a) - res.toks.indexOf(b)));
     const toks = tokAll.slice(0, Number(process.env.MLBDN || 6));
@@ -8869,8 +8883,10 @@ async function mlbdStreams(name, year, type, s, e, cap) {
     const dl = T0 + B;
     const NTOK = Number(process.env.MLBDN || 6);
     const jobs = toks.slice(0, NTOK).map(t => mlbdOne(base, t, dl, qOf(t), (LAB[t] && LAB[t].lab) || '').catch(() => null));
-    let got = (await Promise.all(jobs)).filter(Boolean);
-    if (!got.length && Date.now() < dl - 900) {          // পুরো-ব্যর্থ (SAN-ফ্লেক) ⇒ এক দফা আবার
+    const gathered = await require('./tools/mlbd-index/partial_results.cjs').collect(jobs,{started:T0,maxMs:Math.min(B,10000)});
+    let got = gathered.results;
+    diag('mlbd','partial='+Number(gathered.partial)+' resolved='+got.length+' @'+(Date.now()-T0)+'ms');
+    if (!got.length && !gathered.partial && Date.now() < dl - 900) {          // পুরো-ব্যর্থ (SAN-ফ্লেক) ⇒ এক দফা আবার
       if (DBG) console.error('[mlbd] 2nd-wave @' + (Date.now() - T0) + 'ms');
       const j2 = toks.slice(0, Math.min(3, NTOK)).map(t => mlbdOne(base, t, dl).catch(() => null));
       got = (await Promise.all(j2)).filter(Boolean);
@@ -8887,7 +8903,7 @@ async function mlbdStreams(name, year, type, s, e, cap) {
     for (const g of got) {
       if (sm && !sm.test(g.name)) continue;                       // সিরিজে ঠিক-এপিসোড ছাড়া নয়
       const h = parseInt((String(g.name).match(/(\d{3,4})p/i) || [])[1], 10) || (g.q || 0);   // v1.27.17: label-fallback
-      if (maxh && h && h > maxh) continue;
+      if (h === 480 || (maxh && h && h > maxh)) continue;
       for (const m of (g.mirrors || [])) cand.push({ h: h, u: m.u, srv: m.s || srvLabel(m.u) || '', name: g.name });   // চেইন-লেবেল আগে
     }
     const rank = x => (x.srv === 'FSL' ? 0 : x.srv === 'HubCloud' ? 1 : x.srv === 'Pixeldrain' ? 2 : 3);
@@ -18660,7 +18676,8 @@ const server = http.createServer((req, res) => {
       const azP = !(cfg && cfg.az === 0) ? azStreams(Number(m[1]), 'movie', 0, 0, cfg && cfg.azq || [], originOf(req)).catch(() => []) : null; // v1.15.76: AniZone
       kickSubs('tmdb' + m[1], 'movie', null, null, cfg);
       const lookP = Promise.all([typeof tp !== 'undefined' ? tp : null, typeof nmP !== 'undefined' ? nmP : null, typeof infoP !== 'undefined' ? infoP : null].filter(Boolean)).catch(() => []); // v1.26.2
-      const mlbP = mlbdOn(cfg) ? mlbdTask(tp, infoP, 'movie', 0, 0, (cfg && cfg.mlbr) || 0) : null;
+      const mlbInfo = mlbdOn(cfg) ? yearForTmdb(Number(m[1]), 'movie').then(year => ({year})).catch(() => null) : null;
+      const mlbP = mlbdOn(cfg) ? mlbdTask(tp, mlbInfo, 'movie', 0, 0, (cfg && cfg.mlbr) || 0) : null;
       const mlsP = mlsOn(cfg) ? mlsTask(tp, infoP, 'movie', 0, 0, 'tmdb' + m[1]) : null;
       const dtP = dtOn(cfg) ? dtTask(tp, infoP, 'movie', 0, 0, originOf(req)) : null;   // v1.30.0: Deadtoons/AniDisk
       return withDeadline(withSources(vOn ? getSources(Number(m[1]), 'movie', null, null, '', cfg, tp) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: hmP, key: 'hm' }, { p: hdP, key: 'hd' }, { p: mlbP, key: 'mlb' }, { p: mlsP, key: 'mls' }, { p: dtP, key: 'dt' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0, p, lookP), (cfg && cfg.__slow) ? Number(process.env.SDLSLOW || 26000) : (cfg && cfg.__bg) ? Number(process.env.SDLBG || 11500) : SDL_MS, undefined, (cfg && (cfg.__bg || cfg.__slow)) ? 0 : Number(process.env.SDLGRACE || 800) /* v1.33.2: এজ-কাটের (১২সে) নিচে: 10.2s → 12s — MLSBD-র ঠান্ডা-পথ (সার্চ+sav+watch/gd) ১০সে ছাড়ায়; NXHARD ১২সের সমান, তবু উত্তর হারায় না (মাপা: battery-তে কোনো রিগ্রেশন নয়) */, p).then(
