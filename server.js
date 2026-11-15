@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.216';
+const VERSION = '1.34.217';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -8448,7 +8448,7 @@ async function mlbdGet(u, opt) {
   const pxTry = async () => {
     if (Date.now() - T0 > BUD) return null;
     try {
-      const x = await racePool(u, 3, Math.max(1500, Math.min(opt.ms || 6000, 3500)), 'mlb');
+      const x = await racePool(u, 3, Math.max(1500, Math.min(opt.ms || 6000, 3500)), 'mlb', body => require('./tools/mlbd-index/proxy_validation.cjs').valid(body,u));
       const txt = String((x && x.body) || '');
       if (txt.length > 200) { diag('mlbd', 'px-ok ' + String(u).replace(/^https?:\/\//, '').slice(0, 44) + ' via ' + (x.px || '?')); return { st: 200, loc: '', body: txt }; }
     } catch (e2) { }
@@ -8477,7 +8477,7 @@ async function mlbdGet(u, opt) {
           if (opt.body !== false) { try { body = await r.text(); } catch (e) { } }
           hostOK(u);
           if (r.status !== 200) diag('mlbd', 'http ' + r.status + ' ' + String(url).replace(/^https?:\/\//, '').slice(0, 70) + ' len=' + body.length);
-          return { st: r.status, loc: loc, body: body };
+          return { st: r.status, loc: loc, body: body, url: url };
         }
         return { st: 0, loc: '', body: '' };
       });
@@ -8507,7 +8507,7 @@ async function mlbdMirror(force) {
     if (!r || r.st !== 200 || !r.body) continue;
     const cands = [...new Set((r.body.match(/https:\/\/[a-z0-9]{4,12}\.movielinkbd\.[a-z]{2,6}/gi) || []))].slice(0, 4);
     for (const c of cands) {                          // ঘোষিত-মিরর: **যাচাই করে** নিই
-      try { const t = await mlbdGet(c + '/', { ms: 3500, body: false }); if (t.st === 200) { MLBD_BASE = c; MLBD_BASE_TS = Date.now(); MLBD_BASE_WEAK = false; if (DBG) console.error('[mlbd] base=' + c); return MLBD_BASE; } } catch (e) { }
+      try { const t = await mlbdGet(c + '/', { ms: 3500, body: false }); if (t.st === 200) { MLBD_BASE = require('./tools/mlbd-index/proxy_validation.cjs').canonicalMirror(t.url || c,c); MLBD_BASE_TS = Date.now(); MLBD_BASE_WEAK = false; if (DBG) console.error('[mlbd] base=' + c); return MLBD_BASE; } } catch (e) { }
     }
     MLBD_BASE = seed.replace(/\/$/, ''); MLBD_BASE_TS = Date.now(); MLBD_BASE_WEAK = true; // মিরর-লিংক না-থাকলে নিজেই
     if (DBG) console.error('[mlbd] base(seed)=' + MLBD_BASE);
@@ -8591,6 +8591,10 @@ function mlbdPicks(items, name, year, type, season, ep) { // ★ v1.27.14: স�
     if(exact.length)cands=exact;
   }
   if (type !== 'movie') {                       // ★ v1.27.12: MovieLinkBD-তে **প্রতি সিজন আলাদা পেজ**
+    // Prefix matches may be unrelated spin-offs: e.g. Friends Sex and Games,
+    // Vikings Valhalla or Squid Game: The Challenge. Strip only known release
+    // descriptors, never meaningful words, before comparing identity.
+    cands=cands.filter(x => require('./tools/mlbd-index/series_identity.cjs').same(name,x.title));
     const want = parseInt(season, 10) || 1;
     const withS = cands.filter(x => mlbdSeasonOf(x.title) === want);
     const noS = cands.filter(x => !mlbdSeasonOf(x.title));
