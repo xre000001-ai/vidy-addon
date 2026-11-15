@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.188';
+const VERSION = '1.34.189';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -4075,7 +4075,7 @@ async function mlsWatchSlow(link, ms, px) {
     }
     const title=mlsEnt((/<title[^>]*>([\s\S]*?)<\/title>/i.exec(pb)||[])[1]||'');
     const qm=/(2160|1080|720|480)p\b/i.exec(title); const em=/\bS0*(\d{1,2})E0*(\d{1,4})(?!\d)(?:[-–]E?0*(\d{1,4}))?/i.exec(title);
-    meta={q:qm?+qm[1]:(/\b4k\b/i.test(title)?2160:0),season:em?+em[1]:0,episode:em?+em[2]:0,episode_end:em?+(em[3]||em[2]):0};
+    meta={filename:title,q:qm?+qm[1]:(/\b4k\b/i.test(title)?2160:0),season:em?+em[1]:0,episode:em?+em[2]:0,episode_end:em?+(em[3]||em[2]):0};
   }
   if (DBG) console.error('[mlsw] cands=' + cands.map(c => c.tag).join(','));
   for (const c of cands.slice(0, 2)) {
@@ -4411,7 +4411,8 @@ async function mlsTask(nameP, infoP, type, s, e, requestId) {
           const inner = [];
           const range = (Number(it.ep)>0 && Number(it.ep_end)>Number(it.ep)) ? {start:Number(it.ep),end:Number(it.ep_end)} : null;
           const seasonOnly = type === 'series' && !Number(it.ep) && !/\bS\d{1,2}E\d/i.test(String(p.title||''));
-          const consistent = r => !!r && (!r.fastWatch || names.some(n => mlsTitleOk(n, r.filename, year, type === 'series'))) && (type !== 'series' || (r.season === SE && r.episode === (range ? range.start : EP) && (r.episode_end||r.episode) === (range ? range.end : EP)));
+          const verifiedMovieName = title => require('./tools/mls-index-lab/movie_watch_identity').valid(title,names,year || +(String(p.title||'').match(/\b(?:19|20)\d{2}\b/)||[])[0] || 0,mlsTitleOk);
+          const consistent = r => !!r && (!r.fastWatch || names.some(n => mlsTitleOk(n, r.filename, year, type === 'series'))) && (q0 || type !== 'movie' || verifiedMovieName(r.filename)) && (type !== 'series' || (r.season === SE && r.episode === (range ? range.start : EP) && (r.episode_end||r.episode) === (range ? range.end : EP)));
           for (const u of (x.gdx || []).slice(0, 1))
             inner.push(MLS_PLAY_RESOLVE.get('gdx:'+u, () => require('./tools/mls-index-lab/gdx_watch').resolve(u, mlsGet, Math.max(3000, CAP - (Date.now() - T0) - 400))).then(r => { if (!r || !consistent(r) || ![720,1080,2160].includes(r.q) || (q0 && q0 !== r.q)) return null; addCard({ kind:'watch', r, title:ttlOf(p), q:r.q, range }); return {kind:'watch',r,title:ttlOf(p),q:r.q}; }).catch(() => null));
           for (const u of x.mcl.slice(0, 1))
@@ -4419,19 +4420,20 @@ async function mlsTask(nameP, infoP, type, s, e, requestId) {
           // ★ v1.28.22: গেট এখন **বাকি-সময়** দেখে (আগে T0<CAP*0.45 ⇒ সার্চ ৪-৫সে নিলে gdflix কখনোই
           //   চালু হতো না ⇒ সব কার্ড multicloud-এ সীমিত)। আংশিক-কার্ড থাকায় দেরিতে শেষ হলেও ক্ষতি নেই।
           if (CAP - (Date.now() - T0) > 2400)
-            for (const u of ((q0 || range || seasonOnly) ? x.gd : []).slice(0, 1))
+            for (const u of ((q0 || range || seasonOnly || type === 'movie') ? x.gd : []).slice(0, 1))
               inner.push((async () => {
                 let actualQ=q0;
                 let seasonUnmarked=false;
                 // Start metadata validation and media generation together; shared file-page
                 // request is coalesced. Do not emit until validation completes successfully.
-                const metaP=(range || seasonOnly) ? mlsGdPackMeta(u,4000) : Promise.resolve(null);
+                const needsMeta=!!(range || seasonOnly || (!q0 && type === 'movie'));
+                const metaP=needsMeta ? mlsGdPackMeta(u,4000) : Promise.resolve(null);
                 const resolveP=MLS_PLAY_RESOLVE.get('gd:'+u, () => mlsGd(u, Math.max(2600, CAP - (Date.now() - T0) - 400))).catch(()=>null);
-                if (range || seasonOnly) {
+                if (needsMeta) {
                   const meta=await metaP;
                   const postYear=+(String(p.title||'').match(/\b(?:19|20)\d{2}\b/)||[])[0]||0;
                   const seasonMeta=seasonOnly && names.map(n=>require('./tools/mls-index-lab/season_file').seasonFile(meta.title,SE,{name:n,year:postYear})).find(Boolean);
-                  if (range ? !consistent(meta) : (!seasonMeta || !names.some(n=>mlsTitleOk(n,meta.title,year,true)))) return null;
+                  if (range ? !consistent(meta) : seasonOnly ? (!seasonMeta || !names.some(n=>mlsTitleOk(n,meta.title,year,true))) : !verifiedMovieName(meta.title)) return null;
                   if (![720,1080,2160].includes(meta.q) || (q0 && q0!==meta.q)) return null;
                   actualQ=meta.q;seasonUnmarked=!!(seasonMeta && seasonMeta.unmarked);
                 }

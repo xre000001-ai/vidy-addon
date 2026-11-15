@@ -1,0 +1,11 @@
+'use strict';
+const assert=require('assert');const {valid}=require('./movie_watch_identity');const {find}=require('./lookup');
+const match=(a,b)=>b.toLowerCase().includes(a.toLowerCase());
+assert(valid('MLSBD.Co-Obsession (2026) 1080p.mkv',['Obsession'],2026,match));
+assert(!valid('MLSBD.Co-Obsession (2025) 720p.mkv',['Obsession'],2026,match));
+assert(!valid('MLSBD.Co-Obsession (2026) S01 1080p.mkv',['Obsession'],2026,match));
+assert(!valid('Unknown 2026 1080p.mkv',['Obsession'],2026,match));
+assert(!valid('Obsession 1080p.mkv',['Obsession'],2026,match));
+const r=find([{id:1,title:'Obsession (2026)',sav:[{id:'watch1',q:0},{id:'bad480',q:480}]}],{name:'Obsession',type:'movie',year:2026});
+assert.deepEqual(r[0].sav.map(s=>s.id),['watch1']);
+console.log('unknown quality movie watch discovery and exact filename/year validation passed');

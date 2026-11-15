@@ -40,7 +40,7 @@ function find(rows,q){
    const seasonOnly=!s && !(p.sav||[]).some(x=>Number(x.ep)>0);
    sav=sav.filter(x=> (Number(x.ep)>0 && Number(x.ep_end)>=Number(x.ep) && Number(x.ep)<=Number(q.episode) && Number(q.episode)<=Number(x.ep_end)) || (Number(x.ep)===Number(q.episode) && !x.ep_end && !hasRange) || (!x.ep && ((s && !hasRange && +s[1]===Number(q.episode)) || seasonOnly)));
   }
-  sav=sav.filter(x=>Number(x.q)>0 || (q.type==='series' && !Number(x.ep)) || (q.type==='series' && Number(x.ep)>0 && Number(x.ep_end)>=Number(x.ep) && Number(x.ep)<=Number(q.episode) && Number(q.episode)<=Number(x.ep_end)));
+  sav=sav.filter(x=>Number(x.q)>0 || q.type==='movie' || (q.type==='series' && !Number(x.ep)) || (q.type==='series' && Number(x.ep)>0 && Number(x.ep_end)>=Number(x.ep) && Number(x.ep)<=Number(q.episode) && Number(q.episode)<=Number(x.ep_end)));
   if(sav.length)r.push({id:p.id,title:p.title,url:p.url,sav});
  }
  return r;

@@ -3,7 +3,7 @@ const assert=require('node:assert');const {find}=require('./lookup');
 const row=(title,sav)=>({id:1,title,url:'https://mlsbd.co/a',sav});
 const q=(name,type='movie',season=0,episode=0,year=2024)=>({name,type,season,episode,year});
 assert.equal(find([row('Alien Predator (2024)',[{id:'A',q:720}])],q('Alien')).length,0);
-assert.equal(find([row('Alien (2024) 720p',[{id:'A',q:480},{id:'B',q:720},{id:'C',q:0}])],q('Alien'))[0].sav.length,1);
+assert.deepEqual(find([row('Alien (2024) 720p',[{id:'A',q:480},{id:'B',q:720},{id:'C',q:0}])],q('Alien'))[0].sav.map(x=>x.id),['B','C']); // unknown quality must be verified against the resolved filename before any card
 assert.equal(find([row('Alien (1990)',[{id:'A',q:720}])],q('Alien')).length,0);
 const r=row('Show (2024) S01E01-03',[{id:'A',q:720,ep:1,ep_end:1},{id:'B',q:1080,ep:2,ep_end:2},{id:'C',q:720,ep:0}]);
 assert.equal(find([row('Show (2024) S01E01-03',[{id:'A',q:720,ep:1,ep_end:3}])],q('Show','series',1,1)).length,1);
