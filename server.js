@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.179';
+const VERSION = '1.34.180';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -1462,7 +1462,7 @@ function spoolLoad() {
     let stale = 0;
     for (const k of Object.keys(j)) for (const px of Object.keys(j[k] || {})) {
       if ((j[k][px].v || 1) !== probeVer(k)) { stale++; continue; }   // পুরোনো-মার্কারে যাচাই ⇒ বাদ
-      srcPool(k).set(px, { ms: j[k][px].ms || 3000, ok: 1, fail: 0, ts: _t0, ban: 0 });
+      srcPool(k).set(px, { ms: j[k][px].ms || 3000, ok: 1, fail: 0, ts: _t0, ban: 0, seeded: true });
     }
     if (stale && process.env.VDBG) console.error('[spool] বাসি-মার্কার বাদ ' + stale + ' নোড');
     if (process.env.VDBG) console.error('[spool] লোড ' + SPOOL.size + ' পুল, মোট ' + [...SPOOL.values()].reduce((a, m) => a + m.size, 0) + ' নোড');
@@ -1503,7 +1503,7 @@ function spoolRec(key, px, ok, ms) {
   if (!key || !px || px === '@direct') return;
   const m = srcPool(key), now = Date.now();
   const e = m.get(px) || { ms: ms || 3000, ok: 0, fail: 0, ts: 0, ban: 0 };
-  if (ok) { e.ok = (e.ok || 0) + 1; e.fail = 0; e.ms = e.ms ? Math.round(e.ms * 0.6 + (ms || e.ms) * 0.4) : (ms || 3000); e.ts = now; e.ban = 0; }
+  if (ok) { e.ok = (e.ok || 0) + 1; e.fail = 0; e.ms = e.ms ? Math.round(e.ms * 0.6 + (ms || e.ms) * 0.4) : (ms || 3000); e.ts = now; e.ban = 0; e.seeded = false; }
   else { e.fail = (e.fail || 0) + 1; if (e.fail >= 2) e.ban = now + 120000; SPOOL_TRIED.set(key + '|' + px, now); }
   m.set(px, e);
   if (m.size > 360) { const old = [...m.entries()].sort((a, b) => (a[1].ts || 0) - (b[1].ts || 0)).slice(0, m.size - 360); for (const [k] of old) m.delete(k); } // v1.34.64: spool runtime cap 3x (120->360)
@@ -1584,9 +1584,11 @@ async function spoolTrain() {
     // ২) পুরোনো নোড পুনঃযাচাই — একবার-পাস করা নোড চিরকাল "verified" থাকে না
     const oldest = [];
     for (const [k, m] of SPOOL) {
+      if (!SRC_PROBE[k]) continue; // dynamic result keys have no active trainer
       const arr = [...m.entries()].filter(([, e]) => !(e.ban > Date.now())).sort((a, b) => (a[1].ts || 0) - (b[1].ts || 0));
-      for (const [px] of arr.slice(0, 2)) oldest.push([k, px]);
+      for (const [px, e] of arr.slice(0, 2)) oldest.push([k, px, e.ts || 0]);
     }
+    oldest.sort((a, b) => a[2] - b[2]);
     await Promise.all(oldest.slice(0, _serving ? Number(process.env.SPREVS || 16) : Number(process.env.SPREV || 96)).map(([k, px]) => spoolCheck(k, px)));   // v1.34.38: serving-এ ছোট reverify
     spoolSave();
   } finally { spoolBusy = false; }
@@ -3236,10 +3238,10 @@ function mlsPxSave(force) {
 }
 function mlsPxRec(px, ok, ms) {
   if (!px) return; const e = MLS_PX_OK.get(px) || { ok: 0, fail: 0, ms: 9000 };
-  if (ok) { e.ok = (e.ok || 0) + 1; e.fail = 0; e.ms = Math.round(e.ms ? (e.ms * 2 + ms) / 3 : ms); e.ts = Date.now(); MLS_PX_OK.set(px, e); mlsPxSave(); }
-  else { e.fail = (e.fail || 0) + 1; if (e.fail >= 2 && !(e.ok > 1)) { MLS_PX_OK.delete(px); mlsPxSave(true); } else MLS_PX_OK.set(px, e); }
+  if (ok) { e.ok = (e.ok || 0) + 1; e.fail = 0; e.ban = 0; e.ms = Math.round(e.ms ? (e.ms * 2 + ms) / 3 : ms); e.ts = Date.now(); MLS_PX_OK.set(px, e); mlsPxSave(); }
+  else { e.fail = (e.fail || 0) + 1; if (e.fail >= 2) e.ban = Date.now() + 120000; MLS_PX_OK.set(px, e); }
 }
-const mlsPxFresh = e => !!e && e.ok > 0 && (Date.now() - (e.ts || 0)) < 25 * 60 * 1000;
+const mlsPxFresh = e => !!e && e.ok > 0 && (e.fail || 0) < 2 && (!e.ban || e.ban <= Date.now()) && (Date.now() - (e.ts || 0)) < 25 * 60 * 1000;
 function mlsPxBest(n, bdOnly) {
   return [...MLS_PX_OK.entries()].filter(([px, e]) => mlsPxFresh(e) && (!bdOnly || MLS_PX_BD_SET.has(px)))
     .sort((a, b) => (a[1].ms || 9999) - (b[1].ms || 9999)).slice(0, n).map(x => x[0]);
@@ -3256,7 +3258,7 @@ const MLS_PX_CANDS = (() => {
   return out.slice(0, Number(process.env.MLSPXCAP || 60000)); // v1.34.64: candidate cap 3x
 })();
 const MLS_PX_SOCKS = /:(?:1080|1088|9050|4145|10808|9813|8569|22222|40001|11200)$/;
-const mlsPxSchemes = px => /^(?:socks4|socks5|http):\/\//.test(px) ? [px] : (MLS_PX_SOCKS.test(px) ? ['http://' + px, 'socks5h://' + px] : ['http://' + px]);
+const mlsPxSchemes = px => /^(?:socks4|socks5h?|http):\/\//.test(px) ? [px] : (MLS_PX_SOCKS.test(px) ? ['http://' + px, 'socks5h://' + px] : ['http://' + px]);
 let mlsPxCursor = 0, mlsPxBusy = false;
 async function mlsPxCheck(px) {
   const u = MLS_BASE + '/wp-json/wp/v2/search?search=moana&per_page=2&_fields=id,title';
@@ -3274,16 +3276,27 @@ async function mlsPxTrain() {
   try {
     if (process.uptime() < 12) return;
     if (Date.now() - LAST_STREAM_AT < 1500) return;                                  // সার্ভিং চললে ব্যাকগ্রাউন্ড-চাপ নয়
-    if (mlsPxBest(99, false).length >= Number(process.env.MLSPXTGT || 42)) return;    // v1.34.64: learned target 3x (14->42)
-    const N = Number(process.env.MLSPXSCAN || 24);
-    const batch = [];
-    for (let i = 0; i < N && MLS_PX_CANDS.length; i++) {
-      const px = MLS_PX_CANDS[(mlsPxCursor + i) % MLS_PX_CANDS.length];
+    // Previously known entries were never rechecked: train skipped every key
+    // already in the map, even after its success expired or it repeatedly failed.
+    const now = Date.now();
+    const due = [...MLS_PX_OK.entries()].filter(([, e]) => (!e.ban || e.ban <= now) && now - (e.checkAt || 0) >= 60000 && ((e.fail || 0) > 0 || now - (e.ts || 0) >= 300000))
+      .sort((a,b) => (a[1].checkAt || 0) - (b[1].checkAt || 0)).slice(0, 4);
+    for (const [, e] of due) e.checkAt = now;
+    if (due.length) await Promise.all(due.map(([px]) => mlsPxCheck(px).catch(() => false)));
+    if (mlsPxBest(99, false).length >= Number(process.env.MLSPXTGT || 42)) return;
+    const N = Math.max(1, Number(process.env.MLSPXSCAN || 24));
+    const limit = Math.max(1, Number(process.env.MLSPXBATCH || 10));
+    const batch = []; let examined = 0;
+    // Advance only past entries actually considered. Previously N=24 was
+    // skipped while only 10 were probed, permanently delaying the other 14.
+    while (examined < Math.min(N, MLS_PX_CANDS.length) && batch.length < limit) {
+      const px = MLS_PX_CANDS[(mlsPxCursor + examined) % MLS_PX_CANDS.length];
+      examined++;
       if (!MLS_PX_OK.has(px)) batch.push(px);
     }
-    mlsPxCursor = MLS_PX_CANDS.length ? (mlsPxCursor + N) % MLS_PX_CANDS.length : 0;
+    mlsPxCursor = MLS_PX_CANDS.length ? (mlsPxCursor + examined) % MLS_PX_CANDS.length : 0;
     if (!batch.length) return;
-    const res = await Promise.all(batch.slice(0, Number(process.env.MLSPXBATCH || 10)).map(mlsPxCheck));
+    const res = await Promise.all(batch.map(mlsPxCheck));
     if (DBG) console.error('[mlspx] tried=' + batch.length + ' ok=' + res.filter(Boolean).length + ' have=' + mlsPxBest(99, false).length + '/' + MLS_PX_CANDS.length);
   } catch (e) { } finally { mlsPxBusy = false; }
 }
@@ -17750,9 +17763,14 @@ const server = http.createServer((req, res) => {
       /* ★ v1.28.1: তালিকা আর হাতে-লেখা নয় — `SRC_PROBE`-এর সব কী (আগে mv/hs/hc/mlb বাদ-পড়ে প্রোডে নিবেদিত পুলগুলো দেখাই যাত্ব না) */
       for (const k of [...new Set([...Object.keys(SRC_PROBE || {}), 'm4u', 'hd', 'hm', 'sky', 'az', 'ott', 'mm', 'vidy', 'vsp', 'nx', 'tw', 'rt'])]) {
         const m = SPOOL.get(k); const arr = m ? [...m.entries()] : [];
-        out[k] = { verified: arr.filter(([, e]) => !(e.ban > now)).length, total: arr.length, best: arr.filter(([, e]) => spoolFresh(e)).sort((a, b) => (a[1].ms || 9999) - (b[1].ms || 9999)).slice(0, 3).map(x => x[0] + ' ' + x[1].ms + 'ms') };
+        const fresh = arr.filter(([, e]) => spoolFresh(e));
+        out[k] = { verified: fresh.filter(([, e]) => !e.seeded).length, fresh: fresh.length, seeded: fresh.filter(([, e]) => !!e.seeded).length, banned: arr.filter(([, e]) => e.ban > now).length, total: arr.length, best: fresh.slice().sort((a, b) => (a[1].ms || 9999) - (b[1].ms || 9999)).slice(0, 3).map(x => x[0] + ' ' + x[1].ms + 'ms') };
       }
-      out._vidy = { verified: VIDY_OK.size, pool: POOL.length, site: PX_SITE.size };
+      out._vidy = { retained: VIDY_OK.size, fresh: [...VIDY_OK.values()].filter(e => e.ts && now - e.ts < Number(process.env.PXFRESH || 240000)).length, pool: POOL.length, homepageBench: PX_SITE.size };
+      out._multimovies = { pool: MM_POOL.length, homepageBench: MM_SITE.size, resolverFresh: [...MM_RESOLVE_OK.values()].filter(t => now - t < 600000).length, cooling: [...MM_COOL.values()].filter(t => t > now).length };
+      out._mls = { retained: MLS_PX_OK.size, fresh: [...MLS_PX_OK.values()].filter(mlsPxFresh).length, cooling: [...MLS_PX_OK.values()].filter(e => e.ban > now).length, candidates: MLS_PX_CANDS.length };
+      out._vidsrc = { pool: VSP_POOL.length, cooldown: [...VSP_BAD.values()].filter(t => now - t < 300000).length };
+      out._moviebox = { bench: NXBENCH, pool: NXSIZE, resolverConfigured: !!NEXBASE };
       return sendJson(res, 200, out);
     }
     if (p === '/mbpool.json') { try { const b = fs.readFileSync(MB_POOL_FILE); res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', 'access-control-allow-origin': '*' }); return res.end(b); } catch (e) { return sendJson(res, 200, []); } } // v1.17.34: child-যাচাই করা MB-বেঞ্চ (ডিপ্লয়-বীজ-হালনাগাদের জন্য)
