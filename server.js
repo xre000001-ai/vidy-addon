@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.219';
+const VERSION = '1.34.220';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -8710,21 +8710,26 @@ async function mlbdOne(base, fileUrl, dl, labQ, labTxt) {
   };
   // ① নেস্টেড-পেজ → FSL (fsldownload)
   const fslBranch = async () => {
-    const out = [];
-    if (!nested || left() < 1500) return out;
-    try {
-      for (const nx of [nested].concat(nested2)) { // v1.34.30: প্রথম nested-এ মিরর না পেলে দ্বিতীয়টাও দেখি
-        if (!nx || left() < 1500 || out.length) break;
-        const p2 = await mlbdGet(base + nx, { ms: Math.min(4200, left()) });
-        const b2 = String(p2.body || '').replace(/&amp;/g, '&');
-        const fsl = (b2.match(/https:\/\/fsldownload\.com\/d\/[A-Za-z0-9._-]+/) || [])[0]
-          || (b2.match(/https:\/\/[a-z0-9]+\.r2\.cloudflarestorage\.com\/[^"'\s<>]+/) || [])[0] || ''; // v1.34.30: সাইট এখন প্রিসাইনড-R2 দেয় (মাপা: Odyssey nested → stream.mp4)
-        await pick(fsl, 'FSL', out);
+    if (!nested || left() < 1500) return [];
+    // The site commonly puts R2 and FSL Worker on different nested pages.
+    // Resolve both independently; one success must not suppress the other.
+    // At most two pages per token; mlbdLimit still bounds total requests.
+    const pages=await Promise.all([nested].concat(nested2).map(async nx=>{
+      const out=[];
+      try {
+        if (!nx || left()<1500) return out;
+        const p2=await mlbdGet(base+nx,{ms:Math.min(4200,left())});
+        if (!p2 || p2.st!==200) return out;
+        const b2=String(p2.body||'').replace(/&amp;/g,'&');
+        const fsl=(b2.match(/https:\/\/fsldownload\.com\/d\/[A-Za-z0-9._-]+/)||[])[0]
+          || (b2.match(/https:\/\/[a-z0-9]+\.r2\.cloudflarestorage\.com\/[^"'\s<>]+/)||[])[0] || '';
+        await pick(fsl,'FSL',out);
         const worker=require('./tools/mlbd-index/worker_link.cjs').find(b2);
-        if (worker) await pick(worker, 'FSL Worker', out, true);
-      }
-    } catch (e) { }
-    return out;
+        if (worker) await pick(worker,'FSL Worker',out,true);
+      } catch (_) {}
+      return out;
+    }));
+    return pages.flat();
   };
   // ② HubCloud: drive → (302) ist → gamerxyt → r2-presigned **এবং** workers.dev (দুটোই আলাদা সার্ভার)
   const hubBranch = async () => {
