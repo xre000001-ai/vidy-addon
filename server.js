@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.206';
+const VERSION = '1.34.207';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -3474,6 +3474,7 @@ async function mlsIndexedLinkRace(u, opt) {
 async function mlsGetRaw(u, opt) {
   opt = opt || {};
   const ms = Math.max(1500, opt.ms || 6000), T0 = Date.now();
+  const accepted = (body, url) => { try { return typeof opt.accept !== 'function' || !!opt.accept(String(body || ''), url || u); } catch (_) { return false; } };
   const indexedLink = await mlsIndexedLinkRace(u, opt);
   if (indexedLink) return indexedLink;
   // ★ মাপা: mlsbd.co-র CF গেট **শুধু** সাধারণ UA-তে ৪০৩ দেয়; পূর্ণ Chrome-fingerprint
@@ -3498,7 +3499,7 @@ async function mlsGetRaw(u, opt) {
     const good = MLS_GOOD.get(host0) || '';
     const pxs = opt.proxy ? (Array.isArray(opt.proxy) ? opt.proxy : [opt.proxy]) : mlsPxFor(host0);
     const wpJson = /wp-json/i.test(u);
-    const valid = t => (opt.json ? (wpJson ? mlsOkJsonStrict(t) : mlsOkJson(t)) : mlsOkHtml(t));
+    const valid = t => (opt.json ? (wpJson ? mlsOkJsonStrict(t) : mlsOkJson(t)) : mlsOkHtml(t)) && accepted(t, u);
     // ★ v1.28.20: **হোস্ট-ভিত্তিক কৌশল** (মাপা ২৮-১০-২০২৬, প্রোড):
     //   • mlsbd.co  — curl ব্লকড, প্রক্সি অনির্ভরযোগ্য, **রিডার ২-৪সে-তে নির্ভরযোগ্য** ⇒ রিডার-প্রথম
     //   • savelinks / gdflix / multicloud — **প্রক্সি ১-৩সে-তে কাজ করে** ⇒ প্রক্সি-প্রথম
@@ -3598,7 +3599,7 @@ async function mlsGetRaw(u, opt) {
     MLS_CURL_DEAD.set(host0, Date.now());
     if (DBG) console.error('[mlsd] সব পথ ব্যর্থ ' + String(u).slice(0, 60));
     try {
-      const b = await mlsPoolFetch(u, Math.max(3000, Math.min(5600, left() || 3000)), opt.json ? mlsOkJson : mlsOkHtml);
+      const b = await mlsPoolFetch(u, Math.max(3000, Math.min(5600, left() || 3000)), t => (opt.json ? mlsOkJson(t) : mlsOkHtml(t)) && accepted(t,u));
       if (b) { mlsRec(u, 200, String(b).length, 'pool'); return { st: 200, body: String(b), url: u, px: 1 }; }
       mlsRec(u, 0, 0, 'pool·empty');
     } catch (e) { mlsRec(u, 0, 0, 'pool·err'); }
@@ -3610,7 +3611,7 @@ async function mlsGetRaw(u, opt) {
       let body = '';
       if (opt.body !== false) { try { body = await r.text(); } catch (e) { } }
       const chal = /_cf_chl_opt|Just a moment|Enable JavaScript and cookies/.test(body) || (r.status === 403 && body.length < 6000);
-      if (!chal) return { st: r.status, body: body, url: r.url || u };
+      if (!chal && accepted(body, r.url || u)) return { st: r.status, body: body, url: r.url || u };
       if (DBG) console.error('[mlsd] challenge ' + r.status + ' ' + String(u).slice(0, 70));
     } catch (e) {
       if (DBG) console.error('[mlsd] net ' + ((e && e.message) || e) + ' ' + String(u).slice(0, 60));
@@ -3619,14 +3620,14 @@ async function mlsGetRaw(u, opt) {
     if (opt.proxy) {
       for (const fp of (Array.isArray(opt.proxy) ? opt.proxy : [opt.proxy])) {
         const cp3 = await mlsCurl(u, { ms: Math.min(4500, ms - (Date.now() - T0)), json: !!opt.json, referer: opt.referer, proxy: fp });
-        if (cp3 && cp3.st >= 200 && cp3.st < 400) return { st: cp3.st, body: cp3.body, url: cp3.eu || u, ct: cp3.ct, px: fp };
+        if (cp3 && cp3.st >= 200 && cp3.st < 400 && accepted(cp3.body, cp3.eu || u)) return { st: cp3.st, body: cp3.body, url: cp3.eu || u, ct: cp3.ct, px: fp };
       }
     }
     const cu = await mlsCurl(u, { ms: Math.min(4500, ms - (Date.now() - T0)), json: !!opt.json, referer: opt.referer });
-    if (cu && cu.st >= 200 && cu.st < 400 && String(cu.body || '').length > 200) return { st: cu.st, body: cu.body, url: cu.eu || u, ct: cu.ct };
+    if (cu && cu.st >= 200 && cu.st < 400 && String(cu.body || '').length > 200 && accepted(cu.body, cu.eu || u)) return { st: cu.st, body: cu.body, url: cu.eu || u, ct: cu.ct };
   }
   try {
-    const b = await mlsPoolFetch(u, Math.max(3000, Math.min(5600, ms)), opt.json ? mlsOkJson : mlsOkHtml);
+    const b = await mlsPoolFetch(u, Math.max(3000, Math.min(5600, ms)), t => (opt.json ? mlsOkJson(t) : mlsOkHtml(t)) && accepted(t,u));
     if (b) return { st: 200, body: String(b), url: u, px: 1 };
   } catch (e) { }
   return { st: 0, body: '', url: u };
@@ -4033,7 +4034,8 @@ async function mlsGdOnce(fileUrl, ms, resume) {
     || grab(body, /https:\/\/pub-[a-z0-9]+\.r2\.dev\/[^\s"'<>\\]+/i);
   if (direct) {                                    // ইনলাইন-লিংক থাকলে সরাসরি
     const pv = await mlsProve(direct, 2400);
-    return pv && pv.ok ? { ok: true, direct: direct, size: pv.size || 0, ct: pv.ct || '', route: 'inline' } : { ok: false, route: 'inline-unproven' };   // v1.34.60: prove-fail != file-death (no done-poison)
+    if (pv && pv.ok) return { ok: true, direct: direct, size: pv.size || 0, ct: pv.ct || '', route: 'inline' };
+    // Failed inline proof is not proof that the generation page has no usable alternative.
   }
   const id = mlsGdId(fileUrl);
   // ★ v1.28.32: `/file/`-পেজ gdflix.com → … → **new7.gdflix.io**-তে রিডাইরেক্ট হয়; পোস্ট **শেষ-হোস্টেই**
@@ -4043,7 +4045,13 @@ async function mlsGdOnce(fileUrl, ms, resume) {
   else if (/^https:\/\/gdflix\.com/i.test(origin)) origin = 'https://new7.gdflix.io';
   let cloud = grab(body, /https?:\/\/[^"'\s<>]+\/cloud\/\d+\/[A-Za-z0-9]+/);
   cloud = cloud ? cloud.replace(/^https?:\/\/[^\/]+/i, origin) : (origin + '/cloud/' + String(Date.now()).slice(0, 10) + '/' + id);
-  const cp = await (MLS_GD_CLOUD_FLIGHT.get(id) || mlsGet(cloud, { ms: Math.max(1800, Math.min(2600, ms - (Date.now() - T0))) }));
+  let cp = await (MLS_GD_CLOUD_FLIGHT.get(id) || mlsGet(cloud, { ms: Math.max(1800, Math.min(2600, ms - (Date.now() - T0))) }));
+  // A speculative page may be a challenge or belong to an invalid redirect.
+  // Do not let it suppress the file-page-derived cloud session.
+  if (!cp || !require('./tools/mls-index-lab/gd_session').cloudUrl(cp.url, id)) {
+    cp = await mlsGet(cloud, { ms: Math.max(1800, Math.min(2600, ms - (Date.now() - T0))) });
+  }
+  if (!cp || !require('./tools/mls-index-lab/gd_session').cloudUrl(cp.url, id)) return {ok:false,route:'invalid-cloud-session'};
   // The speculative cloud GET can win on a different host/path than the
   // file-page redirect. POST must use the exact same validated key session.
   const actualCloud = require('./tools/mls-index-lab/gd_session').cloudUrl(cp && cp.url, id);

@@ -2,7 +2,7 @@
 // Public metadata only: never store playback URLs or stream-card responses.
 const {find}=require('./lookup');
 const repo='xre000001-ai/vidy-addon';
-let current=null,inflight=null,lastAttempt=0;
+let current=null,inflight=null,lastAttempt=0,lastError="";
 // Last known good immutable metadata snapshot: protects cold starts from GitHub outages.
 // It is discovery-only; signed playback links are never stored here.
 try {
@@ -24,14 +24,15 @@ async function load(){
  const shards=await Promise.all(manifest.shards.map((x,i)=>{if(x.file!=='s'+String(i).padStart(2,'0')+'.json')throw Error('invalid shard name');return get(x.file)}));
  if(shards.some(a=>!Array.isArray(a))||shards.reduce((n,a)=>n+a.length,0)!==manifest.posts)throw Error('incomplete index');
  // Optional mirror metadata, pinned to the same immutable revision.
- const mirrorData=await get('mirrors.json').catch(()=>({}));
- const mirrors=mirrorData && typeof mirrorData==='object' && !Array.isArray(mirrorData) ? mirrorData : {};
+ const mirrorData=await get('mirrors.json');
+ if(!mirrorData || typeof mirrorData!=='object' || Array.isArray(mirrorData) || (Number.isInteger(manifest.mirror_sets) && Object.keys(mirrorData).length!==manifest.mirror_sets))throw Error('incomplete mirror index');
+ const mirrors=mirrorData;
  const rows=shards.flat();if(rows.some(r=>!r||!Number.isSafeInteger(r.id)||typeof r.title!=='string'||!Array.isArray(r.sav)))throw Error('invalid indexed post');
  current={rows,mirrors,sha,at:Date.now()};return current;
 }
 function start(){
  if(inflight || Date.now()-lastAttempt<(current && !current.bootstrap?120000:15000) || (current && Date.now()-current.at<300000))return inflight;
- lastAttempt=Date.now();inflight=load().catch(()=>null).finally(()=>{inflight=null});return inflight;
+ lastAttempt=Date.now();inflight=load().then(v=>{lastError='';return v}).catch(e=>{lastError=String(e && e.message || e).slice(0,160);return null}).finally(()=>{inflight=null});return inflight;
 }
 async function candidates(names,year,type,season,episode,waitMs=1000){
  const p=start();
@@ -55,5 +56,5 @@ function mirror(id){
  if(!(out.gd.length||out.gdx.length||out.mcl.length))return null;
  out.hosts=[...new Set([...out.gd,...out.gdx,...out.mcl].map(u=>new URL(u).hostname))];return out;
 }
-function stats(){return {posts:current?current.rows.length:0,mirrors:current?Object.keys(current.mirrors||{}).length:0,revision:current?current.sha.slice(0,12):'',ageSeconds:current&&current.at?Math.round((Date.now()-current.at)/1000):null,bootstrap:!!(current&&current.bootstrap),loading:!!inflight};}
+function stats(){return {posts:current?current.rows.length:0,mirrors:current?Object.keys(current.mirrors||{}).length:0,revision:current?current.sha.slice(0,12):'',ageSeconds:current&&current.at?Math.round((Date.now()-current.at)/1000):null,bootstrap:!!(current&&current.bootstrap),loading:!!inflight,error:lastError};}
 module.exports={candidates,start,stats,mirror};
