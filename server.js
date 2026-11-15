@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.222';
+const VERSION = '1.34.223';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -8748,7 +8748,8 @@ async function mlbdOne(base, fileUrl, dl, labQ, labTxt) {
         const b2=String(p2.body||'').replace(/&amp;/g,'&');
         const fsl=(b2.match(/https:\/\/fsldownload\.com\/d\/[A-Za-z0-9._-]+/)||[])[0]
           || (b2.match(/https:\/\/[a-z0-9]+\.r2\.cloudflarestorage\.com\/[^"'\s<>]+/)||[])[0] || '';
-        await pick(fsl,'FSL',out);
+        const kind=require('./tools/mlbd-index/server_kind.cjs').classify(b2,fsl);
+        await pick(fsl,kind,out,kind==='MP4 Fast Cloud');
         const worker=require('./tools/mlbd-index/worker_link.cjs').find(b2);
         if (worker) await pick(worker,'FSL Worker',out,true);
       } catch (_) {}
@@ -8950,7 +8951,7 @@ async function mlbdStreams(name, year, type, s, e, cap) {
       if (h === 480 || (maxh && h && h > maxh)) continue;
       for (const m of (g.mirrors || [])) cand.push({ h: h, u: m.u, srv: m.s || srvLabel(m.u) || '', name: g.name });   // চেইন-লেবেল আগে
     }
-    const rank = x => (x.srv === 'FSL' ? 0 : x.srv === 'HubCloud' ? 1 : x.srv === 'Pixeldrain' ? 2 : 3);
+    const rank = x => (x.srv === 'MP4 Fast Cloud' ? 0 : x.srv === 'FSL' || x.srv === 'FSL Worker' ? 1 : x.srv === 'HubCloud' ? 2 : x.srv === 'Pixeldrain' ? 3 : 4);
     cand.sort((a, b) => (b.h - a.h) || (rank(a) - rank(b)));
     for (const c of cand) {
       if (seenU.has(c.u)) continue; seenU.add(c.u);
@@ -8960,11 +8961,11 @@ async function mlbdStreams(name, year, type, s, e, cap) {
       const langs = mlbdLangs(c.name);
       const txt = '\u29c9 ' + ttl + (year ? ' | ' + year + ' |' : ' |') + '\n'
         + (type === 'series' ? '\u29e0 S' + SE + 'E' + EP : '\u29e0 Movie') + '\n'
-        + '\u229e MovieLinkBD' + (langs ? ' \u2317 ' + langs : '');
+        + '\u229e MovieLinkBD' + (c.srv ? ' ◧ ' + c.srv : '') + (langs ? ' \u2317 ' + langs : '');
       out.push({
         name: '\u25a5 ' + (c.h ? String(c.h) : 'Auto') + ' \u25a5', title: txt, description: txt, quality: String(c.h || ''),
         url: c.u, _srv: c.srv,
-        behaviorHints: { notWebReady: false, isBingeable: true, proxyHeaders: { request: { 'User-Agent': UA } }, filename: (c.name || 'movielinkbd.mkv') },
+        behaviorHints: { notWebReady: false, isBingeable: true, proxyHeaders: { request: { 'User-Agent': UA } }, filename: require('./tools/mlbd-index/server_kind.cjs').filename(c.name,c.srv) },
         bingeGroup: 'mlb|' + mlbdNorm(ttl) + '::' + (type === 'series' ? 'S' + SE + 'E' + EP : 'm')
       });
     }
