@@ -1,0 +1,10 @@
+'use strict';
+const fs=require('fs'),vm=require('vm'),assert=require('assert');const src=fs.readFileSync(require('path').join(__dirname,'../../server.js'),'utf8');
+const a=src.indexOf('async function spoolTrain() {'),b=src.indexOf('\nspoolLoad();',a);assert(a>=0&&b>a);
+const pools=new Map(),ids=Array.from({length:40},(_,i)=>'node'+i),active={n:0,max:0},checked=[];
+const c={Date,Promise,Map,Set,Math,Number,Object,Array,process:{uptime:()=>200,env:{}},LAST_STREAM_AT:0,MMR_ACTIVE_UNTIL:0,INFLIGHT_STREAM:0,spoolBusy:false,spoolSourceCursor:0,SRC_PROBE:{a:{},b:{},c:{},d:{}},SPOOL:pools,SPOOL_TRIED:new Map(),VIDY_OK:new Map(ids.map(x=>[x,{}])),POOL:[],PX_SITE:new Set(),PX_RAW:[],SPOOL_TGT:288,DBG:false,spoolFresh:e=>!!e.ok,srcPool:k=>{if(!pools.has(k))pools.set(k,new Map());return pools.get(k)},spoolCheck:async(k,px)=>{active.n++;active.max=Math.max(active.max,active.n);checked.push(k+':'+px);await new Promise(r=>setTimeout(r,2));active.n--;return true},spoolSave:()=>{},console};
+vm.createContext(c);vm.runInContext(src.slice(a,b)+';globalThis.run=spoolTrain',c);
+(async()=>{await c.run();assert.equal(checked.length,64);assert.equal(new Set(checked).size,64,'sources and candidate calls should not repeat');assert(active.max<=32&&active.max>=17,'parallelism must be bounded yet concurrent');checked.length=0;c.INFLIGHT_STREAM=1;await c.run();assert.equal(checked.length,0,'no new discovery while request is in flight');
+assert(src.includes('const candidateSeen = new Set(cands)') && src.includes('!candidateSeen.has(rawC[i])'),'VIDY raw and pool candidates are deduplicated');
+const start=src.indexOf('const scanWidth =',src.indexOf('async function vidySweep('));const end=src.indexOf('if (DBG && (vidySweepBusy',start);const loop=src.slice(start,end);assert(/i\s*\+=\s*scanWidth/.test(loop)&&/slice\(i, i \+ scanWidth\)/.test(loop),'scan advance must match slice width');
+console.log('source trainer 2x16 bounded, no duplicate source work, traffic pause, and non-overlapping VIDY scan passed')})().catch(e=>{console.error(e);process.exitCode=1});

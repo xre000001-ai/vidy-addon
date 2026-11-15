@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.209';
+const VERSION = '1.34.210';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -1450,7 +1450,7 @@ if (pxsWarmTimer.unref) pxsWarmTimer.unref();
 let LAST_SRC = null;   // ★ v1.22.2: শেষ অনুরোধে প্রতি-সোর্স ফল (prod-ডায়াগনস্টিক)
 const SPOOL = new Map();          // srcKey -> Map(px -> {ms, ok, fail, ts, ban})
 const SPOOL_FILE = require('path').join(__dirname, 'src_pools.json');
-const SPOOL_TGT = Number(process.env.SPTGT || 216); // v1.34.64: per-source target 3x (72->216)   // v1.25.1 (user: 'bakigula 8x') 9 -> 72 per source   // v1.23.0: প্রতি সোর্সে ৯টি তাজা-যাচাই নোড (ইউজার: ৮-১০)   // প্রতি সোর্সে লক্ষ্য-ভেরিফায়েড নোড
+const SPOOL_TGT = Number(process.env.SPTGT || 288); // v1.34.64: per-source target 3x (72->216)   // v1.25.1 (user: 'bakigula 8x') 9 -> 72 per source   // v1.23.0: প্রতি সোর্সে ৯টি তাজা-যাচাই নোড (ইউজার: ৮-১০)   // প্রতি সোর্সে লক্ষ্য-ভেরিফায়েড নোড
 const SPOOL_TRIED = new Map();    // `${srcKey}|${px}` -> ts (ব্যর্থ-কুলডাউন ২০মিন)
 /* ★ v1.28.1: **প্রোব-ভার্সন** — কোনো সোর্সের যাচাই-মার্কার কড়া/বদলালে পুরোনো নোডগুলো আর 'প্রমাণিত' নয়
    (মাপা: az-এর নরম মার্কার `/anizone|anime|href/` ৪০০-বাইট প্রক্সি-এরর-পাতাকেও পাস করিয়ে দিয়েছিল)।
@@ -1573,33 +1573,43 @@ async function spoolTrain() {
     // serving চললে নতুন-প্রার্থী যাচাই বাদ (phase-১ skip), কিন্তু reverify ছোট আকারে চলুক
     // ১) তাজা-নোড কম হলে নতুন প্রার্থী **সমান্তরালে** যাচাই (লক্ষ্য ৯ নোড/সোর্স)
     const sourceKeys = Object.keys(SRC_PROBE);
-    for (let si = 0; !_serving && si < sourceKeys.length; si++) {
-      if (Date.now() - LAST_STREAM_AT < 3000 || Date.now() < MMR_ACTIVE_UNTIL) break;
-      const k = sourceKeys[spoolSourceCursor % sourceKeys.length];
-      spoolSourceCursor = (spoolSourceCursor + 1) % sourceKeys.length;
-      const m = srcPool(k);
-      const fresh = [...m.values()].filter(e => spoolFresh(e) && !e.seeded).length;
-      if (fresh >= Number(process.env.SPMIN || 216)) continue;
-      const cands = [];
-      for (const px of VIDY_OK.keys()) if (!m.has(px)) cands.push(px);                          // (ক) vidy-প্রমাণিত নোড
-      for (const c of POOL.filter(c => PX_SITE.has(c.px))) if (!m.has(c.px) && cands.indexOf(c.px) < 0) cands.push(c.px); // (খ) site-proven
-      for (const c of POOL) if (!m.has(c.px) && cands.indexOf(c.px) < 0) cands.push(c.px);       // (গ) পুল
-      for (const px of PX_RAW) if (cands.length < 600 && !m.has(px) && cands.indexOf(px) < 0) cands.push(px);
-      const usable = cands.filter(px => Date.now() - (SPOOL_TRIED.get(k + '|' + px) || 0) > 10 * 60 * 1000);
-      const batch = usable.slice(0, process.uptime() < 150 ? Number(process.env.SPBATCHBOOT || 8) : Number(process.env.SPBATCH || 12));
-      if (!batch.length) continue;
-      const res = await Promise.all(batch.map(px => spoolCheck(k, px)));
-      if (DBG) console.error('[spool] ' + k + ' tried=' + batch.length + ' ok=' + res.filter(Boolean).length + ' fresh=' + [...srcPool(k).values()].filter(e => spoolFresh(e)).length + '/' + SPOOL_TGT);
-    }
+    // Two source-level workers, each capped at 16 probes. Source cursor is
+    // shared synchronously, so they never take the same source in one cycle.
+    let remaining=sourceKeys.length;
+    const sourceWorker=async()=>{
+      while (!_serving && remaining>0) {
+        if (Date.now()-LAST_STREAM_AT<3000 || Date.now()<MMR_ACTIVE_UNTIL || INFLIGHT_STREAM>0) break;
+        remaining--;
+        const k=sourceKeys[spoolSourceCursor % sourceKeys.length];
+        spoolSourceCursor=(spoolSourceCursor+1)%sourceKeys.length;
+        const m=srcPool(k);
+        const fresh=[...m.values()].filter(e=>spoolFresh(e)&&!e.seeded).length;
+        if(fresh>=Number(process.env.SPMIN || 288))continue;
+        const cands=[],seen=new Set();
+        const add=px=>{if(px && !m.has(px) && !seen.has(px)){seen.add(px);cands.push(px)}};
+        for(const px of VIDY_OK.keys())add(px);
+        for(const c of POOL)if(PX_SITE.has(c.px))add(c.px);
+        for(const c of POOL)add(c.px);
+        for(const px of PX_RAW){if(cands.length>=600)break;add(px)}
+        const usable=cands.filter(px=>Date.now()-(SPOOL_TRIED.get(k+'|'+px)||0)>10*60*1000);
+        const size=process.uptime()<150?Number(process.env.SPBATCHBOOT || 8):Number(process.env.SPBATCH || 16);
+        const batch=usable.slice(0,Math.max(1,Math.min(16,size)));
+        if(!batch.length)continue;
+        const res=await Promise.all(batch.map(px=>spoolCheck(k,px)));
+        if(DBG)console.error('[spool] '+k+' tried='+batch.length+' ok='+res.filter(Boolean).length+' fresh='+[...srcPool(k).values()].filter(e=>spoolFresh(e)).length+'/'+SPOOL_TGT);
+      }
+    };
+    await Promise.all(Array.from({length:Math.min(2,sourceKeys.length)},sourceWorker));
     // ২) পুরোনো নোড পুনঃযাচাই — একবার-পাস করা নোড চিরকাল "verified" থাকে না
     const oldest = [];
+    const reverifyServing = _serving || Date.now()-LAST_STREAM_AT<3000 || INFLIGHT_STREAM>0 || Date.now()<MMR_ACTIVE_UNTIL;
     for (const [k, m] of SPOOL) {
       if (!SRC_PROBE[k]) continue; // dynamic result keys have no active trainer
       const arr = [...m.entries()].filter(([, e]) => (e.ok || 0) > 0 && !(e.ban > Date.now())).sort((a, b) => (a[1].checkAt || a[1].ts || 0) - (b[1].checkAt || b[1].ts || 0));
-      for (const [px, e] of arr.slice(0, 2)) oldest.push([k, px, e.checkAt || e.ts || 0]);
+      for (const [px, e] of arr.slice(0, reverifyServing ? 2 : 4)) oldest.push([k, px, e.checkAt || e.ts || 0]);
     }
     oldest.sort((a, b) => a[2] - b[2]);
-    await Promise.all(oldest.slice(0, _serving ? Number(process.env.SPREVS || 16) : Number(process.env.SPREV || 96)).map(([k, px]) => spoolCheck(k, px)));   // v1.34.38: serving-এ ছোট reverify
+    await Promise.all(oldest.slice(0, reverifyServing ? Number(process.env.SPREVS || 16) : Number(process.env.SPREV || 96)).map(([k, px]) => spoolCheck(k, px)));   // v1.34.38: serving-এ ছোট reverify
     spoolSave();
   } finally { spoolBusy = false; }
 }
@@ -1873,16 +1883,22 @@ async function vidySweep(n) {
     const poolC = POOL.filter(c => free(c.px)).sort((a, b) => pxScore(a.px, a.ms) - pxScore(b.px, b.ms)).map(c => c.px);
     // ★ v1.17.56: POOL শেষ হলে enrich-এর তাজা-প্রার্থী-তালিকা (PX_RAW) থেকে যাচাই চলবে — পুল স্যাচুরেট হয় না।
     const rawC = PX_RAW.filter(p2 => free(p2) && vpxLeft(p2) >= 3);
-    const cands = poolC.slice(0, n || Number(process.env.VPXPASS || 1500));   // ★ v1.26.9: ৭২০ → ১৫০০ (verified পুল দ্বিগুণ-দ্রুত ভরে)
-    for (let i = 0; i < rawC.length && cands.length < (n || Number(process.env.VPXPASS || 1500)); i++) cands.push(rawC[i]);
+    const cands = poolC.slice(0, n || Number(process.env.VPXPASS || 1500));   // pool and raw lists can overlap
+    const candidateSeen = new Set(cands);
+    for (let i = 0; i < rawC.length && cands.length < (n || Number(process.env.VPXPASS || 1500)); i++) {
+      if (!candidateSeen.has(rawC[i])) { candidateSeen.add(rawC[i]); cands.push(rawC[i]); }
+    }
     let _ok = 0;
     // ★ v1.17.56: প্রশিক্ষণ এখন **ভদ্র** — ছোট-ব্যাচ (১২) + গ্লোবাল-গেট + প্রতি-নোড-লক,
     //   আর ইউজারের অনুরোধ চলাকালীন স্ক্যান থামে (আগে ৬০-এর-বেশি সমান্তরাল স্ক্যান সার্ভিং-ট্র্যাফিক
     //   ডুবিয়ে দিত: মাপা ok ৬–৮/১৬ → ০–৩/১৬)।
-    for (let i = 0; i < cands.length; i += 12) {
+    // Advance by exactly the batch width: the old 12-step/96-slice loop
+    // retested overlapping candidates up to eight times and wasted quota.
+    const scanWidth = Math.max(1, Math.min(96, Number(process.env.PXSCAN || 48) || 48));
+    for (let i = 0; i < cands.length; i += scanWidth) {
       const _low = VIDY_OK.size < Number(process.env.PXVLOW || 60); // ★ v1.17.56: পুল-শুকিয়ে-গেলে অনুরোধের মাঝেও (ছোট-ব্যাচে) রিফিল
       if (!_low && Date.now() - LAST_STREAM_AT < 2500) { if (DBG) console.error('[vsweep] ইউজার-অনুরোধ চলছে — স্ক্যান থামানো'); break; }
-      await Promise.all(cands.slice(i, i + Number(process.env.PXSCAN || 96)).map(async px => {   // v1.25.3: 48 -> 96 parallel probe (3x scan rate)
+      await Promise.all(cands.slice(i, i + scanWidth).map(async px => {   // v1.25.3: 48 -> 96 parallel probe (3x scan rate)
         if (!vpxTake(px)) return;
         try { await vySlot(2500); } catch (e) { vpxFree(px); return; }
         try {
@@ -2221,7 +2237,7 @@ function poolsFull() {
     const keys = Object.keys(SRC_PROBE); if (SPOOL.has('bf')) keys.push('bf');
     for (const k of keys) {
       const fresh = [...srcPool(k).values()].filter(e => spoolFresh(e)).length;
-      if (fresh < Number(process.env.SPMIN || 216)) return false;
+      if (fresh < Number(process.env.SPMIN || 288)) return false;
     }
     if (typeof MM_POOL !== 'undefined' && MM_POOL.length < Number(process.env.MMTGT || 288)) return false;
   } catch (e) { }
@@ -2235,7 +2251,7 @@ function poolsFill() {
   out.generic = [POOL.length, Math.floor(PX_CAP * 0.8)];
   try {
     const keys = Object.keys(SRC_PROBE); if (SPOOL.has('bf')) keys.push('bf');
-    for (const k of keys) out[k] = [[...srcPool(k).values()].filter(e => spoolFresh(e)).length, Number(process.env.SPMIN || 216)];
+    for (const k of keys) out[k] = [[...srcPool(k).values()].filter(e => spoolFresh(e)).length, Number(process.env.SPMIN || 288)];
     if (typeof MM_POOL !== 'undefined') out.mm = [MM_POOL.length, Number(process.env.MMTGT || 288)];
   } catch (e) { }
   return out;
@@ -3294,12 +3310,12 @@ async function mlsPxTrain() {
     // already in the map, even after its success expired or it repeatedly failed.
     const now = Date.now();
     const due = [...MLS_PX_OK.entries()].filter(([, e]) => (!e.ban || e.ban <= now) && now - (e.checkAt || 0) >= 60000 && ((e.fail || 0) > 0 || now - (e.ts || 0) >= 300000))
-      .sort((a,b) => (a[1].checkAt || 0) - (b[1].checkAt || 0)).slice(0, 4);
+      .sort((a,b) => (a[1].checkAt || 0) - (b[1].checkAt || 0)).slice(0, 6);
     for (const [, e] of due) e.checkAt = now;
     if (due.length) await Promise.all(due.map(([px]) => mlsPxCheck(px).catch(() => false)));
-    if (mlsPxBest(99, false).length >= Number(process.env.MLSPXTGT || 42)) return;
-    const N = Math.max(1, Number(process.env.MLSPXSCAN || 24));
-    const limit = Math.max(1, Number(process.env.MLSPXBATCH || 10));
+    if (mlsPxBest(99, false).length >= Number(process.env.MLSPXTGT || 60)) return;
+    const N = Math.max(1, Number(process.env.MLSPXSCAN || 48));
+    const limit = Math.max(1, Math.min(24, Number(process.env.MLSPXBATCH || 18) || 18));
     const batch = []; let examined = 0;
     // Advance only past entries actually considered. Previously N=24 was
     // skipped while only 10 were probed, permanently delaying the other 14.
@@ -3314,7 +3330,7 @@ async function mlsPxTrain() {
     if (DBG) console.error('[mlspx] tried=' + batch.length + ' ok=' + res.filter(Boolean).length + ' have=' + mlsPxBest(99, false).length + '/' + MLS_PX_CANDS.length);
   } catch (e) { } finally { mlsPxBusy = false; }
 }
-setTimeout(() => { mlsPxTrain(); setInterval(() => { mlsPxTrain(); }, Number(process.env.MLSPXNI || 45000)).unref?.(); }, 15000).unref?.();
+setTimeout(() => { mlsPxTrain(); setInterval(() => { mlsPxTrain(); }, Number(process.env.MLSPXNI || 20000)).unref?.(); }, 15000).unref?.();
 
 let MLS_CURL_OK = null;
 // ★ v1.28.5d: execFileSync → **async execFile**। sync-curl পুরো ইভেন্ট-লুপ আটকে দিত
