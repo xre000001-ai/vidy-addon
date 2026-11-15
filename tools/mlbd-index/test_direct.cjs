@@ -1,10 +1,11 @@
 'use strict';
 const assert=require('assert'),fs=require('fs'),vm=require('vm'),path=require('path');
-const search=require('./direct_search.cjs'),partial=require('./partial_results.cjs');
+const search=require('./direct_search.cjs'),partial=require('./partial_results.cjs'),worker=require('./worker_link.cjs');
 const src=fs.readFileSync(path.join(__dirname,'../../server.js'),'utf8');
 const a=src.indexOf('function mlbdNorm('),b=src.indexOf('const MLBD_WL',a),c=src.indexOf('function mlbdSeasonOf('),d=src.indexOf('function mlbdAbs(',c);
 assert(a>=0&&b>a&&c>=0&&d>c);const ctx={};vm.createContext(ctx);vm.runInContext(src.slice(a,b)+src.slice(c,d)+';globalThis.picks=mlbdPicks',ctx);
 (async()=>{
+ assert(worker.find('<a href="https://fsl.mks-lukatube.workers.dev/video/file?x=1&amp;y=2">'));assert.equal(worker.find('https://fsl.mks-lukatube.workers.dev.evil.test/a'),'');assert.equal(worker.find('https://elsewhere.workers.dev/video'),'');
  assert.equal(search.key('Queen of Tears'),'te');assert.equal(search.key('éclair'),'ec');assert.equal(search.key('a'),'');
  const rows=[['Avengers Endgame: Encore (2026)','avengers-endgame-2026','','movie','2026',0],['Avengers: Endgame (2019)','avengers-endgame-2019','','movie','2019',0],['Avengers: Endgame (2019)','../../evil','','movie','2019',0],['Avengers: Endgame (2019)','unsafe','','download18plus','2019',1]];
  const items=search.rowsToItems(rows,'Avengers Endgame');assert.equal(items.length,2);assert.equal(ctx.picks(items,'Avengers: Endgame','2019','movie',0,0).length,1);assert.equal(ctx.picks(items,'Avengers: Endgame','','movie',0,0)[0].year,'2019');assert.equal(ctx.picks(items,'Avengers: Endgame','2018','movie',0,0).length,0);
@@ -14,5 +15,6 @@ assert(a>=0&&b>a&&c>=0&&d>c);const ctx={};vm.createContext(ctx);vm.runInContext(
  const later=(ms,r)=>new Promise(ok=>setTimeout(()=>ok(r),ms));let t=Date.now();let res=await partial.collect([later(5,'first'),later(200,'late')],{started:t,maxMs:150,minMs:30,quietMs:20,pollMs:5});assert.deepEqual(res.results,['first']);assert(res.partial);assert(Date.now()-t<140);
  res=await partial.collect([later(10,'a'),later(20,'b')],{started:Date.now(),maxMs:100,minMs:80,quietMs:20,pollMs:5});assert.deepEqual(res.results,['a','b']);assert(!res.partial);
  res=await partial.collect([later(100,null)],{started:Date.now(),maxMs:30,minMs:10,quietMs:5,pollMs:5});assert.equal(res.results.length,0);assert(res.partial);
+ assert(src.includes("await pick(worker, 'FSL Worker', out, true)"));assert(src.includes('!requireVerified && mlbdTrusted(u)'));
  assert(src.includes('qOf(t)!==480'));assert(src.includes('h === 480'));console.log('Direct suggestion validation, identity/year guard, 480 exclusion and bounded partial collection passed');
 })().catch(e=>{console.error(e);process.exitCode=1});

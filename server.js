@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.213';
+const VERSION = '1.34.214';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -8695,11 +8695,11 @@ async function mlbdOne(base, fileUrl, dl, labQ, labTxt) {
   const ic = (H.match(/https:\/\/instantcloud\.org\/file\/[A-Za-z0-9]+/) || [])[0] || '';
   // एक मिरर प्रमाण: ২০৬ ⇒ নাও; প্রোব-ব্যর্থ হলেও trust-হোস্ট হলে নাও
   const seenM = new Set();
-  const pick = async (u, srv, out) => {
+  const pick = async (u, srv, out, requireVerified = false) => {
     if (!u || seenM.has(u) || left() < 900) return;
     seenM.add(u);
     if (await mlbdRng(u, Math.min(1600, left()))) out.push({ u: u, s: srv });
-    else if (mlbdTrusted(u)) out.push({ u: u, s: srv, soft: 1 });
+    else if (!requireVerified && mlbdTrusted(u)) out.push({ u: u, s: srv, soft: 1 });
   };
   // ① নেস্টেড-পেজ → FSL (fsldownload)
   const fslBranch = async () => {
@@ -8713,6 +8713,8 @@ async function mlbdOne(base, fileUrl, dl, labQ, labTxt) {
         const fsl = (b2.match(/https:\/\/fsldownload\.com\/d\/[A-Za-z0-9._-]+/) || [])[0]
           || (b2.match(/https:\/\/[a-z0-9]+\.r2\.cloudflarestorage\.com\/[^"'\s<>]+/) || [])[0] || ''; // v1.34.30: সাইট এখন প্রিসাইনড-R2 দেয় (মাপা: Odyssey nested → stream.mp4)
         await pick(fsl, 'FSL', out);
+        const worker=require('./tools/mlbd-index/worker_link.cjs').find(b2);
+        if (worker) await pick(worker, 'FSL Worker', out, true);
       }
     } catch (e) { }
     return out;
