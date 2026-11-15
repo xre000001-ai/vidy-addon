@@ -30,7 +30,7 @@ async function load(){
  current={rows,mirrors,sha,at:Date.now()};return current;
 }
 function start(){
- if(inflight || Date.now()-lastAttempt<(current?120000:15000) || (current && Date.now()-current.at<300000))return inflight;
+ if(inflight || Date.now()-lastAttempt<(current && !current.bootstrap?120000:15000) || (current && Date.now()-current.at<300000))return inflight;
  lastAttempt=Date.now();inflight=load().catch(()=>null).finally(()=>{inflight=null});return inflight;
 }
 async function candidates(names,year,type,season,episode,waitMs=1000){
