@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.210';
+const VERSION = '1.34.211';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -3453,7 +3453,7 @@ function mlsRec(u, st, len, via) {
 // direct curl with one general HTTP proxy; neither path changes MLSBD-site
 // confidence. Preserve the effective redirect URL for relative links.
 let mlsLinkRaceActive = 0, mlsLinkTurn = 0;
-const MLS_LINK_METRICS = {races:0,slotSkipped:0,directOk:0,proxyOk:0,directFail:0,proxyFail:0};
+const MLS_LINK_METRICS = {races:0,slotSkipped:0,directOk:0,proxyOk:0,directFail:0,proxyFail:0,directUnusable:0,proxyUnusable:0};
 async function mlsIndexedLinkRace(u, opt) {
   const host = mlsHost(u);
   if (opt.proxy || opt.json) return null; // explicit/IP-bound sessions use their existing path
@@ -3475,9 +3475,13 @@ async function mlsIndexedLinkRace(u, opt) {
     const go = async p => {
       const t = Date.now();
       const r = await mlsCurl(u, {ms:time, json:!!opt.json, referer:opt.referer, proxy:p || undefined}).catch(() => null);
-      const ok = valid(r) && (typeof opt.accept !== 'function' || !!opt.accept(String(r.body || ''),r.eu || u));
-      if (p) { pxsRec(key, p, ok, Date.now() - t); MLS_LINK_METRICS[ok?'proxyOk':'proxyFail']++; }
-      else MLS_LINK_METRICS[ok?'directOk':'directFail']++;
+      const reachable=!!valid(r);
+      let ok=reachable;
+      if (ok && typeof opt.accept==='function') { try {ok=!!opt.accept(String(r.body || ''),r.eu || u)} catch (_) {ok=false} }
+      // A healthy HTML page lacking a requested mirror is not evidence of a
+      // bad proxy. Do not poison host-wide rankings for content-specific misses.
+      if (p) { if(ok || !reachable)pxsRec(key,p,ok,Date.now()-t); MLS_LINK_METRICS[ok?'proxyOk':reachable?'proxyUnusable':'proxyFail']++; }
+      else MLS_LINK_METRICS[ok?'directOk':reachable?'directUnusable':'directFail']++;
       if (!ok) throw new Error('invalid-or-unexpected-link-page');
       mlsRec(u, r.st, r.body.length, p ? 'link-proxy' : 'link-direct');
       return {st:r.st, body:r.body, url:r.eu || u, via:p ? 'link-proxy' : 'link-direct', px:p || undefined};
@@ -3990,7 +3994,7 @@ function mlsGdBg(fileUrl, id) {
       if (r && r.route === 'queued') { MLS_GD.set(id, { ts: Date.now(), tokUrl: r.tokUrl, cloud: r.cloud, px: r.px }); mlsMarkDirty(); }
       // ★ v1.29.0 (মাপা: সিরিজের এপিসোড-ফাইল QUEUED-এ ৪০সে+ থাকে, মুভি ~৩৫সে) ⇒ ১৪ → **৭৫ রাউন্ড**
       //   (~১০ মিনিট, ৮সে ফাঁকে) — একবার তৈরি হলেই কার্ড ক্যাশে ঢুকে যায় ও ডিস্কে থাকে।
-      if (round >= 75) { MLS_GBG.delete(id); MLS_GD.set(id, { ts: Date.now(), ok: false, route: 'bg-timeout', done: true }); return; }
+      if (round >= 75) { MLS_GBG.delete(id); MLS_GD.delete(id); return; } // Timeout is not proof of a dead file.
       setTimeout(() => tick(round + 1), 8000);
     } catch (e) { MLS_GBG.delete(id); }
   };
@@ -4100,7 +4104,8 @@ async function mlsGd(link, ms, px) {
   const id = mlsGdId(link);
   const C = MLS_GD.get(id);
   if (C && C.ok && Date.now() - C.ts < 1800000) return { ok: true, direct: C.direct, size: C.size || 0, ct: C.ct || '', route: 'cache', link: link };
-  if (C && C.done && !C.ok && Date.now() - C.ts < 900000) return { ok: false, route: 'known-dead', link: link };
+  // A previous background timeout is not a permanent provider failure.
+  if (C && C.done && !C.ok && C.route !== 'bg-timeout' && Date.now() - C.ts < 900000) return { ok: false, route: 'known-dead', link: link };
   const started=Date.now(), budget=Math.min(ms || 4000, 8500);
   let r = await mlsGdOnce(link, Math.min(budget, 5200), (C && C.tokUrl) ? { tok: C.tokUrl, cloud: C.cloud, px: C.px } : null);
   // A queued GDFlix response is not a final failure. Continue the same
@@ -4531,7 +4536,7 @@ async function mlsTask(nameP, infoP, type, s, e, requestId) {
           }
           // Pixeldrain is a distinct mirror, not a replacement for Watch Online.
           for (const u of x.mcl.slice(0, 1))
-            inner.push(MLS_PLAY_RESOLVE.get('mcl-pixel:'+u, () => require('./tools/mls-index-lab/multicloud_pixel').resolve(u, mlsGet, Math.max(3000, CAP - (Date.now() - T0) - 400))).then(addMultiResult).catch(() => null));
+            inner.push(MLS_PLAY_RESOLVE.get('mcl-pixel:'+u, () => require('./tools/mls-index-lab/multicloud_pixel').resolve(u, mlsGet, Math.max(3000, CAP - (Date.now() - T0) - 400), reason => diag('mlspx', reason + ' @' + (Date.now()-T0) + 'ms'))).then(addMultiResult).catch(() => null));
           // ★ v1.28.22: গেট এখন **বাকি-সময়** দেখে (আগে T0<CAP*0.45 ⇒ সার্চ ৪-৫সে নিলে gdflix কখনোই
           //   চালু হতো না ⇒ সব কার্ড multicloud-এ সীমিত)। আংশিক-কার্ড থাকায় দেরিতে শেষ হলেও ক্ষতি নেই।
           if (CAP - (Date.now() - T0) > 2400)
@@ -4549,10 +4554,11 @@ async function mlsTask(nameP, infoP, type, s, e, requestId) {
                   const postYear=+(String(p.title||'').match(/\b(?:19|20)\d{2}\b/)||[])[0]||0;
                   const seasonMeta=seasonOnly && names.map(n=>require('./tools/mls-index-lab/season_file').seasonFile(meta.title,SE,{name:n,year:postYear})).find(Boolean);
                   if (range ? !consistent(meta) : seasonOnly ? (!seasonMeta || !names.some(n=>mlsTitleOk(n,meta.title,year,true))) : type === 'series' ? (!consistent(meta) || !names.some(n=>mlsTitleOk(n,meta.title,year,true))) : !verifiedMovieName(meta.title)) return null;
-                  if (![720,1080,2160].includes(meta.q) || (q0 && q0!==meta.q)) return null;
+                  if (![720,1080,2160].includes(meta.q) || (q0 && q0!==meta.q)) { diag('mlsgd','metadata-quality-rejected'); return null; }
                   actualQ=meta.q;seasonUnmarked=!!(seasonMeta && seasonMeta.unmarked);
                 }
                 const r=await resolveP;
+                diag('mlsgd', (r && r.route || 'no-result') + ' q=' + actualQ + ' @' + (Date.now()-T0) + 'ms');
                 if (r && r.ok && r.direct) addCard({kind:'gd',r,title:ttlOf(p),q:actualQ,range,seasonFile:seasonOnly,seasonUnmarked});
                 if (r && !r.ok && !range && !seasonOnly) MLS_GD_CTX.set(mlsGdId(u), { ck:RCK,INFO,NAME,type,s,e,title:ttlOf(p),q:actualQ });
                 return {kind:'gd',r,title:ttlOf(p),q:actualQ};

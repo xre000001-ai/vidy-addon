@@ -17,7 +17,8 @@ function extractFile(body, effective) {
   const file=obj && obj.type==='file' && obj.api_response;
   return file && file.id===id && /\.(mkv|mp4|m4v|avi|webm)$/i.test(file.name||'') ? {id,file} : null;
 }
-async function resolve(link, get, ms) {
+async function resolve(link, get, ms, report) {
+  const note=x=>{try{if(report)report(x)}catch(_){}};
   try {
     const v=new URL(link);
     if(v.protocol!=='https:' || !/(^|\.)multicloudlinks\.com$/i.test(v.hostname) || !/^\/view\/[a-z0-9]+\/?$/i.test(v.pathname)) return null;
@@ -27,15 +28,17 @@ async function resolve(link, get, ms) {
     // faster page that has no useful Pixeldrain link.
     const page=await get(link,{ms:Math.min(4000,budget),referer:'https://savelinks.me/',accept:(body,url)=>!!findMirror(body,url||link)});
     const mirror=findMirror(page && page.body,(page && page.url)||link);
-    if(!mirror || budget-(Date.now()-t)<300) return null;
+    if(!mirror){note('no-mirror-page');return null;}
+    if(budget-(Date.now()-t)<300){note('budget-after-view');return null;}
     const r=await get(mirror.href,{ms:Math.max(1500,budget-(Date.now()-t)),referer:page.url||link,accept:(body,url)=>!!extractFile(body,url)});
     const extracted=extractFile(r && r.body,r && r.url);
-    if(!extracted)return null;
+    if(!extracted){note('no-pixeldrain-metadata');return null;}
     const {id,file}=extracted;
     const title=String(file.name), qm=/(2160|1080|720|480)p\b/i.exec(title), em=/\bS0*(\d{1,2})E0*(\d{1,4})(?!\d)(?:[-–]E?0*(\d{1,4}))?/i.exec(title);
     const q=qm?+qm[1]:(/\b4k\b/i.test(title)?2160:0);
-    if(![720,1080,2160].includes(q))return null;
+    if(![720,1080,2160].includes(q)){note('quality-rejected');return null;}
+    note('resolved-'+q);
     return {ok:true,direct:'https://pixeldrain.com/api/file/'+id,size:Number(file.size)||0,srv:'multicloud·pixeldrain',q,season:em?+em[1]:0,episode:em?+em[2]:0,episode_end:em?+(em[3]||em[2]):0,filename:title,fastWatch:true};
-  } catch (_) { return null; }
+  } catch (_) { note('resolver-error');return null; }
 }
 module.exports={resolve};

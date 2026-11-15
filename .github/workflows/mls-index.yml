@@ -60,6 +60,7 @@ jobs:
           node test-multicloud-race.cjs
           node test-watch-task-race.cjs
           node test-gd-inline-fallback.cjs
+          node test-gd-timeout-retry.cjs
           node test-pixel-page-race.cjs
           node test-mls-get-accept.cjs
           node test-multicloud-pixel.cjs
