@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.182';
+const VERSION = '1.34.183';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -3589,7 +3589,7 @@ async function mlsGetRaw(u, opt) {
         else if (tag === 'reader') MLS_GOOD.set(host0, 'reader');
         MLS_GOOD_TS.set(host0, Date.now());
         if (DBG) console.error('[mlsd] ' + host0 + ' ✓ ' + tag + ' ' + w.body.length + 'b @' + (Date.now() - T0) + 'ms');
-        return { st: 200, body: w.body, url: w.url || u, via: tag };
+        return { st: 200, body: w.body, url: w.url || u, via: tag, px: tag.indexOf('px:') === 0 ? tag.slice(3) : undefined };
       }
     }
     got = null;
@@ -3920,20 +3920,20 @@ const MLS_GD = new Map(typeof MLS_GD_LOAD !== 'undefined' ? MLS_GD_LOAD : undefi
 const MLS_GBG = new Set();      // ব্যাকগ্রাউন্ড-পোল চলছে এমন id
 function mlsGdId(u) { const m = /\/file\/([A-Za-z0-9]+)/.exec(String(u || '')); return m ? m[1] : String(u || ''); }
 
-async function mlsGdPoll(tokUrl, cloud, ms) {
+async function mlsGdPoll(tokUrl, cloud, ms, px) {
   const T0 = Date.now();
   let n = 0;
   while (Date.now() - T0 < ms && n < 6) {
     n++;
-    const pr = await mlsCurl(tokUrl + (tokUrl.indexOf('?') >= 0 ? '&' : '?') + 'xhr=1', { ms: Math.min(2600, Math.max(900, ms - (Date.now() - T0))), xhr: true, referer: cloud });
+    const pr = await mlsCurl(tokUrl + (tokUrl.indexOf('?') >= 0 ? '&' : '?') + 'xhr=1', { ms: Math.min(2600, Math.max(900, ms - (Date.now() - T0))), xhr: true, referer: cloud, proxy: px || undefined });
     let pj = null;
     try { pj = JSON.parse((pr && pr.body) || ''); } catch (e) { pj = null; }
     if (pj && pj.done && pj.redirect) {
       let fin = '';
       try { fin = new URL(String(pj.redirect).replace(/\\\//g, '/'), cloud).href; } catch (e) { fin = ''; }
       if (!fin) return { ok: false, route: 'redirect-bad' };
-      const fp = await mlsGet(fin, { ms: Math.min(3200, 3600) });
-      const grab = re => (re.exec(String(fp.body || '')) || [])[0] || '';
+      const fp = px ? await mlsCurl(fin, { ms: 3200, proxy: px, referer: cloud }) : await mlsGet(fin, { ms: 3200 });
+      const grab = re => (re.exec(String((fp && fp.body) || '')) || [])[0] || '';
       const direct = grab(/https:\/\/cloud-dl\.[a-z0-9]+\.workers\.dev\/[^\s"'<>\\]+/i)
         || grab(/https:\/\/pub-[a-z0-9]+\.r2\.dev\/[^\s"'<>\\]+/i)
         || grab(/https:\/\/instant\.[a-z0-9.]+\/[^\s"'<>\\]+/i);
@@ -3945,7 +3945,7 @@ async function mlsGdPoll(tokUrl, cloud, ms) {
     if (pj && pj.done && !pj.redirect) return { ok: false, route: 'done-noredirect' };   // v1.34.62: session quirk, retry later -- no done-poison
     await new Promise(r => setTimeout(r, 1000));
   }
-  return { ok: false, route: 'queued', tokUrl: tokUrl, cloud: cloud };
+  return { ok: false, route: 'queued', tokUrl: tokUrl, cloud: cloud, px: px || undefined };
 }
 
 function mlsGdBg(fileUrl, id) {
@@ -3955,7 +3955,7 @@ function mlsGdBg(fileUrl, id) {
     try {
       const st = MLS_GD.get(id);
       if (st && st.ok) { MLS_GBG.delete(id); return; }
-      const r = await mlsGdOnce(fileUrl, 9000, round > 0 && st && st.tokUrl ? { tok: st.tokUrl, cloud: st.cloud } : null);
+      const r = await mlsGdOnce(fileUrl, 9000, round > 0 && st && st.tokUrl ? { tok: st.tokUrl, cloud: st.cloud, px: st.px } : null);
       if (r && (r.ok || r.done)) {
         MLS_GD.set(id, Object.assign({ ts: Date.now() }, r)); mlsMarkDirty(); MLS_GBG.delete(id);
         if (DBG) console.error('[mlsd] gd-bg ' + id + ' ' + (r.ok ? 'OK' : r.route));
@@ -3965,7 +3965,7 @@ function mlsGdBg(fileUrl, id) {
         }
         return;
       }
-      if (r && r.route === 'queued') { MLS_GD.set(id, { ts: Date.now(), tokUrl: r.tokUrl, cloud: r.cloud }); mlsMarkDirty(); }
+      if (r && r.route === 'queued') { MLS_GD.set(id, { ts: Date.now(), tokUrl: r.tokUrl, cloud: r.cloud, px: r.px }); mlsMarkDirty(); }
       // ★ v1.29.0 (মাপা: সিরিজের এপিসোড-ফাইল QUEUED-এ ৪০সে+ থাকে, মুভি ~৩৫সে) ⇒ ১৪ → **৭৫ রাউন্ড**
       //   (~১০ মিনিট, ৮সে ফাঁকে) — একবার তৈরি হলেই কার্ড ক্যাশে ঢুকে যায় ও ডিস্কে থাকে।
       if (round >= 75) { MLS_GBG.delete(id); MLS_GD.set(id, { ts: Date.now(), ok: false, route: 'bg-timeout', done: true }); return; }
@@ -3985,7 +3985,7 @@ function mlsGdFilePage(link, ms) {
 
 async function mlsGdOnce(fileUrl, ms, resume) {
   const T0 = Date.now();
-  if (resume && resume.tok && resume.cloud) return await mlsGdPoll(resume.tok, resume.cloud, Math.max(1200, ms));
+  if (resume && resume.tok && resume.cloud) return await mlsGdPoll(resume.tok, resume.cloud, Math.max(1200, ms), resume.px);
   const g = await mlsGdFilePage(fileUrl, Math.min(ms, 3600));
   const body = g.body || '';
   if (!body) return { ok: false, route: 'nofile' };
@@ -4010,7 +4010,7 @@ async function mlsGdOnce(fileUrl, ms, resume) {
   const key = (/formData\.append\("key",\s*"([a-f0-9]{20,})"\)/.exec(cp.body || '') || [])[1]
     || (/name="key"\s+value="([a-f0-9]+)"/.exec(cp.body || '') || [])[1];
   if (!key) return { ok: false, route: 'nokey' };
-  const post = await mlsCurl(cloud, { ms: 2800, post: ['action=cloud', 'key=' + key, 'action_token='], host: mlsHost(cp.url || cloud), referer: cloud });
+  const post = await mlsCurl(cloud, { ms: 2800, post: ['action=cloud', 'key=' + key, 'action_token='], host: mlsHost(cp.url || cloud), referer: cloud, proxy: cp.px || undefined });
   let j = null;
   try { j = JSON.parse((post && post.body) || ''); } catch (e) { j = null; }
   if (DBG) console.error('[mlsd] gd-post cloud=' + String(cloud).slice(0, 80) + ' key=' + String(key).slice(0, 10) + ' st=' + ((post && post.st) || 0) + ' body=' + String((post && post.body) || '').replace(/\s+/g, ' ').slice(0, 120));
@@ -4018,7 +4018,7 @@ async function mlsGdOnce(fileUrl, ms, resume) {
   let tok = '';
   try { tok = new URL(String(j.url).replace(/\\\//g, '/'), cloud).href; } catch (e) { tok = ''; }
   if (!tok) return { ok: false, route: 'post-nourl' };
-  return await mlsGdPoll(tok, cloud, Math.max(1200, Math.min(2200, ms - (Date.now() - T0))));
+  return await mlsGdPoll(tok, cloud, Math.max(1200, Math.min(2200, ms - (Date.now() - T0))), cp.px);
 }
 
 async function mlsGd(link, ms, px) {
@@ -4026,9 +4026,9 @@ async function mlsGd(link, ms, px) {
   const C = MLS_GD.get(id);
   if (C && C.ok && Date.now() - C.ts < 1800000) return { ok: true, direct: C.direct, size: C.size || 0, ct: C.ct || '', route: 'cache', link: link };
   if (C && C.done && !C.ok && Date.now() - C.ts < 900000) return { ok: false, route: 'known-dead', link: link };
-  const r = await mlsGdOnce(link, Math.min(ms || 4000, 5200), (C && C.tokUrl) ? { tok: C.tokUrl, cloud: C.cloud } : null);
+  const r = await mlsGdOnce(link, Math.min(ms || 4000, 5200), (C && C.tokUrl) ? { tok: C.tokUrl, cloud: C.cloud, px: C.px } : null);
   if (r && (r.ok || r.done)) { MLS_GD.set(id, Object.assign({ ts: Date.now() }, r)); return Object.assign({ link: link }, r); }
-  if (r && r.route === 'queued') MLS_GD.set(id, { ts: Date.now(), tokUrl: r.tokUrl, cloud: r.cloud });
+  if (r && r.route === 'queued') MLS_GD.set(id, { ts: Date.now(), tokUrl: r.tokUrl, cloud: r.cloud, px: r.px });
   mlsGdBg(link, id);                                 // বাকিটা ব্যাকগ্রাউন্ডে
   return { ok: false, route: (r && r.route) || 'pending', link: link };
 }
