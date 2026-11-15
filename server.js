@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.175';
+const VERSION = '1.34.176';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -7370,10 +7370,12 @@ async function hmStreamsRaw(tmdbId, title, type, s, e, origin, maxh) {
 
 // VidBolt's Orion provider exposes its own resolver. Use it independently of
 // the rotating /api/resolve response, without fabricating language tracks.
-async function mmOrionMovie(tmdbId, origin, ms) {
+async function mmOrionMovie(tmdbId, origin, ms, isSeries, season, episode) {
   if (!/^\d+$/.test(String(tmdbId || ''))) return [];
-  const key = '0f461eaa465bb2a7acd037425217f2f209ef540a3171e1ac';
-  const url = 'https://api.movy.lol/api/source/' + tmdbId + '?api_key=' + key + '&apikey=' + key;
+  if (isSeries && (!/^[1-9]\d*$/.test(String(season || '')) || !/^[1-9]\d*$/.test(String(episode || '')))) return [];
+  const key = isSeries ? 'streamrip_secret_2026' : '0f461eaa465bb2a7acd037425217f2f209ef540a3171e1ac';
+  const endpoint = isSeries ? 'https://img.animecurx.tech/api/tv/' + tmdbId + '/' + season + '/' + episode : 'https://api.movy.lol/api/source/' + tmdbId;
+  const url = endpoint + '?api_key=' + key + '&apikey=' + key;
   const timeout = Math.max(500, Math.min(4500, ms || 4500));
   const valid = text => { try { const j = JSON.parse(String(text || '')); return Array.isArray(j.sources) && j.sources.some(s => s && mmRousav(s.url)); } catch (_) { return false; } };
   const headers = { 'User-Agent': UA, Referer: VB_REF, Origin: 'https://vidbolt.xyz', Accept: 'application/json' };
@@ -7392,6 +7394,34 @@ async function mmOrionMovie(tmdbId, origin, ms) {
     return results.flat();
   } catch (_) { return []; }
 }
+// Nova is an independent VidBolt provider, not a proxy-pool replacement.
+// Require an exact TMDB episode, trusted provider host, declared HD quality,
+// and a bounded media range response before adding any card.
+async function mmNova(tmdbId, isSeries, season, episode, ms) {
+  if (!/^\d+$/.test(String(tmdbId || ''))) return [];
+  if (isSeries && (!/^[1-9]\d*$/.test(String(season || '')) || !/^[1-9]\d*$/.test(String(episode || '')))) return [];
+  const params = new URLSearchParams({tmdbId: String(tmdbId)});
+  if (isSeries) { params.set('season', String(season)); params.set('episode', String(episode)); }
+  const u = 'https://scraper.vidbolt.xyz/scrape/Nova/' + (isSeries ? 'tv/tmdb' : 'movie/') + tmdbId + '?' + params;
+  const headers = {'User-Agent': UA, Referer: VB_REF, Origin: 'https://vidbolt.xyz'};
+  const timeout = Math.max(500, Math.min(3500, ms || 3500));
+  try {
+    const r = await fetch(u, {headers, signal: AbortSignal.timeout(timeout)});
+    if (!r.ok) return [];
+    const j = await r.json(); if (!Array.isArray(j.sources)) return [];
+    const sources = j.sources.filter(x => { try { const z = new URL(x.url); return z.protocol === 'https:' && z.hostname === 'scraper.vidbolt.xyz' && z.pathname.startsWith('/proxy/segment/') && /^(720|1080|2160)p$/i.test(String(x.quality || '')) && String(x.type || '').toLowerCase() === 'video'; } catch (_) { return false; } }).slice(0, 8);
+    const rows = await Promise.all(sources.map(async x => {
+      try {
+        const z = await fetch(x.url, {headers: {...headers, Range:'bytes=0-1023'}, signal: AbortSignal.timeout(Math.min(2400, timeout))});
+        const ct = String(z.headers.get('content-type') || '').toLowerCase();
+        if (z.body) z.body.cancel().catch(() => {});
+        if (z.status !== 206 || !ct.startsWith('video/')) return null;
+        return {h: parseInt(x.quality,10), url:x.url, ref:VB_REF, mp4:1, lang:String(x.language || '').slice(0,60), aud:'', mini:0};
+      } catch (_) { return null; }
+    }));
+    return rows.filter(Boolean);
+  } catch (_) { return []; }
+}
 async function mmStreams(tmdbId, title, type, s, e, origin, maxh, rel) { // v1.15.54: rel=MM-মিডিয়া-সার্ভার-রিলে // v1.15.28: Multimovies source — vidout index + vidbolt resolve; origin: mini-master URLs; maxh: MM-রেজোলিউশন-ছাঁকনি (v1.15.39, 0=সব)
   if (!tmdbId) return [];
   const t3 = Date.now(); const WOB = 7000; const left = () => Math.max(300, WOB - (Date.now() - t3)); // v1.17.47: ৮.২সে ক্যাপের ভিতরে সেটেল
@@ -7399,7 +7429,8 @@ async function mmStreams(tmdbId, title, type, s, e, origin, maxh, rel) { // v1.1
     const isSeries = type === 'series';
     const u = isSeries ? (WOBASE + '/hls/tv/' + tmdbId + '/S' + (parseInt(s, 10) || 1) + '.json') : (WOBASE + '/hls/movie/' + tmdbId);
     const vbP = mmVidbolt(tmdbId, isSeries, s, e, left(), origin).catch(() => []);
-    const orionP = isSeries ? Promise.resolve([]) : mmOrionMovie(tmdbId, origin, left()).catch(() => []); // parallel — index present or not
+    const orionP = mmOrionMovie(tmdbId, origin, left(), isSeries, s, e).catch(() => []); // exact episode; parallel with other providers
+    const novaP = mmNova(tmdbId, isSeries, s, e, left()).catch(() => []);
     const subsP = woSubs(tmdbId, type, s, e, 2500).catch(() => []); // v1.15.99: সমান্তরালে সাবটাইটেল ফেচ (শেষে ব্লক না করা)
     const idxTxt = await mmFetchIndex(u, isSeries, e, left());
     let servers = [];
@@ -7424,6 +7455,7 @@ async function mmStreams(tmdbId, title, type, s, e, origin, maxh, rel) { // v1.1
     }
     try { const vbl = await vbP; for (const v of (vbl || [])) { if (!v || !v.url) continue; const vk2 = v.url + '|' + (v.h | 0) + (v.mini ? 'm' : '') + '|' + (v.alang || ''); if (seen.has(vk2)) continue; seen.add(vk2); raws.push(v); } } catch { } // vidbolt merge — dedup per url+height so per-quality minis all survive
     try { for (const v of await orionP) { const k = v.url + '|' + (v.h | 0) + (v.mini ? 'm' : '') + '|' + (v.alang || ''); if (!seen.has(k)) { seen.add(k); raws.push(v); } } } catch (_) {}
+    try { for (const v of await novaP) { const k = v.url + '|' + (v.h | 0) + '|'; if (!seen.has(k)) { seen.add(k); raws.push(v); } } } catch (_) {}
     if (DBG) console.error('[mm] ' + tmdbId + '/' + (isSeries ? 'S' + (s || 1) + 'E' + (e || 1) : 'movie') + ' servers=' + servers.length + ' variants=' + raws.length + ' @' + (Date.now() - t3) + 'ms');
     const fvars = maxh ? raws.filter(x => !x.h || x.h <= maxh) : raws; // v1.15.39: config-রেজোলিউশন-ফিল্টার — অজানা-উচ্চতা (0) সবসময়-থাকে
     const vars = fvars.slice().sort((a, b) => b.h - a.h); // v1.15.51: 12→16 // v1.15.88: 16→20 (কোয়ালিটি×ভাষা মেট্রিক্স — ১৬-এ ৪৮০p-সারি কেটে যেত) // v1.15.91: ২০ → ৬০ (১৩ ভাষা × ৩-৪ কোয়ালিটি = ৩৯-৫২ কার্ড ধরা পড়ুক)
