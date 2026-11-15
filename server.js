@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.218';
+const VERSION = '1.34.219';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -8563,7 +8563,7 @@ async function mlbdSearch(base, q, ms) {
     const blk = m[4] || '';
     const title = ((blk.match(/mlbd-lm-title">([^<]+)/) || [])[1] || (blk.match(/alt="([^"]+)"/) || [])[1] || '').trim();
     const year = (title.match(/\((\d{4})\)/) || [])[1] || '';
-    items.push({ path: path, title: title.replace(/\([^)]*\)/g, ' ').trim(), year: year, type: /series|anime|drama/i.test(m[2]) ? 'series' : 'movie' });
+    items.push({ path: path, title: title.replace(/\([^)]*\)/g, ' ').trim(), year: year, category: m[2].toLowerCase(), type: /series|anime|drama/i.test(m[2]) ? 'series' : 'movie' });
   }
   return items;
 }
@@ -8582,7 +8582,7 @@ function mlbdEpRange(t) { // "S04 [Ep 01-08]" → [1,8] ; সিরিজ-পো
 }
 function mlbdPicks(items, name, year, type, season, ep) { // ★ v1.27.14: স্কোর-ক্রমে **সব** যোগ্য পেজ (একই টাইটেলের একাধিক পেজ থাকে)
   const W = mlbdNorm(name); if (!W) return [];
-  let cands = items.filter(x => (type === 'movie' ? x.type === 'movie' : x.type === 'series'));
+  let cands = items.filter(x => (type === 'movie' ? (x.type === 'movie' || (x.category === 'drama' && year && x.year === String(year) && !mlbdSeasonOf(x.title))) : x.type === 'series'));
   // A movie's known release year must not match a different year's sequel.
   // When an exact title exists, do not union lookalike titles as mirrors.
   if (type === 'movie') {
@@ -8800,6 +8800,9 @@ async function mlbdStreams(name, year, type, s, e, cap) {
         for (const path of paths) {
           const f = await getF(path);
           if (!f) { failed.push(path); continue; }                 // নেট-ব্যর্থ ⇒ শেষে আরেক দফা
+          // A movie may be misclassified by the site as drama. Never use a
+          // drama page with episode groups as a movie.
+          if (type === 'movie' && /^\/drama\//.test(path) && (f.groups || []).length) continue;
           if (!f0) f0 = f;
           if (f.lab) for (const k in f.lab) labA[k] = f.lab[k];
           let t = f.toks || [];
@@ -8910,7 +8913,8 @@ async function mlbdStreams(name, year, type, s, e, cap) {
     // ★ v1.27.13: প্রতি ফাইল-টোকেনের **সব Range-প্রমাণিত মিরর** → আলাদা কার্ড (সার্ভার-নাম আলাদা)
     const cand = [];
     for (const g of got) {
-      if (sm && !sm.test(g.name)) continue;                       // সিরিজে ঠিক-এপিসোড ছাড়া নয়
+      if (sm && !sm.test(g.name)) continue;
+      if (type === 'movie' && /\bS\d{1,2}E\d{1,4}\b/i.test(String(g.name||''))) continue;                       // সিরিজে ঠিক-এপিসোড ছাড়া নয়
       const h = parseInt((String(g.name).match(/(\d{3,4})p/i) || [])[1], 10) || (g.q || 0);   // v1.27.17: label-fallback
       if (h === 480 || (maxh && h && h > maxh)) continue;
       for (const m of (g.mirrors || [])) cand.push({ h: h, u: m.u, srv: m.s || srvLabel(m.u) || '', name: g.name });   // চেইন-লেবেল আগে
@@ -18747,7 +18751,8 @@ cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'series', s: Number(m
       const azP = !(cfg && cfg.az === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? azStreams(info.id, 'movie', 0, 0, cfg && cfg.azq || [], originOf(req)).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.76: AniZone
       kickSubs(m[1], 'movie', null, null, cfg);
       const lookP = Promise.all([typeof tp !== 'undefined' ? tp : null, typeof nmP !== 'undefined' ? nmP : null, typeof infoP !== 'undefined' ? infoP : null].filter(Boolean)).catch(() => []); // v1.26.2
-      const mlbP = mlbdOn(cfg) ? mlbdTask(nmP, infoP, 'movie', 0, 0, (cfg && cfg.mlbr) || 0) : null;
+      const mlbMeta = mlbdOn(cfg) ? (infoP || pooledGet(CINEMETA + '/meta/movie/' + encodeURIComponent(m[1]) + '.json', 3000).then(b => { const v=JSON.parse(b).meta || {}; return {name:v.name || '',year:String(v.releaseInfo || v.year || '').slice(0,4)}; }).catch(()=>null)) : null;
+      const mlbP = mlbdOn(cfg) ? mlbdTask(nmP, mlbMeta, 'movie', 0, 0, (cfg && cfg.mlbr) || 0) : null;
       const mlsP = mlsOn(cfg) ? mlsTask(nmP, infoP, 'movie', 0, 0, m[1]) : null;
       const dtP = dtOn(cfg) ? dtTask(nmP, infoP, 'movie', 0, 0, originOf(req)) : null;   // v1.30.0
       return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'movie', null, null, info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: hmP, key: 'hm' }, { p: hdP, key: 'hd' }, { p: mlbP, key: 'mlb' }, { p: mlsP, key: 'mls' }, { p: dtP, key: 'dt' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0, p, lookP), (cfg && cfg.__slow) ? Number(process.env.SDLSLOW || 26000) : (cfg && cfg.__bg) ? Number(process.env.SDLBG || 11500) : SDL_MS, undefined, (cfg && (cfg.__bg || cfg.__slow)) ? 0 : Number(process.env.SDLGRACE || 800) /* v1.33.2: এজ-কাটের (১২সে) নিচে (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(

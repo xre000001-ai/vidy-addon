@@ -11,7 +11,7 @@ function rowsToItems(rows,query){
   const typ=x[3].toLowerCase(), slug=x[1];if(!/^(movie|series|drama|anime)$/.test(typ)||!/^[a-z0-9][a-z0-9_-]{0,199}$/i.test(slug))continue;
   const title=String(x[0]).slice(0,400),t=norm(title);if(!words.every(w=>t.includes(w)))continue;
   const path='/'+typ+'/'+slug;if(seen.has(path))continue;seen.add(path);
-  const y=String(x[4]||'');out.push({path,title:title.replace(/\([^)]*\)/g,' ').trim(),year:/^(?:19|20)\d{2}$/.test(y)?y:'',type:typ==='movie'?'movie':'series'});
+  const y=String(x[4]||'');out.push({path,title:title.replace(/\([^)]*\)/g,' ').trim(),year:/^(?:19|20)\d{2}$/.test(y)?y:'',category:typ,type:typ==='movie'?'movie':'series'});
  }
  return out;
 }
