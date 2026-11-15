@@ -1,15 +1,20 @@
 'use strict';
 // Resolve only a Pixeldrain mirror linked by a MultiCloud view page. Never
 // persist generated download URLs; the stable Pixeldrain file ID is derived at request time.
+function findMirror(body,base) {
+  const hrefs=[...String(body||'').matchAll(/href\s*=\s*["']([^"']+)["']/gi)].map(m=>m[1].replace(/&amp;/gi,'&'));
+  return hrefs.map(h=>{try{return new URL(h,base)}catch(_){return null}}).find(u=>u && u.protocol==='https:' && u.hostname.toLowerCase()==='pixeldra.multicloudlinks.com' && u.pathname==='/' && /^[A-Za-z0-9_-]{4,128}$/.test(u.searchParams.get('pid')||'')) || null;
+}
 async function resolve(link, get, ms) {
   try {
     const v=new URL(link);
     if(v.protocol!=='https:' || !/(^|\.)multicloudlinks\.com$/i.test(v.hostname) || !/^\/view\/[a-z0-9]+\/?$/i.test(v.pathname)) return null;
     const t=Date.now(), budget=Math.max(2500,Math.min(7000,ms||6000));
-    const page=await get(link,{ms:Math.min(4000,budget),referer:'https://savelinks.me/'});
-    const body=String(page && page.body||'');
-    const hrefs=[...body.matchAll(/href\s*=\s*["']([^"']+)["']/gi)].map(m=>m[1].replace(/&amp;/gi,'&'));
-    const mirror=hrefs.map(h=>{try{return new URL(h,page.url||link)}catch(_){return null}}).find(u=>u && u.protocol==='https:' && u.hostname.toLowerCase()==='pixeldra.multicloudlinks.com' && u.pathname==='/' && /^[A-Za-z0-9_-]{4,128}$/.test(u.searchParams.get('pid')||''));
+    // A valid MultiCloud HTML page can still omit the mirror. Within the
+    // direct/proxy race, let a page containing the actual mirror beat a
+    // faster page that has no useful Pixeldrain link.
+    const page=await get(link,{ms:Math.min(4000,budget),referer:'https://savelinks.me/',accept:(body,url)=>!!findMirror(body,url||link)});
+    const mirror=findMirror(page && page.body,(page && page.url)||link);
     if(!mirror || budget-(Date.now()-t)<300) return null;
     const r=await get(mirror.href,{ms:Math.max(1500,budget-(Date.now()-t)),referer:page.url||link});
     const html=String(r && r.body||'');

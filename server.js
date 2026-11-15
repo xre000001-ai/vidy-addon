@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.203';
+const VERSION = '1.34.204';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -4166,7 +4166,13 @@ async function mlsWatchFast(link, ms, px) {
   } catch (_) { return null; }
 }
 async function mlsWatch(link, ms, px) {
-  const valid = p => Promise.resolve(p).then(v => { if (!v || !v.ok || !v.direct) throw Error('empty-watch'); return v; });
+  // A faster response without quality or filename cannot pass the task's
+  // identity checks. Reject it *inside* the race so a slower valid branch
+  // can still win instead of being silently discarded after Promise.any.
+  const valid = p => Promise.resolve(p).then(v => {
+    if (!v || !v.ok || !v.direct || ![720,1080,2160].includes(Number(v.q)) || !String(v.filename || '').trim()) throw Error('incomplete-watch');
+    return v;
+  });
   try { return await Promise.any([valid(mlsWatchFast(link, ms, px)), valid(mlsWatchSlow(link, ms, px))]); }
   catch (_) { return null; }
 }
