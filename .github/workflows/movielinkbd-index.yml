@@ -22,7 +22,7 @@ jobs:
           python-version: '3.11'
       - run: python -m pip install requests
       - name: Test index builder
-        run: python -m unittest -v tools/mlbd-index/test_basic.py
+        run: python -m unittest -v tools/mlbd-index/test_basic.py tools/mlbd-index/test_claim.py
       - name: Restore latest database
         run: |
           set -euo pipefail
@@ -44,7 +44,32 @@ jobs:
           set -euo pipefail
           python tools/mlbd-index/init.py /tmp/mlbd-index/store.sqlite
           python -u tools/mlbd-index/discover.py /tmp/mlbd-index/store.sqlite
-          python -u tools/mlbd-index/backfill.py --db /tmp/mlbd-index/store.sqlite --limit 180 --delay 1.5
+          # Initialize schema once, then recover any claims interrupted in a prior run.
+          rm -f tools/mlbd-index/.stop-rate-limit
+          python -u tools/mlbd-index/backfill.py --db /tmp/mlbd-index/store.sqlite --limit 0
+          python - <<'PY'
+          import sqlite3
+          db=sqlite3.connect('/tmp/mlbd-index/store.sqlite')
+          with db:
+              db.execute("update jobs set state='pending' where state='running'")
+              db.execute("update file_jobs set state='pending' where state='running'")
+          PY
+          pids=()
+          for worker in 1 2 3; do
+            python -u tools/mlbd-index/backfill.py --db /tmp/mlbd-index/store.sqlite --limit 150 --delay 1.5 >"/tmp/mlbd-index/worker-$worker.log" 2>&1 &
+            pids+=("$!")
+          done
+          rc=0
+          for pid in "${pids[@]}"; do wait "$pid" || rc=1; done
+          for f in /tmp/mlbd-index/worker-*.log; do echo "=== $f ==="; tail -40 "$f"; done
+          [ "$rc" = 0 ] || { echo 'Worker failed; preserving last published snapshot'; exit 1; }
+          python - <<'PY'
+          import sqlite3
+          db=sqlite3.connect('/tmp/mlbd-index/store.sqlite')
+          with db:
+              db.execute("update jobs set state='pending' where state='running'")
+              db.execute("update file_jobs set state='pending' where state='running'")
+          PY
       - name: Validate and summarize
         run: |
           python - <<'PY'

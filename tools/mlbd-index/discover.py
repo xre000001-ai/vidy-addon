@@ -7,7 +7,7 @@ if not m:raise SystemExit('no declared mirror; preserve prior snapshot')
 base=m[0];cursor=con.execute("select value from state where key='listing_cursor'").fetchone();cursor=int(cursor[0]) if cursor else 1
 pat=re.compile(r'href="([^" ]*/(movie|series|anime|drama)/([A-Za-z0-9_-]{10,}))"[^>]*>([\s\S]{0,600}?)</a>',re.I)
 # Recent pages overlap on every run; the remainder advances durably. No unsupported claim of complete traversal.
-pages=list(dict.fromkeys([1,2,3]+list(range(cursor,cursor+20))))
+pages=list(dict.fromkeys([1,2,3]+list(range(cursor,cursor+60))))
 for page in pages:
  try:
   r=s.get(base+'/new',params={'page':page},timeout=15,allow_redirects=False)

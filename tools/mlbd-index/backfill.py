@@ -4,9 +4,10 @@ import argparse,email.utils,html,json,random,re,sqlite3,subprocess,time,datetime
 from pathlib import Path
 from urllib.parse import urlparse
 import requests
+from claim import claim
 D=Path(__file__).resolve().parent
 p=argparse.ArgumentParser();p.add_argument('--db',default=str(D/'sample-index.sqlite'));p.add_argument('--limit',type=int,default=120);p.add_argument('--delay',type=float,default=1.5);args=p.parse_args()
-db=sqlite3.connect(args.db);db.execute('pragma foreign_keys=ON');db.executescript('''
+db=sqlite3.connect(args.db,timeout=30);db.execute('pragma foreign_keys=ON');db.executescript('''
 CREATE TABLE IF NOT EXISTS jobs(kind TEXT NOT NULL,path TEXT NOT NULL,post_id INTEGER NOT NULL,depth INTEGER NOT NULL DEFAULT 0,state TEXT NOT NULL DEFAULT 'pending',attempts INTEGER NOT NULL DEFAULT 0,last_status TEXT,last_try INTEGER,PRIMARY KEY(kind,path,post_id));
 CREATE INDEX IF NOT EXISTS jobs_pending ON jobs(state,kind,attempts);
 CREATE TABLE IF NOT EXISTS server_refs(ref_id INTEGER NOT NULL REFERENCES refs(id),kind TEXT NOT NULL,url TEXT NOT NULL,depth INTEGER NOT NULL DEFAULT 0,seen_at INTEGER NOT NULL,PRIMARY KEY(ref_id,kind,url));
@@ -68,20 +69,18 @@ def server_links(body):
  return out
 
 for n in range(max(0,args.limit)):
- # Interleave page types: prevent title backlog starving server page scanning.
- job=None
- if n%2 or not db.execute("SELECT 1 FROM jobs WHERE state='pending' AND attempts<3 LIMIT 1").fetchone():
-  job=db.execute("SELECT path,ref_id,depth FROM file_jobs WHERE state='pending' AND attempts<3 ORDER BY attempts,depth,rowid LIMIT 1").fetchone();kind='file'
- if job is None:
-  job=db.execute("SELECT path,post_id,depth FROM jobs WHERE state='pending' AND attempts<3 ORDER BY attempts,rowid LIMIT 1").fetchone();kind='title'
- if job is None:
-  job=db.execute("SELECT path,ref_id,depth FROM file_jobs WHERE state='pending' AND attempts<3 ORDER BY attempts,depth,rowid LIMIT 1").fetchone();kind='file'
+ # Claim under an SQLite write lock; workers cannot take the same job.
+ if (D / '.stop-rate-limit').exists():print('shared rate-limit pause',flush=True);break
+ kind,job=claim(db,bool(n%2))
  if job is None:print('queue exhausted',flush=True);break
  path,ident,depth=job;body,status=fetch(path);now=int(time.time())
- if status=='rate-limit':break
  table='jobs' if kind=='title' else 'file_jobs';col='post_id' if kind=='title' else 'ref_id'
+ if status=='rate-limit':
+  (D / '.stop-rate-limit').touch()
+  with db:db.execute(f"UPDATE {table} SET state='pending',last_status=?,last_try=? WHERE path=? AND {col}=?",(status,now,path,ident))
+  break
  if body is None:
-  with db:db.execute(f"UPDATE {table} SET attempts=attempts+1,last_status=?,last_try=? WHERE path=? AND {col}=?",(status,now,path,ident))
+  with db:db.execute(f"UPDATE {table} SET state='pending',attempts=attempts+1,last_status=?,last_try=? WHERE path=? AND {col}=?",(status,now,path,ident))
   print(n+1,kind,status,'depth',depth,flush=True);continue
  try:
   if kind=='title':
@@ -113,7 +112,7 @@ for n in range(max(0,args.limit)):
    result='server-refs='+str(len(links))
   print(n+1,kind,result,'depth',depth,flush=True)
  except Exception as e:
-  with db:db.execute(f"UPDATE {table} SET attempts=attempts+1,last_status=?,last_try=? WHERE path=? AND {col}=?",('parse-'+type(e).__name__,now,path,ident))
+  with db:db.execute(f"UPDATE {table} SET state='pending',attempts=attempts+1,last_status=?,last_try=? WHERE path=? AND {col}=?",('parse-'+type(e).__name__,now,path,ident))
   print(n+1,kind,'parse-error',str(e)[:100],flush=True)
 print('total posts',db.execute('select count(*) from posts').fetchone()[0], 'file refs',db.execute('select count(*) from refs').fetchone()[0], 'server refs',db.execute('select count(*) from server_refs').fetchone()[0], 'title jobs done',db.execute("select count(*) from jobs where state='done'").fetchone()[0], 'file jobs done',db.execute("select count(*) from file_jobs where state='done'").fetchone()[0],flush=True)
 db.close()
