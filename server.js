@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.215';
+const VERSION = '1.34.216';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -8698,7 +8698,11 @@ async function mlbdOne(base, fileUrl, dl, labQ, labTxt) {
   const pick = async (u, srv, out, requireVerified = false) => {
     if (!u || seenM.has(u) || left() < 900) return;
     seenM.add(u);
-    if (await mlbdRng(u, Math.min(1600, left()))) out.push({ u: u, s: srv });
+    // hdProbe intentionally returns unverified candidates; use the real direct
+    // probe for the new worker path and require an actual partial response.
+    const tested = requireVerified ? await hdProbeD(u, Math.min(2500, left())).catch(() => null) : null;
+    const ok = requireVerified ? !!(tested && tested.ok && tested.st === 206 && /^bytes\s+0-\d+\/\d+/i.test(tested.cr || '')) : await mlbdRng(u, Math.min(1600, left()));
+    if (ok) out.push({ u: u, s: srv });
     else if (!requireVerified && mlbdTrusted(u)) out.push({ u: u, s: srv, soft: 1 });
   };
   // ① নেস্টেড-পেজ → FSL (fsldownload)

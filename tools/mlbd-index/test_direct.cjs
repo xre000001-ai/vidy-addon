@@ -16,6 +16,6 @@ assert(a>=0&&b>a&&c>=0&&d>c);const ctx={};vm.createContext(ctx);vm.runInContext(
  const later=(ms,r)=>new Promise(ok=>setTimeout(()=>ok(r),ms));let t=Date.now();let res=await partial.collect([later(5,'first'),later(200,'late')],{started:t,maxMs:150,minMs:30,quietMs:20,pollMs:5});assert.deepEqual(res.results,['first']);assert(res.partial);assert(Date.now()-t<140);
  res=await partial.collect([later(10,'a'),later(20,'b')],{started:Date.now(),maxMs:100,minMs:80,quietMs:20,pollMs:5});assert.deepEqual(res.results,['a','b']);assert(!res.partial);
  res=await partial.collect([later(100,null)],{started:Date.now(),maxMs:30,minMs:10,quietMs:5,pollMs:5});assert.equal(res.results.length,0);assert(res.partial);
- assert(src.includes("await pick(worker, 'FSL Worker', out, true)"));assert(src.includes('!requireVerified && mlbdTrusted(u)'));
+ assert(src.includes("await pick(worker, 'FSL Worker', out, true)"));assert(src.includes('!requireVerified && mlbdTrusted(u)'));assert(src.includes('tested.st === 206'));assert(src.includes('await hdProbeD(u'));
  assert(src.includes('qOf(t)!==480'));assert(src.includes('h === 480'));console.log('Direct suggestion validation, identity/year guard, 480 exclusion and bounded partial collection passed');
 })().catch(e=>{console.error(e);process.exitCode=1});
