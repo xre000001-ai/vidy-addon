@@ -11,6 +11,7 @@ function matches(row,name,year,type,season,episode) {
  const tail=joined ? '2020' : candidate.slice(want.length).trim();
  // Short/one-word names must not match unrelated titles sharing the first word.
  if (!/^(?:19\d\d|20\d\d|s\d{1,2}e\d|season\b|dual\b|multi\b|hindi\b|bengali\b|english\b|web\b|download\b|$)/.test(tail)) return false;
+ if(type==='movie' && /\b(?:S\d{1,2}(?:E\d{1,4})?|Season\s*\d{1,2})\b/i.test(title))return false;
  if (type==='movie' && year) {
   const y=(row.title.match(/\b(?:19|20)\d{2}\b/)||[])[0];
   if (y && Math.abs(+y-(+year))>1) return false;

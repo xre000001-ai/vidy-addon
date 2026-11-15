@@ -45,6 +45,7 @@ jobs:
         run: |
           python -m unittest -v test_indexer.py test_refresh.py
           node test_lookup.js
+          node test-obsession-identity.cjs
           node test_season_file.js
           node test_playback_resolution_cache.js
           node test_parallel.cjs

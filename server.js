@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.186';
+const VERSION = '1.34.187';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -4213,7 +4213,7 @@ function mlsEnrich(ck, savMore, INFO, NAME, type, s, e) {
 }
 
 const MLS_PLAY_RESOLVE = require('./tools/mls-index-lab/playback_resolution_cache').create();
-async function mlsTask(nameP, infoP, type, s, e) {
+async function mlsTask(nameP, infoP, type, s, e, requestId) {
   const T0 = Date.now();
   // ★ v1.28.27: **CAP ১০.৫সে মানে কার্ড হারানো** — /stream-এর বাইরের `withDeadline` ১০.২সে, তাই
   //   ১০.৫সে-তে তৈরি কার্ড আর উত্তরে ঢোকে না (মাপা: `cards=2 @7462ms` থাকা সত্ত্বেও ক্লায়েন্টে ০)।
@@ -4334,7 +4334,7 @@ async function mlsTask(nameP, infoP, type, s, e) {
       if (anyMatch) { MLS_C.set(ck, { ts: Date.now(), posts: posts }); if (MLS_C.size > 300) _shrink(MLS_C, 0.5); }
     }
     const SE = Number(s || 1), EP = Number(e || 1);
-    const okPost = p => names.some(n => mlsTitleOk(n, p.title, year, type === 'series')) && (type !== 'series' || mlsEpOk(p.title, SE, EP) || (Array.isArray(p._sav) && new RegExp('(?:S0*' + SE + '(?:\\D|$))|(?:Season\\s*0*' + SE + '(?:\\D|$))', 'i').test(p.title) && p._sav.some(x => Number(x.ep)>0 && Number(x.ep)<=EP && Number(x.ep_end)>=EP)));
+    const okPost = p => require('./tools/mls-index-lab/post_identity').postAllowed(p,type,requestId) && !(type === 'movie' && /\b(?:S\d{1,2}(?:E\d{1,4})?|Season\s*\d{1,2})\b/i.test(String(p.title||''))) && names.some(n => mlsTitleOk(n, p.title, year, type === 'series')) && (type !== 'series' || mlsEpOk(p.title, SE, EP) || (Array.isArray(p._sav) && new RegExp('(?:S0*' + SE + '(?:\\D|$))|(?:Season\\s*0*' + SE + '(?:\\D|$))', 'i').test(p.title) && p._sav.some(x => Number(x.ep)>0 && Number(x.ep)<=EP && Number(x.ep_end)>=EP)));
         // ★ v1.29.1 (ইউজার: "onek stream pacchi na"): আগে মিলে-যাওয়া **২টি** পোস্টই যথেষ্ট ধরা হতো —
     //   এক পোস্টে শুধু 1080/480 আর অন্যটায় 2160/720 থাকলে দুটোই হারাত। এখন ৩টি পোস্টের sav-লিংক
     //   একসাথে (রেজলভ-চেইন কিন্তু এখনো savTop=৩ ⇒ সময় বাড়ে না, শুধু কোয়ালিটি-বিকল্প বাড়ে)।
@@ -18535,7 +18535,7 @@ const server = http.createServer((req, res) => {
       kickSubs('tmdb' + m[1], 'movie', null, null, cfg);
       const lookP = Promise.all([typeof tp !== 'undefined' ? tp : null, typeof nmP !== 'undefined' ? nmP : null, typeof infoP !== 'undefined' ? infoP : null].filter(Boolean)).catch(() => []); // v1.26.2
       const mlbP = mlbdOn(cfg) ? mlbdTask(tp, infoP, 'movie', 0, 0, (cfg && cfg.mlbr) || 0) : null;
-      const mlsP = mlsOn(cfg) ? mlsTask(tp, infoP, 'movie', 0, 0) : null;
+      const mlsP = mlsOn(cfg) ? mlsTask(tp, infoP, 'movie', 0, 0, 'tmdb' + m[1]) : null;
       const dtP = dtOn(cfg) ? dtTask(tp, infoP, 'movie', 0, 0, originOf(req)) : null;   // v1.30.0: Deadtoons/AniDisk
       return withDeadline(withSources(vOn ? getSources(Number(m[1]), 'movie', null, null, '', cfg, tp) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: hmP, key: 'hm' }, { p: hdP, key: 'hd' }, { p: mlbP, key: 'mlb' }, { p: mlsP, key: 'mls' }, { p: dtP, key: 'dt' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0, p, lookP), (cfg && cfg.__slow) ? Number(process.env.SDLSLOW || 26000) : (cfg && cfg.__bg) ? Number(process.env.SDLBG || 11500) : SDL_MS, undefined, (cfg && (cfg.__bg || cfg.__slow)) ? 0 : Number(process.env.SDLGRACE || 800) /* v1.33.2: এজ-কাটের (১২সে) নিচে: 10.2s → 12s — MLSBD-র ঠান্ডা-পথ (সার্চ+sav+watch/gd) ১০সে ছাড়ায়; NXHARD ১২সের সমান, তবু উত্তর হারায় না (মাপা: battery-তে কোনো রিগ্রেশন নয়) */, p).then(
 cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'movie', s: 0, e: 0 }).then(u => sendStreams(res, req.url, p, Date.now() - t0, u, RVA, cfg)); },
@@ -18591,7 +18591,7 @@ cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'series', s: Number(m
       kickSubs(m[1], 'movie', null, null, cfg);
       const lookP = Promise.all([typeof tp !== 'undefined' ? tp : null, typeof nmP !== 'undefined' ? nmP : null, typeof infoP !== 'undefined' ? infoP : null].filter(Boolean)).catch(() => []); // v1.26.2
       const mlbP = mlbdOn(cfg) ? mlbdTask(nmP, infoP, 'movie', 0, 0, (cfg && cfg.mlbr) || 0) : null;
-      const mlsP = mlsOn(cfg) ? mlsTask(nmP, infoP, 'movie', 0, 0) : null;
+      const mlsP = mlsOn(cfg) ? mlsTask(nmP, infoP, 'movie', 0, 0, m[1]) : null;
       const dtP = dtOn(cfg) ? dtTask(nmP, infoP, 'movie', 0, 0, originOf(req)) : null;   // v1.30.0
       return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'movie', null, null, info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: hmP, key: 'hm' }, { p: hdP, key: 'hd' }, { p: mlbP, key: 'mlb' }, { p: mlsP, key: 'mls' }, { p: dtP, key: 'dt' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0, p, lookP), (cfg && cfg.__slow) ? Number(process.env.SDLSLOW || 26000) : (cfg && cfg.__bg) ? Number(process.env.SDLBG || 11500) : SDL_MS, undefined, (cfg && (cfg.__bg || cfg.__slow)) ? 0 : Number(process.env.SDLGRACE || 800) /* v1.33.2: এজ-কাটের (১২সে) নিচে (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
 cards => { if (DBG) console.error('[rt] RID=' + t0 + ' cards-ready @' + (Date.now() - t0) + 'ms n=' + (cards || []).length); Promise.all([raceObjP(infoP, 1500), raceObjP(nmP, 1500)]).then(([info, nm]) => { if (DBG) console.error('[rt] info/nm ready @' + (Date.now() - t0) + 'ms'); return unifyCards(cards, { tmdbId: info && info.id, title: (info && info.name) || nm, type: 'movie', s: 0, e: 0, year: info && info.year }); }).then(u => { if (DBG) console.error('[rt] sending @' + (Date.now() - t0) + 'ms'); sendStreams(res, req.url, p, Date.now() - t0, u, RVA, cfg); }); },
