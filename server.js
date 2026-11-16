@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.260';
+const VERSION = '1.34.261';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -815,7 +815,7 @@ async function mmCheckerWave() { // pxCheckerWave's twin — bench = vidbolt rea
     })));
     const t2 = Date.now();
     let cutN = 0;
-    for (let i = MM_POOL.length - 1; i >= 0 && MM_POOL.length > 600; i--) if (t2 - (MM_LASTOK.get(MM_POOL[i].px) || t2) > 600000) { const g = MM_POOL.splice(i, 1)[0]; cutN++; MM_RUN.delete(g.px); MM_LASTOK.delete(g.px); MM_COOL.delete(g.px); MM_SITE.delete(g.px); MM_MISS.delete(g.px); } // v1.34.64: floor 3x
+    for (let i = MM_POOL.length - 1; i >= 0 && MM_POOL.length > 600; i--) if (t2 - (MM_LASTOK.get(MM_POOL[i].px) || t2) > 600000) { const g = MM_POOL.splice(i, 1)[0]; cutN++; MM_RUN.delete(g.px); MM_LASTOK.delete(g.px); MM_COOL.delete(g.px); MM_SITE.delete(g.px); MM_MISS.delete(g.px); MM_ADDED.delete(g.px); } // v1.34.64: floor 3x
     if (cutN) mmSave(); // v1.15.29 revise: write only when members were cut (no idle disk churn)
     if (DBG) console.error('[mmchk] pool=' + MM_POOL.length + ' bench=' + MM_POOL.filter(c => MM_SITE.has(c.px)).length);
   } finally { mmChkBusy = false; Promise.resolve(mmResolverBenchWave()).catch(() => {}); }
@@ -842,9 +842,15 @@ function mmAddCandidates(limit) {
     if (MM_DISC_SEEN.has(px)) continue;
     MM_DISC_SEEN.add(px);
     if (MM_COOL.get(px) > now) continue;
+    // v1.34.261 (audit): MM_DISC_SEEN স্ক্যান শেষে একবার clear হয় — তখন **আগেই-পুলে-থাকা** নোড আবার
+    //   "নতুন" হয়ে Dup হিসেবে push হচ্ছিল (bench double-count, নষ্ট প্রোব)। এখন পুল-সদস্যত্ব O(1)-এ যাচাই।
+    if (MM_ADDED.has(px) || MM_RUN.has(px) || MM_LASTOK.has(px)) continue;
     MM_POOL.push({ px: px, ms: 2000 }); MM_ADDED.set(px, now); added++;
   }
   if (MM_DISC_SEEN.size > 40000) MM_DISC_SEEN.clear();
+  // v1.34.261 (audit): MM_ADDED ছিল write-only — কেউ পড়ত না, কেও মুছত না ⇒ প্রতিদিন-বদলানো হাজারো
+  //   প্রক্সি-আইপি চিরকাল জমত (ধীর মেমরি-লিক)। এখন trim-এ মুছে যায় + আকার-সীমা সবসময় বলবৎ।
+  if (MM_ADDED.size > 8000) { for (const k of [...MM_ADDED.keys()].slice(0, MM_ADDED.size - 8000)) MM_ADDED.delete(k); }
   return added;
 }
 setTimeout(() => { MM_DISCOVERY.tick().catch(() => { }); setInterval(() => MM_DISCOVERY.tick().catch(() => { }), Number(process.env.MMDISCGAP || 30000)).unref?.(); }, 30000).unref?.();
