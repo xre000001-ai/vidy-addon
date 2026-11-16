@@ -41,8 +41,8 @@ async function variantStreams(subjectId, detailPath, season, episode) {
     // empty-play variants paid an extra full round-trip); both ride
     // hedged rotating exits (parallel search across proxies).
     const [res, res2] = await Promise.all([
-      fetchJsonRotating(playUrl, H, { attempts: 4, ms: 3000, hedgeMs: 420 }),   // v1.34.256: 4 hedged exits, faster stagger
-      fetchJsonRotating(dlUrl, H, { attempts: 4, ms: 3000, hedgeMs: 420 }),
+      fetchJsonRotating(playUrl, H, { attempts: 2, ms: 3000, hedgeMs: 650 }),
+      fetchJsonRotating(dlUrl, H, { attempts: 2, ms: 3000, hedgeMs: 650 }),
     ]);
     streams = res.ok ? res.data?.data?.streams || [] : [];
     if (streams.length === 0) {
@@ -61,7 +61,7 @@ async function variantCaptions(subjectId, detailPath, season, episode, videoId) 
   const referer = `${SITE}/play/${detailPath}`;
   const res = await fetchJsonRotating(
     `${API}/wefeed-h5api-bff/subject/caption?format=MP4&id=${videoId}&subjectId=${subjectId}&detailPath=${encodeURIComponent(detailPath)}`,
-    commonHeaders(referer), { attempts: 3, ms: 3000, hedgeMs: 450 }
+    commonHeaders(referer), { attempts: 2, ms: 3000, hedgeMs: 600 }
   );
   if (!res.ok) return [];
   return (res.data?.data?.captions || [])
@@ -105,7 +105,7 @@ async function getDetail(detailPath) {
   if (e && Date.now() - e.at < DETAIL_TTL) return { ok: true, status: 200, data: e.data };
   let detail = await fetchJsonRotating(
     `${API}/wefeed-h5api-bff/detail?detailPath=${encodeURIComponent(detailPath)}`,
-    commonHeaders(), { attempts: 3, ms: 3200, hedgeMs: 480 }
+    commonHeaders(), { attempts: 2, ms: 3500, hedgeMs: 700 }
   );
   if (!detail.ok || !detail.data) {
     // v2.4.0: one more full rotating round before "subject not found" —
@@ -113,7 +113,7 @@ async function getDetail(detailPath) {
     await sleep(300);
     detail = await fetchJsonRotating(
       `${API}/wefeed-h5api-bff/detail?detailPath=${encodeURIComponent(detailPath)}`,
-      commonHeaders(), { attempts: 4, ms: 3200, hedgeMs: 480 }
+      commonHeaders(), { attempts: 3, ms: 3500, hedgeMs: 700 }
     );
   }
   if (detail.ok && detail.data) {
