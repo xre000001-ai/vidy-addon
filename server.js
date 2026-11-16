@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.263';
+const VERSION = '1.34.264';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -8166,15 +8166,14 @@ async function mmStreams(tmdbId, title, type, s, e, origin, maxh, rel) { // v1.1
       for (let i = 0; i < servers.length; i++) if (String(masters[i] || '').includes('#EXTM3U')) rows.push(...mmExpandMaster(masters[i], servers[i], WO_REF, ''));
       return rows;
     }).catch(() => []);
-    const harvested = await mmHarvestProviders([indexP, indexExpandP, vbP, orionP, novaP, vrp], Math.max(1, 7200 - (Date.now() - t3)));
-    // ★ v1.34.260: HubCloud-৪K আলাদা ডেডলাইনে — অন্য প্রোভাইডার ফুরালেও এই কার্ড হারায় না
-    //   (উষ্ণ-ক্যাশে <২০০ms, ঠান্ডায় ~২-৪সে; বাজেট ৭৮০০ms-এর মধ্যে সীমিত)
-    let hubRows = [];
-    try {
-      const hubWait = Math.max(250, 7800 - (Date.now() - t3));
-      hubRows = (await Promise.race([hubP, new Promise(r => setTimeout(() => r(null), hubWait))])) || [];
-      if (DBG && hubRows.length) console.error('[mm] hub4k rows=' + hubRows.length + ' q=' + hubRows.map(x => x.h).join(',') + ' @' + (Date.now() - t3) + 'ms');
-    } catch (_) { hubRows = []; }
+    // ★★ v1.34.263 (মাপা: প্রোডে MM-শুধু কল ৯.৩সে, আর hub4k কার্ড **হারিয়ে গেল**): HubCloud-৪K-কে আলাদা
+    //   ছোট ডেডলাইনে অপেক্ষা করানো হচ্ছিল (`7800 - elapsed`), কিন্তু অন্য প্রোভাইডার ৭.২সে খেয়ে ফেলার
+    //   পরে তার ভাগে পড়ত মাত্র ~২৫০ms — ঠান্ডা চেইনের (~২.৪সে) জন্য যথেষ্ট নয় ⇒ ৪K কার্ড ঝরে যেত।
+    //   এখন **সবাই একই ডেডলাইন** ভাগ করে (hub ও vidrift সহ): আগে যার ফল তৈরি সে দেয়, আর hub-এর
+    //   ঠান্ডা-চেইনও পুরো জানালা পায়। উষ্ণ-ক্যাশে খরচ ~৩ms।
+    const harvested = await mmHarvestProviders([indexP, indexExpandP, vbP, orionP, novaP, hubP, vrp], Math.max(1, 7600 - (Date.now() - t3)));
+    const hubRows = harvested.length > 5 ? (harvested[5] || []) : [];
+    if (DBG && hubRows.length) console.error('[mm] hub4k rows=' + hubRows.length + ' q=' + hubRows.map(x => x.h).join(',') + ' @' + (Date.now() - t3) + 'ms');
     const raws = [], seen = new Set();
     for (const v of hubRows) if (v && v.url) { const k = 'hub|' + v.url; if (!seen.has(k)) { seen.add(k); raws.push(v); } }
     for (const list of harvested) for (const v of list) {
