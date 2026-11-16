@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.228';
+const VERSION = '1.34.229';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -8442,6 +8442,11 @@ function mlbdNorm(s) { return String(s || '').toLowerCase().replace(/[^a-z0-9]+/
 const MLBD_WL = require('./tools/mlbd-index/bounded_queue.cjs').create({limit:Math.max(1,Math.min(8,Number(process.env.MLBDC || 4))),maxQueue:24,waitMs:2500});
 async function mlbdLimit(fn,ms,taskMs) { return MLBD_WL.run(fn,ms,taskMs); }
 const mlbdXcLimit = require('./tools/mlbd-index/bounded_queue.cjs').create({limit:2,maxQueue:8,waitMs:1000});
+const mlbdUltraLimit = require('./tools/mlbd-index/bounded_queue.cjs').create({limit:4,maxQueue:8,waitMs:300});
+function mlbdRangeBytes(url) {
+ return new Promise(resolve=>require('child_process').execFile('curl',['-sS','--max-time','2','--max-filesize','2048','-r','0-1023','-A',UA,'-w','\nVIDY_RANGE=%{http_code}|%header{content-range}',url],{encoding:null,maxBuffer:4096,timeout:2400},(err,out)=>resolve(err?null:require('./tools/mlbd-index/direct_ultra.cjs').parse(out))));
+}
+
 const MLBD_NET_METRICS={curlOk:0,curlFail:0,proxyOk:0,queueTimeout:0,mirrorStarted:0};
 // কখনো-throw-নয়: নেটওয়ার্ক-ব্যর্থতায় একবার রিট্রাই, শেষ-ব্যর্থতায় st:0 (কলার তখন [] ফেরায়)
 async function mlbdGet(u, opt) {
@@ -8773,7 +8778,16 @@ async function mlbdOne(base, fileUrl, dl, labQ, labTxt) {
       } catch (_) {}
       return out;
     }));
-    return pages.flat();
+    const found=pages.flat();
+    // Direct Ultra is inferred only from the website's own MP4 media ID and
+    // emitted only if its 206 range matches the same token's FSL video bytes.
+    const mp4=found.find(x=>x.s==='MP4 Fast Cloud'),worker=found.find(x=>x.s==='FSL Worker');
+    const ultra=mp4&&worker&&require('./tools/mlbd-index/direct_ultra.cjs').candidate(mp4.u);
+    if(ultra && left()>1800) try {
+      const [a,b]=await mlbdUltraLimit.run(()=>Promise.all([mlbdRangeBytes(ultra),mlbdRangeBytes(worker.u)]),300,2500);
+      if(require('./tools/mlbd-index/direct_ultra.cjs').same(a,b))found.push({u:ultra,s:'One Click Ultra'});
+    } catch (_) {}
+    return found;
   };
   // ② HubCloud: drive → (302) ist → gamerxyt → r2-presigned **এবং** workers.dev (দুটোই আলাদা সার্ভার)
   const hubBranch = async () => {
@@ -8999,7 +9013,7 @@ async function mlbdStreams(name, year, type, s, e, cap) {
       if (seenU.has(c.u)) continue; seenU.add(c.u);
       const qk = (c.h || 'a') + '|' + c.srv;
       if (seenQ.has(qk)) continue; seenQ.add(qk);                 // একই মান + একই সার্ভার একবারই
-      if (out.length >= Number(process.env.MLBDCAP || 6)) break;
+      if (out.length >= Number(process.env.MLBDCAP || 8)) break;
       const langs = mlbdLangs(c.name);
       const txt = '\u29c9 ' + ttl + (year ? ' | ' + year + ' |' : ' |') + '\n'
         + (type === 'series' ? '\u29e0 S' + SE + 'E' + EP : '\u29e0 Movie') + '\n'
