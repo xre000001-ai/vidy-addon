@@ -1,0 +1,3 @@
+'use strict';const assert=require('node:assert'),{waitMs}=require('./collection_budget.cjs'),fs=require('node:fs');
+assert.equal(waitMs(1400,10000,6000),1400);assert.equal(waitMs(1400,10000,9500),500);assert.equal(waitMs(1400,10000,10100),0);assert.equal(waitMs(1400,undefined,100),1400);
+const s=fs.readFileSync(require('node:path').join(__dirname,'../../server.js'),'utf8');assert(s.includes('foregroundDeadline: t0 + Number(process.env.VPICK || 6800) - 150'));assert(s.includes('el2 < Number(process.env.VPICK || 6800)) continue'));console.log('Collection cannot consume first-tap deadline; all selected servers are protected');

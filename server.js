@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.236';
+const VERSION = '1.34.237';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -2588,7 +2588,7 @@ async function vidyFetch(o) { // ★ v1.17.56: verified-pool **ক্রমব�
   return new Promise((resolve, reject) => {
     let win = false, pending = 0;
     const to = setTimeout(() => { if (!win) { win = true; ST.done = true; recordRaceFailure(); reject(new Error('vidy-timeout')); } }, left());
-    const done = r => { if (!win) { win = true; ST.done = true; clearTimeout(to); if (r && o.collect) { const _also = []; ST.alsoSink = _also; const _wp = !!(o.prefer && r.px && o.prefer.has(r.px)); setTimeout(() => { let _out = r, _al = _also; if (o.prefer && !_wp) { const _alt = _also.find(x => x && x.px && x.ct && o.prefer.has(x.px)); if (_alt) { _out = _alt; _al = [r].concat(_also.filter(x => x !== _alt)); } } resolve(Object.assign({}, _out, { also: _al })); }, _wp ? 0 : Number(o.collect)); } else resolve(r); } };   // v1.34.108: winner playlist-proved hole wait noy; rotator jit-le collect-window-te proved runner-up ele card-session takei (born-alive) — remint-call (prefer chara) ager motoi
+    const done = r => { if (!win) { win = true; ST.done = true; clearTimeout(to); if (r && o.collect) { const _also = []; ST.alsoSink = _also; const _wp = !!(o.prefer && r.px && o.prefer.has(r.px)); setTimeout(() => { let _out = r, _al = _also; if (o.prefer && !_wp) { const _alt = _also.find(x => x && x.px && x.ct && o.prefer.has(x.px)); if (_alt) { _out = _alt; _al = [r].concat(_also.filter(x => x !== _alt)); } } resolve(Object.assign({}, _out, { also: _al })); }, _wp ? 0 : require('./tools/vidy-tests/collection_budget.cjs').waitMs(o.collect, o.foregroundDeadline, Date.now())); } else resolve(r); } };   // v1.34.108: winner playlist-proved hole wait noy; rotator jit-le collect-window-te proved runner-up ele card-session takei (born-alive) — remint-call (prefer chara) ager motoi
     const fire = px => { pending++; one(px).then(r => { if (r) { if (!win) done(r); else if (ST.alsoSink && ST.alsoSink.length < 4) ST.alsoSink.push(r); } }, () => { }).finally(() => { pending--; }); };   // v1.34.106: runner-up session joma (remint-er jonno)
     // ★ v1.25.0 (মাপা মূল কারণ): ৩০০০ms-এর হেজ নোডের হাতে মাত্র ~১.৫সে থাকত ⇒ দুই-কলের সেশন কখনো শেষ হত না,
     //   শুধুই read-timeout ⇒ 'node-fail' হিসেবে জমত (আসলে সেটা **আমাদের রেস-কাঁচি**)। এখন বাজেট না থাকলে ফায়ারই করি না।
@@ -8522,7 +8522,7 @@ async function mlbdGet(u, opt) {
       return { st: 0, loc: '', body: '' };
     }
     try {
-      return await mlbdLimit(async (signal) => {
+      const answer = await mlbdLimit(async (signal) => {
         let url = u;                                   // ★ 301/302 (movielinkbd.com → mirror) নিজেই ফলো করি
         for (let hop = 0; hop < 3; hop++) {
           const r = await fetch(url, {
@@ -8543,6 +8543,15 @@ async function mlbdGet(u, opt) {
         }
         return { st: 0, loc: '', body: '' };
       },Math.max(1,BUD-(Date.now()-T0)),Math.max(1,Math.min(3500,BUD-(Date.now()-T0))));
+      // HTTP challenges are normal responses, not thrown exceptions. The old
+      // early return skipped the validated general-proxy fallback on 403/429.
+      if (answer && (answer.st === 403 || answer.st === 429) && Date.now()-T0 < BUD-900) {
+        let h=''; try { h=new URL(u).hostname; } catch (_) {}
+        if (/(^|\.)movielinkbd\.(?:com|at|app|cc|tv)$/i.test(h)) {
+          const pr=await pxTry(); if (pr) { hostOK(u); return pr; }
+        }
+      }
+      return answer;
     } catch (e) {
       if (e && e.message==='mlbd-queue-timeout') { MLBD_NET_METRICS.queueTimeout++; return {st:0,loc:'',body:''}; }
       hostFail(u);
@@ -15737,7 +15746,7 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
         // v1.11.2 FETCH-HEDGE: আটকে-যাওয়া-আপস্ট্রিম-উত্তরের (phoenix 4.9s, dallas/tampa 7.5s+) +2.5সে-পরে-আরেক-টা-একই-কল;
         // প্রথম-সফল-টা-জেতে, হেরে-যাওয়া-টা-বাদ। প্রতি-সার্ভার-এখনো-এক-স্ক্যান-ফল-দেয়।
         const _pgx = new Set([...pxplGood(srv, 40), ...pxplGoodAny(24)]);   // v1.34.108: playlist-proved node-er session diyei card (mint-warm/_mint click-ei kaj kore)
-        const vr = await vidyFetch({ srv: srv, tmdbId: tmdbId, q: q, sc: sc, collect: _pgx.size ? 1400 : 900, prefer: _pgx.size ? _pgx : null }); // ★ v1.17.54: নোড-সেশন রেস (seed+sources একই IP)   // v1.34.109: swap-window 1400 (stable node-er session 1–2.5s); bench khali hole opekkha noy
+        const vr = await vidyFetch({ srv: srv, tmdbId: tmdbId, q: q, sc: sc, collect: _pgx.size ? 1400 : 900, prefer: _pgx.size ? _pgx : null, foregroundDeadline: t0 + Number(process.env.VPICK || 6800) - 150 }); // ★ v1.17.54: নোড-সেশন রেস (seed+sources একই IP)   // v1.34.109: swap-window 1400 (stable node-er session 1–2.5s); bench khali hole opekkha noy
         const ct = vr.ct; // v1.17.39: ১২.৫সে হার্ড-ডেডলাইন ছিল নিছক সকেট-দখল (কাট সবসময় ≤৪.২সে)
         const j = JSON.parse(vidyDecrypt(ct, vr.seed, tmdbId)); // ★ সেশন-সিড দিয়েই ডিক্রিপ্ট (ভিন্ন-নোড-ডিক্রিপ্ট-ত
         // ★ v1.34.48: জয়ী নোডটা প্রতিটা প্লেলিস্ট-URL-এর সাথে বেঁধে রাখি — ক্লিকের সময় /vh/ প্রথমে **সেই নোড** দিয়েই
@@ -15836,7 +15845,7 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
         || (okWave >= 1 && el2 >= 4300 && allow.length - pend.size >= allow.length - 2))) {
         if (DBG) console.error('[t1g] TIGHTEN ok=' + okWave + ' cut=' + pend.size + ' at ' + el2 + 'ms');
         for (const [srv2, f2] of Array.from(pend)) {
-          if ((isPriSrv(srv2) || GIANT.indexOf(srv2) >= 0) && el2 < Number(process.env.VPRIX || 7200)) continue;   // ★ v1.26.2 + v1.34.119: rakha-4 server (Miami/Boise/Atlanta/Munich) kawkei tighten-e taratari kati na — 1st-tap-ei sobar card (user: 1st tap e sob stream)
+          if (el2 < Number(process.env.VPICK || 6800)) continue; // Do not cut selected servers before the common first-tap deadline.   // ★ v1.26.2 + v1.34.119: rakha-4 server (Miami/Boise/Atlanta/Munich) kawkei tighten-e taratari kati na — 1st-tap-ei sobar card (user: 1st tap e sob stream)
           pend.delete(srv2); f2({ srv: srv2, late: true });
         }
       }
