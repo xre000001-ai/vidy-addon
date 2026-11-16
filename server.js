@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.235';
+const VERSION = '1.34.236';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -1650,11 +1650,17 @@ async function seedViaPx(px, tmdbId, tmo) {
   if (SEED_PX.size > 800) SEED_PX.delete(SEED_PX.keys().next().value);
   return j.seed;
 }
-async function vidyMetaQ(tmdbId, type, s, e, title) { // ★ v1.34.128: official-parity query — delhi/austin `imdbId` chara 500 ("IMDB ID is required"), chicago `title` chara 500 ("title is required"); miami/boise/munich-er kono khoti nei (upstream extra param ignore kore). Atlanta sere uthle ei official param-ei firbe.
+async function vidyMetaQ(tmdbId, type, s, e, title) {
   const q = { mediaType: type, tmdbId: String(tmdbId), enc: '2', title: title || '' };
   if (type === 'tv') { q.seasonId = String(s || 1); q.episodeId = String(e || 1); }
-  try { const im = await Promise.race([tmdbToImdb(tmdbId, type), new Promise(r => setTimeout(() => r(''), 1800))]); if (im) q.imdbId = im; } catch (e) { }
-  try { const em = await Promise.race([epMetaFor(tmdbId, type, s, e), new Promise(r => setTimeout(() => r(null), 1500))]); if (em) { if (em.year) q.year = String(em.year); if (!q.title && em.name) q.title = em.name; } } catch (e) { }
+  // Independent metadata lookups run in parallel; serial waits consumed up to
+  // 3.3 seconds before any server race could start, causing first-tap misses.
+  const [im, em] = await Promise.all([
+    Promise.race([tmdbToImdb(tmdbId, type).catch(() => ''), new Promise(r => setTimeout(() => r(''), 1800))]),
+    Promise.race([epMetaFor(tmdbId, type, s, e).catch(() => null), new Promise(r => setTimeout(() => r(null), 1500))])
+  ]);
+  if (im) q.imdbId = im;
+  if (em) { if (em.year) q.year = String(em.year); if (!q.title && em.name) q.title = em.name; }
   return q;
 }
 function vidySessionP(px, o, tmo) {
@@ -2537,8 +2543,13 @@ async function vidyFetch(o) { // ★ v1.17.56: verified-pool **ক্রমব�
   const isG = VGIANT.indexOf(o.srv) >= 0;
   const hot = (isG ? vhotPick(o.srv, Number(process.env.PXHOTK || 2)) : []).filter(px => vpxLeft(px) >= 2);
   // ★ v1.34.104: session যেন **static (playlist-প্রমাণিত) node** দিয়েই হয় — rotator দিয়ে session জিতলে playlist 403 অনিবার্য (diag-প্রমাণিত)
-  const _pgs = new Set([...pxplGood(o.srv, 40), ...pxplGoodAny(24)]);   // v1.34.106: srv-প্রমাণিত + global single-egress — API-only নোডের সেশন মানেই মৃত কার্ড, তাই এরা আগে
-  if (_pgs.size) { for (let i = hot.length - 1; i >= 0; i--) if (_pgs.has(hot[i])) hot.splice(i, 1); for (const px of [..._pgs].slice(0, 3)) if (vpxLeft(px) >= 2) hot.unshift(px); }
+  const _localProof = pxplGood(o.srv, 40), _sharedProof = pxplGoodAny(24);
+  const _pgs = new Set([..._localProof, ..._sharedProof]);
+  if (_pgs.size) {
+    for (let i = hot.length - 1; i >= 0; i--) if (_pgs.has(hot[i])) hot.splice(i, 1);
+    const picks = require('./tools/vidy-tests/proven_nodes.cjs').preferred(o.srv, _localProof, _sharedProof, 3);
+    for (const px of picks.reverse()) if (vpxLeft(px) >= 2) hot.unshift(px);
+  }
   const pool = vidyVerifiedPick(999, off).sort((a, b) =>   // v1.25.1: affinity then yield
     ((_pgs.has(b) ? 1 : 0) - (_pgs.has(a) ? 1 : 0)) || (affN(o.srv, b) - affN(o.srv, a)) || (yieldOf(b) - yieldOf(a)) || (vidyScore(a) - vidyScore(b)));   // v1.34.104: static-node আগে
   // ★ v1.25.1 WAVE RACE + SUBNET DIVERSITY: a wave is 6 nodes from 6 DIFFERENT /24s, and we get up to
@@ -8864,8 +8875,23 @@ async function mlbdOne(base, fileUrl, dl, labQ, labTxt) {
       return hit?[hit]:[];
     } catch (_) {return [];}
   };
-  const allGroups=[[],[],[],[],[]];
-  const jobs=[fslJob,hubBranch(),gdBranch(),xcBranch(),ultraBranch()].map((p,i)=>Promise.resolve(p).then(v=>{allGroups[i]=v}).catch(()=>{}));
+  const oneClickBranch = async () => {
+    const parser = require('./tools/mlbd-index/oneclick_direct.cjs');
+    const path = parser.path(H);
+    if (!path || left() < 1600) return [];
+    try {
+      const page = await mlbdGet(new URL(path, base).href, { ms: Math.min(3500, left()) });
+      if (!page || page.st !== 200) return [];
+      const links = parser.media(page.body, name);
+      const checked = await Promise.all(links.map(async x => {
+        const r = await hdProbeD(x.u, Math.min(2200, left())).catch(() => null);
+        return r && r.ok && r.st === 206 && /^bytes\s+0-\d+\/\d+/i.test(r.cr || '') ? x : null;
+      }));
+      return checked.filter(Boolean);
+    } catch (_) { return []; }
+  };
+  const allGroups=[[],[],[],[],[],[]];
+  const jobs=[fslJob,hubBranch(),gdBranch(),xcBranch(),ultraBranch(),oneClickBranch()].map((p,i)=>Promise.resolve(p).then(v=>{allGroups[i]=v}).catch(()=>{}));
   // Once the principal servers are ready, give optional work a short grace
   // period rather than losing all cards at the outer addon deadline.
   let timer,baseTimer,done=false;
