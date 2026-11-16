@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.270';
+const VERSION = '1.34.271';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -10241,21 +10241,33 @@ async function hdStreams(imdb, title, type, s, e, origin, maxh) { // v1.17.49: �
     //   ৬-৯সে নিলে ৯.৫সে ক্যাপেই drive শুরু হত না (মাপা: drives=0 ⇒ ০ কার্ড)। এখন চেইনগুলো
     //   সমান্তরালে চলে আর hub পেলেই hdDrive — একটির দেরি অন্যটিকে আটকায় না।
     const drives = []; const _dseen = new Set();
-    const addDrive = (hub, ttl) => { if (!hub || _dseen.has(hub) || drives.length >= 8) return; _dseen.add(hub); drives.push({ hub: hub, ttl: ttl }); };
+    // ★★ v1.34.271 (প্রোড-প্রমাণ, ১৬-১১-২০২৬): `[hd] post @8123ms wrap=3 direct=0` ⇒ `no-drives @8668ms`
+    //   ⇒ HDHub4u = ০ কার্ড। কারণ চেইনটা hblinks → **hubdrive** (প্রোড-IP থেকে ৬-৯সে) → hubcloud-এর
+    //   জন্য অপেক্ষা করত, আর ৯.৫সে সোর্স-ক্যাপে সেই হপ শেষই হত না। কিন্তু hblinks পেজেই (০.২-০.৮সে)
+    //   কোয়ালিটি (`<title>… 1080p …`) আর `hubdrive.*/file/<id>` দুটোই আছে ⇒ hubdrive-লিংকটাকেই
+    //   **ড্রাইভ** ধরে কার্ড বানানো হয়, আর hubcloud-রূপান্তর প্লে-সময়ে (m4uFinalFor-এর নতুন
+    //   hubdrive-ব্রাঞ্চ) হয় — সেখানে ৯.৫সে ক্যাপ নেই, ফলাফল ক্যাশেও থাকে।
+    const addDrive = (hub, ttl, kind) => {
+      if (!hub || _dseen.has(hub) || drives.length >= 12) return;
+      _dseen.add(hub); drives.push({ hub: hub, ttl: ttl, kind: kind || '' });
+    };
+    const _isHubDrv = u => /hubdrive\./i.test(String(u || ''));
     const hdChain = async (w) => {
       const pg2 = await hdText(w, HD_BASE + '/', Math.min(2400, left())).catch(() => ({ t: '' }));
       const t = String(pg2.t || '');
       const hub = (t.match(/https:\/\/hubcloud\.[a-z]+\/drive\/[A-Za-z0-9_-]+/) || [])[0];
       const ttl = (t.match(/<title>([^<]*)<\/title>/) || [])[1] || '';
       if (hub) { addDrive(hub, ttl); return; }
-      const mids = [...new Set((t.match(/https:\/\/hubdrive\.(?:bar|blog)\/file\/[A-Za-z0-9]+/g) || []))].slice(0, 4);
+      const mids = [...new Set((t.match(/https:\/\/hubdrive\.(?:bar|blog|[a-z]+)\/file\/[A-Za-z0-9]+/g) || []))].slice(0, 4);
       if (!mids.length) return;
+      for (const m3 of mids) addDrive(m3, ttl, 'hubdrive');   // ★ কার্ড এখনই — hubcloud-এর অপেক্ষা নয়
+      if (left() < 900) return;   // ★ সময় নেই ⇒ hubdrive-ড্রাইভ-ই যথেষ্ট (প্লে-সময়ে রিজলভ হবে)
       const eps = await Promise.all(mids.map(u2 => hdText(u2, HD_BASE + '/', Math.min(Number(process.env.HDHOPMS || 2600), left())).catch(() => ({ t: '' }))));
       for (const e2 of eps) {
         const t2 = String(e2.t || '');
         const h2 = (t2.match(/https:\/\/hubcloud\.[a-z]+\/drive\/[A-Za-z0-9_-]+/) || [])[0];
         const tl2 = (t2.match(/<title>([^<]*)<\/title>/) || [])[1] || '';
-        if (h2) addDrive(h2, tl2);
+        if (h2) addDrive(h2, tl2 || ttl);
       }
       if (DBG) console.error('[hd] hubdrive-hop +' + mids.length + ' drives=' + drives.length + ' @' + (Date.now() - T0) + 'ms');
     };
@@ -10271,11 +10283,13 @@ async function hdStreams(imdb, title, type, s, e, origin, maxh) { // v1.17.49: �
     const hdLazyCards = () => {
       const b = String(origin || '').replace(/\/+$/, '') || PUB_BASE_DEF;
       const o2 = []; const seenQ = new Set();
-      for (const d of drives) {
+      // ★ v1.34.271: একই কোয়ালিটির hubcloud-রূপ থাকলে সেটাই আগে, hubdrive-রূপ পিছনে (ডুপ্লিকেট কার্ড নয়)
+      const _ord = drives.slice().sort((a, b) => (a.kind === 'hubdrive' ? 1 : 0) - (b.kind === 'hubdrive' ? 1 : 0));
+      for (const d of _ord) {
         const info = hdFileOf(d.ttl || '');
         const q = info.h || 0;
         if (maxh && q && q > maxh) continue;
-        const key = q + '|' + hdMirrorKey(d.hub);
+        const key = String(q || 'auto');
         if (seenQ.has(key)) continue; seenQ.add(key);
         const txt2 = '\u29c9 ' + (String(title || '').replace(/\s*\|.*$/, '').slice(0, 78) || 'HDHub4u')
           + '\n\u229e HDHub4u \u00b7 HubCloud' + (q ? ' \u00b7 ' + q + 'p' : '');
@@ -10290,11 +10304,12 @@ async function hdStreams(imdb, title, type, s, e, origin, maxh) { // v1.17.49: �
       return o2.slice(0, Number(process.env.HDCAP || 24));
     };
     const _prove = async () => {
-      const resolved = await Promise.all(drives.slice(0, 8).map(d => hdDrive(d.hub, Math.min(Number(process.env.HDDRVMS || 2600), left())).catch(() => null)));
+      const _drvOrd = drives.slice().sort((a, b) => (a.kind === 'hubdrive' ? 1 : 0) - (b.kind === 'hubdrive' ? 1 : 0)).slice(0, 8);
+      const resolved = await Promise.all(_drvOrd.map(d => hdDrive(d.hub, Math.min(Number(process.env.HDDRVMS || 2600), left())).catch(() => null)));
       const cands = [];
       for (let i = 0; i < resolved.length; i++) {
         const r = resolved[i]; if (!r) continue;
-        const info = hdFileOf(r.fn || drives[i].ttl);
+        const info = hdFileOf(r.fn || _drvOrd[i].ttl);
         for (const c of r.cands) cands.push({ u: c.u, k: c.k, h: info.h, fn: info.fn, tag: info.tag });
       }
       if (!cands.length) { if (DBG) console.error('[hd] no-cands @' + (Date.now() - T0) + 'ms'); return []; }
@@ -11551,6 +11566,24 @@ async function m4uFinalForInner(target) {   // ★ v1.34.35: m4uTdServe-এর �
     const gf2 = (rr && rr.url) || '';
     if (gf2) M4U_TD_USED.set('gf:' + target, { ts: Date.now(), final: gf2 });
     return gf2;
+  }
+  // ★★ v1.34.271: `hubdrive.<tld>/file/<id>` — HDHub4u-এর hblinks পেজ থেকে সরাসরি পাওয়া যায় (০.২-০.৮সে),
+  //   কিন্তু আসল ফাইল-লিংক (hubcloud-ড্রাইভ) ওই পেজের ভিতরে, আর প্রোড-IP থেকে ওই হপ **৬-৯সে** নেয়।
+  //   তাই কার্ড-বানানোর সময় এটা রিজলভ করা হয় না; এখানে (প্লে-সময়ে, ৯.৫সে ক্যাপ ছাড়া) একবার রিজলভ
+  //   করে ১০ মিনিট ক্যাশে রাখা হয় ⇒ ক্লিক-লেটেন্সি একবারই, আর কার্ড কখনো "খালি" থাকে না।
+  if (/(?:^|\.)hubdrive\./i.test(host)) {
+    const hd3 = M4U_TD_USED.get('hdr:' + target);
+    if (hd3 && Date.now() - hd3.ts < 10 * 60e3) return hd3.final;
+    const pg3 = await hdText(target, HD_BASE + '/', Number(process.env.HDRESMS || 9000)).catch(() => ({ t: '' }));
+    const t3 = String((pg3 && pg3.t) || '');
+    const h3 = (t3.match(/https?:\/\/hubcloud\.[a-z.]+\/drive\/[A-Za-z0-9_-]+/i) || [])[0];
+    let f3 = h3 ? await m4uFinalFor(h3).catch(() => '') : '';
+    if (!f3) {   // পেজে সরাসরি ফাইল-লিংকও থাকতে পারে (কিছু hubdrive-পেজ রিডাইরেক্ট করে)
+      const d3 = (t3.match(/https?:\/\/[^\s"'<>\\]+\.(?:mkv|mp4)(?:\?[^\s"'<>\\]*)?/i) || [])[0];
+      if (d3 && m4uIsMediaUrl(d3)) f3 = d3;
+    }
+    if (f3) M4U_TD_USED.set('hdr:' + target, { ts: Date.now(), final: f3 });
+    return f3;
   }
   if (m4uHubHost(host)) {
     const hc = M4U_TD_USED.get('hub:' + target);
