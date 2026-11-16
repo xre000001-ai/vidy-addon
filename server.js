@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.248';
+const VERSION = '1.34.249';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -1698,7 +1698,7 @@ function vidySessionP(px, o, tmo) {
     const _m = String((e && e.message) || '');
     if (e && e.__seedOk && /http_5\d\d|tun-read-timeout|tun-closed|short|decrypt|empty/.test(_m) && typeof o.onSourceFailure === 'function') o.onSourceFailure();
     if (!VIDY_OK.has(px)) { VY_EXPLORE_FAIL.set(px, Date.now() + 120000); if (VY_EXPLORE_FAIL.size > 5000) VY_EXPLORE_FAIL.delete(VY_EXPLORE_FAIL.keys().next().value); }
-    if (!/sock-gate|gate-full/.test(_m)) vidyNodeBad(px); throw e;
+    if (vidyNodeFault(_m)) vidyNodeBad(px); throw e;
   });
 }
 // ===== v1.17.54 (মাপা): vidy-API-এর নিজস্ব কন্ডিশন =====
@@ -1847,7 +1847,7 @@ async function vidySweep(n) {
           const ms = await vidyPing(px);
           vidyNodeOk(px, ms); _o++;
           if (DBG) console.error('[vsweep-t] ✓ ' + px + ' ' + ms + 'ms');
-        } catch (e) { if (!/sock-gate|gate-full/.test(String(e && e.message))) vidyNodeBad(px); }
+        } catch (e) { if (vidyNodeFault(e && e.message)) vidyNodeBad(px); }
         finally { vpxFree(px); }
       }));
       if (DBG) console.error('[vsweep-t] তাজা-রিফিল tried=' + st.length + ' ok=' + _o + ' fresh=' + _freshN + ' inflight=' + _inflight);
@@ -1885,7 +1885,7 @@ async function vidySweep(n) {
             if (!/quota|gate-full|sock-gate/.test(String(e && e.message))) { _rvk++;   // v1.34.106: quota-kill bondho
             if (age0 > rvMax) { // পুরোনো + ব্যর্থ ⇒ আর ভরসা নয় (fresh band-এ জায়গা খালি হয়)
               VIDY_OK.delete(px); try { VIDY_DROP.add(px); } catch (e2) { } TST.pruned = (TST.pruned || 0) + 1;
-            } else vidyNodeBad(px); }
+            } else if (vidyNodeFault(e && e.message)) vidyNodeBad(px); }
           } finally { vyFree(); vpxFree(px); }   // ★ v1.25.7: vySlot-এর কাউন্টার ফেরত — নইলে গেট ভরে গিয়ে পুরো vidy-শাখা বন্ধ হয়ে যায়
         }));
       }
@@ -1937,7 +1937,7 @@ async function vidySweep(n) {
       if (!vpxTake(px)) return;
       try { await vySlot(2500); } catch (e) { vpxFree(px); return; }
       try { const ms = await vidyPing(px); vidyNodeOk(px, ms); }
-      catch (e) { if (!/quota|gate-full|sock-gate/.test(String(e && e.message))) { vidyNodeBad(px); if (!VIDY_OK.has(px) && DBG) console.error('[vpx] - ' + px); } }   // v1.34.106
+      catch (e) { if (vidyNodeFault(e && e.message)) { vidyNodeBad(px); if (!VIDY_OK.has(px) && DBG) console.error('[vpx] - ' + px); } }   // v1.34.106
       finally { vyFree(); vpxFree(px); }
     }));
     vidyVSave();
@@ -1972,7 +1972,7 @@ setInterval(async () => {
           vidyNodeOk(px, ms);
           if (POOL.some(c => c.px === px)) PX_SITE.add(px);
         } catch (e) {
-          if (slot && !/quota|gate-full|sock-gate/.test(String(e && e.message))) { vidyNodeBad(px); PX_SITE.delete(px); }   // v1.34.106: quota = nijer lejar, node-er dosh noy
+          if (slot && vidyNodeFault(e && e.message)) { vidyNodeBad(px); PX_SITE.delete(px); }   // v1.34.106: quota = nijer lejar, node-er dosh noy
         } finally { if (slot) { try { vyFree(); } catch (e2) { } } vpxFree(px); }
       }));
     }
@@ -2214,6 +2214,7 @@ function vidyNodeOk(px, ms) {
   e.ms = Math.min(ms, 6000); e.ts = Date.now(); e.fails = 0; e.ok = (e.ok || 0) + 1; e.att = (e.att || 0) + 1;
   VIDY_OK.set(px, e);
 }
+function vidyNodeFault(msg) { const m = String(msg || ''); return !/quota|gate-full|sock-gate|http_5\d\d/.test(m); } // upstream 5xx / local gate = not this node's fault
 function vidyNodeBad(px) {
   const e = VIDY_OK.get(px); if (!e) return;
   e.fails = (e.fails || 0) + 1; e.att = (e.att || 0) + 1; e.last = Date.now();
