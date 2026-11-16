@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.261';
+const VERSION = '1.34.262';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -35,6 +35,14 @@ const FG_CONTEXT = new (require('async_hooks').AsyncLocalStorage)();
 const LOOP = { lag: 0, at: Date.now() };
 { let last = Date.now(); setInterval(() => { const n = Date.now(); LOOP.lag = Math.max(0, n - last - 500); last = n; LOOP.at = n; }, 500).unref?.(); }
 const loopOk = () => LOOP.lag < Number(process.env.BGLAG || 250);
+// ★★ v1.34.262 (মাপা, প্রোড ১৬-১১-২০২৬): একটাই থ্রেশহোল্ড (250ms) ছিল ⇒ ল্যাগ একবার ২৫০-এর ওপরে গেলে
+//   **সব** ব্যাকগ্রাউন্ড কাজ বন্ধ — এমনকি vidy-র হালকা হেলথ-রিচেকও। ফলে MM-বেঞ্চ ৫-এ আটকে ছিল আর
+//   একবার ল্যাগ বাড়লে কোনো পথই (রিফিল/প্রোব/স্ক্যান) আর ল্যাগ নামাতে পারত না — deadlock-প্রায়।
+//   এখন তিন স্তর: হালকা (কোটা-পুনরুদ্ধার, একক ছোট রিকোয়েস্ট) 250ms পর্যন্ত, মাঝারি (ছোট wave) 900ms
+//   পর্যন্ত, ভারী (বড় enrich/স্ক্যান wave) 250ms-এই বন্ধ। ভারে-ল্যাগে কেবল হালকা কাজ চলে ⇒ পথ খোলা থাকে।
+const loopLag = () => LOOP.lag;
+const loopOkMid = () => LOOP.lag < Number(process.env.BGLAGMID || 900);
+const loopOkHeavy = loopOk;
 const VY_SOCKN = { n: 0 };                       // net sockets opened under the reserved Vidy-probe budget
 const VY_SOCK_MAX = Number(process.env.VYSOCK || 64);   // small: other sources' pools must still get sockets
 const socketGate = require('./tools/vidy-runtime/socket_gate.cjs');
@@ -792,7 +800,7 @@ async function mmCheckerWave() { // pxCheckerWave's twin — bench = vidbolt rea
     // v1.34.259: width follows the shortfall (bench low => probe more), and stands down when the loop lags.
     if (loopOk()) { try { mmAddCandidates(MM_SITE.size < 20 ? 200 : 60); } catch (e) { } }
     const _want = MM_SITE.size < 20 ? Number(process.env.MMWAVELO || 48) : (MM_SITE.size < 60 ? Number(process.env.MMWAVEMID || 28) : Number(process.env.MMWAVEN || 16));
-    const wave = MM_POOL.filter(c => (MM_COOL.get(c.px) || 0) <= tnow).sort((a, b) => (MM_LASTOK.get(a.px) || 0) - (MM_LASTOK.get(b.px) || 0)).slice(0, loopOk() ? _want : 0); // v1.34.259: 420 -> bounded; v1.34.259: adaptive
+    const wave = MM_POOL.filter(c => (MM_COOL.get(c.px) || 0) <= tnow).sort((a, b) => (MM_LASTOK.get(a.px) || 0) - (MM_LASTOK.get(b.px) || 0)).slice(0, loopOkMid() ? _want : 0); // v1.34.262: mid-tier gate (900ms) — 250ms-এ পুরো বন্ধ হলে বেঞ্চ আর কখনো উঠত নাded; v1.34.259: adaptive
     if (!wave.length) return;
     await Promise.all(wave.map(c => new Promise(r2 => {
       const t0 = Date.now();
@@ -1242,6 +1250,12 @@ function tfail(k, tag) { const kk = (tag === 'sweep' ? 'sweep:' : '') + k; TST.e
 function ppath(tag, ok) { const k = (tag === 'sweep' ? 'sw' : 'srv'); const o = TST[k] || (TST[k] = { req: 0, ok: 0, fail: 0, e: {} }); o.req++; ok ? o.ok++ : o.fail++; return o; }
 function pbad(tag, k) { const o = ppath(tag, false); o.e[k] = (o.e[k] || 0) + 1; }
 function ptunAllowed(px) { const u = PTUN_COOL.get(px); return !(u && u > Date.now()); }
+// ★★ v1.34.262 (মাপা: prod `vyBlocks.cooling` 74-86, `available` 29-39 — অথচ ৯৪টি নোড ১০ মিনিটে সেশন-প্রমাণ
+//   করেছে): কুলডাউন শেষ হওয়া নোড আবার ready হবে কি না, তার কোনো পথই ছিল না — `validate()` ভিতরেই
+//   `ptunAllowed` দেখে false ফেরাত, আর কুলডাউন **চালু করা** হয়েছিল সংযোগ-ব্যর্থতায়। ফলে একবার কুলডাউন
+//   খেলে VIDY_OK-তে ঢুকে থাকা নোড চিরতরে "cooling" হয়ে বসে থাকত (ready ০-এ নেমে যেত)।
+//   এখন কুলডাউন শেষে শুধু **কোটা-শূন্য CONNECT/TLS** দিয়ে আবার প্রার্থী করা হয় (১টি ছোট রিকোয়েস্ট,
+//   সেশন-যাচাই আগের মতোই আছে)। ব্যর্থ হলে ভদ্র কুলডাউন (৪৫-১২০সে), সফল হলে কোটার স্বাভাবিক হিসাব।
 // Transient CONNECT failures should not park a recently working node for ten
 // minutes. Never shorten an existing, stricter 403/429 or other cooldown.
 function ptunConnectFailCool(px) { const now = Date.now(), e = VIDY_OK.get(px) || {}; const recent = e.sessionProof && now - e.sessionProof < 600000; const ms = Number(process.env.PXTDC || (recent ? 45000 : 120000)); PTUN_COOL.set(px, Math.max(PTUN_COOL.get(px) || 0, now + ms)); }
@@ -2317,6 +2331,8 @@ function vidyScore(px) {
 // Bounded Vidy-specific standby refill. Seed AND decrypted source data must
 // pass on the same proxy before adding a node. It uses the existing quotas,
 // bans and slot locks and never modifies other sources' pools.
+const PTUN_LIVE_FAST = px => { try { const t = ptunLive(px); return !!t; } catch (_) { return false; } };   // v1.34.262
+const VIDY_STALE = px => { const e = VIDY_OK.get(px); return !!(e && e.ts && Date.now() - e.ts > Number(process.env.VYSTALE || 600000)); };   // v1.34.262
 function vidyBlockCounts() { const r = { total: VIDY_OK.size, banned: 0, cooling: 0, quota: 0, busy: 0, available: 0 }; for (const px of VIDY_OK.keys()) { if (snBanned(px)) r.banned++; else if (!ptunAllowed(px)) r.cooling++; else if (vpxLeft(px) < 2) r.quota++; else if (VPX_BUSY.get(px)) r.busy++; else r.available++; } return r; }
 function vidyReadyCount() {
   const now = Date.now();
@@ -2348,7 +2364,7 @@ const VY_REFILL = require('./tools/vidy-runtime/active_refill.cjs').create({
   candidates: () => {
     const t = Date.now(), proven = [], site = [], fallback = [];
     const rTtl = Number(process.env.VYTRIEDR || 300000);
-    const allowed = px => !VIDY_OK.has(px) && !VIDY_DROP.has(px) && !snBanned(px) && ptunAllowed(px) && !VPX_BUSY.get(px) && vpxLeft(px) >= 3 && t - (VIDY_TRIED.get(px) || 0) >= rTtl;
+    const allowed = px => (!VIDY_OK.has(px) || VIDY_STALE(px)) && !VIDY_DROP.has(px) && !snBanned(px) && ptunAllowed(px) && !VPX_BUSY.get(px) && vpxLeft(px) >= 3 && t - (VIDY_TRIED.get(px) || 0) >= rTtl;   // v1.34.262: মেয়াদোত্তীর্ণ verified-নোডও প্রার্থী
     for (const m of SPOOL.values()) for (const [px,e] of m) if (spoolFresh(e) && !e.seeded) proven.push(px);
     for (const c of POOL) if (c && PX_SITE.has(c.px)) site.push(c.px);
     for (const c of POOL) if (c) fallback.push(c.px);
@@ -2356,8 +2372,36 @@ const VY_REFILL = require('./tools/vidy-runtime/active_refill.cjs').create({
     return require('./tools/vidy-runtime/fair_candidates.cjs').merge([proven, VY_DISCOVERY.candidates(), site, pxRawRecent(6000), fallback], allowed);
   },
   validate: async px => {
-    if (!loopOk()) return null;   // v1.34.259: loop lag => defer this check, it is not a proxy fault
+    if (!loopOkMid()) return null;   // v1.34.262: mid-tier gate — a lagging loop defers, it is not this node's fault
     if (snBanned(px) || !ptunAllowed(px) || vpxLeft(px) < 3) return false;
+    // ★★ v1.34.262 (মাপা: refill attempts 3,708 → passed 95 = ২.৫%): প্রতি প্রার্থীতে **২টি vidy-কল**
+    //   খরচ হতো, অথচ বেশিরভাগই মৃত/ব্লকড প্রক্সি — quota নষ্ট + IP-প্রোফাইল নষ্ট। এখন আগে
+    //   **কোটা-শূন্য CONNECT+TLS** (`ptunOpen`, একই টানেল পরে পুনঃব্যবহৃত হয় ⇒ সফল নোডের জন্য বাড়তি খরচ
+    //   শূন্য); মৃত হলে সস্তায় কুলডাউন। এতে প্রতি মিনিটে অনেক বেশি প্রার্থী যাচাই হয় ⇒ ready দ্রুত ওঠে।
+    if (process.env.VYPRECHK !== '0' && !PTUN_LIVE_FAST(px)) {
+      let sl0 = false;
+      try {
+        await vySlot(1200); sl0 = true;
+        await ptunOpen(px, Number(process.env.VYPRETMO || 2400));
+        VY_COOLRC.pre++;
+      } catch (e0) {
+        const m0 = String((e0 && e0.message) || e0);
+        if (/sock-gate/.test(m0)) return null;         // বাক্স-স্যাচুরেশন, নোডের দোষ নয়
+        VY_COOLRC.bad++; ptunConnectFailCool(px); return false;
+      } finally { if (sl0) vyFree(); }
+    }
+    // ★ v1.34.262: মেয়াদোত্তীর্ণ (ts > ১০মিন) নোড — আগে কখনোই আবার যাচাই হতো না (পুল-সদস্য বলে বাদ পড়ত,
+    //   আর নিজে থেকে ব্যবহার না হলে ts আর তাজা হতো না) ⇒ ধীরে ধীরে মৃত-ভারে পরিণত হতো। এখন আগে
+    //   **কোটা-শূন্য CONNECT** (মৃত হলে সস্তায় বাদ), পাশ হলে নিচের পূর্ণ সেশন-প্রমাণ ts তাজা করে।
+    if (VIDY_OK.has(px) && VIDY_STALE(px) && process.env.VYSTALERC !== '0') {
+      let sl = false;
+      try { await vySlot(1200); sl = true; await ptunOpen(px, 3500); VY_COOLRC.ok++; }
+      catch (e) {
+        const m2 = String((e && e.message) || e);
+        if (/sock-gate/.test(m2)) return null;      // বাক্স-স্যাচুরেশন, নোডের দোষ নয়
+        VY_COOLRC.bad++; ptunConnectFailCool(px); return false;
+      } finally { if (sl) vyFree(); }
+    }
     if (!vpxTake(px)) return null;
     let slot = false; const t0 = Date.now();
     try {
@@ -2378,6 +2422,7 @@ const VY_REFILL = require('./tools/vidy-runtime/active_refill.cjs').create({
     finally { if (slot) vyFree(); vpxFree(px); }
   }
 });
+const VY_COOLRC = { ok: 0, bad: 0, pre: 0 };   // v1.34.262: মেয়াদোত্তীর্ণ-নোড পুনঃযাচাইয়ের হিসাব (_health.vyCoolRecheck)
 setTimeout(() => { VY_REFILL.tick().catch(() => {}); setInterval(() => VY_REFILL.tick().catch(() => {}), 3000).unref?.(); }, 20000).unref?.();
 // ===== v1.18.0 (ইউজার: "vidy etoh rate limit … giant server Miami, Boise, Atlanta, also phoenix") =====
 // vidy প্রতি IP-তে মাত্র ২–৪ কল দেয় ⇒ ১৬ সার্ভারের জন্য বিশাল পুল লাগে না, লাগে **বিশেষায়িত তাজা নোড**।
@@ -8005,6 +8050,61 @@ async function mmHub4K(tmdbId, type, ms, name, year) {
     return [];
   } catch (e) { if (DBG) console.error('[mmhub] err ' + String((e && e.message) || e).slice(0, 90)); return []; }
 }
+// ---------- v1.34.262: MultiMovies-এর দ্বিতীয় সার্ভার — Vidrift/Orion ----------
+// ★ মাপা (১৬-১১-২০২৬): MM-সাইটের সার্ভার-তালিকায় Orion আলাদা সোর্স, আর সেটাই সবচেয়ে সমৃদ্ধ:
+//   `https://embed.vidrift.net/embed/movie/<tmdb>` (সিরিজ: `/embed/tv/<tmdb>/<s>/<e>`) পেজের ভেতরে
+//   `orionStreams` = প্রতি-ভাষায় আলাদা HLS (tt22084616: ৮টি — Original/Hindi/Tamil/Telugu/Malayalam/
+//   Kannada/French/Russian, প্রতিটিতে 480/720/1080)। সেগমেন্ট: `sacdn.hakunaymatata.com/dash/...` → 206।
+//   পুরো চেইনটি **পাবলিক** (রেজলভ-API নেই, পুল-প্রক্সি লাগে না) — তাই এটাই সবচেয়ে সস্তা নতুন কভারেজ।
+//   রেফারার বাধ্যতামূলক (রেফারার ছাড়া master → 403), তাই কার্ডের ref = vidrift origin।
+const VR_BASE = String(process.env.VRBASE || 'https://embed.vidrift.net').replace(/\/+$/, '');
+const VR_REF = VR_BASE + '/';
+const VR_ST = { page: 0, parse: 0, ok: 0, none: 0, err: 0, cache: 0, retry: 0 };
+const VR_PAGE = new Map();   // tmdb|s x e → {ts, html} — embed-পেজ ১০মিন (প্রক্সি-খরচ একবারই)
+const VR_LIB = require('./tools/vidy-runtime/mmvidrift.cjs');   // v1.34.262: বিশুদ্ধ-পার্সার (tools/vidy-tests/mmvidrift)
+const vrStreams = html => VR_LIB.orionStreams(html);
+async function mmVidrift(tmdbId, isSeries, s, e, ms) {
+  if (!/^\d+$/.test(String(tmdbId || ''))) return [];
+  const t0 = Date.now();
+  const left = () => Math.max(1800, Math.min(6500, (ms || 6000) - (Date.now() - t0)));
+  const path = isSeries ? ('/embed/tv/' + tmdbId + '/' + (parseInt(s, 10) || 1) + '/' + (parseInt(e, 10) || 1)) : ('/embed/movie/' + tmdbId);
+  const pageUrl = VR_BASE + path;
+  // ★★ v1.34.262 (মাপা): embed-পেজটি **ক্লায়েন্ট-ফিঙ্গারপ্রিন্ট-গেটেড** — একই IP-তে curl/python
+  //   পান ২০০ (৬৪ KB), আর node/undici পান ৪০৩ "Embed this page in an iframe." (প্রক্সি দিয়ে ৮০/১৪০
+  //   নোডে পেজটি খোলে)। তাই পেজ-ফেচ তিন-পথে রেস করা হয়: সরাসরি + MM-পুল + জেনেরিক পুল।
+  //   (প্লেলিস্ট ও সেগমেন্ট গেটেড নয় — master রেফারার-সহ ২০০, আর সেগমেন্ট CloudFront-সাইনড।)
+  const vh = { 'User-Agent': UA, Referer: VR_REF, Accept: 'text/html,application/xhtml+xml' };
+  const vrValid = t => !!t && String(t).indexOf('orionStreams') >= 0;
+  const vDirect = fetch(pageUrl, { headers: vh, signal: AbortSignal.timeout(Math.min(4500, left())) })
+    .then(r => (r.ok ? r.text() : '')).then(t => { if (!vrValid(t)) throw new Error('vr-gate'); return t; });
+  const vOwn = mmRacePool(pageUrl, 6, Math.min(6000, left()), vrValid).then(r => String((r && r.body) || ''));
+  const vShared = racePool(pageUrl, 6, Math.min(6000, left()), 'mm-vidrift', vrValid, vh).then(r => String((r && r.body) || ''));
+  VR_ST.page++;
+  const ckey = String(tmdbId) + '|' + (isSeries ? (s + 'x' + e) : 'm');
+  let html = '';
+  const cHit = VR_PAGE.get(ckey);
+  if (cHit && Date.now() - cHit.ts < 600000 && cHit.html && vrValid(cHit.html)) { html = cHit.html; VR_ST.cache++; }
+  if (!html) {
+    html = await Promise.any([vDirect, vOwn, vShared]).catch(() => '');
+    if (!html && left() > 2500) {   // এক ড্র খালি গেলে আরেক ড্র (প্রক্সি-লটারি) — বাজেট থাকলে
+      const vShare2 = racePool(pageUrl, 8, Math.min(7000, left()), 'mm-vidrift', vrValid, vh).then(r => String((r && r.body) || ''));
+      const vOwn2 = mmRacePool(pageUrl, 8, Math.min(7000, left()), vrValid).then(r => String((r && r.body) || ''));
+      html = await Promise.any([vShare2, vOwn2]).catch(() => '');
+      VR_ST.retry = (VR_ST.retry || 0) + 1;
+    }
+  }
+  if (!html) { VR_ST.err++; return []; }
+  if (html) { VR_PAGE.set(ckey, { ts: Date.now(), html: html }); if (VR_PAGE.size > 200) { try { VR_PAGE.delete(VR_PAGE.keys().next().value); } catch (_) { } } }
+  const arr = vrStreams(html);
+  VR_ST.parse++;
+  if (!arr.length) { VR_ST.none++; return []; }
+  // ৪৮০ কখনোই কার্ড নয়; একই উচ্চতায় একাধিক ভাষা → সব আলাদা কার্ড (MM-এর অন্য পথের মতোই)
+  const uniq = VR_LIB.cardsFromStreams(arr, VR_BASE, 720).map(v => ({ h: v.h, url: v.url, ref: VR_REF, mp4: 0, lang: v.lang, aud: '', mini: 0, vr: 1, vrAll: v.hs }));
+  if (uniq.length) VR_ST.ok++;
+  if (DBG) console.error('[mmvr] ' + tmdbId + (isSeries ? '/S' + s + 'E' + e : '') + ' streams=' + arr.length + ' cards=' + uniq.length + ' q=' + uniq.map(x => x.h + x.lang[0]).join(',') + ' @' + (Date.now() - t0) + 'ms');
+  return uniq;
+}
+
 // Snapshot successful providers at a shared deadline; never replace them with
 // a failed/late provider. No stream-card cache or cross-request state.
 async function mmHarvestProviders(promises, ms) {
@@ -8026,6 +8126,7 @@ async function mmStreams(tmdbId, title, type, s, e, origin, maxh, rel) { // v1.1
     const orionP = mmOrionMovie(tmdbId, origin, left(), isSeries, s, e).catch(() => []); // exact episode; parallel with other providers
     const novaP = mmNova(tmdbId, isSeries, s, e, left()).catch(() => []);
     const hubP = mmHub4K(tmdbId, type, left(), title, 0).catch(() => []);   // v1.34.260: MM-সাইটের ৪K (HubCloud মিরর)
+    const vrp = mmVidrift(tmdbId, isSeries, s, e, left()).catch(() => []);   // v1.34.262: MM-সাইটের Orion/Vidrift সার্ভার
     const subsP = woSubs(tmdbId, type, s, e, 2500).catch(() => []); // v1.15.99: সমান্তরালে সাবটাইটেল ফেচ (শেষে ব্লক না করা)
     // Each provider runs independently. A hung index, master or resolver must
     // not discard cards already obtained from another provider at the outer
@@ -8046,7 +8147,7 @@ async function mmStreams(tmdbId, title, type, s, e, origin, maxh, rel) { // v1.1
       for (let i = 0; i < servers.length; i++) if (String(masters[i] || '').includes('#EXTM3U')) rows.push(...mmExpandMaster(masters[i], servers[i], WO_REF, ''));
       return rows;
     }).catch(() => []);
-    const harvested = await mmHarvestProviders([indexP, indexExpandP, vbP, orionP, novaP], Math.max(1, 7200 - (Date.now() - t3)));
+    const harvested = await mmHarvestProviders([indexP, indexExpandP, vbP, orionP, novaP, vrp], Math.max(1, 7200 - (Date.now() - t3)));
     // ★ v1.34.260: HubCloud-৪K আলাদা ডেডলাইনে — অন্য প্রোভাইডার ফুরালেও এই কার্ড হারায় না
     //   (উষ্ণ-ক্যাশে <২০০ms, ঠান্ডায় ~২-৪সে; বাজেট ৭৮০০ms-এর মধ্যে সীমিত)
     let hubRows = [];
@@ -18331,7 +18432,7 @@ const server = http.createServer((req, res) => FG_CONTEXT.run({ active: true }, 
       RT_INFLIGHT.set(kRT, pr);
       res = w;
     }
-    if (p === '/_health') { const _vf = [...VIDY_OK.values()].filter(v => v.ts && Date.now() - v.ts < Number(process.env.PXFRESH || 240000)).length; return sendJson(res, 200, { ok: 1, cg: CG_ST, cgDead: CG_DEAD.size, cgSrc: Object.fromEntries([...CG_SRC].map(([k, v]) => [k, { ok: v.ok, fail: v.fail, down: v.down > Date.now() ? Math.round((v.down - Date.now()) / 1000) : 0 }])), version: VERSION, cache: CACHE_ST, bg: BG_ST, pwhy: PART_WHY, up: Math.round(process.uptime()), deploy: 'v' + VERSION, mmpool: { size: MM_POOL.length, bench: MM_SITE.size, discovery: MM_DISCOVERY.stats(), resolverFresh: [...MM_RESOLVE_OK.values()].filter(t => Date.now() - t < 600000).length, resolverChecks: MM_RESOLVE_BENCH_STATS, hub4k: MMHUB_ST, cooling: [...MM_COOL.values()].filter(t => t > Date.now()).length, race: MM_RACE_ST }, pool: POOL.length, pxbench: POOL.filter(c => PX_SITE.has(c.px)).length, pxbf: PX_BF.size, memo: memo.size, gw: (typeof GW !== 'undefined' ? GW.size : -1), nx: NEXBASE ? 1 : 0, nxpool: NXBENCH, nxwaves: NXWAVES, nxsize: NXSIZE, tw: TWBASE ? 1 : 0, rt: RTBASE ? 1 : 0, mls: (process.env.MLSD !== '0') ? 1 : 0, mlsindex: require('./tools/mls-index-lab/runtime_index').stats(), mlslinks: Object.assign({active:mlsLinkRaceActive}, MLS_LINK_METRICS), mlbdRuntime: {queue:MLBD_WL.stats(),net:MLBD_NET_METRICS,mirrorReady:!!MLBD_BASE,mirrorFlight:!!MLBD_MIRROR_FLIGHT,mirrorBlocked:!!(MLBD_BASE && hostBad(MLBD_BASE))}, vsp: VSP_POOL.length, vy: VIDY_OK.size, vyfresh: _vf, vyReady: vidyReadyCount(), vyBlocks: vidyBlockCounts(), vyRefill: VY_REFILL.stats(), vyDiscovery: VY_DISCOVERY.stats(), vhg: (typeof VHG !== 'undefined' ? VHG : 0), pxpl: (typeof PXPL !== 'undefined' ? PXPL.size : 0), rtmq: RT_MQ_ST, dti: (typeof DT_IDX !== 'undefined' ? DT_IDX : 0), dtst: (typeof DT_ST !== 'undefined' ? DT_ST : 0), dtsh: (typeof DT_SH !== 'undefined' ? { on: DT_SH.on, src: DT_SH.src, pre: DT_SH.pre, loaded: DT_SH.loaded, hits: DT_SH.hits, miss: DT_SH.miss, cache: (typeof DT_SH_CACHE !== 'undefined' ? DT_SH_CACHE.size : 0), err: DT_SH.err, units: (DT_SH.man && DT_SH.man.units) || null, slugs: (DT_SH.man && DT_SH.man.slugs || []).length } : 0), lastreq: { el: LR.el, n: LR.total, pend: LR.pend, p: LR.path, sr: (LR.sr || []).map(x => x[0] + ':' + x[1] + '@' + x[2]) } }); } // v1.34.95, v1.34.105 // ★ v1.21.9: vy=verified vidy নোড, vyfresh=৪মিন-তাজা // v1.15.71: vsp=Vidsrc-পুল-আকার // v1.15.18: pxbench=সাইট-প্রমাণিত-বেঞ্চ (v1.15.8: nxpool=MB-বেঞ্চ)
+    if (p === '/_health') { const _vf = [...VIDY_OK.values()].filter(v => v.ts && Date.now() - v.ts < Number(process.env.PXFRESH || 240000)).length; return sendJson(res, 200, { ok: 1, cg: CG_ST, cgDead: CG_DEAD.size, cgSrc: Object.fromEntries([...CG_SRC].map(([k, v]) => [k, { ok: v.ok, fail: v.fail, down: v.down > Date.now() ? Math.round((v.down - Date.now()) / 1000) : 0 }])), version: VERSION, cache: CACHE_ST, bg: BG_ST, pwhy: PART_WHY, up: Math.round(process.uptime()), deploy: 'v' + VERSION, mmpool: { size: MM_POOL.length, bench: MM_SITE.size, discovery: MM_DISCOVERY.stats(), resolverFresh: [...MM_RESOLVE_OK.values()].filter(t => Date.now() - t < 600000).length, resolverChecks: MM_RESOLVE_BENCH_STATS, hub4k: MMHUB_ST, vidrift: VR_ST, cooling: [...MM_COOL.values()].filter(t => t > Date.now()).length, race: MM_RACE_ST }, pool: POOL.length, pxbench: POOL.filter(c => PX_SITE.has(c.px)).length, pxbf: PX_BF.size, memo: memo.size, gw: (typeof GW !== 'undefined' ? GW.size : -1), nx: NEXBASE ? 1 : 0, nxpool: NXBENCH, nxwaves: NXWAVES, nxsize: NXSIZE, tw: TWBASE ? 1 : 0, rt: RTBASE ? 1 : 0, mls: (process.env.MLSD !== '0') ? 1 : 0, mlsindex: require('./tools/mls-index-lab/runtime_index').stats(), mlslinks: Object.assign({active:mlsLinkRaceActive}, MLS_LINK_METRICS), mlbdRuntime: {queue:MLBD_WL.stats(),net:MLBD_NET_METRICS,mirrorReady:!!MLBD_BASE,mirrorFlight:!!MLBD_MIRROR_FLIGHT,mirrorBlocked:!!(MLBD_BASE && hostBad(MLBD_BASE))}, vsp: VSP_POOL.length, vy: VIDY_OK.size, vyfresh: _vf, vyReady: vidyReadyCount(), vyBlocks: vidyBlockCounts(), vyRefill: VY_REFILL.stats(), vyCoolRecheck: VY_COOLRC, vyDiscovery: VY_DISCOVERY.stats(), vhg: (typeof VHG !== 'undefined' ? VHG : 0), pxpl: (typeof PXPL !== 'undefined' ? PXPL.size : 0), rtmq: RT_MQ_ST, dti: (typeof DT_IDX !== 'undefined' ? DT_IDX : 0), dtst: (typeof DT_ST !== 'undefined' ? DT_ST : 0), dtsh: (typeof DT_SH !== 'undefined' ? { on: DT_SH.on, src: DT_SH.src, pre: DT_SH.pre, loaded: DT_SH.loaded, hits: DT_SH.hits, miss: DT_SH.miss, cache: (typeof DT_SH_CACHE !== 'undefined' ? DT_SH_CACHE.size : 0), err: DT_SH.err, units: (DT_SH.man && DT_SH.man.units) || null, slugs: (DT_SH.man && DT_SH.man.slugs || []).length } : 0), lastreq: { el: LR.el, n: LR.total, pend: LR.pend, p: LR.path, sr: (LR.sr || []).map(x => x[0] + ':' + x[1] + '@' + x[2]) } }); } // v1.34.95, v1.34.105 // ★ v1.21.9: vy=verified vidy নোড, vyfresh=৪মিন-তাজা // v1.15.71: vsp=Vidsrc-পুল-আকার // v1.15.18: pxbench=সাইট-প্রমাণিত-বেঞ্চ (v1.15.8: nxpool=MB-বেঞ্চ)
     if (p === '/_mem') { /* ★ v1.28.1: মেমোরি-ডিয়াগনস্টিক — OOM-ক্ষতির কারন খুঁজতে (প্রমাণ: ব্যাটারি-চালাকালে node 896MB-তে kernel-OOM-kill) */
       const m = process.memoryUsage(); const sz = o => { try { return o instanceof Map ? o.size : (Array.isArray(o) ? o.length : -1); } catch (e) { return -1; } };
       // ★ v1.28.3-M4: সীমা + purge-পরিসংখ্যান (কতবার, কোন স্তরে) — প্রোডে "মেমরি ফুল" কেন, একনজরে
