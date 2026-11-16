@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.274';
+const VERSION = '1.34.275';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -10320,7 +10320,7 @@ async function hdStreams(imdb, title, type, s, e, origin, maxh) { // v1.17.49: �
       if (!mids.length) return;
       for (const m3 of mids) addDrive(m3, ttl, 'hubdrive');   // ★ কার্ড এখনই — hubcloud-এর অপেক্ষা নয়
       if (left() < 900) return;   // ★ সময় নেই ⇒ hubdrive-ড্রাইভ-ই যথেষ্ট (প্লে-সময়ে রিজলভ হবে)
-      const eps = await Promise.all(mids.map(u2 => hdText(u2, HD_BASE + '/', Math.min(Number(process.env.HDHOPMS || 2600), left())).catch(() => ({ t: '' }))));
+      const eps = await Promise.all(mids.map(u2 => hdText(u2, HD_BASE + '/', Math.min(Number(process.env.HDHOPMS || 1800), left())).catch(() => ({ t: '' }))));
       for (const e2 of eps) {
         const t2 = String(e2.t || '');
         const h2 = (t2.match(/https:\/\/hubcloud\.[a-z]+\/drive\/[A-Za-z0-9_-]+/) || [])[0];
@@ -10416,7 +10416,11 @@ async function hdStreams(imdb, title, type, s, e, origin, maxh) { // v1.17.49: �
       hdCards('hm:' + (imdb || title), out);
       return out;
     };
-    const _proven = await Promise.race([
+    // ★ v1.34.275: hubdrive-ড্রাইভ hdDrive দিয়ে **প্রমাণ করা যায় না** (ওটা hubcloud-পেজের ফাংশন) —
+    //   সব ড্রাইভ hubdrive হলে প্রমাণ-দৌড় শুধু HDRACE (৩সে) নষ্ট করত, আর কার্ড সোর্স-সেটেল
+    //   (৯.২৫সে)-এর পরে পৌঁছাত (`[srcsettle] hd @9259ms n=0`)। এখন সেটা বাদ ⇒ lazy কার্ড ~৩-৪সে-তে।
+    const _provable = drives.some(d => d.kind !== 'hubdrive');
+    const _proven = !_provable ? null : await Promise.race([
       _prove().catch(() => null),
       new Promise(r => { const t = setTimeout(() => r(null), Number(process.env.HDRACE || 3000)); if (t.unref) t.unref(); })
     ]);
