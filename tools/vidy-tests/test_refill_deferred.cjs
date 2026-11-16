@@ -1,0 +1,2 @@
+'use strict';const assert=require('assert'),{create}=require('../vidy-runtime/active_refill.cjs');
+(async()=>{let n=0;const c=create({ready:()=>0,candidates:()=>['same'],validate:async()=>++n===1?null:true,target:2,parallel:1});await c.tick();assert.equal(c.stats().deferred,1);assert.equal(c.stats().failed,0);await c.tick();assert.equal(c.stats().passed,1);await c.tick();assert.equal(n,2);console.log('Locally deferred checks are retried; genuine checks retain cooldown');})().catch(e=>{console.error(e);process.exitCode=1});

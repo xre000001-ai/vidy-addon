@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.247';
+const VERSION = '1.34.248';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -28,6 +28,8 @@ const LT = { iv: new Set(), to: new Set(), on: process.env.LEAK === '1' };
 const SK = { on: process.env.SOCKS === '1', live: new Map(), liveN: 0, made: 0, madeBy: new Map(),
   waited: 0, queued: 0, dropped: 0, fg: 0 };
 const SOCKMAX = Number(process.env.SOCKMAX || 160);
+const FG_CONTEXT = new (require('async_hooks').AsyncLocalStorage)();
+const socketGate = require('./tools/vidy-runtime/socket_gate.cjs');
 function isLocalOnly(req) { const ip = String((req.headers['x-forwarded-for'] || req.socket.remoteAddress || '')).split(',')[0].trim(); return /^(127\.|::1$|::ffff:127\.)/.test(ip) || DBG; }
 {
   // ★ v1.28.3-S6 (গুরুত্বপূর্ণ): আগের সংস্করণ ছাদে পৌঁছালে ব্যাকগ্রাউন্ড-কানেকশন **ফেলে দিত** —
@@ -63,29 +65,21 @@ function isLocalOnly(req) { const ip = String((req.headers['x-forwarded-for'] ||
       else if (typeof arguments[0] === 'string') host = arguments[0];
     } catch (e) { }
     const self = this, args = arguments;
-    const tryNow = (waitedMs) => {
-      const cap = capNow();
-      if (SK.fg > 0 || SK.liveN < cap || waitedMs > Number(process.env.SOCKWAIT || 6000)) {
-        if (waitedMs) SK.queued = Math.max(0, SK.queued - 1);   // v1.34.124 (audit): queue theke berolei hisab ferot — age queued sudhu barto, QMAX-guard sthayibhabe armed hoye queue-i bondho hoye jeto
-        if (SK.fg > 0 || SK.liveN < cap) { try { count(host, self); } catch (e) { } }
-        else {                                    // ★ S8: ভুল-কোড দিয়ে destroy করলে (listener না থাকলে) uncaught-crash ⇒ নিরাপদে কেটে দিই
-          SK.dropped++;
-          try { self.once('error', () => { }); self.destroy(); } catch (e) { }
-          return;
-        }
-        return origProto.apply(self, args);
-      }
-      if (!waitedMs) SK.queued++;   // v1.34.124 (audit): proti tick-e noy, queue-te dhokar somoy ekbar
-      setTimeout(() => tryNow(waitedMs + 20), 20).unref();
-      return undefined;
-    };
-    // সারি-সীমা: অগাধ জমলে সোজা timeout (মেমরি বাঁচাতে)
-    if (SK.fg <= 0 && SK.liveN >= capNow() && SK.queued > QMAX) {
-      SK.dropped++;
-      process.nextTick(() => { try { self.once('error', () => { }); self.destroy(); } catch (e) { } });
+    const foreground = () => { const c = FG_CONTEXT.getStore(); return !!(c && c.active); };
+    if (!foreground() && SK.liveN >= capNow() && SK.queued > QMAX) {
+      SK.dropped++; self.__sockGateRejected = true;
+      process.nextTick(() => { try { self.once('error', () => {}); self.destroy(); } catch (_) {} });
       return self;
     }
-    return tryNow(0) === undefined ? self : self;
+    return socketGate.schedule({
+      socket: self,
+      allowed: () => foreground() || SK.liveN < capNow(),
+      open: () => { count(host, self); return origProto.apply(self, args); },
+      drop: () => { SK.dropped++; self.__sockGateRejected = true; try { self.once('error', () => {}); self.destroy(); } catch (_) {} },
+      onQueue: () => { SK.queued++; SK.waited++; },
+      onDequeue: () => { SK.queued = Math.max(0, SK.queued - 1); },
+      maxWait: Number(process.env.SOCKWAIT || 6000)
+    });
   };
 }
 if (LT.on) {
@@ -1202,7 +1196,7 @@ function ptunOpen(px, tmo) { // CONNECT+TLS — vidy-কোটা-শূন্�
     const phost = px.slice(0, ci), pport = Number(px.slice(ci + 1)) || 8080;
     const t0 = Date.now(); let done = false;
     const sock = net.connect({ host: phost, port: pport });
-    const to = setTimeout(() => fin(new Error('tun-timeout')), Math.max(1200, tmo || 4000));
+    const to = setTimeout(() => fin(new Error((sock.__sockGateQueued || sock.__sockGateRejected) ? 'sock-gate-timeout' : 'tun-timeout')), Math.max(1200, tmo || 4000));
     function fin(e, v) {
       if (done) return; done = true; clearTimeout(to);
       if (e) { try { sock.destroy(); } catch (e2) { } TST.rej++; return reject(e); }
@@ -1275,7 +1269,7 @@ async function apiGetT(px, url, tmo, hdrs, tag) { // vidy-কলের একম
     let ent = ptunLive(px), reused = !!(ent && !ent.busy && !PX_NORE.get(px));
     if (!reused) {
       try { ent = await ptunOpen(px, tmo); }
-      catch (e) { TST.dead++; ptunConnectFailCool(px); if (DBG && process.env.VJDBG) console.error('[tun] ✗ ' + px + ' ' + String(e && e.message)); throw e; }
+      catch (e) { if (!/sock-gate/.test(String(e && e.message))) { TST.dead++; ptunConnectFailCool(px); } if (DBG && process.env.VJDBG) console.error('[tun] ✗ ' + px + ' ' + String(e && e.message)); throw e; }
     }
     ent.busy = true; if (reused) TST.reuse++;
     let r;
@@ -1332,7 +1326,7 @@ async function tunWarm(n) { // টানেল-ব্যাংক ভরা — 
       while (i < cands.length) {
         const px = cands[i++];
         try { const e = await ptunOpen(px, Number(process.env.PXTWTO || 3500)); if (!PTUN.has(px)) { PTUN.set(px, e); _ok++; } else { try { e.s.destroy(); } catch (_) {} } }
-        catch (err) { TST.dead++; ptunConnectFailCool(px); _bad++; }
+        catch (err) { if (!/sock-gate/.test(String(err && err.message))) { TST.dead++; ptunConnectFailCool(px); _bad++; } }
       }
     }));
     if (DBG && (_ok || _bad)) console.error('[tunwarm] ok=' + _ok + ' dead=' + _bad + ' live=' + PTUN.size);
@@ -1704,7 +1698,7 @@ function vidySessionP(px, o, tmo) {
     const _m = String((e && e.message) || '');
     if (e && e.__seedOk && /http_5\d\d|tun-read-timeout|tun-closed|short|decrypt|empty/.test(_m) && typeof o.onSourceFailure === 'function') o.onSourceFailure();
     if (!VIDY_OK.has(px)) { VY_EXPLORE_FAIL.set(px, Date.now() + 120000); if (VY_EXPLORE_FAIL.size > 5000) VY_EXPLORE_FAIL.delete(VY_EXPLORE_FAIL.keys().next().value); }
-    vidyNodeBad(px); throw e;
+    if (!/sock-gate|gate-full/.test(_m)) vidyNodeBad(px); throw e;
   });
 }
 // ===== v1.17.54 (মাপা): vidy-API-এর নিজস্ব কন্ডিশন =====
@@ -1853,7 +1847,7 @@ async function vidySweep(n) {
           const ms = await vidyPing(px);
           vidyNodeOk(px, ms); _o++;
           if (DBG) console.error('[vsweep-t] ✓ ' + px + ' ' + ms + 'ms');
-        } catch (e) { vidyNodeBad(px); }
+        } catch (e) { if (!/sock-gate|gate-full/.test(String(e && e.message))) vidyNodeBad(px); }
         finally { vpxFree(px); }
       }));
       if (DBG) console.error('[vsweep-t] তাজা-রিফিল tried=' + st.length + ' ok=' + _o + ' fresh=' + _freshN + ' inflight=' + _inflight);
@@ -1888,7 +1882,7 @@ async function vidySweep(n) {
             const ms = await vidyPing(px);
             vidyNodeOk(px, ms); _rvo++;
           } catch (e) {
-            if (!/quota|gate-full/.test(String(e && e.message))) { _rvk++;   // v1.34.106: quota-kill bondho
+            if (!/quota|gate-full|sock-gate/.test(String(e && e.message))) { _rvk++;   // v1.34.106: quota-kill bondho
             if (age0 > rvMax) { // পুরোনো + ব্যর্থ ⇒ আর ভরসা নয় (fresh band-এ জায়গা খালি হয়)
               VIDY_OK.delete(px); try { VIDY_DROP.add(px); } catch (e2) { } TST.pruned = (TST.pruned || 0) + 1;
             } else vidyNodeBad(px); }
@@ -1930,7 +1924,7 @@ async function vidySweep(n) {
           vidyNodeOk(px, ms);
           if (!POOL.some(c => c.px === px) && POOL.length < PX_CAP) { POOL.push({ px: px, ms: ms }); PX_SITE.add(px); } // সেশন-পাস ⇒ পুলেও ঢোকে
           if (DBG) console.error('[vpx] + ' + px + ' ' + ms + 'ms');
-        } catch (e) { VIDY_TRIED.set(px, Date.now()); }
+        } catch (e) { if (!/sock-gate|gate-full/.test(String(e && e.message))) VIDY_TRIED.set(px, Date.now()); }
         finally { vyFree(); vpxFree(px); }
       }));
     }
@@ -1943,7 +1937,7 @@ async function vidySweep(n) {
       if (!vpxTake(px)) return;
       try { await vySlot(2500); } catch (e) { vpxFree(px); return; }
       try { const ms = await vidyPing(px); vidyNodeOk(px, ms); }
-      catch (e) { if (!/quota|gate-full/.test(String(e && e.message))) { vidyNodeBad(px); if (!VIDY_OK.has(px) && DBG) console.error('[vpx] - ' + px); } }   // v1.34.106
+      catch (e) { if (!/quota|gate-full|sock-gate/.test(String(e && e.message))) { vidyNodeBad(px); if (!VIDY_OK.has(px) && DBG) console.error('[vpx] - ' + px); } }   // v1.34.106
       finally { vyFree(); vpxFree(px); }
     }));
     vidyVSave();
@@ -1978,7 +1972,7 @@ setInterval(async () => {
           vidyNodeOk(px, ms);
           if (POOL.some(c => c.px === px)) PX_SITE.add(px);
         } catch (e) {
-          if (slot && !/quota|gate-full/.test(String(e && e.message))) { vidyNodeBad(px); PX_SITE.delete(px); }   // v1.34.106: quota = nijer lejar, node-er dosh noy
+          if (slot && !/quota|gate-full|sock-gate/.test(String(e && e.message))) { vidyNodeBad(px); PX_SITE.delete(px); }   // v1.34.106: quota = nijer lejar, node-er dosh noy
         } finally { if (slot) { try { vyFree(); } catch (e2) { } } vpxFree(px); }
       }));
     }
@@ -2269,7 +2263,8 @@ const VY_REFILL = require('./tools/vidy-runtime/active_refill.cjs').create({
     return require('./tools/vidy-runtime/fair_candidates.cjs').merge([proven, VY_DISCOVERY.candidates(), site, PX_RAW, fallback], allowed);
   },
   validate: async px => {
-    if (snBanned(px) || !ptunAllowed(px) || vpxLeft(px) < 3 || !vpxTake(px)) return false;
+    if (snBanned(px) || !ptunAllowed(px) || vpxLeft(px) < 3) return false;
+    if (!vpxTake(px)) return null;
     let slot = false; const t0 = Date.now();
     try {
       await vySlot(1200); slot = true;
@@ -2285,7 +2280,7 @@ const VY_REFILL = require('./tools/vidy-runtime/active_refill.cjs').create({
       const ms = Date.now() - t0;
       if (ms > 5500) throw new Error('slow-session');
       vidyNodeOk(px, ms); const entry = VIDY_OK.get(px); if (entry) entry.sessionProof = Date.now(); return true;
-    } catch (e) { if (!/quota|gate-full|http_5\d\d|invalid-sources/.test(String(e && e.message))) VIDY_TRIED.set(px, Date.now()); return false; }
+    } catch (e) { const msg = String(e && e.message); if (/gate-full|sock-gate/.test(msg)) return null; if (!/quota|http_5\d\d|invalid-sources/.test(msg)) VIDY_TRIED.set(px, Date.now()); return false; }
     finally { if (slot) vyFree(); vpxFree(px); }
   }
 });
@@ -17933,7 +17928,9 @@ function rtReplay(res, cap, origin) {
   } catch (e) { try { res.end('{"streams":[]}'); } catch (_) { } }
 }
 
-const server = http.createServer((req, res) => {
+const server = http.createServer((req, res) => FG_CONTEXT.run({ active: true }, () => {
+  const fgCtx = FG_CONTEXT.getStore();
+  res.once('finish', () => { fgCtx.active = false; }); res.once('close', () => { fgCtx.active = false; });
   res.__t0 = Date.now();   // ★ v1.34.153: রিকোয়েস্ট-শুরু (x-vidy-ms হেডার = সার্ভার-হ্যান্ডেল-সময়)
   const RVA = String(req.headers['user-agent'] || '');
   let pRaw = new URL(req.url, 'http://x').pathname;
@@ -19161,7 +19158,7 @@ cards => { Promise.all([raceObjP(infoP, 1500), raceObjP(nmP, 1500)]).then(([info
     }
     sendJson(res, 404, { error: 'not found' });
   } catch (e) { sendJson(res, 500, { error: String(e && e.message) }); }
-});
+}));
 // v1.15.0: ৬০-সে-অন্তর-সব-agent-socket-ধ্বংস-বাদ — এটাই-কিপ-অ্যালাইভ-কে-অর্থহীন-করত (প্রতি-ট্যাপে-DNS+TLS-পুনরায়);
 // warmBases()-এর-৪৫-সে-অন্তর-ট্রাফিক-সকেট-সক্রিয়-রাখে (NAT-কাট-স্বাভাবিকভাবেই-টালানো); মরা-সকেট-সার্ভার-FIN-এ-এজেন্ট-নিজেই-ফেলে।
 // ---------- v1.11.8 embedded MovieBox (vendored nethex child; single-app deploy) ----------
