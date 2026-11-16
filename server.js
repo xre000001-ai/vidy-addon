@@ -2373,12 +2373,12 @@ const VY_DISCOVERY = require('./tools/vidy-runtime/discovery.cjs').create({
 setTimeout(() => { VY_DISCOVERY.tick().catch(() => {}); setInterval(() => VY_DISCOVERY.tick().catch(() => {}), 20000).unref?.(); }, 25000).unref?.();
 const VY_REFILL = require('./tools/vidy-runtime/active_refill.cjs').create({
   ready: vidyReadyCount,
-  target: 100, parallel: 24, busyParallel: 6,
+  target: 100, parallel: 32, busyParallel: 6,
   getParallel: () => {
     const busy = INFLIGHT_STREAM > 0 || Date.now() - LAST_STREAM_AT < 3000 || Date.now() < MMR_ACTIVE_UNTIL;
     if (busy) return 6;                            // never race a user's playback for sockets
     const ready = vidyReadyCount();
-    return ready >= 100 ? 4 : (ready >= 50 ? 12 : 24);   // scale with the shortfall, not with unrelated pool state
+    return ready >= 100 ? 4 : (ready >= 50 ? 16 : 32);   // v1.34.265: 24→32 — CONNECT-প্রি-চেক সস্তা করার পরও refill ~১.৬/সে-এ আটকে ছিল (attempts 666/৭মিনিট), লক্ষ্য ৫০+ ready
   },
   candidates: () => {
     const t = Date.now(), proven = [], site = [], fallback = [];
@@ -2401,7 +2401,7 @@ const VY_REFILL = require('./tools/vidy-runtime/active_refill.cjs').create({
       let sl0 = false;
       try {
         await vySlot(1200); sl0 = true;
-        await ptunOpen(px, Number(process.env.VYPRETMO || 2400));
+        await ptunOpen(px, Number(process.env.VYPRETMO || 2000));   // v1.34.265: মৃত প্রক্সি দ্রুত বাদ ⇒ প্রতি সেকেন্ডে বেশি প্রার্থী
         VY_COOLRC.pre++;
       } catch (e0) {
         const m0 = String((e0 && e0.message) || e0);
