@@ -1,7 +1,7 @@
 'use strict';
 const fs=require('fs'),assert=require('assert'),vm=require('vm');
 const s=fs.readFileSync(require('path').join(__dirname,'../../server.js'),'utf8');
-assert(s.includes('Math.max(Number(process.env.VPICK || 6800) + 150, (GIANT.indexOf(srv)'));
+assert(s.includes('Math.max(vPickMs + 150, (GIANT.indexOf(srv)'));
 const fn=s.match(/function vspText\(u, ref, px, tmo\) \{[\s\S]*?\n\}/)[0];
 let args; const ctx={UA:'ua',proxiedGet:(...x)=>{args=x;return 'ok'},fetch:()=>{},AbortSignal};
 vm.runInNewContext(fn+'; this.vspText=vspText',ctx);
