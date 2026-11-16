@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.249';
+const VERSION = '1.34.250';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -878,6 +878,8 @@ const PX_BASE_N = 34, PX_CAP = Number(process.env.PXCAP || 7200), POOL_FILE = pa
 // ★ v1.17.56: vidy-প্রশিক্ষণের কাঁচা-সরবরাহ — enrich-এর প্রতিটি *নতুন* প্রার্থী এখানে জমে,
 //   vidySweep শুধু POOL (≈১৯০) নয়, এই তাজা-তালিকাও সেশন-যাচাই করে ⇒ verified আর স্যাচুরেট করে না।
 const PX_RAW = []; const PX_RAW_SEEN = new Set(); const PX_RAW_CAP = Number(process.env.PXRAWCAP || 100000);
+const VY_TRIED_TTL = () => Number(process.env.VYTRIED || 600000);   // failed-probe cooldown (scan rotation)
+function pxRawRecent(n) { const out = []; for (let i = PX_RAW.length - 1; i >= 0 && out.length < (n || 4000); i--) out.push(PX_RAW[i]); return out; } // newest candidates first: PX_RAW is append-only, so index 0 is the stalest
 function pxRawPush(list) {
   for (const px of list) { if (PX_RAW.length >= PX_RAW_CAP) break; if (PX_RAW_SEEN.has(px)) continue; PX_RAW_SEEN.add(px); PX_RAW.push(px); }
 } // v1.15.68 (ইউজার): ২×-স্কেল — ক্যাপ ১৫৪→৩০৮, বেস ১৭→৩৪
@@ -1892,15 +1894,25 @@ async function vidySweep(n) {
       if (DBG) console.error('[reverify] tried=' + rv.length + ' ok=' + _rvo + ' killed=' + _rvk + ' fresh=' + [...VIDY_OK.values()].filter(v => v.ts && Date.now() - v.ts < Number(process.env.PXFRESH || 240000)).length);
     }
     if (poolsFull()) { vidyVSave(); return; }   // v1.25.7: pool ভরা হলেও উপরের রি-ভেরিফাই আগে চলে (তাজা-ব্যান্ড টিকিয়ে রাখা)
-    const free = px => !VIDY_OK.has(px) && (now - (VIDY_TRIED.get(px) || 0)) > 30 * 60 * 1000;
+    const triedTtl = VY_TRIED_TTL();
+    const free = px => !VIDY_OK.has(px) && (now - (VIDY_TRIED.get(px) || 0)) > triedTtl;
+    const capN = n || Number(process.env.VPXPASS || 1500);
     const poolC = POOL.filter(c => free(c.px)).sort((a, b) => pxScore(a.px, a.ms) - pxScore(b.px, b.ms)).map(c => c.px);
-    // ★ v1.17.56: POOL শেষ হলে enrich-এর তাজা-প্রার্থী-তালিকা (PX_RAW) থেকে যাচাই চলবে — পুল স্যাচুরেট হয় না।
-    const rawC = PX_RAW.filter(p2 => free(p2) && vpxLeft(p2) >= 3);
-    const cands = poolC.slice(0, n || Number(process.env.VPXPASS || 1500));   // pool and raw lists can overlap
-    const candidateSeen = new Set(cands);
-    for (let i = 0; i < rawC.length && cands.length < (n || Number(process.env.VPXPASS || 1500)); i++) {
-      if (!candidateSeen.has(rawC[i])) { candidateSeen.add(rawC[i]); cands.push(rawC[i]); }
+    // v1.34.250 (audit): the bulk scanner used to probe POOL first and then PX_RAW from index 0 — PX_RAW is
+    // append-only, so it re-tested the OLDEST (already dead) entries every round and never reached the fresh
+    // lists. Measured: sweep 0/240 passes for minutes while a direct probe of the same list sources passed
+    // 16/120. Now: freshly discovered lists first, then the NEWEST raw candidates, then the pool.
+    const rawC = pxRawRecent(6000).filter(p2 => free(p2) && vpxLeft(p2) >= 3);
+    const discC = VY_DISCOVERY.candidates().filter(p2 => free(p2) && vpxLeft(p2) >= 3);
+    const cands = [], candidateSeen = new Set();
+    const addC = px => { if (px && !candidateSeen.has(px) && cands.length < capN) { candidateSeen.add(px); cands.push(px); } };
+    const discShare = Math.max(0, Math.min(1, Number(process.env.VYDISCSHARE || 0.5)));
+    const discCap = Math.ceil(capN * discShare);
+    for (let i = 0; i < Math.max(discC.length, rawC.length) && cands.length < capN; i++) {
+      if (i < discCap) addC(discC[i]);
+      addC(rawC[i]);
     }
+    for (const px of poolC) addC(px);
     let _ok = 0;
     // ★ v1.17.56: প্রশিক্ষণ এখন **ভদ্র** — ছোট-ব্যাচ (১২) + গ্লোবাল-গেট + প্রতি-নোড-লক,
     //   আর ইউজারের অনুরোধ চলাকালীন স্ক্যান থামে (আগে ৬০-এর-বেশি সমান্তরাল স্ক্যান সার্ভিং-ট্র্যাফিক
@@ -1924,11 +1936,16 @@ async function vidySweep(n) {
           vidyNodeOk(px, ms);
           if (!POOL.some(c => c.px === px) && POOL.length < PX_CAP) { POOL.push({ px: px, ms: ms }); PX_SITE.add(px); } // সেশন-পাস ⇒ পুলেও ঢোকে
           if (DBG) console.error('[vpx] + ' + px + ' ' + ms + 'ms');
-        } catch (e) { if (!/sock-gate|gate-full/.test(String(e && e.message))) VIDY_TRIED.set(px, Date.now()); }
+        } catch (e) {
+          const _m = String(e && e.message);
+          if (/sock-gate|gate-full/.test(_m)) { /* local limit, not this proxy */ }
+          else if (/_slow|^slow$/.test(_m)) VIDY_TRIED.set(px, Date.now() - (triedTtl - 120000)); // works but too slow: retry in 2m
+          else VIDY_TRIED.set(px, Date.now());
+        }
         finally { vyFree(); vpxFree(px); }
       }));
     }
-    if (DBG && (vidySweepBusy || true)) console.error('[vsweep] tried=' + cands.length + ' ok=' + _ok + ' verified=' + VIDY_OK.size + ' raw=' + PX_RAW.length + ' pool=' + POOL.length);
+    if (DBG && (vidySweepBusy || true)) console.error('[vsweep] tried=' + cands.length + ' ok=' + _ok + ' disc=' + discC.length + ' rawC=' + rawC.length + ' verified=' + VIDY_OK.size + ' raw=' + PX_RAW.length + ' pool=' + POOL.length);
     // পুরোনো verified-দের মাঝে-মাঝে পুনঃযাচাই (৩০মিন+) — বাদ-পড়া সরিয়ে ফেলি
     // v1.25.0: re-verifying a 4-min-old node spent its whole quota on the ping and pushed it out of the
     // serving band. Now only nodes older than PXAGE(10min) are re-verified.
@@ -2256,12 +2273,13 @@ const VY_REFILL = require('./tools/vidy-runtime/active_refill.cjs').create({
   getParallel: () => (INFLIGHT_STREAM > 0 || Date.now() - LAST_STREAM_AT < 3000 || Date.now() < MMR_ACTIVE_UNTIL || SK.liveN >= 145) ? 4 : (SK.liveN >= 110 ? 10 : 24),
   candidates: () => {
     const t = Date.now(), proven = [], site = [], fallback = [];
-    const allowed = px => !VIDY_OK.has(px) && !VIDY_DROP.has(px) && !snBanned(px) && ptunAllowed(px) && !VPX_BUSY.get(px) && vpxLeft(px) >= 3 && t - (VIDY_TRIED.get(px) || 0) >= 600000;
+    const rTtl = Number(process.env.VYTRIEDR || 300000);
+    const allowed = px => !VIDY_OK.has(px) && !VIDY_DROP.has(px) && !snBanned(px) && ptunAllowed(px) && !VPX_BUSY.get(px) && vpxLeft(px) >= 3 && t - (VIDY_TRIED.get(px) || 0) >= rTtl;
     for (const m of SPOOL.values()) for (const [px,e] of m) if (spoolFresh(e) && !e.seeded) proven.push(px);
     for (const c of POOL) if (c && PX_SITE.has(c.px)) site.push(c.px);
     for (const c of POOL) if (c) fallback.push(c.px);
     for (const m of SPOOL.values()) for (const [px,e] of m) if (spoolFresh(e)) fallback.push(px);
-    return require('./tools/vidy-runtime/fair_candidates.cjs').merge([proven, VY_DISCOVERY.candidates(), site, PX_RAW, fallback], allowed);
+    return require('./tools/vidy-runtime/fair_candidates.cjs').merge([proven, VY_DISCOVERY.candidates(), site, pxRawRecent(6000), fallback], allowed);
   },
   validate: async px => {
     if (snBanned(px) || !ptunAllowed(px) || vpxLeft(px) < 3) return false;
