@@ -1,0 +1,11 @@
+'use strict';
+const fs=require('fs'),assert=require('assert'),vm=require('vm');
+const s=fs.readFileSync(require('path').join(__dirname,'../../server.js'),'utf8');
+assert(s.includes('Math.max(Number(process.env.VPICK || 6800) + 150, (GIANT.indexOf(srv)'));
+const fn=s.match(/function vspText\(u, ref, px, tmo\) \{[\s\S]*?\n\}/)[0];
+let args; const ctx={UA:'ua',proxiedGet:(...x)=>{args=x;return 'ok'},fetch:()=>{},AbortSignal};
+vm.runInNewContext(fn+'; this.vspText=vspText',ctx);
+assert.equal(ctx.vspText('https://example.test/a','https://example.test/frame','1.2.3.4:80',5000),'ok');
+assert.equal(args[3].Referer,'https://example.test/frame');
+ctx.vspText('https://example.test/a',null,'1.2.3.4:80',5000);assert.equal(args[3],undefined);
+console.log('Non-priority budget covers first-tap cutoff; proxy forwards optional Vidsrc referer');

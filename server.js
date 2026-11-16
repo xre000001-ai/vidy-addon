@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.237';
+const VERSION = '1.34.238';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -7810,7 +7810,7 @@ function vspMint(key) { // key=type:id:s:e → স্থায়ী-টোক�
 }
 function vspText(u, ref, px, tmo) { // ছোট-টেক্সট: সরাসরি-fetch নয়তো প্রক্সি-সুরঙ্গ (proxiedGet)
   if (!px) return fetch(u, { headers: { 'User-Agent': UA, Accept: '*/*', ...(ref ? { Referer: ref } : {}) }, signal: AbortSignal.timeout(tmo || 12000) }).then(x => x.ok ? x.text() : Promise.reject(new Error('h' + x.status)));
-  return proxiedGet(px, u, tmo || 12000);
+  return proxiedGet(px, u, tmo || 12000, ref ? { Referer: ref } : undefined);
 }
 function vspBuf(u, px, rng, tmo) { // বাইনারি-বাফ (wasm): প্রক্সি-মোডে-শুধু
   return new Promise((resolve, reject) => {
@@ -8038,7 +8038,7 @@ function vspRelay(req, res, p) { // /vsp/t/<tok>.m3u8 | /vsp/c/<tok>/<i>.m3u8 | 
   }
   res.writeHead(404, { 'Content-Type': 'text/plain' }); res.end('nf');
 }
-const VSP_ON = process.env.VSPON !== '0';   // ★ v1.34.172: vidsrc.ir এখন CONFIG-এ apiToken **ফাঁকা** দেয় (Turnstile/gate-ticket) ⇒ API `403 invalid api token` (মাপা: ২/২ চেইন)। পুরোনো-পথে চিরকাল ০ কার্ড অথচ গড় ৯.২সে খায় ⇒ ডিফল্ট বন্ধ; `VSPON=1`-এ ফেরে।
+const VSP_ON = process.env.VSPON !== '0'; // Enabled unless VSPON=0; current player can require invisible verification before minting its API token.
 async function vspStreams(tmdbId, type, s, e, vspq) { // কার্ড: মান-ফাইল-নাম-থেকে (অতিরিক্ত-ফেচ-নয়); vspq=নিজস্ব-মান-ছাঁকনি
   if (!VSP_ON) return [];   // ★ v1.34.172
   const t3 = Date.now();
@@ -15820,7 +15820,7 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
         fire({ srv, err: new Error('srv-budget') });
       }, isPriSrv(srv) ? Number(process.env.VPRIB || 8800) /* ★ v1.34.27 */                              // ★ v1.26.2: Miami/Boise — দীর্ঘ বাজেট
         : srv === 'delhi' ? Number(process.env.VDELB || 2600)
-          : (GIANT.indexOf(srv) >= 0 ? (viaProxy ? 8200 : 5000) : (viaProxy ? 6200 : 4800)) /* ★ v1.34.27: ঠান্ডা-স্ক্যানে giant-বাজেট বাড়ল (tighten-কাট আগের মতোই দ্রুত-সাফল্যে কাটে) */); // v1.21.5: delhi (500) ছোট বাজেট — ৪.৫সে-উইন্ডো/quota খায় না // ★ v1.17.56: vidy-সেশন ২–৩সে নেয় ⇒ ৩.৮সে-বাজেট ভিডি-কার্ডই কেটে দিত // v1.17.39: কাট-ঘড়ির (≤৪.২সে) পরে বাজেট-টাইমারের কোনো মানে নেই // v1.15.24 (ইউজার: '৬-৭সে-তে-সব-কার্ড'): প্রক্সি-পথ-বাজেট ৮.৫/৭→৬.৫/৫.৫সে — vidy-শাখা-নিজেই-ধীরতম-হয়ে-গোটা-উত্তর-৮-১০সে-টানছিল; প্রক্সি-চেইনের-সফল-ফেচ ৪.৭-৬.৩সে-তে-বলে-৬.৫সে-দৈত্য-সীমা-ওদের-ধরে; সরাসরি-পথ ৫.৫/৩.৮-অক্ষত
+          : Math.max(Number(process.env.VPICK || 6800) + 150, (GIANT.indexOf(srv) >= 0 ? (viaProxy ? 8200 : 5000) : (viaProxy ? 6200 : 4800))) /* Non-priority selected servers must survive until the common first-tap cutoff. ★ v1.34.27: ঠান্ডা-স্ক্যানে giant-বাজেট বাড়ল (tighten-কাট আগের মতোই দ্রুত-সাফল্যে কাটে) */); // v1.21.5: delhi (500) ছোট বাজেট — ৪.৫সে-উইন্ডো/quota খায় না // ★ v1.17.56: vidy-সেশন ২–৩সে নেয় ⇒ ৩.৮সে-বাজেট ভিডি-কার্ডই কেটে দিত // v1.17.39: কাট-ঘড়ির (≤৪.২সে) পরে বাজেট-টাইমারের কোনো মানে নেই // v1.15.24 (ইউজার: '৬-৭সে-তে-সব-কার্ড'): প্রক্সি-পথ-বাজেট ৮.৫/৭→৬.৫/৫.৫সে — vidy-শাখা-নিজেই-ধীরতম-হয়ে-গোটা-উত্তর-৮-১০সে-টানছিল; প্রক্সি-চেইনের-সফল-ফেচ ৪.৭-৬.৩সে-তে-বলে-৬.৫সে-দৈত্য-সীমা-ওদের-ধরে; সরাসরি-পথ ৫.৫/৩.৮-অক্ষত
       return Promise.race([
         one(srv).then(r => { done = true; clearTimeout(tmo); pend.delete(srv); if (r.ok) okWave++; return r; }), // timer cleared on win — no dangling timeouts
         new Promise(r => { fire = r; pend.set(srv, v => { done = true; clearTimeout(tmo); fire(v); }); }) // v1.14.2: tighten-কাটও-টাইমার-পরিষ্কার-করে — পরের-আসল-বাজেট-কাট/শাস্তি-আর-গুলে-খায়-না
