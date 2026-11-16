@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.230';
+const VERSION = '1.34.231';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -8741,8 +8741,9 @@ async function mlbdOne(base, fileUrl, dl, labQ, labTxt) {
   if (DBG) console.error('[mlbd] file ' + String(fileUrl).slice(-14) + ' st=' + pg.st + ' len=' + H.length + ' name=' + name.slice(0, 40));
   const size = ((H.match(/fa-database[^>]*><\/i>\s*([^<]+)/) || [])[1] || '').trim();
   const hub = (H.match(/https:\/\/hubcloud\.[a-z.]+\/drive\/[A-Za-z0-9]+/) || [])[0] || '';
-  const nested = (H.match(/href="(\/file\/[A-Za-z0-9_-]{40,})"/) || [])[1] || '';
-  const nested2 = [...new Set([...H.matchAll(/href="(\/file\/[A-Za-z0-9_-]{40,})"/g)].map(z => z[1]))].filter(z => z && z !== nested).slice(0, 1); // v1.34.30: দ্বিতীয় সার্ভার-পেজ (MP4/FSL দুটো বোতামই থাকে)
+  const nestedPaths=require('./tools/mlbd-index/nested_pages.cjs').choose(H);
+  const nested=nestedPaths[0]||'';
+  const nested2=nestedPaths.slice(1);
   const ic = (H.match(/https:\/\/instantcloud\.org\/file\/[A-Za-z0-9]+/) || [])[0] || '';
   // एक मिरर प्रमाण: ২০৬ ⇒ নাও; প্রোব-ব্যর্থ হলেও trust-হোস্ট হলে নাও
   const seenM = new Set();
@@ -8778,16 +8779,19 @@ async function mlbdOne(base, fileUrl, dl, labQ, labTxt) {
       } catch (_) {}
       return out;
     }));
-    const found=pages.flat();
-    // Direct Ultra is inferred only from the website's own MP4 media ID and
-    // emitted only if its 206 range matches the same token's FSL video bytes.
+    return pages.flat();
+  };
+  // Ultra is optional and must never delay or suppress already-ready FSL/MP4.
+  const fslJob=fslBranch();
+  const ultraBranch=async()=>{
+    const found=await fslJob;
     const mp4=found.find(x=>x.s==='MP4 Fast Cloud'),worker=found.find(x=>x.s==='FSL Worker');
     const ultra=mp4&&worker&&require('./tools/mlbd-index/direct_ultra.cjs').candidate(mp4.u);
     if(ultra && left()>1800) try {
       const [a,b]=await mlbdUltraLimit.run(()=>Promise.all([mlbdRangeBytes(ultra),mlbdRangeBytes(worker.u)]),300,2500);
-      const ok=require('./tools/mlbd-index/direct_ultra.cjs').same(a,b);diag('mlbd','ultra q='+labQ+' ranges='+Number(!!a)+'/'+Number(!!b)+' match='+Number(ok));if(ok)found.push({u:ultra,s:'One Click Ultra'});
+      const ok=require('./tools/mlbd-index/direct_ultra.cjs').same(a,b);diag('mlbd','ultra q='+labQ+' ranges='+Number(!!a)+'/'+Number(!!b)+' match='+Number(ok));if(ok)return [{u:ultra,s:'One Click Ultra'}];
     } catch (_) {}
-    return found;
+    return [];
   };
   // ② HubCloud: drive → (302) ist → gamerxyt → r2-presigned **এবং** workers.dev (দুটোই আলাদা সার্ভার)
   const hubBranch = async () => {
@@ -8839,9 +8843,14 @@ async function mlbdOne(base, fileUrl, dl, labQ, labTxt) {
       return hit?[hit]:[];
     } catch (_) {return [];}
   };
-  const allGroups=[[],[],[],[]];
-  const jobs=[fslBranch(),hubBranch(),gdBranch(),xcBranch()].map((p,i)=>Promise.resolve(p).then(v=>{allGroups[i]=v}).catch(()=>{}));
-  let timer;await Promise.race([Promise.all(jobs),new Promise(r=>{timer=setTimeout(r,Math.max(1,Math.min(4500,dl-Date.now()-1000)))})]);clearTimeout(timer);
+  const allGroups=[[],[],[],[],[]];
+  const jobs=[fslJob,hubBranch(),gdBranch(),xcBranch(),ultraBranch()].map((p,i)=>Promise.resolve(p).then(v=>{allGroups[i]=v}).catch(()=>{}));
+  // Once the principal servers are ready, give optional work a short grace
+  // period rather than losing all cards at the outer addon deadline.
+  let timer,baseTimer,done=false;
+  const baseGrace=fslJob.then(v=>!done&&v.length?new Promise(r=>{baseTimer=setTimeout(r,1200)}):new Promise(()=>{})).catch(()=>new Promise(()=>{}));
+  await Promise.race([Promise.all(jobs),baseGrace,new Promise(r=>{timer=setTimeout(r,Math.max(1,Math.min(4500,dl-Date.now()-1000)))})]);
+  done=true;clearTimeout(timer);clearTimeout(baseTimer);
   const groups=allGroups.map(x=>x.slice());
   diag('mlbd', 'hop nest=' + (nested ? 1 : 0) + ' hub=' + (hub ? 1 : 0) + ' got=' + groups.map(g => g.length).join('/') + ' st=' + pg.st + ' len=' + H.length);
   if (DBG) console.error('[mlbd1] ' + String(fileUrl).slice(-12) + ' nest=' + (nested ? 1 : 0) + ' hub=' + (hub ? 1 : 0) + ' ic=' + (ic ? 1 : 0) + ' got=' + groups.map(g => g.length).join('/') + ' left=' + left() + 'ms');
@@ -8988,7 +8997,7 @@ async function mlbdStreams(name, year, type, s, e, cap) {
     diag('mlbd','partial='+Number(gathered.partial)+' resolved='+got.length+' @'+(Date.now()-T0)+'ms');
     if (!got.length && !gathered.partial && Date.now() < dl - 900) {          // পুরো-ব্যর্থ (SAN-ফ্লেক) ⇒ এক দফা আবার
       if (DBG) console.error('[mlbd] 2nd-wave @' + (Date.now() - T0) + 'ms');
-      const j2 = toks.slice(0, Math.min(3, NTOK)).map(t => mlbdOne(base, t, dl).catch(() => null));
+      const j2 = toks.slice(0, Math.min(3, NTOK)).map(t => mlbdOne(base, t, dl, qOf(t), (LAB[t] && LAB[t].lab) || '').catch(() => null));
       got = (await Promise.all(j2)).filter(Boolean);
     }
     if (DBG && (type === 'series' || process.env.MLBDBG === '1')) console.error('[mlbd] got=' + got.length + ' names: ' + got.map(g => String(g.name).slice(0, 52) + '{' + (g.mirrors || []).map(m => (srvLabel(m.u) || m.s || '?') + (m.soft ? '?' : '')).join('+') + '}').join(' | '));
@@ -9011,9 +9020,9 @@ async function mlbdStreams(name, year, type, s, e, cap) {
     cand.sort((a, b) => (b.h - a.h) || (rank(a) - rank(b)));
     for (const c of cand) {
       if (seenU.has(c.u)) continue; seenU.add(c.u);
-      const qk = (c.h || 'a') + '|' + c.srv;
-      if (seenQ.has(qk)) continue; seenQ.add(qk);                 // একই মান + একই সার্ভার একবারই
-      if (out.length >= Number(process.env.MLBDCAP || 8)) break;
+      const qk = (c.h || 'a') + '|' + c.srv + '|' + String(c.name || '').toLowerCase();
+      if (seenQ.has(qk)) continue; seenQ.add(qk);                 // Same file and server only; different releases at the same quality survive.
+      if (out.length >= Number(process.env.MLBDCAP || 12)) break;
       const langs = mlbdLangs(c.name);
       const txt = '\u29c9 ' + ttl + (year ? ' | ' + year + ' |' : ' |') + '\n'
         + (type === 'series' ? '\u29e0 S' + SE + 'E' + EP : '\u29e0 Movie') + '\n'
