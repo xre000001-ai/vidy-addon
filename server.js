@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.240';
+const VERSION = '1.34.241';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -170,7 +170,7 @@ function tmdbGet(path, timeoutMs) { // v1.13.7 IMDb/ফ্রি-পাবলি
     .catch(() => pooledGet(TMDBP + path, timeoutMs));
 }
 const CINEMETA = 'https://v3-cinemeta.strem.io';
-const SERVERS = ['miami', 'atlanta', 'seattle', 'boise', 'phoenix', 'dallas', 'austin', 'delhi', 'munich', 'cancun', 'vegas', 'oakland', 'orlando', 'paris', 'reno', 'tampa', 'nashville', 'chicago']; // full server family — 7 veterans + 9 discovered from the official player bundle (live-probed)
+const SERVERS = ['miami', 'atlanta', 'seattle', 'boise', 'phoenix', 'dallas', 'austin', 'delhi', 'munich', 'cancun', 'vegas', 'oakland', 'portland', 'orlando', 'paris', 'reno', 'tampa', 'nashville', 'chicago']; // full server family — 7 veterans + 9 discovered from the official player bundle (live-probed)
 const GIANT = ['miami', 'boise', 'atlanta', 'munich', 'chicago'];   // v1.34.114: 5-server talika
 // ★★ v1.26.7 (ইউজার: "vidy er Miami, Boise majhe majhe miss korche"): এই দুটো **প্রায়োরিটি** সার্ভার —
 //   আলাদা হট-কোটা, লম্বা TTL, বড় টাইমআউট আর দেরিতে-খোলা ব্রেকার, যাতে অন্য সার্ভারের ভিড়ে এরা খালি না হয়।
@@ -2525,6 +2525,26 @@ async function vidyFetch(o) { // ★ v1.17.56: verified-pool **ক্রমব�
   //  • ডিরেক্ট নিজের-IP শুধু শেষ-ভরসা (PXVD ৪সে) — ৩–৫ কলে ৪২৯
   const _bk = vsrvKey(o);
   if (vsrvOpen(_bk)) return Promise.reject(Object.assign(new Error('srv-breaker'), { breaker: 1, srv: o.srv }));
+  // User-requested grouped foreground path: exactly one proxy per server
+  // attempt, shared by at most three servers. Same-click retry picks another
+  // lane; per-node quota, the global concurrency gate, and seed-IP pin remain.
+  if (o.group) {
+    const px = o.group.pick(o.srv, o.excl);
+    if (!px) throw new Error('vidy-group-no-proxy');
+    if (o.attempted) o.attempted.add(px);
+    if (vyKnownBd(px) || snBanned(px) || !ptunAllowed(px) || vpxLeft(px) < 2) throw new Error('vidy-group-unavailable');
+    if (!vpxTake(px, 3)) throw new Error('vidy-group-busy');
+    if (!o.group.take(px, o.srv)) { vpxFree(px); throw new Error('vidy-group-full'); }
+    let failed = false, gotSlot = false;
+    const raceOpts = Object.assign({}, o, { onSourceFailure: () => { failed = true; } });
+    try {
+      await vySlot(2600); gotSlot = true;
+      return await vidySessionP(px, raceOpts, Number(process.env.PXVTO || 2600));
+    } catch (e) {
+      if (failed && typeof o.onRaceFailure === 'function') o.onRaceFailure();
+      throw e;
+    } finally { if (gotSlot) vyFree(); vpxFree(px); }
+  }
   // ★ v1.26.0: এক সিড-এক নোড (leader) — আগে এখানেই বেশিরভাগ কল সফল হয়ে যায়, সিড-কোটা বাঁচে
   if (process.env.PXLEAD === '1') {   // opt-in (মাপা: এক সিডে ৬টি sources সমান্তরালে ৩.২সে-তে ৬/৬ ২০০)
     const _lr = await vidyLeaderTry(o, Number(process.env.PXLTO || 2600));
@@ -15579,7 +15599,7 @@ function srvBump(srv, d) {
 }
 // ★ v1.18.3 (ইউজার: "Miami, Boise, Phoenix, Atlanta, Delhi ei 5 ta server rakho"): শুধু এই ৫টি সার্ভার।
 //   ৫ সার্ভার = ৫×(seed+sources) ≈ ১০ কল ⇒ মাত্র ৩–৪টি নোডেই সবগুলো চলে ⇒ ভাগ্য-নির্ভরতা প্রায় শেষ।
-const SRV_KEEP = (process.env.VSRV || 'miami,boise,atlanta,munich,chicago').split(',').map(x => x.trim()).filter(Boolean); // v1.34.128 (ইউজার): Delhi/Nashville/Chicago/Austin jog — imdbId/title param-fix-e era jibito (mapito); Atlanta upstream-mrito holeo talikay thaklo (breaker+trainer probe-e sere uthlei nije firbe); VSRV env diye bodlano jay // v1.34.114 (ইউজার): Austin-o jog (BND-te 1080p/4K dekhay) — mot 5 server; VSRV env diye bodlano jay
+const SRV_KEEP = (process.env.VSRV || 'miami,boise,atlanta,munich,chicago,vegas,oakland,portland,reno').split(',').map(x => x.trim()).filter(Boolean); // v1.34.128 (ইউজার): Delhi/Nashville/Chicago/Austin jog — imdbId/title param-fix-e era jibito (mapito); Atlanta upstream-mrito holeo talikay thaklo (breaker+trainer probe-e sere uthlei nije firbe); VSRV env diye bodlano jay // v1.34.114 (ইউজার): Austin-o jog (BND-te 1080p/4K dekhay) — mot 5 server; VSRV env diye bodlano jay
 // v1.34.79 (user: "Delhi, Reno, Paris, Oakland add koro, performance drop jate na hoi"): the three were
 //   already in SERVERS (historic scores paris 20, reno 20, oakland 5) — now kept. All servers fetch in
 //   parallel under the same VPICK(9s)/tighten cuts, so wall-clock is unchanged; delhi keeps its 2.6s
@@ -15741,7 +15761,7 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP, requestStart) { // t
     const viaProxy = true; // (ডিরেক্ট-পথ আমাদের IP-তে ৪২৯ ⇒ সবসময় প্রক্সি-পথের বাজেট)
     const ckFor = srv => ['srvc', VERSION, tmdbId, type, s || '', e || '', srv].join('|');
     const allow = srvOrder().filter(srv => !cfg || !Array.isArray(cfg.srv) || !cfg.srv.length || cfg.srv.indexOf(srv) >= 0); // cfg-সার্ভার-সাবসেট
-    const groupNodes = [...new Set([...pxplGoodAny(24), ...vidyVerifiedPick(999, 0)])].filter(px => !vyKnownBd(px));
+    const groupNodes = [...new Set([...pxplGoodAny(24), ...[...VIDY_OK.keys()].sort((a, b) => vidyScore(a) - vidyScore(b))])].filter(px => !vyKnownBd(px) && !snBanned(px) && ptunAllowed(px) && vpxLeft(px) >= 2);
     const requestGroup = require('./tools/vidy-tests/proxy_groups.cjs').create(allow, groupNodes, 3);
     const attemptedByServer = new Map();
     const raceFailures = new Set();
@@ -15915,7 +15935,7 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP, requestStart) { // t
     } catch (eE) {}
     // মার্জ: কোনো-ক্রস-সার্ভার-ডিউপ-নয় — প্রতিটা-সার্ভারের-প্রতিটা-স্ট্রিম-কার্ড-থাকবে;
     // ক্রম: দৈত্য-সার্ভার (miami→boise→atlanta) সবার-উপরে, তারপর-বাড়তি, ভেতরে-রেজোলিউশন-বড়→ছোট:
-    const PRIO = ['miami', 'boise', 'atlanta', 'munich', 'nashville', 'chicago', 'delhi', 'austin', 'phoenix', 'dallas', 'seattle', 'paris', 'orlando', 'reno', 'oakland', 'vegas', 'cancun', 'tampa'];
+    const PRIO = ['miami', 'boise', 'atlanta', 'munich', 'nashville', 'chicago', 'delhi', 'austin', 'phoenix', 'dallas', 'seattle', 'paris', 'orlando', 'reno', 'oakland', 'vegas', 'portland', 'cancun', 'tampa'];
     const prio = v => { const i = PRIO.indexOf(v); return i < 0 ? 99 : i; };
     const all = [];
     for (const r of rs) {
