@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.272';
+const VERSION = '1.34.274';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -9236,6 +9236,36 @@ async function mlbdRng(u, ms) { try { const x = await hdProbe(u, Math.max(1500, 
 //   (প্রোব-ব্যর্থতা ≠ Range-অনুপস্থিতি)। অচেনা হোস্টে প্রমাণ ছাড়া কার্ড **নেই**।
 const MLBD_RANGE_TRUST = /^(?:[a-z0-9.-]*\.)?(?:fsldownload\.com|r2\.cloudflarestorage\.com|[a-z0-9.-]*\.workers\.dev)$/i;
 function mlbdTrusted(u) { try { return MLBD_RANGE_TRUST.test(new URL(u).hostname); } catch (e) { return false; } }
+// ★★ v1.34.273 (প্রোড-ম্যাপ: `hop nest=1 hub=0 ic=0 got=0/0/0/0/0/0` — ফাইল-পেজ ঠিক, কিন্তু নেস্টেড
+//   পেজ থেকে শুধু **fsldownload আর r2** খোঁজা হত) — মিরর-পেজে ওই দুটো ছাড়াও pixeldrain /
+//   instantcloud / hubcloud / workers / 10gbps / gdflix থাকতে পারে, আর সেগুলোই "One Click" ও
+//   সেকেন্ড-সার্ভার দেয় (ইউজার-শর্ত: Watch/Pixeldrain/GDFlix থাকবে)। এখন একটাই তালিকা-তৈরি-ফাংশন;
+//   প্রতিটি লিংক `pick`-এ যায় ⇒ ২০৬-প্রমাণ ছাড়া (বা মাপা-trust-হোস্ট ছাড়া) কার্ড হয় না।
+const MLBD_LINK_PATS = [
+  [/https?:\/\/fsldownload\.com\/d\/[A-Za-z0-9._-]+/gi, 'FSL'],
+  [/https?:\/\/[a-z0-9.-]+\.r2\.cloudflarestorage\.com\/[^"'\s<>]+/gi, 'FSL'],
+  [/https?:\/\/fsl\.[a-z0-9-]+\.workers\.dev\/[^"'\s<>]+/gi, 'FSL Worker'],
+  [/https?:\/\/pixeldrain\.com\/(?:u|api\/file)\/[A-Za-z0-9]+/gi, 'Pixeldrain'],
+  [/https?:\/\/instantcloud\.org\/file\/[A-Za-z0-9]+/gi, 'InstantCloud'],
+  [/https?:\/\/hubcloud\.[a-z.]+\/drive\/[A-Za-z0-9_-]+/gi, 'HubCloud'],
+  [/https?:\/\/10gbps\.[a-z.]+\/[^"'\s<>]+/gi, '10Gbps'],
+  [/https?:\/\/(?:gdflix|gdlink)\.[a-z.]+\/file\/[A-Za-z0-9_-]+/gi, 'GDFlix'],
+  [/https?:\/\/[a-z0-9.-]+\.r2\.dev\/[^"'\s<>]+?\.(?:mkv|mp4)(?:\?[^"'\s<>]*)?/gi, 'R2']
+];
+function mlbdLinks(html, base) {
+  const b = String(html || '').replace(/&amp;/g, '&');
+  const out = []; const seen = new Set();
+  for (const [re, srv] of MLBD_LINK_PATS) {
+    let m; re.lastIndex = 0;
+    while ((m = re.exec(b)) && out.length < 14) {
+      let u = m[0].replace(/[)"'<>]+$/, '');
+      if (u.charAt(0) === '/') { try { u = new URL(u, base).href; } catch (e) { continue; } }
+      if (seen.has(u)) continue;
+      seen.add(u); out.push({ u: u, s: srv });
+    }
+  }
+  return out;
+}
 // এক ফাইল-টোকেন → {url, srv, name} — মিরর-অগ্রাধিকার FSL → HubCloud(r2) → workers.dev; （Google বাদ)
 // ★ v1.27.13 (ইউজার: "ekta server keno only, seekable sob server thakbe"): এক ফাইলনামে **সব জীবিত
 //   Range-মিরর** ফেরত দিই (একটা নয়) — FSL (fsldownload), HubCloud-r2, HubCloud-workers।
@@ -9268,7 +9298,17 @@ async function mlbdOne(base, fileUrl, dl, labQ, labTxt) {
   };
   // ① নেস্টেড-পেজ → FSL (fsldownload)
   const fslBranch = async () => {
-    if (!nested || left() < 1500) return [];
+    // ★ v1.34.273: ফাইল-পেজেই কখনো কখনো pixeldrain/hubcloud/workers-এর সরাসরি লিংক থাকে — নেস্টেড
+    //   পেজের অপেক্ষায় সেটা হারানো যায় না (আগে hub=0/ic=0 হলে ওই লিংকগুলো একেবারেই দেখা হত না)।
+    const seed = [];
+    try {
+      for (const c of mlbdLinks(H, base)) {
+        if (!c) continue;
+        if (left() < 1200) break;
+        await pick(c.u, c.s, seed, c.s === 'MP4 Fast Cloud' || c.s === 'FSL Worker');
+      }
+    } catch (_) { }
+    if (!nested || left() < 1500) return seed;
     // The site commonly puts R2 and FSL Worker on different nested pages.
     // Resolve both independently; one success must not suppress the other.
     // At most two pages per token; mlbdLimit still bounds total requests.
@@ -9279,16 +9319,22 @@ async function mlbdOne(base, fileUrl, dl, labQ, labTxt) {
         const p2=await mlbdGet(base+nx,{ms:Math.min(4200,left())});
         if (!p2 || p2.st!==200) return out;
         const b2=String(p2.body||'').replace(/&amp;/g,'&');
-        const fsl=(b2.match(/https:\/\/fsldownload\.com\/d\/[A-Za-z0-9._-]+/)||[])[0]
-          || (b2.match(/https:\/\/[a-z0-9]+\.r2\.cloudflarestorage\.com\/[^"'\s<>]+/)||[])[0] || '';
-        const kind=require('./tools/mlbd-index/server_kind.cjs').classify(b2,fsl);
-        await pick(fsl,kind,out,kind==='MP4 Fast Cloud');
-        const worker=require('./tools/mlbd-index/worker_link.cjs').find(b2);
-        if (worker) await pick(worker,'FSL Worker',out,true);
+        const cands=mlbdLinks(b2, base);
+        for (const c of cands) {
+          if (left()<900) break;
+          // ★ MP4-Fast-Cloud ও FSL-Worker-এ কঠোর ২০৬-প্রমাণ লাগে (নাম-ভুল যাতে না যায়); বাকিরা
+          //   `pick`-এর স্বাভাবিক পথে (প্রমাণ, নাহলে trust-হোস্ট) — Pixeldrain/GDFlix এখানেই ফেরে।
+          const strict=(c.s==='MP4 Fast Cloud'||c.s==='FSL Worker');
+          const kind=c.s;
+          await pick(c.u, kind, out, strict);
+        }
+        const fsl=(cands.find(c=>c.s==='FSL')||{}).u||'';
+        const _k2=require('./tools/mlbd-index/server_kind.cjs').classify(b2,fsl);
+        if (_k2==='MP4 Fast Cloud' && fsl && !out.some(x=>x.u===fsl)) await pick(fsl,_k2,out,true);
       } catch (_) {}
       return out;
     }));
-    return pages.flat();
+    return seed.concat(pages.flat());
   };
   // Ultra is optional and must never delay or suppress already-ready FSL/MP4.
   const fslJob=fslBranch();
@@ -9647,6 +9693,18 @@ function hdText(u, ref, ms) { // ডিরেক্ট → (status 0/403/429/5xx
     };
     // ★★ পুল আর ডিরেক্ট **একসাথে** ছোটে — আগে যে-উত্তর যাচাই পাশ করে সেইটাই। প্রোডে hubdrive
     //   ডিরেক্টে ৬-৯সে, পুলে দ্রুত ⇒ পুল জেতে; লোকালে ডিরেক্ট ~১সে ⇒ ডিরেক্ট জেতে (রিগ্রেশন নেই)।
+    // ★★★ v1.34.274 (প্রোড-প্রমাণ): এখানে `_dir()` / `_px()` / `_ok()` **কখনোই সংজ্ঞায়িত হয়নি** —
+    //   .268-এ লেখা এই ব্লক প্রতি কলে `ReferenceError: _dir is not defined` ছুড়ত, আর সব কলার
+    //   `.catch(() => ({t:''}))` দিয়ে তা গিলে ফেলত ⇒ hubdrive/hubcloud পেজ **সবসময় খালি** ⇒
+    //   HDHub4u-র চেইন `drives=0` ⇒ ০ কার্ড (আর hubcloud-এর পুল-পথও মৃত ছিল)। `/_resolve` একবারেই
+    //   ধরে: `ms=1 fin=ERR:_dir is not defined`। এখন তিনটি হেল্পার সত্যিই আছে:
+    //     _dir = সরাসরি-ফেচ, _px = পুল-রেস (৩ নোড), _ok = উত্তর-যাচাই (`_good`)।
+    const _dir = () => fetch(u, { headers: h, redirect: 'follow', signal: AbortSignal.timeout(Math.max(900, ms)) })
+      .then(r => r.text().then(t => ({ st: r.status, t: t })).catch(() => ({ st: r.status, t: '' })))
+      .catch(() => ({ st: 0, t: '' }));
+    const _px = () => racePool(u, 3, Math.max(1600, ms), 'hd')
+      .then(x => ({ st: 200, t: String(x && x.body || '') })).catch(() => ({ st: 0, t: '' }));
+    const _ok = p => Promise.resolve(p).then(r => _good(r) ? r : Promise.reject(new Error('px-bad')));
     const _dirP = _dir();
     // ★★ v1.34.268: ক্রম গুরুত্বপূর্ণ — **ডিরেক্ট আগে**, পুল ১.২সে পরে ঢোকে (মাপা: লোকালে ডিরেক্ট
     //   ~১সে-তে আসল পেজ দেয়, প্রোডে ৬-৯সে; তাই পুল কেবল তখনই জেতে যখন ডিরেক্ট সত্যিই ধীর)।
