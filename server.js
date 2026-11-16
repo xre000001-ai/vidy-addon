@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.271';
+const VERSION = '1.34.272';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -11574,14 +11574,17 @@ async function m4uFinalForInner(target) {   // ★ v1.34.35: m4uTdServe-এর �
   if (/(?:^|\.)hubdrive\./i.test(host)) {
     const hd3 = M4U_TD_USED.get('hdr:' + target);
     if (hd3 && Date.now() - hd3.ts < 10 * 60e3) return hd3.final;
+    const _t3a = Date.now();
     const pg3 = await hdText(target, HD_BASE + '/', Number(process.env.HDRESMS || 9000)).catch(() => ({ t: '' }));
     const t3 = String((pg3 && pg3.t) || '');
+    diag('hdr', 'page st=' + (pg3 && pg3.st) + ' len=' + t3.length + ' ' + (Date.now() - _t3a) + 'ms drv=' + String(target).slice(-14));
     const h3 = (t3.match(/https?:\/\/hubcloud\.[a-z.]+\/drive\/[A-Za-z0-9_-]+/i) || [])[0];
     let f3 = h3 ? await m4uFinalFor(h3).catch(() => '') : '';
     if (!f3) {   // পেজে সরাসরি ফাইল-লিংকও থাকতে পারে (কিছু hubdrive-পেজ রিডাইরেক্ট করে)
       const d3 = (t3.match(/https?:\/\/[^\s"'<>\\]+\.(?:mkv|mp4)(?:\?[^\s"'<>\\]*)?/i) || [])[0];
       if (d3 && m4uIsMediaUrl(d3)) f3 = d3;
     }
+    diag('hdr', 'hub=' + (h3 ? 'y' : 'n') + ' final=' + (f3 ? 'y' : 'n') + ' ' + (Date.now() - _t3a) + 'ms drv=' + String(target).slice(-14));
     if (f3) M4U_TD_USED.set('hdr:' + target, { ts: Date.now(), final: f3 });
     return f3;
   }
@@ -18666,6 +18669,25 @@ const server = http.createServer((req, res) => FG_CONTEXT.run({ active: true }, 
         job.res = out; job.done = true;
       })().catch(() => { job.done = true; });
       return sendJson(res, 200, { job: id, started: 1 });
+    }
+    if (p === '/_resolve') {   // v1.34.272: `/m4g/` যা করবে ঠিক তাই — কিন্তু ফলের বিবরণ সহ (হোয়াইটলিস্ট-মুক্ত নয়)
+      return (async () => {
+        const q = Object.fromEntries(new URL(req.url, 'http://x').searchParams);
+        const u = String(q.u || '');
+        if (!/^https?:\/\//i.test(u)) return sendJson(res, 400, { err: 'url' });
+        const t0 = Date.now();
+        const fin = await m4uFinalFor(u).catch(e => 'ERR:' + String((e && e.message) || e).slice(0, 90));
+        const out = { u: u, ms: Date.now() - t0, fin: String(fin || '').slice(0, 300) };
+        try {
+          if (/^https?:\/\//.test(fin)) {
+            const h = await fetch(fin, { headers: { 'User-Agent': UA, Range: 'bytes=0-1023' }, signal: AbortSignal.timeout(15000) }).catch(() => null);
+            out.probe = h ? { st: h.status, cr: String(h.headers.get('content-range') || ''), ct: String(h.headers.get('content-type') || '') } : null;
+            try { if (h && h.body) h.body.cancel(); } catch (_) { }
+          }
+        } catch (_) { }
+        out.diag = DIAG.filter(x => x.g === 'hdr' || x.g === 'hub').slice(-8).map(x => x.m.slice(0, 200));
+        return sendJson(res, 200, out);
+      })();
     }
     if (p === '/_fetch') {
       return (async () => {
