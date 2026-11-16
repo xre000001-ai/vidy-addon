@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.254';
+const VERSION = '1.34.257';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -1914,7 +1914,7 @@ async function vidySweep(n) {
     const free = px => !VIDY_OK.has(px) && (now - (VIDY_TRIED.get(px) || 0)) > triedTtl;
     const capN = n || Number(process.env.VPXPASS || 1500);
     const poolC = POOL.filter(c => free(c.px)).sort((a, b) => pxScore(a.px, a.ms) - pxScore(b.px, b.ms)).map(c => c.px);
-    // v1.34.254 (audit): the bulk scanner used to probe POOL first and then PX_RAW from index 0 — PX_RAW is
+    // v1.34.257 (audit): the bulk scanner used to probe POOL first and then PX_RAW from index 0 — PX_RAW is
     // append-only, so it re-tested the OLDEST (already dead) entries every round and never reached the fresh
     // lists. Measured: sweep 0/240 passes for minutes while a direct probe of the same list sources passed
     // 16/120. Now: freshly discovered lists first, then the NEWEST raw candidates, then the pool.
