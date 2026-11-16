@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.245';
+const VERSION = '1.34.246';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -2241,6 +2241,19 @@ function vidyReadyCount() {
   const now = Date.now();
   return [...VIDY_OK.entries()].filter(([px,e]) => e && e.ts && now - e.ts < 600000 && !snBanned(px) && ptunAllowed(px) && vpxLeft(px) >= 2 && !VPX_BUSY.get(px)).length;
 }
+// Lightweight source-specific discovery stays independent of the large shared
+// enrich wave (which may pause during playback or when its generic pool is full).
+// This only supplies candidates: all bans, quotas and full session validation remain.
+const VY_DISCOVERY = require('./tools/vidy-runtime/discovery.cjs').create({
+  fetchList: url => directGet(url, 10000),
+  urls: [
+    'https://raw.githubusercontent.com/proxmint/free-proxy-list/main/proxies/http.txt',
+    'https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&protocol=http&proxy_format=ipport&format=text&timeout=5000&supports_https=true',
+    'https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt',
+    'https://raw.githubusercontent.com/Zaeem20/FREE_PROXIES_LIST/master/http.txt'
+  ]
+});
+setTimeout(() => { VY_DISCOVERY.tick().catch(() => {}); setInterval(() => VY_DISCOVERY.tick().catch(() => {}), 60000).unref?.(); }, 25000).unref?.();
 const VY_REFILL = require('./tools/vidy-runtime/active_refill.cjs').create({
   ready: vidyReadyCount,
   target: 100, parallel: 24, busyParallel: 6,
@@ -2252,7 +2265,8 @@ const VY_REFILL = require('./tools/vidy-runtime/active_refill.cjs').create({
     // seeded/stale cross-source nodes are only lower-confidence exploration.
     for (const m of SPOOL.values()) for (const [px,e] of m) if (spoolFresh(e) && !e.seeded) add(px);
     for (const c of POOL) if (c && PX_SITE.has(c.px)) add(c.px);
-    for (let i = PX_RAW.length - 1; i >= 0; i--) add(PX_RAW[i]);
+    for (const px of VY_DISCOVERY.candidates()) add(px);
+    for (const px of PX_RAW) add(px);
     for (const c of POOL) add(c && c.px);
     for (const m of SPOOL.values()) for (const [px,e] of m) if (spoolFresh(e)) add(px);
     return out;
@@ -18100,7 +18114,7 @@ const server = http.createServer((req, res) => {
       RT_INFLIGHT.set(kRT, pr);
       res = w;
     }
-    if (p === '/_health') { const _vf = [...VIDY_OK.values()].filter(v => v.ts && Date.now() - v.ts < Number(process.env.PXFRESH || 240000)).length; return sendJson(res, 200, { ok: 1, cg: CG_ST, cgDead: CG_DEAD.size, cgSrc: Object.fromEntries([...CG_SRC].map(([k, v]) => [k, { ok: v.ok, fail: v.fail, down: v.down > Date.now() ? Math.round((v.down - Date.now()) / 1000) : 0 }])), version: VERSION, cache: CACHE_ST, bg: BG_ST, pwhy: PART_WHY, up: Math.round(process.uptime()), deploy: 'v' + VERSION, mmpool: { size: MM_POOL.length, bench: MM_SITE.size, resolverFresh: [...MM_RESOLVE_OK.values()].filter(t => Date.now() - t < 600000).length, resolverChecks: MM_RESOLVE_BENCH_STATS, cooling: [...MM_COOL.values()].filter(t => t > Date.now()).length, race: MM_RACE_ST }, pool: POOL.length, pxbench: POOL.filter(c => PX_SITE.has(c.px)).length, pxbf: PX_BF.size, memo: memo.size, gw: (typeof GW !== 'undefined' ? GW.size : -1), nx: NEXBASE ? 1 : 0, nxpool: NXBENCH, nxwaves: NXWAVES, nxsize: NXSIZE, tw: TWBASE ? 1 : 0, rt: RTBASE ? 1 : 0, mls: (process.env.MLSD !== '0') ? 1 : 0, mlsindex: require('./tools/mls-index-lab/runtime_index').stats(), mlslinks: Object.assign({active:mlsLinkRaceActive}, MLS_LINK_METRICS), mlbdRuntime: {queue:MLBD_WL.stats(),net:MLBD_NET_METRICS,mirrorReady:!!MLBD_BASE,mirrorFlight:!!MLBD_MIRROR_FLIGHT,mirrorBlocked:!!(MLBD_BASE && hostBad(MLBD_BASE))}, vsp: VSP_POOL.length, vy: VIDY_OK.size, vyfresh: _vf, vyReady: vidyReadyCount(), vyBlocks: vidyBlockCounts(), vyRefill: VY_REFILL.stats(), vhg: (typeof VHG !== 'undefined' ? VHG : 0), pxpl: (typeof PXPL !== 'undefined' ? PXPL.size : 0), rtmq: RT_MQ_ST, dti: (typeof DT_IDX !== 'undefined' ? DT_IDX : 0), dtst: (typeof DT_ST !== 'undefined' ? DT_ST : 0), dtsh: (typeof DT_SH !== 'undefined' ? { on: DT_SH.on, src: DT_SH.src, pre: DT_SH.pre, loaded: DT_SH.loaded, hits: DT_SH.hits, miss: DT_SH.miss, cache: (typeof DT_SH_CACHE !== 'undefined' ? DT_SH_CACHE.size : 0), err: DT_SH.err, units: (DT_SH.man && DT_SH.man.units) || null, slugs: (DT_SH.man && DT_SH.man.slugs || []).length } : 0), lastreq: { el: LR.el, n: LR.total, pend: LR.pend, p: LR.path, sr: (LR.sr || []).map(x => x[0] + ':' + x[1] + '@' + x[2]) } }); } // v1.34.95, v1.34.105 // ★ v1.21.9: vy=verified vidy নোড, vyfresh=৪মিন-তাজা // v1.15.71: vsp=Vidsrc-পুল-আকার // v1.15.18: pxbench=সাইট-প্রমাণিত-বেঞ্চ (v1.15.8: nxpool=MB-বেঞ্চ)
+    if (p === '/_health') { const _vf = [...VIDY_OK.values()].filter(v => v.ts && Date.now() - v.ts < Number(process.env.PXFRESH || 240000)).length; return sendJson(res, 200, { ok: 1, cg: CG_ST, cgDead: CG_DEAD.size, cgSrc: Object.fromEntries([...CG_SRC].map(([k, v]) => [k, { ok: v.ok, fail: v.fail, down: v.down > Date.now() ? Math.round((v.down - Date.now()) / 1000) : 0 }])), version: VERSION, cache: CACHE_ST, bg: BG_ST, pwhy: PART_WHY, up: Math.round(process.uptime()), deploy: 'v' + VERSION, mmpool: { size: MM_POOL.length, bench: MM_SITE.size, resolverFresh: [...MM_RESOLVE_OK.values()].filter(t => Date.now() - t < 600000).length, resolverChecks: MM_RESOLVE_BENCH_STATS, cooling: [...MM_COOL.values()].filter(t => t > Date.now()).length, race: MM_RACE_ST }, pool: POOL.length, pxbench: POOL.filter(c => PX_SITE.has(c.px)).length, pxbf: PX_BF.size, memo: memo.size, gw: (typeof GW !== 'undefined' ? GW.size : -1), nx: NEXBASE ? 1 : 0, nxpool: NXBENCH, nxwaves: NXWAVES, nxsize: NXSIZE, tw: TWBASE ? 1 : 0, rt: RTBASE ? 1 : 0, mls: (process.env.MLSD !== '0') ? 1 : 0, mlsindex: require('./tools/mls-index-lab/runtime_index').stats(), mlslinks: Object.assign({active:mlsLinkRaceActive}, MLS_LINK_METRICS), mlbdRuntime: {queue:MLBD_WL.stats(),net:MLBD_NET_METRICS,mirrorReady:!!MLBD_BASE,mirrorFlight:!!MLBD_MIRROR_FLIGHT,mirrorBlocked:!!(MLBD_BASE && hostBad(MLBD_BASE))}, vsp: VSP_POOL.length, vy: VIDY_OK.size, vyfresh: _vf, vyReady: vidyReadyCount(), vyBlocks: vidyBlockCounts(), vyRefill: VY_REFILL.stats(), vyDiscovery: VY_DISCOVERY.stats(), vhg: (typeof VHG !== 'undefined' ? VHG : 0), pxpl: (typeof PXPL !== 'undefined' ? PXPL.size : 0), rtmq: RT_MQ_ST, dti: (typeof DT_IDX !== 'undefined' ? DT_IDX : 0), dtst: (typeof DT_ST !== 'undefined' ? DT_ST : 0), dtsh: (typeof DT_SH !== 'undefined' ? { on: DT_SH.on, src: DT_SH.src, pre: DT_SH.pre, loaded: DT_SH.loaded, hits: DT_SH.hits, miss: DT_SH.miss, cache: (typeof DT_SH_CACHE !== 'undefined' ? DT_SH_CACHE.size : 0), err: DT_SH.err, units: (DT_SH.man && DT_SH.man.units) || null, slugs: (DT_SH.man && DT_SH.man.slugs || []).length } : 0), lastreq: { el: LR.el, n: LR.total, pend: LR.pend, p: LR.path, sr: (LR.sr || []).map(x => x[0] + ':' + x[1] + '@' + x[2]) } }); } // v1.34.95, v1.34.105 // ★ v1.21.9: vy=verified vidy নোড, vyfresh=৪মিন-তাজা // v1.15.71: vsp=Vidsrc-পুল-আকার // v1.15.18: pxbench=সাইট-প্রমাণিত-বেঞ্চ (v1.15.8: nxpool=MB-বেঞ্চ)
     if (p === '/_mem') { /* ★ v1.28.1: মেমোরি-ডিয়াগনস্টিক — OOM-ক্ষতির কারন খুঁজতে (প্রমাণ: ব্যাটারি-চালাকালে node 896MB-তে kernel-OOM-kill) */
       const m = process.memoryUsage(); const sz = o => { try { return o instanceof Map ? o.size : (Array.isArray(o) ? o.length : -1); } catch (e) { return -1; } };
       // ★ v1.28.3-M4: সীমা + purge-পরিসংখ্যান (কতবার, কোন স্তরে) — প্রোডে "মেমরি ফুল" কেন, একনজরে
