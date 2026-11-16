@@ -193,7 +193,11 @@ export async function fetchJsonRotating(url, headers, opts = {}) {
     tried.add(px);
     const ac = new AbortController();
     aborts.add(ac);
-    const tmr = setTimeout(() => ac.abort(), ms);
+    // v1.34.256: a PROVEN exit answers the platform API in well under 1.5s (that is the pick() filter), so the
+    // first two hedges do not need the full budget. Dead exits now cost ~1.9s instead of 3-3.5s each while
+    // still leaving the slower retries their full window.
+    const tmo = started <= 2 ? Math.min(ms, Number(process.env.NX_FAST_MS || 1900)) : ms;
+    const tmr = setTimeout(() => ac.abort(), tmo);
     const t0 = Date.now();
     INFLIGHT.set(px, inflight(px) + 1);
     try {
