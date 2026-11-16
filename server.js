@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.238';
+const VERSION = '1.34.239';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -1183,7 +1183,7 @@ function tfail(k, tag) { const kk = (tag === 'sweep' ? 'sweep:' : '') + k; TST.e
 function ppath(tag, ok) { const k = (tag === 'sweep' ? 'sw' : 'srv'); const o = TST[k] || (TST[k] = { req: 0, ok: 0, fail: 0, e: {} }); o.req++; ok ? o.ok++ : o.fail++; return o; }
 function pbad(tag, k) { const o = ppath(tag, false); o.e[k] = (o.e[k] || 0) + 1; }
 function ptunAllowed(px) { const u = PTUN_COOL.get(px); return !(u && u > Date.now()); }
-function ptunDrop(px) { const t = PTUN.get(px); if (t) { try { t.s.destroy(); } catch (e) { } } PTUN.delete(px); }
+function ptunDrop(px, ent) { const cur = PTUN.get(px); const t = ent || cur; if (t) { try { t.s.destroy(); } catch (e) {} } if (!ent || cur === ent) PTUN.delete(px); }
 function ptunLive(px) {
   const t = PTUN.get(px); if (!t) return null;
   // v1.25.0 (measured): free proxies say "connection: keep-alive" but silently kill the socket afterwards.
@@ -1278,7 +1278,7 @@ async function apiGetT(px, url, tmo, hdrs, tag) { // vidy-কলের একম
     let r;
     try { r = await ptunReq(ent, url, tmo, hdrs, (reused && ent.used) ? Number(process.env.PXTFB || 900) : 0); }
     catch (e) { // ট্রান্সপোর্ট-মৃত্যু ⇒ টানেল ফেলে নতুন করে (এটা node-fail নয়, নিজের ভিতরেই সারানো হয়)
-      ent.busy = false; ptunDrop(px); last = e;
+      ent.busy = false; ptunDrop(px, ent); last = e;
       if (reused) { // পুনঃব্যবহার-ব্যর্থ = প্রক্সি keep-alive মিথ্যা বলছে ⇒ শিখে রাখি
         const n = (PX_NORE.get(px) || 0) + 1;
         if (n >= Number(process.env.PXNORE || 2)) { PX_NORE.set(px, n); tfail('ka-liar', tag); }
@@ -1295,7 +1295,7 @@ async function apiGetT(px, url, tmo, hdrs, tag) { // vidy-কলের একম
       TST.failr++; tfail('tun', tag); pbad(tag, 'tun'); if (DBG && tag !== 'sweep') console.error('[srvfail] tun ' + px + ' ' + String(e && e.message) + ' tmo=' + tmo + ' reused=' + (reused ? 1 : 0) + ' ms=' + ((VIDY_OK.get(px) || {}).ms || '?') + ' ' + String(url).replace(API, '').slice(0, 46)); throw e;
     }
     ent.busy = false;
-    if (r.keepAlive && !ent.s.destroyed && !PX_NORE.get(px)) { ent.ts = Date.now(); ent.used = (ent.used || 0) + 1; PTUN.set(px, ent); } else ptunDrop(px);
+    if (r.keepAlive && !ent.s.destroyed && !PX_NORE.get(px)) { ent.ts = Date.now(); ent.used = (ent.used || 0) + 1; const cur = PTUN.get(px); if (!cur || cur === ent || !cur.busy) { if (cur && cur !== ent) ptunDrop(px, cur); PTUN.set(px, ent); } else ptunDrop(px, ent); } else ptunDrop(px, ent);
     if (reused) PX_NORE.set(px, Math.max(0, (PX_NORE.get(px) || 0) - 1)); // সফল পুনঃব্যবহার ⇒ বিশ্বাস ফিরে
     TST.req++;
     if (r.code === 429) { TST.rate++; tfail('429', tag); pbad(tag, '429'); vpxBurn(px); PTUN_COOL.set(px, Date.now() + Number(process.env.PXTCF || 150000)); TST.failr++; throw Object.assign(new Error('rate_limited'), { code: 429 }); }
@@ -1328,7 +1328,7 @@ async function tunWarm(n) { // টানেল-ব্যাংক ভরা — 
     await Promise.all(Array.from({ length: Math.min(Number(process.env.PXTWC || 18), Math.max(1, cands.length)) }, async () => {   // v1.25.3: 6 -> 18 warm workers (3x)
       while (i < cands.length) {
         const px = cands[i++];
-        try { const e = await ptunOpen(px, Number(process.env.PXTWTO || 3500)); PTUN.set(px, e); _ok++; }
+        try { const e = await ptunOpen(px, Number(process.env.PXTWTO || 3500)); if (!PTUN.has(px)) { PTUN.set(px, e); _ok++; } else { try { e.s.destroy(); } catch (_) {} } }
         catch (err) { TST.dead++; PTUN_COOL.set(px, Date.now() + Number(process.env.PXTDC || 600000)); _bad++; }
       }
     }));
@@ -1633,7 +1633,14 @@ setInterval(() => {
 //   ভিন্ন-নোডে সোর্স কল করলে `http_401` / `decrypt failed: bad seed or tampered payload`।
 //   তাই race হয় **নোড-সেশনে**: প্রতি নোডে (১) seed, (২) sources — দুটোই সেই IP দিয়ে; প্রথম সম্পূর্ণ-সফল সেশন জেতে।
 const SEED_PX = new Map(); // px:mediaId -> {seed,ts} — ★ একই প্রক্সি-IP-তে একই মিডিয়ার সিড ২৫সে পুনঃব্যবহার (কোটা বাঁচে)
-async function seedViaPx(px, tmdbId, tmo) {
+const SEED_INFLIGHT = new Map();
+function seedViaPx(px, tmdbId, tmo) {
+  const key = px + ":" + tmdbId;
+  if (SEED_INFLIGHT.has(key)) return SEED_INFLIGHT.get(key);
+  const p = seedViaPxRaw(px, tmdbId, tmo).finally(() => { if (SEED_INFLIGHT.get(key) === p) SEED_INFLIGHT.delete(key); });
+  SEED_INFLIGHT.set(key, p); return p;
+}
+async function seedViaPxRaw(px, tmdbId, tmo) {
   const ck = px + ':' + tmdbId, hit = SEED_PX.get(ck);
   if (hit && Date.now() - hit.ts < 25000) return hit.seed;
   vpxCharge(px, 1); vpxSeedCharge(px);
@@ -2199,7 +2206,7 @@ function vpxCap(px) { return Math.min(VUSED, VCAP.get(px) || VUSED); } // first 
 function vpxLeftReal(px) { const e = VPX_USED.get(px); if (!e || Date.now() - e.ts > VWIN) return vpxCap(px); return Math.max(0, vpxCap(px) - e.n); }
 
 const VPX_BUSY = new Map();
-function vpxTake(px) { const n = VPX_BUSY.get(px) || 0; if (n >= Number(process.env.PXVPC || 1)) return false; VPX_BUSY.set(px, n + 1); return true; }
+function vpxTake(px, limit) { const n = VPX_BUSY.get(px) || 0; if (n >= (limit || Number(process.env.PXVPC || 1))) return false; VPX_BUSY.set(px, n + 1); return true; }
 function vpxFree(px) { const n = VPX_BUSY.get(px) || 0; if (n <= 1) VPX_BUSY.delete(px); else VPX_BUSY.set(px, n - 1); }
 function vidyNodeOk(px, ms) {
   const e = VIDY_OK.get(px) || { ms: ms, ts: 0, fails: 0, ok: 0 };
@@ -2506,6 +2513,11 @@ function vidySessionWithSeed(px, o, tmo) { // সিড আগেই আছে �
     return { ct: ct, seed: (o.sc && o.sc.seed) || '', px: px };
   }).catch(e => { pxsRec('vidy:' + o.srv, px, false, Date.now() - t0); throw e; });
 }
+// Explicitly exclude the separately maintained Bangladesh proxy list from Vidy.
+// General-pool nodes can have unknown/rotating exit locations; this is not a
+// substitute for verifying every proxy's actual egress country.
+const VY_KNOWN_BD = (() => { try { const d = JSON.parse(fs.readFileSync(path.join(__dirname, 'mls_px_bd.json'), 'utf8')); return new Set([...(d.good || []), ...(d.backup || [])].map(x => String(x).replace(/^[a-z0-9]+:\/\//i, '').split(':')[0])); } catch (_) { return new Set(); } })();
+const vyKnownBd = px => VY_KNOWN_BD.has(String(px || '').replace(/^[a-z0-9]+:\/\//i, '').split(':')[0]);
 async function vidyFetch(o) { // ★ v1.17.56: verified-pool **ক্রমবর্ধমান-হেজ** + গ্লোবাল-গেট + নোড-স্কোর
   // নীতি (ইউজার): stream fetch সবসময় প্রক্সি-পুল দিয়ে, প্লেব্যাক-লিংক সরাসরি CDN।
   //  • সেরা-স্কোর নোড আগে; #0 সঙ্গে-সঙ্গে, বাকিরা ৩৫০/৯০০/১৮০০/২৮০০ms-এ (কেউ জিতলেই বাকিরা বন্ধ)
@@ -2557,15 +2569,16 @@ async function vidyFetch(o) { // ★ v1.17.56: verified-pool **ক্রমব�
   // the chance that a server group gets nothing is 1e-7 or less, i.e. user-visible failure ~0.
   const Q = [], _sn = new Map(), SNMAX = Number(process.env.PXSN || 2), WAVES = Number(process.env.PXWAVES || 4); // ★ v1.34.21: ঢেউ ৩→৪ (মোট প্রার্থী-নোড বাড়ল)
   const offer = px => {
-    if (!px || Q.indexOf(px) >= 0 || snBanned(px) || vpxLeft(px) < 2 || (o.excl && o.excl.has(px))) return;   // v1.34.106: bade-dawa node (remint re-roll)
+    if (!px || vyKnownBd(px) || Q.indexOf(px) >= 0 || snBanned(px) || vpxLeft(px) < 2 || (o.excl && o.excl.has(px))) return;   // v1.34.106: bade-dawa node (remint re-roll)
     const s2 = sub24(px), used = _sn.get(s2) || 0;
     if (used >= SNMAX) return;
     _sn.set(s2, used + 1); Q.push(px);
   };
+  if (o.group) offer(o.group.first(o.srv));
   for (const px of hot) offer(px);
   for (const px of pool) { if (Q.length >= NQ * (process.env.PXWAVES ? WAVES : (_poor ? 1 : WAVES))) break; offer(px); }   // affinity first
-  if (sc.via === 'proxy' && sc.px) { const i2 = Q.indexOf(sc.px); if (i2 > 0) { Q.splice(i2, 1); Q.unshift(sc.px); } }
-  if (sc.via === 'proxy' && sc.px && Q.indexOf(sc.px) < 0) Q.unshift(sc.px); // সদ্য-যাচাই-করা IP আগে
+  if (sc.via === 'proxy' && sc.px && !vyKnownBd(sc.px)) { const i2 = Q.indexOf(sc.px); if (i2 > 0) { Q.splice(i2, 1); Q.unshift(sc.px); } }
+  if (sc.via === 'proxy' && sc.px && !vyKnownBd(sc.px) && Q.indexOf(sc.px) < 0) Q.unshift(sc.px); // সদ্য-যাচাই-করা IP আগে
   // ★ v1.25.0: প্রতি-নোড সময়সীমা — নোডের নিজের মাপা-লেটেন্সির সাথে (আগে সবার জন্য ২.২সে ⇒ ধীর নোড
   //   সারাক্ষণই read-timeout খেত)। বাকি-বাজেট থাকলে নোড-অনুযায়ী, নাহলে বাজেটই সীমা।
   const sesTmo = px => {
@@ -2576,7 +2589,8 @@ async function vidyFetch(o) { // ★ v1.17.56: verified-pool **ক্রমব�
     return Math.max(1200, Math.min(base, Number(process.env.PXVTO || 2600), left()));
   };
   const one = async px => {
-    if (ST.done || !vpxTake(px)) return null;
+    if (ST.done || !vpxTake(px, o.group ? 3 : undefined)) return null;
+    if (o.group && !o.group.take(px, o.srv)) { vpxFree(px); return null; }
     try { await vySlot(left()); } catch (e) { vpxFree(px); return null; }   // v1.34.124 (audit): gate-full-e vpxFree chhara chhilo — VPX_BUSY leak hoye node chirotore brick hoto (baki 6 call-site thik kore)
     try { return await vidySessionP(px, raceOptions, sesTmo(px)); }
     catch (e) { if (DBG && process.env.VJDBG) console.error('[vjob] ' + o.srv + ' ' + String(e && e.message).slice(0, 40)); return null; }
@@ -15725,6 +15739,8 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
     const viaProxy = true; // (ডিরেক্ট-পথ আমাদের IP-তে ৪২৯ ⇒ সবসময় প্রক্সি-পথের বাজেট)
     const ckFor = srv => ['srvc', VERSION, tmdbId, type, s || '', e || '', srv].join('|');
     const allow = srvOrder().filter(srv => !cfg || !Array.isArray(cfg.srv) || !cfg.srv.length || cfg.srv.indexOf(srv) >= 0); // cfg-সার্ভার-সাবসেট
+    const groupNodes = [...new Set([...pxplGoodAny(24), ...vidyVerifiedPick(999, 0)])].filter(px => !vyKnownBd(px));
+    const requestGroup = require('./tools/vidy-tests/proxy_groups.cjs').create(allow, groupNodes, 3);
     const one = async srv => {
       const ck = ['srvc', VERSION, tmdbId, type, s || '', e || '', srv].join('|');
       // v1.15.8 (ইউজার): SRV_CACHE/SRV_NEG-পাঠ-বিলোপ — প্রতি-ট্যাপ-লাইভ-স্ক্যান; নতুন/মিস-হওয়া-স্ট্রিম-পরের-ক্লিকেই-ধরা-পড়ে
@@ -15746,7 +15762,7 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
         // v1.11.2 FETCH-HEDGE: আটকে-যাওয়া-আপস্ট্রিম-উত্তরের (phoenix 4.9s, dallas/tampa 7.5s+) +2.5সে-পরে-আরেক-টা-একই-কল;
         // প্রথম-সফল-টা-জেতে, হেরে-যাওয়া-টা-বাদ। প্রতি-সার্ভার-এখনো-এক-স্ক্যান-ফল-দেয়।
         const _pgx = new Set([...pxplGood(srv, 40), ...pxplGoodAny(24)]);   // v1.34.108: playlist-proved node-er session diyei card (mint-warm/_mint click-ei kaj kore)
-        const vr = await vidyFetch({ srv: srv, tmdbId: tmdbId, q: q, sc: sc, collect: _pgx.size ? 1400 : 900, prefer: _pgx.size ? _pgx : null, foregroundDeadline: t0 + Number(process.env.VPICK || 6800) - 150 }); // ★ v1.17.54: নোড-সেশন রেস (seed+sources একই IP)   // v1.34.109: swap-window 1400 (stable node-er session 1–2.5s); bench khali hole opekkha noy
+        const vr = await vidyFetch({ srv: srv, tmdbId: tmdbId, q: q, sc: sc, group: requestGroup, collect: _pgx.size ? 1400 : 900, prefer: _pgx.size ? _pgx : null, foregroundDeadline: t0 + Number(process.env.VPICK || 6800) - 150 }); // ★ v1.17.54: নোড-সেশন রেস (seed+sources একই IP)   // v1.34.109: swap-window 1400 (stable node-er session 1–2.5s); bench khali hole opekkha noy
         const ct = vr.ct; // v1.17.39: ১২.৫সে হার্ড-ডেডলাইন ছিল নিছক সকেট-দখল (কাট সবসময় ≤৪.২সে)
         const j = JSON.parse(vidyDecrypt(ct, vr.seed, tmdbId)); // ★ সেশন-সিড দিয়েই ডিক্রিপ্ট (ভিন্ন-নোড-ডিক্রিপ্ট-ত
         // ★ v1.34.48: জয়ী নোডটা প্রতিটা প্লেলিস্ট-URL-এর সাথে বেঁধে রাখি — ক্লিকের সময় /vh/ প্রথমে **সেই নোড** দিয়েই
