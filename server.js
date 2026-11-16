@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.266';
+const VERSION = '1.34.267';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -3076,6 +3076,18 @@ function pooledGet(url, timeoutMs, n) {
 // vidy servers + NetHex (MovieBox direct-MP4) run in parallel; NetHex cards (♧, distinct style)
 // are appended after the vidy cards. Any NetHex failure/timeout/slow = vidy cards alone, never an error.
 const DBG = !!process.env.VDBG;
+// ---------- v1.34.267: প্রোডাকশন-ডায়াগনস্টিক ----------
+// প্রোডে m4u/mlb/hd শূন্য কার্ড দিচ্ছিল, অথচ লোকালে ঠিক (hd 7 · m4u 9 · mlb 8) ⇒ কোড-পার্স নয়,
+// পরিবহন/IP-স্তরের সমস্যা। দূর থেকে দেখা যায় না বলে লগের শেষ লাইনগুলো রিং-বাফারে রাখা হচ্ছে
+// (250 লাইন) — `/_trace?g=hd&n=60` দিয়ে পড়া যায়। কোনো কার্ড/ক্যাশ-আচরণ বদলায় না, খরচও নেই।
+const TRACE = { buf: [], max: 250 };
+{ const _ce = console.error.bind(console); console.error = function () {
+    try { const line = Array.prototype.map.call(arguments, a => (typeof a === 'string' ? a : String(a))).join(' ').replace(/\s+$/, '');
+      TRACE.buf.push(line.length > 400 ? line.slice(0, 400) : line);
+      if (TRACE.buf.length > TRACE.max) TRACE.buf.splice(0, TRACE.buf.length - TRACE.max);
+    } catch (_) { }
+    return _ce.apply(null, arguments);
+  }; }
 // ★ v1.27.18: প্রোডেশনে লগ দেখার উপায় -- স্ট্যাটিক রিং-বাফার (শেষ 600 লাইন), `/_diag` এন্ডপজেইন্টে দেখা যায়।
 //   mlbd/hm ফেল-কারণ (হোস্ট-ব্লক, পেজ-শূন্য, টাইম-ক্যাপ) এখানে জমা হয়।
 const DIAG = []; const DIAG_MAX = 600;
@@ -11059,6 +11071,24 @@ const M4U_FLY = new Map();   // nexdrive-url → {ts, url, ct, cl}
 //   curl ২০০ দেয় — এটাই কোডবেসের পুরোনো মাপা-সত্য (mlsbd.co-র নোট, v1.28.x)। তাই m4u-চেইনের সব হপ
 //   **curl-সাবপ্রসেস** দিয়ে (execFile, shell নয়; async — ইভেন্ট-লুপ আটকায় না)।
 const M4U_CURL = { ok: null };
+function m4uFetch0(u, opt) {
+  const T = Math.max(1500, opt.ms || 6000);
+  const hd = {
+    'User-Agent': M4U_UA4,
+    Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.9',
+    ...(opt.ref ? { Referer: opt.ref } : {})
+  };
+  const init = { headers: hd, redirect: opt.noredir ? 'manual' : 'follow', signal: AbortSignal.timeout(T) };
+  if (opt.head) init.method = 'HEAD';
+  if (opt.data) { init.method = 'POST'; init.headers = { ...hd, 'Content-Type': 'application/x-www-form-urlencoded' }; init.body = opt.data; }
+  return fetch(u, init).then(async r => {
+    const body = opt.head ? '' : await r.text().catch(() => '');
+    const hdr = ['location: ' + (r.headers.get('location') || ''), 'content-length: ' + (r.headers.get('content-length') || body.length)].join('\n');
+    const cut = body.length > (opt.maxBody || 1500000) ? body.slice(0, opt.maxBody || 1500000) : body;
+    return { st: r.status, ct: String(r.headers.get('content-type') || ''), size: cut.length, eu: r.url || u, body: cut, hdr: hdr, err: '' };
+  }).catch(() => null);
+}
 function m4uCurlOK() { if (M4U_CURL.ok === null) { try { require('child_process').execFileSync('curl', ['--version'], { stdio: 'ignore' }); M4U_CURL.ok = true; } catch (e) { M4U_CURL.ok = false; } } return M4U_CURL.ok; }
 // ★ গ্লোবাল-সেমাফোর: ফাস্ট-ফায়ার (একাধিক টাইটেল একসাথে) চাপে curl-প্রসেস ও বাফার একসাথে না জমুক
 const M4U_SEM = { n: 0, q: [], max: Number(process.env.M4UCONC || 6) };
@@ -11077,7 +11107,10 @@ function m4uCurl(u, opt) {
 function m4uCurl0(u, opt) {
   opt = opt || {};
   const cp = require('child_process'), fs = require('fs');
-  if (!m4uCurlOK()) return Promise.resolve(null);
+  // ★★ v1.34.267: প্রোড-কন্টেইনারে curl বাইনারি না-থাকলে (বা execFile বন্ধ) Movies4u-র **সব** কল
+  //   null হয়ে যেত ⇒ সোর্স শূন্য। এখন fetch-ভিত্তিক একই-আকৃতির প্রতিস্থাপন (`m4uFetch0`) ব্যবহার হয় —
+  //   একই হেডার/রিডাইরেক্ট/সাইজ-ক্যাপ, ফেরত-কাঠামো হুবহু এক ⇒ উপরের চেইনের কোনো বদল লাগে না।
+  if (!m4uCurlOK()) return m4uFetch0(u, opt);
   const tag = '/tmp/m4u_' + process.pid + '_' + Math.random().toString(36).slice(2, 8);
   const out = tag + '.o', hdr = tag + '.h';
   const a = ['-g', '-s', '-k', '--compressed', '-m', String(Math.max(2, Math.round((opt.ms || 6000) / 1000))),
@@ -18455,7 +18488,33 @@ const server = http.createServer((req, res) => FG_CONTEXT.run({ active: true }, 
       RT_INFLIGHT.set(kRT, pr);
       res = w;
     }
-    if (p === '/_health') { const _vf = [...VIDY_OK.values()].filter(v => v.ts && Date.now() - v.ts < Number(process.env.PXFRESH || 240000)).length; return sendJson(res, 200, { ok: 1, cg: CG_ST, cgDead: CG_DEAD.size, cgSrc: Object.fromEntries([...CG_SRC].map(([k, v]) => [k, { ok: v.ok, fail: v.fail, down: v.down > Date.now() ? Math.round((v.down - Date.now()) / 1000) : 0 }])), version: VERSION, cache: CACHE_ST, bg: BG_ST, pwhy: PART_WHY, up: Math.round(process.uptime()), deploy: 'v' + VERSION, mmpool: { size: MM_POOL.length, bench: MM_SITE.size, discovery: MM_DISCOVERY.stats(), resolverFresh: [...MM_RESOLVE_OK.values()].filter(t => Date.now() - t < 600000).length, resolverChecks: MM_RESOLVE_BENCH_STATS, pruned: MM_PRUNED, hub4k: MMHUB_ST, vidrift: VR_ST, cooling: [...MM_COOL.values()].filter(t => t > Date.now()).length, race: MM_RACE_ST }, pool: POOL.length, pxbench: POOL.filter(c => PX_SITE.has(c.px)).length, pxbf: PX_BF.size, memo: memo.size, gw: (typeof GW !== 'undefined' ? GW.size : -1), nx: NEXBASE ? 1 : 0, nxpool: NXBENCH, nxwaves: NXWAVES, nxsize: NXSIZE, tw: TWBASE ? 1 : 0, rt: RTBASE ? 1 : 0, mls: (process.env.MLSD !== '0') ? 1 : 0, mlsindex: require('./tools/mls-index-lab/runtime_index').stats(), mlslinks: Object.assign({active:mlsLinkRaceActive}, MLS_LINK_METRICS), mlbdRuntime: {queue:MLBD_WL.stats(),net:MLBD_NET_METRICS,mirrorReady:!!MLBD_BASE,mirrorFlight:!!MLBD_MIRROR_FLIGHT,mirrorBlocked:!!(MLBD_BASE && hostBad(MLBD_BASE))}, vsp: VSP_POOL.length, vy: VIDY_OK.size, vyfresh: _vf, vyReady: vidyReadyCount(), vyBlocks: vidyBlockCounts(), vyRefill: VY_REFILL.stats(), vyCoolRecheck: VY_COOLRC, vyDiscovery: VY_DISCOVERY.stats(), vhg: (typeof VHG !== 'undefined' ? VHG : 0), pxpl: (typeof PXPL !== 'undefined' ? PXPL.size : 0), rtmq: RT_MQ_ST, dti: (typeof DT_IDX !== 'undefined' ? DT_IDX : 0), dtst: (typeof DT_ST !== 'undefined' ? DT_ST : 0), dtsh: (typeof DT_SH !== 'undefined' ? { on: DT_SH.on, src: DT_SH.src, pre: DT_SH.pre, loaded: DT_SH.loaded, hits: DT_SH.hits, miss: DT_SH.miss, cache: (typeof DT_SH_CACHE !== 'undefined' ? DT_SH_CACHE.size : 0), err: DT_SH.err, units: (DT_SH.man && DT_SH.man.units) || null, slugs: (DT_SH.man && DT_SH.man.slugs || []).length } : 0), lastreq: { el: LR.el, n: LR.total, pend: LR.pend, p: LR.path, sr: (LR.sr || []).map(x => x[0] + ':' + x[1] + '@' + x[2]) } }); } // v1.34.95, v1.34.105 // ★ v1.21.9: vy=verified vidy নোড, vyfresh=৪মিন-তাজা // v1.15.71: vsp=Vidsrc-পুল-আকার // v1.15.18: pxbench=সাইট-প্রমাণিত-বেঞ্চ (v1.15.8: nxpool=MB-বেঞ্চ)
+    if (p === '/_health') { const _vf = [...VIDY_OK.values()].filter(v => v.ts && Date.now() - v.ts < Number(process.env.PXFRESH || 240000)).length; return sendJson(res, 200, { ok: 1, cg: CG_ST, cgDead: CG_DEAD.size, cgSrc: Object.fromEntries([...CG_SRC].map(([k, v]) => [k, { ok: v.ok, fail: v.fail, down: v.down > Date.now() ? Math.round((v.down - Date.now()) / 1000) : 0 }])), version: VERSION, curlOk: (() => { try { return m4uCurlOK(); } catch (_) { return null; } })(), cache: CACHE_ST, bg: BG_ST, pwhy: PART_WHY, up: Math.round(process.uptime()), deploy: 'v' + VERSION, mmpool: { size: MM_POOL.length, bench: MM_SITE.size, discovery: MM_DISCOVERY.stats(), resolverFresh: [...MM_RESOLVE_OK.values()].filter(t => Date.now() - t < 600000).length, resolverChecks: MM_RESOLVE_BENCH_STATS, pruned: MM_PRUNED, hub4k: MMHUB_ST, vidrift: VR_ST, cooling: [...MM_COOL.values()].filter(t => t > Date.now()).length, race: MM_RACE_ST }, pool: POOL.length, pxbench: POOL.filter(c => PX_SITE.has(c.px)).length, pxbf: PX_BF.size, memo: memo.size, gw: (typeof GW !== 'undefined' ? GW.size : -1), nx: NEXBASE ? 1 : 0, nxpool: NXBENCH, nxwaves: NXWAVES, nxsize: NXSIZE, tw: TWBASE ? 1 : 0, rt: RTBASE ? 1 : 0, mls: (process.env.MLSD !== '0') ? 1 : 0, mlsindex: require('./tools/mls-index-lab/runtime_index').stats(), mlslinks: Object.assign({active:mlsLinkRaceActive}, MLS_LINK_METRICS), mlbdRuntime: {queue:MLBD_WL.stats(),net:MLBD_NET_METRICS,mirrorReady:!!MLBD_BASE,mirrorFlight:!!MLBD_MIRROR_FLIGHT,mirrorBlocked:!!(MLBD_BASE && hostBad(MLBD_BASE))}, vsp: VSP_POOL.length, vy: VIDY_OK.size, vyfresh: _vf, vyReady: vidyReadyCount(), vyBlocks: vidyBlockCounts(), vyRefill: VY_REFILL.stats(), vyCoolRecheck: VY_COOLRC, vyDiscovery: VY_DISCOVERY.stats(), vhg: (typeof VHG !== 'undefined' ? VHG : 0), pxpl: (typeof PXPL !== 'undefined' ? PXPL.size : 0), rtmq: RT_MQ_ST, dti: (typeof DT_IDX !== 'undefined' ? DT_IDX : 0), dtst: (typeof DT_ST !== 'undefined' ? DT_ST : 0), dtsh: (typeof DT_SH !== 'undefined' ? { on: DT_SH.on, src: DT_SH.src, pre: DT_SH.pre, loaded: DT_SH.loaded, hits: DT_SH.hits, miss: DT_SH.miss, cache: (typeof DT_SH_CACHE !== 'undefined' ? DT_SH_CACHE.size : 0), err: DT_SH.err, units: (DT_SH.man && DT_SH.man.units) || null, slugs: (DT_SH.man && DT_SH.man.slugs || []).length } : 0), lastreq: { el: LR.el, n: LR.total, pend: LR.pend, p: LR.path, sr: (LR.sr || []).map(x => x[0] + ':' + x[1] + '@' + x[2]) } }); } // v1.34.95, v1.34.105 // ★ v1.21.9: vy=verified vidy নোড, vyfresh=৪মিন-তাজা // v1.15.71: vsp=Vidsrc-পুল-আকার // v1.15.18: pxbench=সাইট-প্রমাণিত-বেঞ্চ (v1.15.8: nxpool=MB-বেঞ্চ)
+    // ★ v1.34.267 (ডায়াগনস্টিক, হোস্ট-হোয়াইটলিস্টেড): প্রোড-IP থেকে একটি হপ সত্যিই খুলছে কি না দেখা।
+    //   শুধু GET, কেবল এই সোর্স-হোস্টগুলোর জন্য, উত্তর ৩০০ বাইটে কাটা — জেনেরিক প্রক্সি নয়।
+    if (p === '/_fetch') {
+      return (async () => {
+        const q = Object.fromEntries(new URL(req.url, 'http://x').searchParams);
+        const u = String(q.u || '');
+        const HOSTS = /^(?:[a-z0-9-]+\.)*(?:hdhubinfo\.com|hdhub4u\.[a-z]+|movies4u\.[a-z]+|movielinkbd\.[a-z]+|hblinks\.lol|hubcloud\.[a-z.]+|hubdrive\.[a-z]+|gamerxyt\.com)$/i;
+        let h = ''; try { h = new URL(u).hostname; } catch (_) { }
+        if (!/^https?:\/\//i.test(u) || !HOSTS.test(h)) return sendJson(res, 400, { err: 'host' });
+        const t0 = Date.now();
+        try {
+          const r = await fetch(u, { headers: { 'User-Agent': UA, Accept: 'text/html,application/json;q=0.9,*/*;q=0.8', ...(q.r ? { Referer: String(q.r) } : {}) }, redirect: 'follow', signal: AbortSignal.timeout(9000) });
+          const txt = await r.text().catch(() => '');
+          return sendJson(res, 200, { u: u, st: r.status, ms: Date.now() - t0, len: txt.length, ct: String(r.headers.get('content-type') || ''), eu: r.url, head: txt.slice(0, 300) });
+        } catch (e) {
+          return sendJson(res, 200, { u: u, st: 0, ms: Date.now() - t0, err: String((e && e.message) || e).slice(0, 120) });
+        }
+      })();
+    }
+    if (p === '/_trace') {
+      const q = Object.fromEntries(new URL(req.url, 'http://x').searchParams);
+      const g = String(q.g || ''), n = Math.max(1, Math.min(200, Number(q.n || 80) || 80));
+      let arr = TRACE.buf.slice(-n);
+      if (g) arr = TRACE.buf.filter(x => x.indexOf(g) >= 0).slice(-n);
+      return sendJson(res, 200, { n: arr.length, lines: arr });
+    }
     if (p === '/_mem') { /* ★ v1.28.1: মেমোরি-ডিয়াগনস্টিক — OOM-ক্ষতির কারন খুঁজতে (প্রমাণ: ব্যাটারি-চালাকালে node 896MB-তে kernel-OOM-kill) */
       const m = process.memoryUsage(); const sz = o => { try { return o instanceof Map ? o.size : (Array.isArray(o) ? o.length : -1); } catch (e) { return -1; } };
       // ★ v1.28.3-M4: সীমা + purge-পরিসংখ্যান (কতবার, কোন স্তরে) — প্রোডে "মেমরি ফুল" কেন, একনজরে
