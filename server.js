@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.277';
+const VERSION = '1.34.278';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -2743,21 +2743,38 @@ async function vidyFetch(o) { // ★ v1.17.56: verified-pool **ক্রমব�
   if (o.group) {
     if (o.group.refresh) o.group.refresh();
     const usable = p => !snBanned(p) && ptunAllowed(p) && vpxLeft(p) >= 2 && (VY_EXPLORE_FAIL.get(p) || 0) <= Date.now() && (VPX_BUSY.get(p) || 0) < 3;
-    const px = await require('./tools/vidy-runtime/wait_proxy.cjs').pick(o.group, o.srv, o.excl, usable, Math.min(Date.now() + 1300, o.foregroundDeadline || Date.now() + 1300));
-    if (!px) throw new Error('vidy-group-no-proxy');
-    if (o.attempted) o.attempted.add(px);
-    if (snBanned(px) || !ptunAllowed(px) || vpxLeft(px) < 2) throw new Error('vidy-group-unavailable');
-    if (!vpxTake(px, 3)) throw new Error('vidy-group-busy');
-    if (!o.group.take(px, o.srv)) { vpxFree(px); throw new Error('vidy-group-full'); }
-    let failed = false, gotSlot = false;
-    const raceOpts = Object.assign({}, o, { onSourceFailure: () => { failed = true; } });
-    try {
-      await vySlot(2600); gotSlot = true;
-      return await vidySessionP(px, raceOpts, Number(process.env.PXVTO || 2600));
-    } catch (e) {
-      if (failed && typeof o.onRaceFailure === 'function') o.onRaceFailure();
-      throw e;
-    } finally { if (gotSlot) vyFree(); vpxFree(px); }
+    const dl = Math.min(Date.now() + 1300, o.foregroundDeadline || Date.now() + 1300);
+    // ★★★ v1.34.278 (প্রোড-মাপা, ইউজার: "1st tap e maje moddhe stream miss hoi"):
+    //   গ্রুপ-পথে প্রতি-সার্ভারে **ঠিক একটি** নোড দেওয়া হত (PXVTO ২.৬সে)। ওই এক নোড ধীর/মৃত হলে
+    //   সার্ভারটা ২.৬-৩সে নষ্ট করে ব্যর্থ হত, আর same-click-retry (৪.৩সে) হয় নতুন নোড খুঁজতেই
+    //   VPICK (৮.৫সে) শেষ — প্রোড-লগ: `server-status … reno:pending munich:pending chicago:tun-timeout`
+    //   ⇒ প্রথম ট্যাপে ৬/৯ সার্ভার ⇒ কার্ড ৭-১১, দ্বিতীয় ট্যাপে ৯/৯ ⇒ ১২-১৫।
+    //   এখন **হেজ**: #১ সাথে সাথে, #২ VYHEDGE(৯০০ms) পরে ভিন্ন নোডে; যেটা আগে সফল সেটাই জেতে
+    //   (হেরে-যাওয়া শাখা নিজের কোটা ফেরত দেয়)। প্রতিটি নোডে ≤৩ সার্ভার নিয়ম অপরিবর্তিত।
+    const usedPx = new Set(o.excl ? [...o.excl] : []);
+    const lane = async (delay) => {
+      if (delay) await new Promise(r => setTimeout(r, delay));
+      const px = await require('./tools/vidy-runtime/wait_proxy.cjs').pick(o.group, o.srv, usedPx, usable, dl);
+      if (!px) throw new Error('vidy-group-no-proxy');
+      usedPx.add(px);
+      if (o.attempted) o.attempted.add(px);
+      if (snBanned(px) || !ptunAllowed(px) || vpxLeft(px) < 2) throw new Error('vidy-group-unavailable');
+      if (!vpxTake(px, 3)) throw new Error('vidy-group-busy');
+      if (!o.group.take(px, o.srv)) { vpxFree(px); throw new Error('vidy-group-full'); }
+      let failed = false, gotSlot = false;
+      const raceOpts = Object.assign({}, o, { onSourceFailure: () => { failed = true; } });
+      try {
+        await vySlot(2600); gotSlot = true;
+        return await vidySessionP(px, raceOpts, Number(process.env.PXVTO || 2600));
+      } catch (e) {
+        if (failed && typeof o.onRaceFailure === 'function') o.onRaceFailure();
+        throw e;
+      } finally { if (gotSlot) vyFree(); vpxFree(px); }
+    };
+    const hedge = String(process.env.VYHEDGE || '900') !== '0';
+    if (!hedge) return lane(0);
+    try { return await Promise.any([lane(0), lane(Number(process.env.VYHEDGE || 900))]); }
+    catch (e) { throw ((e && e.errors && e.errors[0]) || e); }   // আসল কারণ-বার্তা অক্ষত (server-status/breaker এই মেসেজ পড়ে)
   }
   // ★ v1.26.0: এক সিড-এক নোড (leader) — আগে এখানেই বেশিরভাগ কল সফল হয়ে যায়, সিড-কোটা বাঁচে
   if (process.env.PXLEAD === '1') {   // opt-in (মাপা: এক সিডে ৬টি sources সমান্তরালে ৩.২সে-তে ৬/৬ ২০০)
@@ -8905,6 +8922,40 @@ const MLBD_SEEDS = ['https://movielinkbd.com/', 'https://movielinkbd.at/', 'http
 const mlbdOn = cfg => (process.env.MLBD !== '0') && !(cfg && cfg.mlb === 0);
 let MLBD_BASE = '', MLBD_BASE_TS = 0, MLBD_BASE_WEAK = false; // WEAK = যাচাই-না-করা seed (কম সময় ক্যাশ)
 const MLBD_PATH_C = new Map();  // 'name|year|type' → {path, ts}   (স্থির-আইডি)
+// ★★ v1.34.278 (ইউজার: "movielinkbd 1st tap ei ana jai"): সার্চ-হপটাই সবচেয়ে ধীর ধাপ
+//   (মাপা: `search 17 qs=2 @4032ms`, সাইটের সাইনড মিরর/-q প্যারামিটার নিয়ে দ্বিতীয় চেষ্টাও লাগে)।
+//   আগে জানা-পোস্টের পাথ কেবল **মেমরিতে** থাকত ⇒ রিস্টার্ট/নতুন ইনস্ট্যান্সে (BeamUp ঘন ঘন
+//   রিস্টার্ট করে) প্রতিটি প্রথম-ট্যাপ আবার সার্চ করত ⇒ mlb প্রায়ই deadline-এ কাটা পড়ত।
+//   এখন পাথ-ক্যাশ ডিস্কে থাকে (mlbd_paths.json, ৪০০ এন্ট্রি, ৩০ দিন) ⇒ প্রথম ট্যাপেই সার্চ বাদ,
+//   সরাসরি পোস্ট-পেজ। পোস্ট-পেজ বদলালে `grab` ব্যর্থ হয় ⇒ তখন স্বাভাবিক সার্চ-পথেই ফলব্যাক।
+const MLBD_PC_FILE = require('path').join(__dirname, process.env.MLBD_PCF || 'mlbd_paths.json');
+const MLBD_PC_TTL = Number(process.env.MLBD_PCTTL || 30 * 24 * 3600e3);
+{
+  try {
+    const j = JSON.parse(require('fs').readFileSync(MLBD_PC_FILE, 'utf8'));
+    const now = Date.now(); let n = 0;
+    for (const k of Object.keys(j || {})) {
+      const e = j[k];
+      if (!e || !e.path || !/^\/(movie|series|anime|drama)\/[A-Za-z0-9_-]+$/.test(String(e.path))) continue;
+      if (now - (e.ts || 0) > MLBD_PC_TTL) continue;
+      MLBD_PATH_C.set(k, { path: e.path, ts: e.ts || now }); n++;
+    }
+    if (DBG) console.error('[mlbd-pc] loaded ' + n);
+  } catch (e) { }
+}
+let _mlbdPcSaveT = 0;
+function mlbdPcSave() {
+  const now = Date.now();
+  if (now - _mlbdPcSaveT < 60000) return;   // ডিবাউন্স — প্রতি মিনিটে একবার
+  _mlbdPcSaveT = now;
+  try {
+    const o = {}; let n = 0;
+    for (const [k, e] of MLBD_PATH_C) { if (n++ >= 400) break; if (e && e.path) o[k] = { path: e.path, ts: e.ts || now }; }
+    require('fs').writeFile(MLBD_PC_FILE + '.tmp', JSON.stringify(o), () => {
+      try { require('fs').renameSync(MLBD_PC_FILE + '.tmp', MLBD_PC_FILE); } catch (_) { }
+    });
+  } catch (e) { }
+}
 const MLBD_FILE_C = new Map();  // path → {toks:[], ts}              (স্থির-টোকেন)
 function mlbdNorm(s) { return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); }
 const MLBD_WL = require('./tools/mlbd-index/bounded_queue.cjs').create({limit:Math.max(1,Math.min(8,Number(process.env.MLBDC || 4))),maxQueue:24,waitMs:2500});
@@ -8943,7 +8994,10 @@ async function mlbdGet(u, opt) {
     if(!/(^|\.)movielinkbd\.(?:com|at|app|cc)$/i.test(h))return null;
     const left=BUD-(Date.now()-T0);if(left<900)return null;
     try {
-      const r=await mlbdLimit(()=>mlsCurl(u,{ms:Math.min(3200,left),referer:'https://movielinkbd.com/',returnHeaders:true}),left,Math.min(4000,left+250));
+      // ★ v1.34.278: ৩.২সে-ছাঁটাই ছিল সবচেয়ে ক্ষতিকর — curl-ই ৯০% সফল পথ (mlbdRuntime.net curlOk ৯৪/b>),
+      //   কিন্তু ধীর পেজে ৩.২সে-তে কেটে তারপর প্রক্সি/নোড-রিট্রাইতে আরও ৩-৫সে খরচ হত ⇒ প্রথম-ট্যাপ মিস।
+      //   এখন curl-কে MLBDCURLMS (৫.২সে) পর্যন্ত সময়, আর তার queue-টাস্ক ৬সে (আগে ৪সে-তেই task-timeout)।
+      const r=await mlbdLimit(()=>mlsCurl(u,{ms:Math.min(Number(process.env.MLBDCURLMS||5200),left),referer:'https://movielinkbd.com/',returnHeaders:true}),left,Math.min(Number(process.env.MLBDTASKMS||6000),left+250));
       if(r && r.st===200 && require('./tools/mlbd-index/proxy_validation.cjs').valid(r.body,u)){
         MLBD_NET_METRICS.curlOk++;hostOK(u);const cookie=(/set-cookie:\s*(mlbd_g2=[a-f0-9]{8,64})/i.exec(r.hdr||'')||[])[1]||'';return {st:200,loc:'',body:r.body,url:r.eu||u,cookie};
       }
@@ -9557,7 +9611,7 @@ async function mlbdStreams(name, year, type, s, e, cap) {
       if (r2.toks.length || !res) res = r2;
     }
     if (!res) return [];
-    if (res.usedPath) { MLBD_PATH_C.set(ck, { path: res.usedPath, ts: Date.now() }); if (MLBD_PATH_C.size > 400) MLBD_PATH_C.clear(); }
+    if (res.usedPath) { MLBD_PATH_C.set(ck, { path: res.usedPath, ts: Date.now() }); if (MLBD_PATH_C.size > 400) MLBD_PATH_C.clear(); try { mlbdPcSave(); } catch (_) { } }
     // v1.27.17 (user: "1080p website e thaka sotteo stream dicche na"): token-er nijer label theke
     //   quality jana jay -- tai (a) cap-er upore gele agei bad, (b) 1080p age, tarpor 720/480.
     const LAB = res.lab || {};
