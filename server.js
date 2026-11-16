@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.227';
+const VERSION = '1.34.228';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -8813,7 +8813,7 @@ async function mlbdOne(base, fileUrl, dl, labQ, labTxt) {
   const xcBranch = async () => {
     if (!/data-host=["']xcloud["']/i.test(H)) return [];
     try {
-      const hit=await require('./tools/mlbd-index/xcloud.cjs').resolve({html:H,base,name,quality:labQ,cookie:pg.cookie,
+      const hit=await require('./tools/mlbd-index/xcloud.cjs').resolve({html:H,base,name,quality:labQ,cookie:pg.cookie,trace:reason=>diag('mlbd','xcloud '+reason+' q='+labQ),
         get:async (url,opts)=>{
           const c=await mlbdXcLimit.run(()=>mlsCurl(url,{ms:Math.max(1000,Math.min(2200,dl-Date.now())),referer:opts.referer||fileUrl,noRedirect:!!opts.noRedirect,returnHeaders:!!opts.noRedirect,cookie:opts.cookie}),1000,2600);
           if(!c)return null;
