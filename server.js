@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.269';
+const VERSION = '1.34.270';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -3081,6 +3081,7 @@ const DBG = !!process.env.VDBG;
 // পরিবহন/IP-স্তরের সমস্যা। দূর থেকে দেখা যায় না বলে লগের শেষ লাইনগুলো রিং-বাফারে রাখা হচ্ছে
 // (250 লাইন) — `/_trace?g=hd&n=60` দিয়ে পড়া যায়। কোনো কার্ড/ক্যাশ-আচরণ বদলায় না, খরচও নেই।
 const TRACE = { buf: [], max: 250 };
+const PROBE_JOBS = new Map();   // v1.34.270: /_probe জব (সর্বোচ্চ ২০টি)
 { const _ce = console.error.bind(console); console.error = function () {
     try { const line = Array.prototype.map.call(arguments, a => (typeof a === 'string' ? a : String(a))).join(' ').replace(/\s+$/, '');
       TRACE.buf.push(line.length > 400 ? line.slice(0, 400) : line);
@@ -18594,34 +18595,44 @@ const server = http.createServer((req, res) => FG_CONTEXT.run({ active: true }, 
     if (p === '/_health') { const _vf = [...VIDY_OK.values()].filter(v => v.ts && Date.now() - v.ts < Number(process.env.PXFRESH || 240000)).length; return sendJson(res, 200, { ok: 1, cg: CG_ST, cgDead: CG_DEAD.size, cgSrc: Object.fromEntries([...CG_SRC].map(([k, v]) => [k, { ok: v.ok, fail: v.fail, down: v.down > Date.now() ? Math.round((v.down - Date.now()) / 1000) : 0 }])), version: VERSION, curlOk: (() => { try { return m4uCurlOK(); } catch (_) { return null; } })(), cache: CACHE_ST, bg: BG_ST, pwhy: PART_WHY, up: Math.round(process.uptime()), deploy: 'v' + VERSION, mmpool: { size: MM_POOL.length, bench: MM_SITE.size, discovery: MM_DISCOVERY.stats(), resolverFresh: [...MM_RESOLVE_OK.values()].filter(t => Date.now() - t < 600000).length, resolverChecks: MM_RESOLVE_BENCH_STATS, pruned: MM_PRUNED, hub4k: MMHUB_ST, vidrift: VR_ST, cooling: [...MM_COOL.values()].filter(t => t > Date.now()).length, race: MM_RACE_ST }, pool: POOL.length, pxbench: POOL.filter(c => PX_SITE.has(c.px)).length, pxbf: PX_BF.size, memo: memo.size, gw: (typeof GW !== 'undefined' ? GW.size : -1), nx: NEXBASE ? 1 : 0, nxpool: NXBENCH, nxwaves: NXWAVES, nxsize: NXSIZE, tw: TWBASE ? 1 : 0, rt: RTBASE ? 1 : 0, mls: (process.env.MLSD !== '0') ? 1 : 0, mlsindex: require('./tools/mls-index-lab/runtime_index').stats(), mlslinks: Object.assign({active:mlsLinkRaceActive}, MLS_LINK_METRICS), mlbdRuntime: {queue:MLBD_WL.stats(),net:MLBD_NET_METRICS,mirrorReady:!!MLBD_BASE,mirrorFlight:!!MLBD_MIRROR_FLIGHT,mirrorBlocked:!!(MLBD_BASE && hostBad(MLBD_BASE))}, vsp: VSP_POOL.length, vy: VIDY_OK.size, vyfresh: _vf, vyReady: vidyReadyCount(), vyBlocks: vidyBlockCounts(), vyRefill: VY_REFILL.stats(), vyCoolRecheck: VY_COOLRC, vyDiscovery: VY_DISCOVERY.stats(), vhg: (typeof VHG !== 'undefined' ? VHG : 0), pxpl: (typeof PXPL !== 'undefined' ? PXPL.size : 0), rtmq: RT_MQ_ST, dti: (typeof DT_IDX !== 'undefined' ? DT_IDX : 0), dtst: (typeof DT_ST !== 'undefined' ? DT_ST : 0), dtsh: (typeof DT_SH !== 'undefined' ? { on: DT_SH.on, src: DT_SH.src, pre: DT_SH.pre, loaded: DT_SH.loaded, hits: DT_SH.hits, miss: DT_SH.miss, cache: (typeof DT_SH_CACHE !== 'undefined' ? DT_SH_CACHE.size : 0), err: DT_SH.err, units: (DT_SH.man && DT_SH.man.units) || null, slugs: (DT_SH.man && DT_SH.man.slugs || []).length } : 0), lastreq: { el: LR.el, n: LR.total, pend: LR.pend, p: LR.path, sr: (LR.sr || []).map(x => x[0] + ':' + x[1] + '@' + x[2]) } }); } // v1.34.95, v1.34.105 // ★ v1.21.9: vy=verified vidy নোড, vyfresh=৪মিন-তাজা // v1.15.71: vsp=Vidsrc-পুল-আকার // v1.15.18: pxbench=সাইট-প্রমাণিত-বেঞ্চ (v1.15.8: nxpool=MB-বেঞ্চ)
     // ★ v1.34.267 (ডায়াগনস্টিক, হোস্ট-হোয়াইটলিস্টেড): প্রোড-IP থেকে একটি হপ সত্যিই খুলছে কি না দেখা।
     //   শুধু GET, কেবল এই সোর্স-হোস্টগুলোর জন্য, উত্তর ৩০০ বাইটে কাটা — জেনেরিক প্রক্সি নয়।
-    if (p === '/_probe') {   // v1.34.269: এক-সোর্স সরাসরি চালিয়ে সত্য মাপা (প্লেয়ারের ৯.৫সে ক্যাপ ছাড়া)
-      return (async () => {
-        const q = Object.fromEntries(new URL(req.url, 'http://x').searchParams);
-        const src = String(q.src || '').toLowerCase();
-        const imdb = String(q.imdb || 'tt0468569');
-        const T0 = Date.now();
+    if (p === '/_probe') {   // v1.34.270: এক-সোর্স সরাসরি মাপা — **জব-ভিত্তিক** (এজ-টাইমআউটে কাটে না)
+      const q = Object.fromEntries(new URL(req.url, 'http://x').searchParams);
+      if (q.job) {   // পোল
+        const j = PROBE_JOBS.get(String(q.job));
+        if (!j) return sendJson(res, 404, { err: 'job' });
+        return sendJson(res, 200, { done: j.done ? 1 : 0, ms: Date.now() - j.t0, res: j.res || null });
+      }
+      const src = String(q.src || '').toLowerCase();
+      const imdb = String(q.imdb || 'tt0468569');
+      const id = 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+      const job = { t0: Date.now(), done: false, res: null };
+      PROBE_JOBS.set(id, job);
+      if (PROBE_JOBS.size > 20) { try { PROBE_JOBS.delete(PROBE_JOBS.keys().next().value); } catch (_) { } }
+      (async () => {
         const off = TRACE.buf.length;
-        const res = { src: src, imdb: imdb, tmdb: 0, title: '', ms: 0, n: 0, sample: [], err: '' };
+        const out = { src: src, imdb: imdb, tmdb: 0, title: '', ms: 0, n: 0, sample: [], err: '' };
         try {
           const info = await Promise.race([findTmdbInfo(imdb, 'movie'), new Promise(r => setTimeout(() => r(null), 9000))]).catch(() => null);
           const tmdb = Number(info && (info.id || info.tmdb)) || 0;
           const name = String((info && (info.name || info.title)) || '');
           const yr = parseInt(String((info && info.year) || '').slice(0, 4), 10) || 0;
-          res.tmdb = tmdb; res.title = name;
+          out.tmdb = tmdb; out.title = name;
           if (!tmdb && !name) throw new Error('no-identity');
+          const org = 'https://' + (req.headers.host || 'probe.local');
           let cards = [];
-          if (src === 'm4u') cards = await m4uStreams(tmdb, name, 'movie', 0, 0, originOf(req), 0);
-          else if (src === 'hd') cards = await hdStreams(imdb, name, 'movie', 0, 0, originOf(req), 0);
+          if (src === 'm4u') cards = await m4uStreams(tmdb, name, 'movie', 0, 0, org, 0);
+          else if (src === 'hd') cards = await hdStreams(imdb, name, 'movie', 0, 0, org, 0);
           else if (src === 'mlb') cards = await mlbdStreams(name, yr, 'movie', 0, 0, 0);
-          else if (src === 'mm') cards = await mmStreams(tmdb, name, 'movie', 0, 0, originOf(req), 0, false);
-          else res.err = 'src?';
-          res.n = (cards || []).length;
-          res.sample = (cards || []).slice(0, 8).map(c => ({ n: String(c.name || ''), s: String(c._srv || c._src || ''), u: String(c.url || '').slice(0, 110), lazy: c._lazy ? 1 : 0 }));
-        } catch (e) { res.err = String((e && e.message) || e).slice(0, 160); }
-        res.ms = Date.now() - T0;
-        res.trace = TRACE.buf.slice(off).slice(-50);
-        return sendJson(res, 200, res);
-      })();
+          else if (src === 'mm') cards = await mmStreams(tmdb, name, 'movie', 0, 0, org, 0, false);
+          else out.err = 'src?';
+          out.n = (cards || []).length;
+          out.sample = (cards || []).slice(0, 8).map(c => ({ n: String(c.name || ''), s: String(c._srv || c._src || ''), u: String(c.url || '').slice(0, 110), lazy: c._lazy ? 1 : 0 }));
+        } catch (e) { out.err = String((e && e.message) || e).slice(0, 160); }
+        out.ms = Date.now() - job.t0;
+        out.trace = TRACE.buf.slice(off).slice(-60);
+        job.res = out; job.done = true;
+      })().catch(() => { job.done = true; });
+      return sendJson(res, 200, { job: id, started: 1 });
     }
     if (p === '/_fetch') {
       return (async () => {
