@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.233';
+const VERSION = '1.34.234';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -15796,8 +15796,9 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
       // ★ v1.17.26 (ইউজার: "4-5s e howar kotha"): ভিডি-ঢেউ পুরো ৬সে জিম্মি করত ⇒ ধাপে-ধাপে-হারভেস্ট:
       //   ৩+ সার্ভার-ঠিক থাকলেই ৩সে-তে, ১টা-ঠিক থাকলেই ৪.২সে-তে বাকি-ঝুলন্তগুলো কাটা পড়ে (শাস্তি নেই —
       //   তারা ব্যাকগ্রাউন্ডে শেষ হয়ে SRV_CACHE-এ জমে ⇒ পরের ট্যাপে পাওয়া যায়)।
+      // Do not harvest an empty wave: the remaining non-priority server can
+      // still return a first card before its own budget or VPICK expires.
       if (pend.size && el2 >= 2200 && (okWave >= 6
-        || (okWave === 0 && el2 >= (Number(process.env.VZERO || 4800)))   // ★ v1.17.56: ৪.০→৪.৮সে (vidy-সেশন দেরিতে ফেরে)
         || (okWave >= 3 && el2 >= (Number(process.env.VTHREE || 4200)))
         || (okWave >= 1 && el2 >= 4800)
         || (okWave >= 1 && el2 >= 4300 && allow.length - pend.size >= allow.length - 2))) {
@@ -15914,7 +15915,20 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP) { // titleP: টা�
       try { PART_WHY.vymiss = (PART_WHY.vymiss || 0) + 1; } catch (eP) { }
       if (DBG) console.error('[partial] বাদ-পড়া vidy-সার্ভার: [' + _miss.join(',') + '] চলমান=' + _pend + ' → ক্যাশে যাবে না');
     }
-    try { diag('vidy', 'resolver n=' + out.length + ' elapsed=' + (Date.now() - t0) + 'ms servers=' + rs.filter(r => r.ok).length + '/' + allow.length); } catch (_) {}
+    try {
+      diag('vidy', 'resolver n=' + out.length + ' elapsed=' + (Date.now() - t0) + 'ms servers=' + rs.filter(r => r.ok).length + '/' + allow.length);
+      const status = allow.map(srv => {
+        const r = rs.find(x => x && x.srv === srv);
+        if (!r) return srv + ':pending';
+        if (r.ok) return srv + ':ok' + (r.nfit || 0);
+        if (r.late) return srv + ':late';
+        if (r.empty) return srv + ':empty';
+        const msg = String(r.err && r.err.message || 'failed');
+        const code = /srv-breaker|srv-budget|vidy-timeout|vidy-allfail/.exec(msg);
+        return srv + ':' + (code ? code[0] : 'failed');
+      });
+      diag('vidy', 'server-status ' + status.join(' ') + ' @' + (Date.now() - t0) + 'ms');
+    } catch (_) {}
     if (DBG) console.error('[getsrc] returning @' + (Date.now() - t0) + 'ms n=' + out.length);
     if (!out.length && lastErr) throw lastErr;
     return out;
@@ -16656,6 +16670,9 @@ async function vhSegNeedsRelay(target, body) {
 }
 async function vhRewrite(body, target, origin) {
   const segRelay = await vhSegNeedsRelay(target, body);
+  // EXTINF identifies media segments even when their upstream URL ends in
+  // .m3u8. Treating such URLs as playlists breaks Atlanta's video playback.
+  const mediaPlaylist = /^#EXTINF:/m.test(String(body || ''));
   const _seq = [];
   const _out = String(body || '').split('\n').map(line => {
     const raw = line.trim();
@@ -16669,11 +16686,17 @@ async function vhRewrite(body, target, origin) {
       });
     }
     let abs = raw; try { abs = new URL(raw, target).toString(); } catch (e) { }
-    if (/\.m3u8(\?|$)/i.test(abs)) return vhRelay(abs, origin); // ভ্যারিয়েন্ট-প্লেলিস্টও রিলে
-    if (segRelay) _seq.push(abs);
-    return segRelay ? vhSegRelay(abs, origin) : abs;
+    if (!mediaPlaylist && /\.m3u8(\?|$)/i.test(abs)) return vhRelay(abs, origin); // variant playlist
+    let mediaRelay = segRelay;
+    // Atlanta's warmsquare segments masquerade as .m3u8 and are blocked on
+    // direct access; the existing segment relay has been validated for them.
+    if (mediaPlaylist && /\.m3u8(?:\?|$)/i.test(abs)) {
+      try { if (/(^|\.)warmsquare\.top$/i.test(new URL(abs).hostname)) mediaRelay = true; } catch (_) {}
+    }
+    if (mediaRelay) _seq.push(abs);
+    return mediaRelay ? vhSegRelay(abs, origin) : abs;
   }).join('\n');
-  if (segRelay && _seq.length > 1) { try { for (let i = 0; i < _seq.length; i++) { const nx = []; if (_seq[i + 1]) nx.push(_seq[i + 1]); if (_seq[i + 2]) nx.push(_seq[i + 2]); if (nx.length) VHS_NEXT.set(_seq[i], nx); } while (VHS_NEXT.size > 6000) VHS_NEXT.delete(VHS_NEXT.keys().next().value); } catch (e) { } }   // v1.34.122: prefetch-krom
+  if (_seq.length > 1) { try { for (let i = 0; i < _seq.length; i++) { const nx = []; if (_seq[i + 1]) nx.push(_seq[i + 1]); if (_seq[i + 2]) nx.push(_seq[i + 2]); if (nx.length) VHS_NEXT.set(_seq[i], nx); } while (VHS_NEXT.size > 6000) VHS_NEXT.delete(VHS_NEXT.keys().next().value); } catch (e) { } }   // v1.34.122: prefetch-krom
   return _out;
 }
 // ★ v1.34.46: vividstone-সেগমেন্ট পাইপ — আপস্ট্রিমে Referer দিয়ে টেনে হুবহু পাইপ (ডিস্ক/বাফার নেই)
