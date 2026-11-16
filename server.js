@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.229';
+const VERSION = '1.34.230';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -8444,7 +8444,7 @@ async function mlbdLimit(fn,ms,taskMs) { return MLBD_WL.run(fn,ms,taskMs); }
 const mlbdXcLimit = require('./tools/mlbd-index/bounded_queue.cjs').create({limit:2,maxQueue:8,waitMs:1000});
 const mlbdUltraLimit = require('./tools/mlbd-index/bounded_queue.cjs').create({limit:4,maxQueue:8,waitMs:300});
 function mlbdRangeBytes(url) {
- return new Promise(resolve=>require('child_process').execFile('curl',['-sS','--max-time','2','--max-filesize','2048','-r','0-1023','-A',UA,'-w','\nVIDY_RANGE=%{http_code}|%header{content-range}',url],{encoding:null,maxBuffer:4096,timeout:2400},(err,out)=>resolve(err?null:require('./tools/mlbd-index/direct_ultra.cjs').parse(out))));
+ return new Promise(resolve=>require('child_process').execFile('curl',['-sS','--max-time','2','--max-filesize','2048','-r','0-1023','-A',UA,'-D','-',url],{encoding:null,maxBuffer:32768,timeout:2400},(err,out)=>{if(err){diag('mlbd','ultra curl error='+String(err.code||'error'));return resolve(null)}const result=require('./tools/mlbd-index/direct_ultra.cjs').parse(out);if(!result)diag('mlbd','ultra bad-range-response');resolve(result)}));
 }
 
 const MLBD_NET_METRICS={curlOk:0,curlFail:0,proxyOk:0,queueTimeout:0,mirrorStarted:0};
@@ -8785,7 +8785,7 @@ async function mlbdOne(base, fileUrl, dl, labQ, labTxt) {
     const ultra=mp4&&worker&&require('./tools/mlbd-index/direct_ultra.cjs').candidate(mp4.u);
     if(ultra && left()>1800) try {
       const [a,b]=await mlbdUltraLimit.run(()=>Promise.all([mlbdRangeBytes(ultra),mlbdRangeBytes(worker.u)]),300,2500);
-      if(require('./tools/mlbd-index/direct_ultra.cjs').same(a,b))found.push({u:ultra,s:'One Click Ultra'});
+      const ok=require('./tools/mlbd-index/direct_ultra.cjs').same(a,b);diag('mlbd','ultra q='+labQ+' ranges='+Number(!!a)+'/'+Number(!!b)+' match='+Number(ok));if(ok)found.push({u:ultra,s:'One Click Ultra'});
     } catch (_) {}
     return found;
   };
