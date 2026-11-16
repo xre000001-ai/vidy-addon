@@ -72,8 +72,10 @@ async function runLimited(items, fn, limit = CONC) {
   await Promise.all(workers);
 }
 
+const PENDING = new Set();   // v1.34.255: boot-loaded rows that this process has NOT proven on the platform API yet
 const LASTOK = new Map();         // r-20261016k (রেজলভার-মানদণ্ড): url → শেষ-প্রমাণ-কখন (চেকার-ঢেউ বা লাইভ-ট্রাফিক)
 function noteGood(u, ms) {
+  PENDING.delete(u);   // proven by this process -> a first-class exit, not a saved guess
   const s = STATS.get(u) || { ok: 0, fail: 0, lat: null };
   s.ok += 1;
   s.lat = s.lat == null ? ms : Math.round(0.6 * s.lat + 0.4 * ms);
@@ -98,7 +100,7 @@ export function pick(exclude) {
     if (b && b > now) continue;
     const st = STATS.get(u);
     const ew = st && st.lat != null ? st.lat : 1200;   // TRAINED EWMA (ms); unproven ~= hopeful
-    if (ew <= 1500) el.push({ u, ew, inf: inflight(u) });
+    if (ew <= 1500) el.push({ u, ew, inf: inflight(u), pend: PENDING.has(u) ? 1 : 0 });
   }
   if (!el.length) {
     for (const u of POOL) {
@@ -115,7 +117,9 @@ export function pick(exclude) {
     }
     return best;
   }
-  el.sort((a, b) => a.ew - b.ew);                 // TRAINED: fastest first
+  // v1.34.255: a saved row from the pool file is a GUESS — the file is a snapshot and most of it is dead.
+  // Proven exits always outrank unproven ones, then trained latency decides.
+  el.sort((a, b) => (a.pend - b.pend) || (a.ew - b.ew));
   const top = el.slice(0, 4);
   top.sort((a, b) => a.inf - b.inf);              // spread load over the 4 fastest
   return top[0].u;
@@ -416,7 +420,7 @@ export async function poolOnce(force = false) {
 // ৬০০সে-অনুত্তপ → বেঞ্চ-কাটা (DEAD_AFTER-প্যারিটি); পাতলা-হলে ৯০সে-গার্ড-মান্য poolOnce-রিফিল (স্ট্রিমিং-ঢোকা)
 let CHK = 0, chkBusy = false; // chkBusy: ঢেউ-সর্বোচ্চ ~১৩সে (probe ৬সে+verify ৭সে) > ১২সে-ব্যবধান — ওভারল্যাপে-একই-১২-পুনঃপ্রোব-নিষিদ্ধ (রেজলভারের-সিকোয়েন্সিয়াল-লুপ-প্যারিটি)
 async function checkerWave() {
-  if (chkBusy || FETCHING || !POOL.length) return;
+  if (chkBusy || !POOL.length || (FETCHING && POOL.length < 12)) return;   // v1.34.255: a live bench keeps verifying while a harvest pass runs
   chkBusy = true;
   try {
   const now = Date.now();
@@ -430,10 +434,10 @@ async function checkerWave() {
   const sliceN = Math.max(16, Math.min(160, Math.ceil(POOL.length / 4))); // v1.34.65: bench 480-scale — wave slice cap 32 -> 96 // v1.34.127: 900-scale-e cap 160 (600s-proof-window-er bhetore puro bench ghore)
   const wave = POOL.filter(u => { const b = BAD.get(u); return !b || b <= now; })
     .filter(u => now - (LASTOK.get(u) || 0) >= GAP)
-    .sort((a, b) => (LASTOK.get(a) || 0) - (LASTOK.get(b) || 0))
+    .sort((a, b) => (PENDING.has(b) ? 1 : 0) - (PENDING.has(a) ? 1 : 0) || (LASTOK.get(a) || 0) - (LASTOK.get(b) || 0))
     .slice(0, sliceN);
+  CHK++;   // v1.34.255: an empty wave is still a wave — waves:0 in /health looked like a dead checker
   if (!wave.length) return;
-  CHK++;
   let cok = 0, cblind = 0, cdead = 0;
   await runLimited(wave, async (u) => {
     const p0 = await probe(u);
@@ -492,7 +496,34 @@ export function benchSave(force = false) {
     fs.writeFileSync(out, JSON.stringify(rows));
   } catch { }
 }
+// ★ v1.34.255: a restart used to start COLD — the trained file was only a candidate list for the next
+//   harvest pass, so right after every deploy the child answered `pool: -1/-0` and MB cards vanished for
+//   minutes (production `nxpool -1`). The saved bench now enters POOL immediately; the always-on wave
+//   re-verifies it in slices and a member that fails its proof is dropped by the normal rules.
+function bootLoad() {
+  for (const f of [process.env.NX_POOL_OUT, process.env.NX_POOL_FILE]) {
+    if (!f) continue;
+    let rows = null;
+    try { rows = JSON.parse(fs.readFileSync(f, 'utf8')); } catch { continue; }
+    if (!Array.isArray(rows) || !rows.length) continue;
+    const seen = new Set(POOL);
+    for (const x of rows) {
+      const px = String(x && (x.px || x));
+      if (!/^[\w.-]+:\d{2,5}$/.test(px)) continue;
+      const u = 'http://' + px;
+      if (seen.has(u)) continue;
+      seen.add(u); POOL.push(u);
+      PENDING.add(u);   // saved, not proven — the wave proves it, pick() only falls back to it
+      if (!STATS.get(u)) STATS.set(u, { ok: 0, fail: 0, lat: null });
+    }
+  }
+  POOL.sort((a, b) => ((STATS.get(a) || {}).lat || 1500) - ((STATS.get(b) || {}).lat || 1500));
+  if (POOL.length > BENCH_MAX) POOL.length = BENCH_MAX;
+  if (POOL.length) console.log('[pool] boot bench: ' + POOL.length + ' saved exits pre-loaded (wave re-verifies)');
+}
+
 export function poolStart() {
+  bootLoad();
   poolOnce(true);
   checkerStart(); // r-20261016k: ২৪ঘণ্টা-জাগ্রত ঢেউ (৯০সে-পূর্ণ-পাসের-বদলে — রেজলভারের-মতো; রিফিল-পাস-চেকার-থেকেই)
 }

@@ -11,7 +11,8 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.254';
+const V1NOTE_255 = 'v1.34.255 (ইউজার: "sob kisu revise daw, moviebox and multimovies er proxy pool ultra advance koro, spiderman 4K stream khutiye dekho") — ★ MM পুলের তিনটি আসল ত্রুটি: (১) ব্যাকগ্রাউন্ড ঢেউয়ের ৪.৫সে-বাজেট — মাপা: vidbolt-এ যাওয়া প্রক্সিগুলোই ৫–৯সে নেয় ⇒ প্রতিটি সৎ নোড "মৃত" গণ্য হতো (প্রোড bench ০, size ২১৮৯); এখন MMPROBE ৯সে। (২) এক-ব্যর্থতায় কুলিং — এখন দুই-স্ট্রাইক, এবং আমাদের নিজের সকেট-কিউ কখনো প্রক্সি-দোষ নয়। (৩) আসল সার্ভিং-সফলতাই এখন bench-এ যায় (রেসে জেতা নোড MM_SITE-এ)। সাথে MM-বেঞ্চের জন্য সংরক্ষিত সকেট-স্লাইস (MMSOCK ১৪, ভিডির মতোই — নইলে জেনেরিক স্ক্যানার তাকে অনাহারে রাখত) + বুটে পচা-স্ন্যাপশট ট্রিম (MMSEED ৭০০) + ঢেউ-লগ সবসময় দৃশ্যমান। ★ MovieBox চাইল্ড: রিস্টার্ট-পরেই ঠান্ডা বেঞ্চ (ট্রেইন-ফাইল শুধু প্রার্থী-তালিকা ছিল) ⇒ প্রোডে nxpool −১, size ৯; এখন সেভ করা বেঞ্চ বুটেই লোড হয়, ঢেউ হারভেস্ট-পাসে আটকে থাকে না, wave-কাউন্টার সত্য বলে, আর PENDING-ক্রমে শুধু-প্রমাণিত exit আগে (সেভ-ফাইলের অনুমান নয়)। মাপা (লোকাল): MB nxpool −১→১২৮–৪২১, nxsize ৯→৯০০, nxwaves ০→১৩+; MM tt22084616 ২৮ কার্ড, tt0468569 ৫–৭, Dark Knight nx ৭ কার্ড। ★ ৪K যাচাই (Spider-Man: Brand New Day, tt22084616): কার্ড আসল — ২০৬, video/mp4, ftyp+moov+hev1, মোট ৩,৯৩৬,০৩৫,৯০১ বাইট (~৩.৯৪GB), HEVC/h265 ২১৬০p; Range ০/৮MB/৩২MB/৬৪MB/১২৮MB-এ সঠিক Content-Range, কিন্তু ভারী প্রোবের পর Cloudflare TLS রিসেট দেয় ⇒ সোর্সটি IP-রেট-লিমিটেড; HEVC-অসমর্থ ডিভাইসে ছবি আসবে না।';
+const VERSION = '1.34.255';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -30,6 +31,7 @@ const SK = { on: process.env.SOCKS === '1', live: new Map(), liveN: 0, made: 0, 
 const SOCKMAX = Number(process.env.SOCKMAX || 160);
 const FG_CONTEXT = new (require('async_hooks').AsyncLocalStorage)();
 const VY_SOCKN = { n: 0 };                       // net sockets opened under the reserved Vidy-probe budget
+const MM_SOCKN = { n: 0 };                       // v1.34.255: reserved sockets for the MultiMovies resolver bench (pxCheckerWave otherwise starves it)
 const VY_SOCK_MAX = Number(process.env.VYSOCK || 64);   // small: other sources' pools must still get sockets
 const socketGate = require('./tools/vidy-runtime/socket_gate.cjs');
 function isLocalOnly(req) { const ip = String((req.headers['x-forwarded-for'] || req.socket.remoteAddress || '')).split(',')[0].trim(); return /^(127\.|::1$|::ffff:127\.)/.test(ip) || DBG; }
@@ -71,6 +73,9 @@ function isLocalOnly(req) { const ip = String((req.headers['x-forwarded-for'] ||
     // Background Vidy probing keeps a small reserved socket budget so playback never starves it
     // and the generic scanners cannot block replenishment completely.
     const vidyReserved = () => { const c = FG_CONTEXT.getStore(); if (!(c && c.vidy && !c.active) || VY_SOCKN.n >= VY_SOCK_MAX) return false; return vidyReadyCount() < Number(process.env.VYTARGET || 100); };
+    // v1.34.255: the MM bench used to compete for the same sockets as the generic scanner, lost, and cooled
+    // healthy nodes as dead (production bench stayed 0 with size 2189). Give it a small own slice.
+    const mmReserved = () => { const c = FG_CONTEXT.getStore(); if (!(c && c.mm && !c.active)) return false; return MM_SOCKN.n < Number(process.env.MMSOCK || 14); };
     if (!foreground() && SK.liveN >= capNow() && SK.queued > QMAX) {
       SK.dropped++; self.__sockGateRejected = true;
       process.nextTick(() => { try { self.once('error', () => {}); self.destroy(); } catch (_) {} });
@@ -78,11 +83,15 @@ function isLocalOnly(req) { const ip = String((req.headers['x-forwarded-for'] ||
     }
     return socketGate.schedule({
       socket: self,
-      allowed: () => foreground() || SK.liveN < capNow() || vidyReserved(),
+      allowed: () => foreground() || SK.liveN < capNow() || vidyReserved() || mmReserved(),
       open: () => {
         if (!foreground() && SK.liveN >= capNow() && vidyReserved()) {   // reserved slot for a Vidy probe
           VY_SOCKN.n++; SK.reserved = (SK.reserved || 0) + 1;
           try { self.once('close', () => { VY_SOCKN.n = Math.max(0, VY_SOCKN.n - 1); }); } catch (_) {}
+        }
+        else if (!foreground() && SK.liveN >= capNow() && mmReserved()) {   // reserved slot for an MM bench probe
+          MM_SOCKN.n++; SK.reserved = (SK.reserved || 0) + 1;
+          try { self.once('close', () => { MM_SOCKN.n = Math.max(0, MM_SOCKN.n - 1); }); } catch (_) {}
         }
         count(host, self); return origProto.apply(self, args);
       },
@@ -383,7 +392,18 @@ function bfBenchStart() {
 // parallel maps + own file — nothing here touches the vidy pool.
 const MM_CAP = 4620, MM_FILE = path.join(__dirname, 'vidy_mm_pool.json'); // v1.34.64: MM pool space 3x (1540->4620)
 let MM_POOL = []; try { for (const c of JSON.parse(fs.readFileSync(MM_FILE, 'utf8'))) if (c && c.px) MM_POOL.push({ px: c.px, ms: Number(c.ms) || 2000 }); } catch (e) { }
+// v1.34.255: the saved pool file is a SNAPSHOT — measured today, a 40-exit sample of it was 100% dead while
+// live discovery still finds working exits every minute. Booting with thousands of corpse rows burned the
+// whole probe budget on them. Keep only the fastest MMSEED rows (they are the plausible half) and let the
+// live discovery feed the rest; anything that never proves itself is pruned by the wave's TTL.
+try {
+  const seedN = Math.max(120, Math.min(Number(process.env.MMSEED || 700), MM_CAP));
+  if (MM_POOL.length > seedN) { MM_POOL.sort((a, b) => (a.ms || 2000) - (b.ms || 2000)); MM_POOL = MM_POOL.slice(0, seedN); }
+} catch (e) { }
 const MM_RUN = new Map(), MM_LASTOK = new Map(), MM_COOL = new Map(), MM_SITE = new Set(), MM_MISS = new Map();
+const MM_ADDED = new Map();     // px -> first time we saw it (pruning baseline for never-proven members)
+const MM_CHK = new Map();       // px -> last health probe (rotating wave, no re-probing the same hot nodes)
+for (const c of MM_POOL) if (!MM_ADDED.has(c.px)) MM_ADDED.set(c.px, Date.now());
 const MM_RACE_ST = { runs: 0, won: 0, invalid: 0, failed: 0, timeout: 0 };
 const MM_RESOLVE_OK = new Map(); // proxies verified on real resolver responses, independent of homepage bench
 const MM_RESOLVE_CHECKED = new Map();
@@ -767,7 +787,7 @@ function mmMiniBuild(masterUrl, wantH, raw, langLabel, alang) { // all qualities
   if (!vars.length) return null; // no variants -> caller falls back to raw
   return mmM3UJoin('', out.join('\n')); // v1.15.89: মাস্টার-আউটপুটেও #EXTM3U প্রথম লাইনে (আগে ট্যাগ দিয়েই শুরু হতো → অবৈধ মাস্টার)
 }
-let mmChkBusy = false;
+let mmChkBusy = false, mmWaves = 0;
 function mmSave() { try { fs.promises.writeFile(MM_FILE, JSON.stringify(MM_POOL)).catch(() => {}); } catch (e) { } }
 function pxRecMM(px, good, ms) {
   const h = MM_RUN.get(px) || { ok: 0, fail: 0, ms: 9999 };
@@ -775,33 +795,57 @@ function pxRecMM(px, good, ms) {
   else h.fail++;
   MM_RUN.set(px, h);
 }
-async function mmCheckerWave() { // pxCheckerWave's twin — bench = vidbolt reachable + alive
+async function mmCheckerWaveRaw() {  // pxCheckerWave's twin — health = the real resolver API first (that is what serves cards)
   if (mmChkBusy || !MM_POOL.length || Date.now() < MMR_ACTIVE_UNTIL) return; mmChkBusy = true;
   try {
     const tnow = Date.now();
-    const wave = MM_POOL.filter(c => (MM_COOL.get(c.px) || 0) <= tnow).sort((a, b) => (MM_LASTOK.get(a.px) || 0) - (MM_LASTOK.get(b.px) || 0)).slice(0, 420); // v1.15.68: ঢেউ ২×
+    const gap = Number(process.env.MMCHKGAP || 45000);
+    const width = Math.max(1, Math.min(Number(process.env.MMWAVE || 64), 420));
+    const probeTo = Math.max(2000, Number(process.env.MMPROBE || 9000));   // v1.34.255: 4.5s called slow exits dead
+    // v1.34.255: the old wave fired all 420 members every 8s and re-probed the same head of the list, so a
+    // node could be cooled by a generic timeout while another node was never tested at all. Now the wave is
+    // bounded, rotated by last-check time, and judged on the resolver API the cards actually use.
+    const wave = MM_POOL.filter(c => (MM_COOL.get(c.px) || 0) <= tnow && tnow - (MM_CHK.get(c.px) || 0) >= gap)
+      .sort((a, b) => (MM_CHK.get(a.px) || 0) - (MM_CHK.get(b.px) || 0)).slice(0, width);
     if (!wave.length) return;
+    const hd = { Referer: VB_REF, Origin: 'https://vidbolt.xyz', Accept: 'application/json' };
     await Promise.all(wave.map(c => new Promise(r2 => {
+      MM_CHK.set(c.px, Date.now());
       const t0 = Date.now();
-      proxiedGet(c.px, VB_REF, 6000).then(body => {
-        const ok = !!body && String(body).length >= 200;
-        pxRecMM(c.px, ok, Date.now() - t0);
-        if (ok) { MM_SITE.add(c.px); MM_MISS.delete(c.px); MM_COOL.delete(c.px); }
+      proxiedGet(c.px, 'https://vidbolt.xyz/api/resolve?type=movie&id=550', probeTo, hd).then(body => {
+        const ok = mmResolveHasSources(body), empty = !ok && mmResolveEmpty(body);
+        if (ok) { pxRecMM(c.px, true, Date.now() - t0); MM_SITE.add(c.px); MM_MISS.delete(c.px); MM_COOL.delete(c.px); MM_RESOLVE_OK.set(c.px, Date.now()); MM_RESOLVE_BENCH_STATS.valid++; }
+        else if (empty) { pxRecMM(c.px, true, Date.now() - t0); MM_SITE.add(c.px); MM_MISS.delete(c.px); MM_RESOLVE_BENCH_STATS.empty++; } // API answered: usable, just no sources for this id
         else { const m = (MM_MISS.get(c.px) || 0) + 1; if (m >= 2) { MM_SITE.delete(c.px); MM_MISS.set(c.px, 0); } else MM_MISS.set(c.px, m); }
         r2();
-      }).catch(() => { // vidbolt-blind -> alive = spare, dead = cooled
+      }).catch(e => { // resolver blind -> a cheap reachability probe decides alive/dead
+        if (/sock-gate/.test(String(e && e.message))) { r2(); return; }   // our own socket ceiling: never a proxy fault
         const t1 = Date.now();
-        MM_SITE.delete(c.px); MM_MISS.delete(c.px);
-        proxiedGet(c.px, PX_PROBE_URL, 4000).then(() => { pxRecMM(c.px, true, Date.now() - t1); r2(); }).catch(() => { pxRecMM(c.px, false, 0); MM_COOL.set(c.px, Date.now() + 120000); r2(); });
+        proxiedGet(c.px, PX_PROBE_URL, 6000).then(() => { pxRecMM(c.px, true, Date.now() - t1); MM_MISS.delete(c.px); r2(); }).catch(e2 => {
+          if (/sock-gate/.test(String(e2 && e2.message))) { r2(); return; }   // still our queue, still not a proxy fault
+          const m = (MM_MISS.get(c.px) || 0) + 1;
+          if (m >= 2) { MM_MISS.set(c.px, 0); pxRecMM(c.px, false, 0); MM_COOL.set(c.px, Date.now() + 120000); MM_SITE.delete(c.px); }
+          else MM_MISS.set(c.px, m);   // one blind probe after a previous success proves nothing
+          r2();
+        });
       });
     })));
     const t2 = Date.now();
     let cutN = 0;
-    for (let i = MM_POOL.length - 1; i >= 0 && MM_POOL.length > 600; i--) if (t2 - (MM_LASTOK.get(MM_POOL[i].px) || t2) > 600000) { const g = MM_POOL.splice(i, 1)[0]; cutN++; MM_RUN.delete(g.px); MM_LASTOK.delete(g.px); MM_COOL.delete(g.px); MM_SITE.delete(g.px); MM_MISS.delete(g.px); } // v1.34.64: floor 3x
-    if (cutN) mmSave(); // v1.15.29 revise: write only when members were cut (no idle disk churn)
-    if (DBG) console.error('[mmchk] pool=' + MM_POOL.length + ' bench=' + MM_POOL.filter(c => MM_SITE.has(c.px)).length);
+    // A member that has never proven anything is dropped after MMTTL; a proven member keeps its normal life.
+    const ttl = Number(process.env.MMTTL || 900000);
+    for (let i = MM_POOL.length - 1; i >= 0 && MM_POOL.length > 600; i--) {
+      const px = MM_POOL[i].px;
+      const last = Math.max(MM_LASTOK.get(px) || 0, MM_RESOLVE_OK.get(px) || 0, MM_ADDED.get(px) || 0);
+      if (t2 - last > ttl) { MM_POOL.splice(i, 1); cutN++; MM_RUN.delete(px); MM_LASTOK.delete(px); MM_COOL.delete(px); MM_SITE.delete(px); MM_MISS.delete(px); MM_ADDED.delete(px); MM_CHK.delete(px); }
+    }
+    if (cutN) mmSave();
+    if (DBG || process.env.MMDBG || (++mmWaves % 8 === 0)) console.error('[mmchk] pool=' + MM_POOL.length + ' bench=' + MM_SITE.size + ' wave=' + wave.length + ' cut=' + cutN + ' cool=' + MM_COOL.size);
   } finally { mmChkBusy = false; Promise.resolve(mmResolverBenchWave()).catch(() => {}); }
 }
+// v1.34.255: the wave runs inside its own async context so the socket gate can hand it the reserved slice
+// (otherwise every probe waits behind the generic scanner, times out, and a healthy node is blamed for our queue).
+function mmCheckerWave() { return FG_CONTEXT.run({ mm: true, active: false }, () => mmCheckerWaveRaw()); }
 function mmCheckerStart() { const loop = () => { setTimeout(() => { Promise.resolve(mmCheckerWave()).catch(() => { }).finally(loop); }, 8000); }; loop(); }
 mmResolverBenchStart();
 // The general homepage bench is not a resolver bench. Verify the actual API
@@ -817,7 +861,7 @@ async function mmResolverBenchWave() {
     await Promise.all(candidates.map(async c => {
       MM_RESOLVE_CHECKED.set(c.px, now); MM_RESOLVE_BENCH_STATS.checked++;
       try {
-        const body = await proxiedGet(c.px, 'https://vidbolt.xyz/api/resolve?type=movie&id=550', 4500, {Referer: VB_REF, Origin: 'https://vidbolt.xyz', Accept: 'application/json'});
+        const body = await proxiedGet(c.px, 'https://vidbolt.xyz/api/resolve?type=movie&id=550', Math.max(2000, Number(process.env.MMPROBE || 9000)), {Referer: VB_REF, Origin: 'https://vidbolt.xyz', Accept: 'application/json'});
         if (mmResolveHasSources(body)) { MM_RESOLVE_OK.set(c.px, Date.now()); MM_RESOLVE_BENCH_STATS.valid++; }
         else if (mmResolveEmpty(body)) MM_RESOLVE_BENCH_STATS.empty++;
         else MM_RESOLVE_BENCH_STATS.failed++;
@@ -878,7 +922,7 @@ function mmRacePool(url, n, timeoutMs, accept) { // racePool's twin over the mul
       const tP = Date.now();
       const hd = { Referer: VB_REF };
       if (mmRousav(url) || /\/api\/(?:resolve|source\/\d+|tv\/\d+\/\d+\/\d+)(?:[?#]|$)/i.test(url)) hd.Origin = 'https://vidbolt.xyz';
-      proxiedGet(c.px, url, timeoutMs, hd).then(body => { if (!mmValidBody(url, body) || (accept && !accept(body))) { MM_RACE_ST.invalid++; const e = new Error('mm-invalid-body'); e.neutral = /\/api\/resolve(?:[?#]|$)/i.test(url) && mmResolveEmpty(body); throw e; } pxRecMM(c.px, true, Date.now() - tP); if (/\/api\/resolve(?:[?#]|$)/i.test(url)) MM_RESOLVE_OK.set(c.px, Date.now()); if (done) return; done = true; MM_RACE_ST.won++; clearTimeout(to); resolve({ body, px: c.px }); })
+      proxiedGet(c.px, url, timeoutMs, hd).then(body => { if (!mmValidBody(url, body) || (accept && !accept(body))) { MM_RACE_ST.invalid++; const e = new Error('mm-invalid-body'); e.neutral = /\/api\/resolve(?:[?#]|$)/i.test(url) && mmResolveEmpty(body); throw e; } pxRecMM(c.px, true, Date.now() - tP); MM_SITE.add(c.px); MM_MISS.delete(c.px); MM_COOL.delete(c.px); if (/\/api\/resolve(?:[?#]|$)/i.test(url)) MM_RESOLVE_OK.set(c.px, Date.now()); if (done) return; done = true; MM_RACE_ST.won++; clearTimeout(to); resolve({ body, px: c.px }); })
         .catch(e => { if (!e || !e.neutral) pxRecMM(c.px, false, 0); if (++fails === cands.length && !done) { done = true; MM_RACE_ST.failed++; clearTimeout(to); reject(new Error('mm-pool-exhausted')); } });
     }
   });
@@ -986,7 +1030,7 @@ async function enrichPool() {
     POOL.length = 0; for (const c of next) POOL.push(c);
     if (n) { try { fs.promises.writeFile(POOL_FILE, JSON.stringify(POOL)).catch(() => {}); } catch (e) {} }
     // v1.15.28: the same harvest feeds the multimovies pool — its own bench then decides vidbolt-capable members
-    if (good.length) { const mseen = new Set(MM_POOL.map(c => c.px)); for (const g of good) { if (MM_POOL.length >= MM_CAP) break; if (!mseen.has(g.px)) { mseen.add(g.px); MM_POOL.push({ px: g.px, ms: g.ms }); } } mmSave(); }
+    if (good.length) { const mseen = new Set(MM_POOL.map(c => c.px)); for (const g of good) { if (MM_POOL.length >= MM_CAP) break; if (!mseen.has(g.px)) { mseen.add(g.px); MM_POOL.push({ px: g.px, ms: g.ms }); MM_ADDED.set(g.px, Date.now()); } } mmSave(); }
     { const vseen = new Set(VSP_POOL.map(c => c.px)); for (const g of good) { if (VSP_POOL.length >= VSP_CAP) break; if (!vseen.has(g.px)) { vseen.add(g.px); VSP_POOL.push({ px: g.px, ms: g.ms }); } } vspSave(); } // v1.15.71: Vidsrc-পুলও-একই-ফসল-থেকে
     if (DBG) console.error('[pool] enrich: +' + n + ' (মোট ' + POOL.length + ', প্রার্থী ' + cands.length + ')');
   } catch (e) { if (DBG) console.error('[pool] enrich-ERR ' + String(e && e.message).slice(0, 80)); } finally { _training = false; }
@@ -1120,7 +1164,7 @@ function proxiedGet(px, url, timeoutMs, hdrs, tag, wantBuf) {   // v1.34.98: wan
     const ci = px.indexOf(':');
     const phost = px.slice(0, ci), pport = Number(px.slice(ci + 1)) || 8080;
     const sock = net.connect({ host: phost, port: pport });
-    const hardTo = setTimeout(() => { sock.destroy(); reject(new Error('proxy-timeout')); }, timeoutMs);
+    const hardTo = setTimeout(() => { const gate = !!(sock.__sockGateQueued || sock.__sockGateRejected); sock.destroy(); reject(new Error(gate ? 'sock-gate-timeout' : 'proxy-timeout')); }, timeoutMs);   // v1.34.255: local socket limit is not a dead proxy
     const bail = e => { clearTimeout(hardTo); try { sock.destroy(); } catch (e2) {} reject(e); };
     sock.once('error', bail);
     sock.once('connect', () => sock.write('CONNECT ' + u.host + ':443 HTTP/1.1\r\nHost: ' + u.host + ':443\r\n\r\n'));
@@ -2265,9 +2309,14 @@ function vidyScore(px) {
 // pass on the same proxy before adding a node. It uses the existing quotas,
 // bans and slot locks and never modifies other sources' pools.
 function vidyBlockCounts() { const r = { total: VIDY_OK.size, banned: 0, cooling: 0, quota: 0, busy: 0, available: 0 }; for (const px of VIDY_OK.keys()) { if (snBanned(px)) r.banned++; else if (!ptunAllowed(px)) r.cooling++; else if (vpxLeft(px) < 2) r.quota++; else if (VPX_BUSY.get(px)) r.busy++; else r.available++; } return r; }
+let _vyReady = { at: 0, n: 0 };
 function vidyReadyCount() {
   const now = Date.now();
-  return [...VIDY_OK.entries()].filter(([px,e]) => e && e.ts && now - e.ts < 600000 && !snBanned(px) && ptunAllowed(px) && vpxLeft(px) >= 2 && !VPX_BUSY.get(px)).length;
+  const ttl = Number(process.env.VYREADYTTL || 1500);
+  if (now - _vyReady.at < ttl) return _vyReady.n;   // hot path: the socket gate polls this every 20ms
+  const n = [...VIDY_OK.entries()].filter(([px, e]) => e && e.ts && now - e.ts < 600000 && !snBanned(px) && ptunAllowed(px) && vpxLeft(px) >= 2 && !VPX_BUSY.get(px)).length;
+  _vyReady = { at: now, n };
+  return n;
 }
 // Lightweight source-specific discovery stays independent of the large shared
 // enrich wave (which may pause during playback or when its generic pool is full).
@@ -7807,7 +7856,7 @@ async function mmOrionMovie(tmdbId, origin, ms, isSeries, season, episode) {
 // Nova is an independent VidBolt provider, not a proxy-pool replacement.
 // Require an exact TMDB episode, trusted provider host, declared HD quality,
 // and a bounded media range response before adding any card.
-async function mmNova(tmdbId, isSeries, season, episode, ms) {
+async function mmNova(tmdbId, isSeries, season, episode, ms, origin) {
   if (!/^\d+$/.test(String(tmdbId || ''))) return [];
   if (isSeries && (!/^[1-9]\d*$/.test(String(season || '')) || !/^[1-9]\d*$/.test(String(episode || '')))) return [];
   const params = new URLSearchParams({tmdbId: String(tmdbId)});
@@ -7826,7 +7875,11 @@ async function mmNova(tmdbId, isSeries, season, episode, ms) {
         const ct = String(z.headers.get('content-type') || '').toLowerCase();
         if (z.body) z.body.cancel().catch(() => {});
         if (z.status !== 206 || !ct.startsWith('video/')) return null;
-        return {h: parseInt(x.quality,10), url:x.url, ref:VB_REF, mp4:1, lang:String(x.language || '').slice(0,60), aud:'', mini:0};
+        // v1.34.255 (measured): this provider hands out direct MP4s on bcdn.hakunaymatata.com behind
+        // scraper.vidbolt.xyz. The relay 403s/429s for some networks, so the card goes to the player through our
+        // own Range-capable MP4 relay instead of the public one; the upstream Referer stays in proxyHeaders.
+        const out = (h => (origin ? origin + '/mmr/' + Buffer.from(h).toString('base64url') + '/s.m4s' : h))(x.url);
+        return {h: parseInt(x.quality,10), url:out, ref:VB_REF, mp4:1, lang:String(x.language || '').slice(0,60), aud:'', mini:0};
       } catch (_) { return null; }
     }));
     return rows.filter(Boolean);
@@ -7851,7 +7904,7 @@ async function mmStreams(tmdbId, title, type, s, e, origin, maxh, rel) { // v1.1
     const u = isSeries ? (WOBASE + '/hls/tv/' + tmdbId + '/S' + (parseInt(s, 10) || 1) + '.json') : (WOBASE + '/hls/movie/' + tmdbId);
     const vbP = mmVidbolt(tmdbId, isSeries, s, e, left(), origin).catch(() => []);
     const orionP = mmOrionMovie(tmdbId, origin, left(), isSeries, s, e).catch(() => []); // exact episode; parallel with other providers
-    const novaP = mmNova(tmdbId, isSeries, s, e, left()).catch(() => []);
+    const novaP = mmNova(tmdbId, isSeries, s, e, left(), origin).catch(() => []);
     const subsP = woSubs(tmdbId, type, s, e, 2500).catch(() => []); // v1.15.99: সমান্তরালে সাবটাইটেল ফেচ (শেষে ব্লক না করা)
     // Each provider runs independently. A hung index, master or resolver must
     // not discard cards already obtained from another provider at the outer
@@ -19216,7 +19269,7 @@ function ensureNxChild(nxPort) { // v1.15.8: ৯০সে-অন্তর-7137-�
       if (Date.now() - lastSpawn < 180000) return;
       lastSpawn = Date.now();
       if (DBG) console.error('[nx-embed] ensure: চাইল্ড-নেই — পুনঃস্পন');
-      try { require('child_process').spawn(process.execPath, [path.join(__dirname, 'nethex', 'server.js')], { env: Object.assign({}, process.env, { PORT: String(nxPort), NX_POOL_FILE: MB_POOL_FILE, NX_POOL_OUT: MB_POOL_FILE, NX_BENCH_MAX: '900', NX_BOOT_TARGET: '120', NX_SAMPLE: '1200', NX_CONC: '28', NX_SEED_BUDGET: '80000', NX_VERIFY_GAP: '60000', NX_FRESH_SAMPLE: '900', NX_CARD_CAP: '40', NX_CAP_MS: '900' }), stdio: 'ignore' }); } catch (e) {}
+      try { require('child_process').spawn(process.execPath, [path.join(__dirname, 'nethex', 'server.js')], { env: Object.assign({}, process.env, { PORT: String(nxPort), NX_POOL_FILE: MB_POOL_FILE, NX_POOL_OUT: MB_POOL_FILE, NX_BENCH_MAX: '900', NX_BOOT_TARGET: '160', NX_SAMPLE: '1200', NX_CONC: '32', NX_SEED_BUDGET: '80000', NX_VERIFY_GAP: '45000', NX_FRESH_SAMPLE: '900', NX_CARD_CAP: '40', NX_CAP_MS: '900' }), stdio: 'ignore' }); } catch (e) {}
     });
     rq.on('timeout', () => { rq.destroy(); });
   }, 90000);
@@ -19261,7 +19314,7 @@ function startEmbeddedNx() {
       if (!fs.existsSync(path.join(__dirname, 'nethex', 'server.js'))) return resolve('');
       const nxPort = Number(process.env.PORT || 9000) + 137;   // ★ v1.34.151: bgStreamFetch-এর fallback (৯০০০)-এর সঙ্গে মিলল
       const child = require('child_process').spawn(process.execPath, [path.join(__dirname, 'nethex', 'server.js')], {
-        env: Object.assign({}, process.env, { PORT: String(nxPort), NX_POOL_FILE: MB_POOL_FILE, NX_POOL_OUT: MB_POOL_FILE, NX_BENCH_MAX: '900', NX_BOOT_TARGET: '120', NX_SAMPLE: '1200', NX_CONC: '28', NX_SEED_BUDGET: '80000', NX_VERIFY_GAP: '60000', NX_CARD_CAP: '40', NX_CAP_MS: '900' }), // v1.17.31: আমাদের-বীজ+বড়-বেঞ্চ
+        env: Object.assign({}, process.env, { PORT: String(nxPort), NX_POOL_FILE: MB_POOL_FILE, NX_POOL_OUT: MB_POOL_FILE, NX_BENCH_MAX: '900', NX_BOOT_TARGET: '160', NX_SAMPLE: '1200', NX_CONC: '32', NX_SEED_BUDGET: '80000', NX_VERIFY_GAP: '45000', NX_CARD_CAP: '40', NX_CAP_MS: '900' }), // v1.17.31: আমাদের-বীজ+বড়-বেঞ্চ
         stdio: 'ignore',
       });
       ensureNxChild(nxPort); // v1.15.8: বুট থেকেই-প্রহরী — চাইল্ড-বুটেই-ব্যর্থ-হলেও-৯০সে-অন্তর-যাচাই→পুনঃস্পন (আগে-স্থায়ী-off-হয়ে-যেত)
@@ -19276,7 +19329,7 @@ function startEmbeddedNx() {
         setTimeout(() => {   // ★ v1.34.167: ৯০সে → ৬০সে (দ্রুত ফেরা), প্রতিবার লগ
           try {
             const c3 = require('child_process').spawn(process.execPath, [path.join(__dirname, 'nethex', 'server.js')], {
-              env: Object.assign({}, process.env, { PORT: String(nxPort), NX_POOL_FILE: MB_POOL_FILE, NX_POOL_OUT: MB_POOL_FILE, NX_BENCH_MAX: '900', NX_BOOT_TARGET: '120', NX_SAMPLE: '1200', NX_CONC: '28', NX_SEED_BUDGET: '80000', NX_VERIFY_GAP: '60000', NX_CARD_CAP: '40', NX_CAP_MS: '900' }), // v1.17.31: আমাদের-বীজ+বড়-বেঞ্চ
+              env: Object.assign({}, process.env, { PORT: String(nxPort), NX_POOL_FILE: MB_POOL_FILE, NX_POOL_OUT: MB_POOL_FILE, NX_BENCH_MAX: '900', NX_BOOT_TARGET: '160', NX_SAMPLE: '1200', NX_CONC: '32', NX_SEED_BUDGET: '80000', NX_VERIFY_GAP: '45000', NX_CARD_CAP: '40', NX_CAP_MS: '900' }), // v1.17.31: আমাদের-বীজ+বড়-বেঞ্চ
               stdio: 'ignore',
             });
             c3.on('exit', () => { // v1.15.7 রাউন্ড-৮: respawn-চাইল্ড-মরলেও-আগে-যাচাই — 7137-তে-কেউ-সেবা-দিলে-'off'-বলা-মিথ্যা
