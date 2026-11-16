@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.244';
+const VERSION = '1.34.245';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -1183,6 +1183,9 @@ function tfail(k, tag) { const kk = (tag === 'sweep' ? 'sweep:' : '') + k; TST.e
 function ppath(tag, ok) { const k = (tag === 'sweep' ? 'sw' : 'srv'); const o = TST[k] || (TST[k] = { req: 0, ok: 0, fail: 0, e: {} }); o.req++; ok ? o.ok++ : o.fail++; return o; }
 function pbad(tag, k) { const o = ppath(tag, false); o.e[k] = (o.e[k] || 0) + 1; }
 function ptunAllowed(px) { const u = PTUN_COOL.get(px); return !(u && u > Date.now()); }
+// Transient CONNECT failures should not park a recently working node for ten
+// minutes. Never shorten an existing, stricter 403/429 or other cooldown.
+function ptunConnectFailCool(px) { const now = Date.now(), e = VIDY_OK.get(px) || {}; const recent = e.sessionProof && now - e.sessionProof < 600000; const ms = Number(process.env.PXTDC || (recent ? 45000 : 120000)); PTUN_COOL.set(px, Math.max(PTUN_COOL.get(px) || 0, now + ms)); }
 function ptunDrop(px, ent) { const cur = PTUN.get(px); const t = ent || cur; if (t) { try { t.s.destroy(); } catch (e) {} } if (!ent || cur === ent) PTUN.delete(px); }
 function ptunLive(px) {
   const t = PTUN.get(px); if (!t) return null;
@@ -1272,7 +1275,7 @@ async function apiGetT(px, url, tmo, hdrs, tag) { // vidy-কলের একম
     let ent = ptunLive(px), reused = !!(ent && !ent.busy && !PX_NORE.get(px));
     if (!reused) {
       try { ent = await ptunOpen(px, tmo); }
-      catch (e) { TST.dead++; PTUN_COOL.set(px, Date.now() + Number(process.env.PXTDC || 600000)); if (DBG && process.env.VJDBG) console.error('[tun] ✗ ' + px + ' ' + String(e && e.message)); throw e; }
+      catch (e) { TST.dead++; ptunConnectFailCool(px); if (DBG && process.env.VJDBG) console.error('[tun] ✗ ' + px + ' ' + String(e && e.message)); throw e; }
     }
     ent.busy = true; if (reused) TST.reuse++;
     let r;
@@ -1329,7 +1332,7 @@ async function tunWarm(n) { // টানেল-ব্যাংক ভরা — 
       while (i < cands.length) {
         const px = cands[i++];
         try { const e = await ptunOpen(px, Number(process.env.PXTWTO || 3500)); if (!PTUN.has(px)) { PTUN.set(px, e); _ok++; } else { try { e.s.destroy(); } catch (_) {} } }
-        catch (err) { TST.dead++; PTUN_COOL.set(px, Date.now() + Number(process.env.PXTDC || 600000)); _bad++; }
+        catch (err) { TST.dead++; ptunConnectFailCool(px); _bad++; }
       }
     }));
     if (DBG && (_ok || _bad)) console.error('[tunwarm] ok=' + _ok + ' dead=' + _bad + ' live=' + PTUN.size);
@@ -2233,20 +2236,25 @@ function vidyScore(px) {
 // Bounded Vidy-specific standby refill. Seed AND decrypted source data must
 // pass on the same proxy before adding a node. It uses the existing quotas,
 // bans and slot locks and never modifies other sources' pools.
+function vidyBlockCounts() { const r = { total: VIDY_OK.size, banned: 0, cooling: 0, quota: 0, busy: 0, available: 0 }; for (const px of VIDY_OK.keys()) { if (snBanned(px)) r.banned++; else if (!ptunAllowed(px)) r.cooling++; else if (vpxLeft(px) < 2) r.quota++; else if (VPX_BUSY.get(px)) r.busy++; else r.available++; } return r; }
 function vidyReadyCount() {
   const now = Date.now();
   return [...VIDY_OK.entries()].filter(([px,e]) => e && e.ts && now - e.ts < 600000 && !snBanned(px) && ptunAllowed(px) && vpxLeft(px) >= 2 && !VPX_BUSY.get(px)).length;
 }
 const VY_REFILL = require('./tools/vidy-runtime/active_refill.cjs').create({
   ready: vidyReadyCount,
-  target: 60, parallel: 12, busyParallel: 4,
-  isBusy: () => INFLIGHT_STREAM > 0 || Date.now() - LAST_STREAM_AT < 3000,
+  target: 100, parallel: 24, busyParallel: 6,
+  isBusy: () => INFLIGHT_STREAM > 0 || Date.now() - LAST_STREAM_AT < 3000 || SK.liveN >= 110,
   candidates: () => {
     const t = Date.now(), out = [], have = new Set();
     const add = px => { if (!px || have.has(px) || VIDY_OK.has(px) || VIDY_DROP.has(px) || snBanned(px) || !ptunAllowed(px) || VPX_BUSY.get(px) || vpxLeft(px) < 3 || t - (VIDY_TRIED.get(px) || 0) < 600000) return; have.add(px); out.push(px); };
+    // Prioritize current runtime successes, then newly discovered raw entries;
+    // seeded/stale cross-source nodes are only lower-confidence exploration.
+    for (const m of SPOOL.values()) for (const [px,e] of m) if (spoolFresh(e) && !e.seeded) add(px);
+    for (const c of POOL) if (c && PX_SITE.has(c.px)) add(c.px);
+    for (let i = PX_RAW.length - 1; i >= 0; i--) add(PX_RAW[i]);
     for (const c of POOL) add(c && c.px);
-    for (const m of SPOOL.values()) for (const [px, e] of m) if (spoolFresh(e)) add(px);
-    for (const px of PX_RAW) add(px);
+    for (const m of SPOOL.values()) for (const [px,e] of m) if (spoolFresh(e)) add(px);
     return out;
   },
   validate: async px => {
@@ -2570,7 +2578,8 @@ async function vidyFetch(o) { // ★ v1.17.56: verified-pool **ক্রমব�
   // lane; per-node quota, the global concurrency gate, and seed-IP pin remain.
   if (o.group) {
     if (o.group.refresh) o.group.refresh();
-    const px = o.group.pick(o.srv, o.excl, p => !snBanned(p) && ptunAllowed(p) && vpxLeft(p) >= 2 && (VY_EXPLORE_FAIL.get(p) || 0) <= Date.now() && (VPX_BUSY.get(p) || 0) < 3);
+    const usable = p => !snBanned(p) && ptunAllowed(p) && vpxLeft(p) >= 2 && (VY_EXPLORE_FAIL.get(p) || 0) <= Date.now() && (VPX_BUSY.get(p) || 0) < 3;
+    const px = await require('./tools/vidy-runtime/wait_proxy.cjs').pick(o.group, o.srv, o.excl, usable, Math.min(Date.now() + 1300, o.foregroundDeadline || Date.now() + 1300));
     if (!px) throw new Error('vidy-group-no-proxy');
     if (o.attempted) o.attempted.add(px);
     if (snBanned(px) || !ptunAllowed(px) || vpxLeft(px) < 2) throw new Error('vidy-group-unavailable');
@@ -18091,7 +18100,7 @@ const server = http.createServer((req, res) => {
       RT_INFLIGHT.set(kRT, pr);
       res = w;
     }
-    if (p === '/_health') { const _vf = [...VIDY_OK.values()].filter(v => v.ts && Date.now() - v.ts < Number(process.env.PXFRESH || 240000)).length; return sendJson(res, 200, { ok: 1, cg: CG_ST, cgDead: CG_DEAD.size, cgSrc: Object.fromEntries([...CG_SRC].map(([k, v]) => [k, { ok: v.ok, fail: v.fail, down: v.down > Date.now() ? Math.round((v.down - Date.now()) / 1000) : 0 }])), version: VERSION, cache: CACHE_ST, bg: BG_ST, pwhy: PART_WHY, up: Math.round(process.uptime()), deploy: 'v' + VERSION, mmpool: { size: MM_POOL.length, bench: MM_SITE.size, resolverFresh: [...MM_RESOLVE_OK.values()].filter(t => Date.now() - t < 600000).length, resolverChecks: MM_RESOLVE_BENCH_STATS, cooling: [...MM_COOL.values()].filter(t => t > Date.now()).length, race: MM_RACE_ST }, pool: POOL.length, pxbench: POOL.filter(c => PX_SITE.has(c.px)).length, pxbf: PX_BF.size, memo: memo.size, gw: (typeof GW !== 'undefined' ? GW.size : -1), nx: NEXBASE ? 1 : 0, nxpool: NXBENCH, nxwaves: NXWAVES, nxsize: NXSIZE, tw: TWBASE ? 1 : 0, rt: RTBASE ? 1 : 0, mls: (process.env.MLSD !== '0') ? 1 : 0, mlsindex: require('./tools/mls-index-lab/runtime_index').stats(), mlslinks: Object.assign({active:mlsLinkRaceActive}, MLS_LINK_METRICS), mlbdRuntime: {queue:MLBD_WL.stats(),net:MLBD_NET_METRICS,mirrorReady:!!MLBD_BASE,mirrorFlight:!!MLBD_MIRROR_FLIGHT,mirrorBlocked:!!(MLBD_BASE && hostBad(MLBD_BASE))}, vsp: VSP_POOL.length, vy: VIDY_OK.size, vyfresh: _vf, vyReady: vidyReadyCount(), vyRefill: VY_REFILL.stats(), vhg: (typeof VHG !== 'undefined' ? VHG : 0), pxpl: (typeof PXPL !== 'undefined' ? PXPL.size : 0), rtmq: RT_MQ_ST, dti: (typeof DT_IDX !== 'undefined' ? DT_IDX : 0), dtst: (typeof DT_ST !== 'undefined' ? DT_ST : 0), dtsh: (typeof DT_SH !== 'undefined' ? { on: DT_SH.on, src: DT_SH.src, pre: DT_SH.pre, loaded: DT_SH.loaded, hits: DT_SH.hits, miss: DT_SH.miss, cache: (typeof DT_SH_CACHE !== 'undefined' ? DT_SH_CACHE.size : 0), err: DT_SH.err, units: (DT_SH.man && DT_SH.man.units) || null, slugs: (DT_SH.man && DT_SH.man.slugs || []).length } : 0), lastreq: { el: LR.el, n: LR.total, pend: LR.pend, p: LR.path, sr: (LR.sr || []).map(x => x[0] + ':' + x[1] + '@' + x[2]) } }); } // v1.34.95, v1.34.105 // ★ v1.21.9: vy=verified vidy নোড, vyfresh=৪মিন-তাজা // v1.15.71: vsp=Vidsrc-পুল-আকার // v1.15.18: pxbench=সাইট-প্রমাণিত-বেঞ্চ (v1.15.8: nxpool=MB-বেঞ্চ)
+    if (p === '/_health') { const _vf = [...VIDY_OK.values()].filter(v => v.ts && Date.now() - v.ts < Number(process.env.PXFRESH || 240000)).length; return sendJson(res, 200, { ok: 1, cg: CG_ST, cgDead: CG_DEAD.size, cgSrc: Object.fromEntries([...CG_SRC].map(([k, v]) => [k, { ok: v.ok, fail: v.fail, down: v.down > Date.now() ? Math.round((v.down - Date.now()) / 1000) : 0 }])), version: VERSION, cache: CACHE_ST, bg: BG_ST, pwhy: PART_WHY, up: Math.round(process.uptime()), deploy: 'v' + VERSION, mmpool: { size: MM_POOL.length, bench: MM_SITE.size, resolverFresh: [...MM_RESOLVE_OK.values()].filter(t => Date.now() - t < 600000).length, resolverChecks: MM_RESOLVE_BENCH_STATS, cooling: [...MM_COOL.values()].filter(t => t > Date.now()).length, race: MM_RACE_ST }, pool: POOL.length, pxbench: POOL.filter(c => PX_SITE.has(c.px)).length, pxbf: PX_BF.size, memo: memo.size, gw: (typeof GW !== 'undefined' ? GW.size : -1), nx: NEXBASE ? 1 : 0, nxpool: NXBENCH, nxwaves: NXWAVES, nxsize: NXSIZE, tw: TWBASE ? 1 : 0, rt: RTBASE ? 1 : 0, mls: (process.env.MLSD !== '0') ? 1 : 0, mlsindex: require('./tools/mls-index-lab/runtime_index').stats(), mlslinks: Object.assign({active:mlsLinkRaceActive}, MLS_LINK_METRICS), mlbdRuntime: {queue:MLBD_WL.stats(),net:MLBD_NET_METRICS,mirrorReady:!!MLBD_BASE,mirrorFlight:!!MLBD_MIRROR_FLIGHT,mirrorBlocked:!!(MLBD_BASE && hostBad(MLBD_BASE))}, vsp: VSP_POOL.length, vy: VIDY_OK.size, vyfresh: _vf, vyReady: vidyReadyCount(), vyBlocks: vidyBlockCounts(), vyRefill: VY_REFILL.stats(), vhg: (typeof VHG !== 'undefined' ? VHG : 0), pxpl: (typeof PXPL !== 'undefined' ? PXPL.size : 0), rtmq: RT_MQ_ST, dti: (typeof DT_IDX !== 'undefined' ? DT_IDX : 0), dtst: (typeof DT_ST !== 'undefined' ? DT_ST : 0), dtsh: (typeof DT_SH !== 'undefined' ? { on: DT_SH.on, src: DT_SH.src, pre: DT_SH.pre, loaded: DT_SH.loaded, hits: DT_SH.hits, miss: DT_SH.miss, cache: (typeof DT_SH_CACHE !== 'undefined' ? DT_SH_CACHE.size : 0), err: DT_SH.err, units: (DT_SH.man && DT_SH.man.units) || null, slugs: (DT_SH.man && DT_SH.man.slugs || []).length } : 0), lastreq: { el: LR.el, n: LR.total, pend: LR.pend, p: LR.path, sr: (LR.sr || []).map(x => x[0] + ':' + x[1] + '@' + x[2]) } }); } // v1.34.95, v1.34.105 // ★ v1.21.9: vy=verified vidy নোড, vyfresh=৪মিন-তাজা // v1.15.71: vsp=Vidsrc-পুল-আকার // v1.15.18: pxbench=সাইট-প্রমাণিত-বেঞ্চ (v1.15.8: nxpool=MB-বেঞ্চ)
     if (p === '/_mem') { /* ★ v1.28.1: মেমোরি-ডিয়াগনস্টিক — OOM-ক্ষতির কারন খুঁজতে (প্রমাণ: ব্যাটারি-চালাকালে node 896MB-তে kernel-OOM-kill) */
       const m = process.memoryUsage(); const sz = o => { try { return o instanceof Map ? o.size : (Array.isArray(o) ? o.length : -1); } catch (e) { return -1; } };
       // ★ v1.28.3-M4: সীমা + purge-পরিসংখ্যান (কতবার, কোন স্তরে) — প্রোডে "মেমরি ফুল" কেন, একনজরে
