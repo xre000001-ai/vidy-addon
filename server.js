@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.267';
+const VERSION = '1.34.268';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -9104,6 +9104,23 @@ async function mlbdSearch(base, q, ms) {
     const year = (title.match(/\((\d{4})\)/) || [])[1] || '';
     items.push({ path: path, title: title.replace(/\([^)]*\)/g, ' ').trim(), year: year, category: m[2].toLowerCase(), type: /series|anime|drama/i.test(m[2]) ? 'series' : 'movie' });
   }
+  // ★★ v1.34.268 (প্রোড-মাপা): `movielinkbd.com/search?q=…` ৩০২ হয়ে **ল্যান্ডিং-পেজ** (`/?q=…`)
+  //   ফেরে — ৪০টি জনপ্রিয় আইটেম, সার্চ-ফল নয়। `valid()` কেবল `/movie/` লিংক দেখে বলে ওটা
+  //   "সফল" গণ্য হত ⇒ প্রোড-লগ: `search n=10/10 … no-title-match n=40` (কখনোই মিররে যায়নি),
+  //   আর mlb = ০ কার্ড। এখন কোয়েরি-সচেতন গ্রহণ: ফল-শিরোনামের মধ্যে কোয়েরির কোনো টোকেন না
+  //   মিললে ⇒ উত্তরটি বাতিল (`[]`) + বেস-কে WEAK ধরি ⇒ কলার নতুন **সাইনড মিরর** খুঁজে সার্চ করে।
+  if (items.length) {
+    let toks = [];
+    try { toks = String(mlsNorm(q) || '').split(' ').filter(w => w.length > 2); } catch (_) { toks = []; }
+    if (toks.length) {
+      const okRow = items.some(it => { const t = String(mlsNorm(it.title) || ''); return toks.some(w => t.includes(w)); });
+      if (!okRow) {
+        MLBD_BASE_WEAK = true;
+        if (DBG) console.error('[mlbd] landing-page n=' + items.length + ' base=' + String(base).replace(/^https?:\/\//, '') + ' q="' + q + '"');
+        return [];
+      }
+    }
+  }
   return items;
 }
 function mlbdSeasonOf(t) { // "Breaking Bad (2008) S04 [Ep 01-08 Added]" → 4 ; "S05 Completed" → 5 ; "Season 4" → 4
@@ -9605,9 +9622,36 @@ function hdTextFast(u, ref, ms) { // ★ v1.27.9: ছোট পেজ (hubdrive/
     .then(r => r.text().then(t => ({ st: r.status, t: t })).catch(() => ({ st: r.status, t: '' })))
     .catch(() => ({ st: 0, t: '' }));
 }
+// ★★ v1.34.268 (প্রোড-মাপা, ৩১-৮-২০২৬): `hubdrive.bar/file/...` প্রোড-IP থেকে **৬.৩-৮.৭সে** নেয়
+//   (লোকালে ~১সে), আর `hubcloud` ড্রাইভ-পেজও একই দলের। hd-চেইনে এই দুটি হপ অবশ্যম্ভাবী ⇒ ধীর
+//   ডিরেক্ট-পথেই ৯.৫সে ক্যাপ শেষ হয়ে যেত (প্রোড-লগ: `hubdrive-hop +2 drives=0` ⇒ ০ কার্ড)।
+//   এখন এই দুই হোস্টে আগে পুল-রেস (৫০+ যাচাই-করা নোড), ব্যর্থ হলেই ডিরেক্ট।
+const HD_SLOWPX = /^(?:[a-z0-9-]+\.)*(?:hubdrive|hubcloud)\.[a-z]+$/i;
 function hdText(u, ref, ms) { // ডিরেক্ট → (status 0/403/429/5xx) হলে পুল-রেস; 404/410 = চূড়ান্ত
   const h = { 'User-Agent': UA, 'Accept': 'text/html,application/json;q=0.9,*/*;q=0.8', 'Accept-Language': 'en-US,en;q=0.9' };
   if (ref) h.Referer = ref;
+  const _pxFirst = (() => { try { return process.env.HDPX !== '0' && HD_SLOWPX.test(new URL(u).hostname); } catch (_) { return false; } })();
+  if (_pxFirst) {
+    // ⚠️ উত্তর যাচাই: পুল/ডিরেক্ট কারো ভুল-পাতা (চ্যালেঞ্জ/এরর) ড্রাইভ-পেজ বলে গোনা যাবে না
+    // ⚠️ উত্তর-যাচাই **হোস্ট-সচেতন**: hubdrive পেজ আসলে কী চাই? ভেতরের hubcloud ড্রাইভ-লিংক।
+    //   কেবল "৩০০+ অক্ষর" দেখলে প্রক্সির ভুল-পাতাও (লিংক-শর্টনার/স্প্ল্যাশ) পাশ করে যেত ⇒ drives=0।
+    const _hst = (() => { try { return new URL(u).hostname.toLowerCase(); } catch (_) { return ''; } })();
+    const _good = r => {
+      const t = String((r && r.t) || '');
+      if (!(t.length > 300)) return false;
+      if (/just a moment|attention required|cf-error|access denied/i.test(t.slice(0, 4000))) return false;
+      if (/^hubdrive\./.test(_hst)) return /https?:\/\/hubcloud\.[a-z]+\/drive\//i.test(t);
+      if (/^hubcloud\./.test(_hst)) return t.length > 800 && /<title>/i.test(t);
+      return /<title>/i.test(t);
+    };
+    // ★★ পুল আর ডিরেক্ট **একসাথে** ছোটে — আগে যে-উত্তর যাচাই পাশ করে সেইটাই। প্রোডে hubdrive
+    //   ডিরেক্টে ৬-৯সে, পুলে দ্রুত ⇒ পুল জেতে; লোকালে ডিরেক্ট ~১সে ⇒ ডিরেক্ট জেতে (রিগ্রেশন নেই)।
+    const _dirP = _dir();
+    // ★★ v1.34.268: ক্রম গুরুত্বপূর্ণ — **ডিরেক্ট আগে**, পুল ১.২সে পরে ঢোকে (মাপা: লোকালে ডিরেক্ট
+    //   ~১সে-তে আসল পেজ দেয়, প্রোডে ৬-৯সে; তাই পুল কেবল তখনই জেতে যখন ডিরেক্ট সত্যিই ধীর)।
+    const _pxP = new Promise(r => { const t = setTimeout(() => r(_px()), Number(process.env.HDPXDELAY || 1200)); if (t.unref) t.unref(); }).then(_ok);
+    return Promise.any([_ok(_dirP), _pxP]).catch(() => _dirP);
+  }
   return fetch(u, { headers: h, redirect: 'follow', signal: AbortSignal.timeout(Math.max(900, ms)) })
     .then(r => r.text().then(t => ({ st: r.status, t: t })).catch(() => ({ st: r.status, t: '' })))
     .catch(() => ({ st: 0, t: '' }))
@@ -10191,81 +10235,121 @@ async function hdStreams(imdb, title, type, s, e, origin, maxh) { // v1.17.49: �
     const direct = [...new Set((html.match(/https:\/\/hubcloud\.[a-z]+\/drive\/[A-Za-z0-9_-]+/g) || []))].slice(0, 5);
     if (!wraps.length && !direct.length) { if (DBG) console.error('[hd] no-hub links @' + (Date.now() - T0) + 'ms'); return []; }
     if (DBG) console.error('[hd] post @' + (Date.now() - T0) + 'ms wrap=' + wraps.length + ' direct=' + direct.length);
-    const drives = [];
-    const wpages = await Promise.all(wraps.map(u => hdText(u, HD_BASE + '/', Math.min(2200, left())).catch(() => ({ t: '' }))));
-    const mDrv = [];
-    for (let i = 0; i < wpages.length; i++) {
-      const t = String(wpages[i].t || '');
+    // ★★ v1.34.268: প্রতি-hblinks-পেজ এক-একটি স্বাধীন চেইন (একই হপ, কিন্তু ওভারল্যাপ করা)।
+    //   পুরোনো ক্রম: সব wrap-পেজ ⇒ mDrv-জমা ⇒ সব hubdrive ⇒ drive ⇒ probe. প্রোডে hubdrive
+    //   ৬-৯সে নিলে ৯.৫সে ক্যাপেই drive শুরু হত না (মাপা: drives=0 ⇒ ০ কার্ড)। এখন চেইনগুলো
+    //   সমান্তরালে চলে আর hub পেলেই hdDrive — একটির দেরি অন্যটিকে আটকায় না।
+    const drives = []; const _dseen = new Set();
+    const addDrive = (hub, ttl) => { if (!hub || _dseen.has(hub) || drives.length >= 8) return; _dseen.add(hub); drives.push({ hub: hub, ttl: ttl }); };
+    const hdChain = async (w) => {
+      const pg2 = await hdText(w, HD_BASE + '/', Math.min(2400, left())).catch(() => ({ t: '' }));
+      const t = String(pg2.t || '');
       const hub = (t.match(/https:\/\/hubcloud\.[a-z]+\/drive\/[A-Za-z0-9_-]+/) || [])[0];
       const ttl = (t.match(/<title>([^<]*)<\/title>/) || [])[1] || '';
-      if (hub) drives.push({ hub: hub, ttl: ttl });
-      else for (const u2 of [...new Set((t.match(/https:\/\/hubdrive\.(?:bar|blog)\/file\/[A-Za-z0-9]+/g) || []))]) if (mDrv.indexOf(u2) < 0 && mDrv.length < 6) mDrv.push(u2);
-    }
-    if (mDrv.length) { // ★ v1.27.0: একই মাঝের-হপ (সিরিজে যেটা সবসময় লাগত)
-      const ep = await Promise.all(mDrv.map(u2 => hdText(u2, HD_BASE + '/', Math.min(2000, left())).catch(() => ({ t: '' }))));
-      for (const e2 of ep) {
+      if (hub) { addDrive(hub, ttl); return; }
+      const mids = [...new Set((t.match(/https:\/\/hubdrive\.(?:bar|blog)\/file\/[A-Za-z0-9]+/g) || []))].slice(0, 4);
+      if (!mids.length) return;
+      const eps = await Promise.all(mids.map(u2 => hdText(u2, HD_BASE + '/', Math.min(Number(process.env.HDHOPMS || 2600), left())).catch(() => ({ t: '' }))));
+      for (const e2 of eps) {
         const t2 = String(e2.t || '');
         const h2 = (t2.match(/https:\/\/hubcloud\.[a-z]+\/drive\/[A-Za-z0-9_-]+/) || [])[0];
         const tl2 = (t2.match(/<title>([^<]*)<\/title>/) || [])[1] || '';
-        if (h2) drives.push({ hub: h2, ttl: tl2 });
+        if (h2) addDrive(h2, tl2);
       }
-      if (DBG) console.error('[hd] hubdrive-hop +' + mDrv.length + ' drives=' + drives.length + ' @' + (Date.now() - T0) + 'ms');
-    }
-    for (const d of direct) drives.push({ hub: d, ttl: '' });
-    if (!drives.length) return [];
-    // ★ v1.27.2: hubcloud-ড্রাইভ (direct) আগেই সমান্তরালে রিজলভ শুরু — hop-শেষের অপেক্ষা নেই
-    const resolved = await Promise.all(drives.slice(0, 8).map(d => hdDrive(d.hub, Math.min(2400, left())).catch(() => null)));
-    const cands = [];
-    for (let i = 0; i < resolved.length; i++) {
-      const r = resolved[i]; if (!r) continue;
-      const info = hdFileOf(r.fn || drives[i].ttl);
-      for (const c of r.cands) cands.push({ u: c.u, k: c.k, h: info.h, fn: info.fn, tag: info.tag });
-    }
-    if (!cands.length) { if (DBG) console.error('[hd] no-cands @' + (Date.now() - T0) + 'ms'); return []; }
-    // ★ v1.17.49 (মাপা: Dorothy ৬.৬সে): সব প্রার্থী একসাথে প্রোব করলে pixeldrain-গেট (PD_MAX=6, m4u-ও
-    //   ব্যবহার করে) লাইনে দাঁড়িয়ে বাজেট খেয়ে ফেলে। তাই আগে **s3/workers** (গেট-মুক্ত, দ্রুত), পরে pd।
-    const prio = c => (c.k === 's3' ? 0 : c.k === 'wk' ? 1 : 2);
-    const uniqC = []; const seenU = new Set();
-    // ★ v1.17.49: **রেজোলিউশন-আগে** (পোস্টের ক্রম ৪৮০p-দিয়ে-শুরু ⇒ আগে ২১৬০p বাদ পড়ত), হোস্ট-ধরন tiebreak
-    for (const c of cands.slice().sort((a, b) => ((b.h || 0) - (a.h || 0)) || (prio(a) - prio(b)))) {
-      const uk = hdMirrorKey(c.u); if (seenU.has(uk)) continue; seenU.add(uk);
-      if (maxh && c.h && c.h > maxh) continue;
-      uniqC.push(c);
-    }
-    const proven = [];
-    const probeOne = async c => {
-      if (left() < 800) return false;
-      const pr = c.k === 'pd'
-        ? await pdProbe(c.u).then(x => ({ ok: !!(x && x.alive), sz: (x && x.total) || 0, nm: (x && x.name) || '' }))
-        : await hdProbe(c.u, Math.min(2800, left())).then(x => ({ ok: !!x.ok, sz: +((String(x.cr || '').match(/\/(\d+)\s*$/) || [])[1] || 0), nm: '' }));
-      if (pr.ok) { c.sz = pr.sz || 0; if (pr.nm && !c.fn) c.fn = hdFileOf(pr.nm).fn; proven.push(c); }
-      return pr.ok;
+      if (DBG) console.error('[hd] hubdrive-hop +' + mids.length + ' drives=' + drives.length + ' @' + (Date.now() - T0) + 'ms');
     };
-    const w1 = hdPickMirrors(uniqC, 24);
-    await Promise.all(w1.map(probeOne));
-    if (proven.length < 3 && left() > 1200) { // ২য় ঢেউ: বাকি pixeldrain-মিরর
-      const done = new Set(w1.map(c => c.u));
-      await Promise.all(uniqC.filter(c => c.k === 'pd' && !done.has(c.u)).slice(0, 3).map(probeOne));
-    }
-    if (!proven.length) { if (DBG) console.error('[hd] no-proven @' + (Date.now() - T0) + 'ms cands=' + cands.length); return []; }
-    proven.sort((a, b) => (b.h || 0) - (a.h || 0));
-    const out = [];
-    const us = new Set();
-    for (const c of proven) {
-      if (us.has(c.u)) continue; us.add(c.u); // Same-size files on distinct mirrors are not duplicate URLs.
-      if (out.length >= Number(process.env.HDCAP || 24)) break;
-      const ttl = String(hit.title || title || '').replace(/\s*\|.*$/, '').slice(0, 78);
-      const gb = c.sz ? ' \u00b7 ' + (c.sz > 1e9 ? (c.sz / 1e9).toFixed(1) + 'GB' : Math.round(c.sz / 1e6) + 'MB') : '';
-      const txt = '\u29c9 ' + ttl + '\n\u29e0 Movie\n\u229e HDHub4u' + (c.tag ? ' \u2317 ' + c.tag : '') + (c.h ? ' \u00b7 ' + c.h + 'p' : '') + gb;
-      out.push({
-        name: '\u25a5 ' + (c.h ? String(c.h) : 'Auto') + ' \u25a5', title: txt, description: txt, quality: String(c.h || ''),
-        url: c.u, behaviorHints: { notWebReady: false, isBingeable: true, proxyHeaders: { request: { 'User-Agent': UA } }, filename: (c.fn || 'hdhub4u.mkv') },
-        bingeGroup: 'hd|' + String(title || ttl).toLowerCase() + '::'
-      });
-    }
-    if (DBG) console.error('[hd] cards=' + out.length + ' @' + (Date.now() - T0) + 'ms');
-    hdCards('hm:' + (imdb || title), out);
-    return out;
+    for (const d of direct) addDrive(d, '');
+    if (!drives.length && wraps.length) await Promise.all(wraps.map(w => hdChain(w).catch(() => { })));
+    if (!drives.length) { if (DBG) console.error('[hd] no-drives @' + (Date.now() - T0) + 'ms'); return []; }
+    if (DBG) console.error('[hd] drives=' + drives.length + ' @' + (Date.now() - T0) + 'ms');
+    // ★ v1.27.2: hubcloud-ড্রাইভ (direct) আগেই সমান্তরালে রিজলভ শুরু — hop-শেষের অপেক্ষা নেই
+    // ★★ v1.34.268 (প্রোড-মাপা): hubcloud-ড্রাইভ পেজ আমাদের **নিজের লেজি-পথে** (/m4g/<b64>/v.m3u8
+    //   → m4uFinalFor → m4uHubFinal) প্লে-সময়ে রিজলভ হয় ⇒ প্লের আগেই drive+probe-এ ৫-৭সে খরচ করে
+    //   ক্যাপে-কাটা ০ কার্ড দেওয়ার দরকার নেই (প্রোড-লগ: drives=0/no-proven ⇒ ০ কার্ড)। প্রমাণ-পথ
+    //   আগে HDRACE (৩সে) সময় পায়; শেষ না হলে **lazy কার্ড** — কোয়ালিটি হাব-পেজের শিরোনাম থেকে।
+    const hdLazyCards = () => {
+      const b = String(origin || '').replace(/\/+$/, '') || PUB_BASE_DEF;
+      const o2 = []; const seenQ = new Set();
+      for (const d of drives) {
+        const info = hdFileOf(d.ttl || '');
+        const q = info.h || 0;
+        if (maxh && q && q > maxh) continue;
+        const key = q + '|' + hdMirrorKey(d.hub);
+        if (seenQ.has(key)) continue; seenQ.add(key);
+        const txt2 = '\u29c9 ' + (String(title || '').replace(/\s*\|.*$/, '').slice(0, 78) || 'HDHub4u')
+          + '\n\u229e HDHub4u \u00b7 HubCloud' + (q ? ' \u00b7 ' + q + 'p' : '');
+        o2.push({
+          name: '\u25a5 ' + (q ? String(q) : 'Auto') + ' \u25a5', title: txt2, description: txt2, quality: String(q || ''),
+          url: b + '/m4g/' + Buffer.from(String(d.hub)).toString('base64url') + '/v.m3u8',
+          _srv: 'HubCloud', _lazy: true,
+          behaviorHints: { notWebReady: false, isBingeable: true, filename: info.fn || 'hdhub4u.mkv' },
+          bingeGroup: 'hd|' + String(title || '').toLowerCase() + '::'
+        });
+      }
+      return o2.slice(0, Number(process.env.HDCAP || 24));
+    };
+    const _prove = async () => {
+      const resolved = await Promise.all(drives.slice(0, 8).map(d => hdDrive(d.hub, Math.min(Number(process.env.HDDRVMS || 2600), left())).catch(() => null)));
+      const cands = [];
+      for (let i = 0; i < resolved.length; i++) {
+        const r = resolved[i]; if (!r) continue;
+        const info = hdFileOf(r.fn || drives[i].ttl);
+        for (const c of r.cands) cands.push({ u: c.u, k: c.k, h: info.h, fn: info.fn, tag: info.tag });
+      }
+      if (!cands.length) { if (DBG) console.error('[hd] no-cands @' + (Date.now() - T0) + 'ms'); return []; }
+      // ★ v1.17.49 (মাপা: Dorothy ৬.৬সে): সব প্রার্থী একসাথে প্রোব করলে pixeldrain-গেট (PD_MAX=6, m4u-ও
+      //   ব্যবহার করে) লাইনে দাঁড়িয়ে বাজেট খেয়ে ফেলে। তাই আগে **s3/workers** (গেট-মুক্ত, দ্রুত), পরে pd।
+      const prio = c => (c.k === 's3' ? 0 : c.k === 'wk' ? 1 : 2);
+      const uniqC = []; const seenU = new Set();
+      // ★ v1.17.49: **রেজোলিউশন-আগে** (পোস্টের ক্রম ৪৮০p-দিয়ে-শুরু ⇒ আগে ২১৬০p বাদ পড়ত), হোস্ট-ধরন tiebreak
+      for (const c of cands.slice().sort((a, b) => ((b.h || 0) - (a.h || 0)) || (prio(a) - prio(b)))) {
+        const uk = hdMirrorKey(c.u); if (seenU.has(uk)) continue; seenU.add(uk);
+        if (maxh && c.h && c.h > maxh) continue;
+        uniqC.push(c);
+      }
+      const proven = [];
+      const probeOne = async c => {
+        if (left() < 800) return false;
+        const pr = c.k === 'pd'
+          ? await pdProbe(c.u).then(x => ({ ok: !!(x && x.alive), sz: (x && x.total) || 0, nm: (x && x.name) || '' }))
+          : await hdProbe(c.u, Math.min(2800, left())).then(x => ({ ok: !!x.ok, sz: +((String(x.cr || '').match(/\/(\d+)\s*$/) || [])[1] || 0), nm: '' }));
+        if (pr.ok) { c.sz = pr.sz || 0; if (pr.nm && !c.fn) c.fn = hdFileOf(pr.nm).fn; proven.push(c); }
+        return pr.ok;
+      };
+      const w1 = hdPickMirrors(uniqC, 24);
+      await Promise.all(w1.map(probeOne));
+      if (proven.length < 3 && left() > 1200) { // ২য় ঢেউ: বাকি pixeldrain-মিরর
+        const done = new Set(w1.map(c => c.u));
+        await Promise.all(uniqC.filter(c => c.k === 'pd' && !done.has(c.u)).slice(0, 3).map(probeOne));
+      }
+      if (!proven.length) { if (DBG) console.error('[hd] no-proven @' + (Date.now() - T0) + 'ms cands=' + cands.length); return []; }
+      proven.sort((a, b) => (b.h || 0) - (a.h || 0));
+      const out = [];
+      const us = new Set();
+      for (const c of proven) {
+        if (us.has(c.u)) continue; us.add(c.u); // Same-size files on distinct mirrors are not duplicate URLs.
+        if (out.length >= Number(process.env.HDCAP || 24)) break;
+        const ttl = String(hit.title || title || '').replace(/\s*\|.*$/, '').slice(0, 78);
+        const gb = c.sz ? ' \u00b7 ' + (c.sz > 1e9 ? (c.sz / 1e9).toFixed(1) + 'GB' : Math.round(c.sz / 1e6) + 'MB') : '';
+        const txt = '\u29c9 ' + ttl + '\n\u29e0 Movie\n\u229e HDHub4u' + (c.tag ? ' \u2317 ' + c.tag : '') + (c.h ? ' \u00b7 ' + c.h + 'p' : '') + gb;
+        out.push({
+          name: '\u25a5 ' + (c.h ? String(c.h) : 'Auto') + ' \u25a5', title: txt, description: txt, quality: String(c.h || ''),
+          url: c.u, behaviorHints: { notWebReady: false, isBingeable: true, proxyHeaders: { request: { 'User-Agent': UA } }, filename: (c.fn || 'hdhub4u.mkv') },
+          bingeGroup: 'hd|' + String(title || ttl).toLowerCase() + '::'
+        });
+      }
+      if (DBG) console.error('[hd] cards=' + out.length + ' @' + (Date.now() - T0) + 'ms');
+      hdCards('hm:' + (imdb || title), out);
+      return out;
+    };
+    const _proven = await Promise.race([
+      _prove().catch(() => null),
+      new Promise(r => { const t = setTimeout(() => r(null), Number(process.env.HDRACE || 3000)); if (t.unref) t.unref(); })
+    ]);
+    if (_proven && _proven.length) return _proven;
+    const _lz = hdLazyCards();
+    if (DBG) console.error('[hd] lazy=' + _lz.length + ' proven=' + (_proven ? _proven.length : 'timeout') + ' @' + (Date.now() - T0) + 'ms');
+    return _lz;
    })(), hard]).then(v => (v === 'deadline' ? [] : v)).then(v => {
     const u2 = hdCards('hm:' + (imdb || title), v);                        // ★ v1.27.2: শেষ-জীবিত-সেট সংরক্ষণ (v1.26.6: merge)
     if (v && v.length) return u2 || v;
@@ -11547,7 +11631,8 @@ async function m4uTdMdisk(mdisk) {
 //     → `https://<hex>.r2.cloudflarestorage.com/hub/<hex>?X-Amz-…` = **Download [FSL Server]**
 //   প্রমাণ: `Range: bytes=1000000-1001023` ⇒ **206 + content-range 1000000-1001023/518921856**,
 //   `Accept-Ranges: bytes`, সই ৮ ঘণ্টা বৈধ ⇒ রিজিউম + সিক দুটোই আসল থেকে চলে।
-function m4uHubHost(h) { return /(?:^|\.)hubcloud\.(?:ist|pw|fans|xyz|site|life|cc|ws|to|ink)$/i.test(String(h || '')); }
+// ★★ v1.34.268: লাইভ hubcloud ডোমেইন এখন `hubcloud.mov` (মাপা: hubdrive পেজে `https://hubcloud.mov/drive/...`) — পুরোনো TLD-তালিকায় `.mov` ছিল না ⇒ HD-র lazy কার্ড (এবং `.td`-পথ) ওই ড্রাইভকে চিনত না, m4uHFast-এ ঠেকে ব্যর্থ হত। তালিকা এখন উদার (যেকোনো সাধারণ TLD), হোস্ট-নামেই `hubcloud.` শর্ত থাকে।
+function m4uHubHost(h) { return /(?:^|\.)hubcloud\.(?:ist|pw|fans|xyz|site|life|cc|ws|to|ink|mov|com|net|org|in|top|one|cloud|buzz|space|click|store|shop|fun|pro|vip|icu|sbs|lat|cx|build|monster|quest|wiki|rest|bond|cfd)$/i.test(String(h || '')); }
 // ★★★ v1.34.17 — ইউজার: "Gamerxt page ta ad"। ঠিক: ওই পেজ অ্যাড-ফার্ম, তাই ওটা **শুধু আমাদের সার্ভার**
 //   সার্ভার-সাইডে পড়ে, অ্যাপ/ইউজার কোনোদিন দেখে না — কার্ডে বসে সরাসরি r2-লিংক। তবু ছোঁয়া যত কম হয়
 //   তত ভালো ⇒ প্রাপ্ত r2-লিংক (প্রিসাইন ~৮ঘণ্টা) এখন **ডিস্ক-ক্যাশে** থাকে (৫ঘণ্টা TTL) — রিস্টার্টের পরেও
@@ -12588,23 +12673,35 @@ async function m4uPostCards(hit, T, Y, isS, s, e, maxh, T0, maxN, origin) {
   if (DBG) console.error('[m4u2] heap@resolve0 ' + Math.round(process.memoryUsage().heapUsed / 1048576) + 'MB');
   // ★ প্রতি-এন্ট্রিতে HEAD নয়: প্রথমটি প্রমাণ হিসেবে (২০০+video/*+আসল সাইজ), বাকিগুলো পোস্টের
   //   সাইজ-লেবেলেই (মাপা: লেবেল ও আসল সাইজ হুবহু মেলে) ⇒ ৪টি HEAD-এর ~০.৫সে বাঁচে।
-  const res = await Promise.all(pick.map((x, i) => m4uHFast(x.href, i === 0).catch(() => null)));
+  // ★★ v1.34.268 (প্রোড-মাপা, ৩১-৮-২০২৬): nexdrive→fast-dl হপ প্রোড-IP থেকে **১৬-২২সে** নিচ্ছে
+  //   (`[m4u2] ok c75a74 ... {"nd":5038,"dl":13632} tot=18670ms`) অথচ সোর্স-ক্যাপ ৯.৫সে ⇒ রিজলভ
+  //   শেষ হওয়ার আগেই উত্তর ⇒ **০ কার্ড**। কার্ডের URL তো আগেই `/m4g/<b64(href)>/v.m3u8` (lazy:
+  //   প্লে-সময়ে m4uFinalFor নিজেই রিজলভ করে) ⇒ রিজলভের জন্য বসে থাকা অপ্রয়োজনীয়। এখন রেস:
+  //   M4ULAZY (২.৬সে) এর মধ্যে যা রিজলভ হয় তা `_direct`+প্রমাণ পায়, বাকিগুলো **lazy কার্ড**।
+  //   চূড়ান্ত-ব্যর্থ (fastdl-miss/turnstile/no-secret/no-302/head-fail) ⇒ কার্ড নয় (সৎ শূন্য)।
+  const _lzMs = Math.max(1200, Math.min(Number(process.env.M4ULAZY || 6800), T0 + Number(process.env.M4UBUD || 7600) - Date.now()));
+  const res = await Promise.race([
+    Promise.all(pick.map((x, i) => m4uHFast(x.href, i === 0).catch(() => null))),
+    new Promise(r => { const t = setTimeout(() => r(null), _lzMs); if (t.unref) t.unref(); })
+  ]);
   if (DBG) console.error('[m4u2] heap@resolved ' + Math.round(process.memoryUsage().heapUsed / 1048576) + 'MB');
   const cards = [];
   let _guWarmed = false;   // v1.34.74: proti post-e sorbochcho 1ti GU pre-warm
-  res.forEach((r, i) => {
-    const x = pick[i];
-    if (!r || !r.url) return;
+  if (DBG) console.error('[m4u2] resolve ' + (res ? 'done' : 'timeout→lazy') + ' @' + (Date.now() - T0) + 'ms');
+  pick.forEach((x, i) => {
+    const r = res ? res[i] : null;
+    if (r && !r.url) return;                 // চূড়ান্ত-ব্যর্থ রিজলভ ⇒ কার্ড নয় (প্রমাণহীন দাবি নয়)
+    if (!r && !origin) return;               // lazy কার্ডের জন্য origin দরকার
     // ★ v1.34.74: GD (GU) card — click-er AGEI pull suru (BG). Karon: GU Range mane na, seek
     //   mane bfGuServe-r disk-cache; pull ~51MB/s-e chole bole list dekhar 10-60s-ei koyek GB
     //   kache thake => click-e start tatkkhonik, Cues-probe/seek-o pull-reach-e. Key = card-er
     //   /m4d/<b64(x.href)> (bfGuServe req.url theke ei key-i ney). Done/adoptable thakle chhobo na.
-    if (!_guWarmed && m4uIsIpLocked(r.url) && (!r.cl || Number(r.cl) <= 6e9)) {
+    if (!_guWarmed && r && r.url && m4uIsIpLocked(r.url) && (!r.cl || Number(r.cl) <= 6e9)) {
       _guWarmed = true;
       try { const _wk = Buffer.from(String(x.href)).toString('base64url'); gdWarmQueue(_wk, r.url); } catch (e) { } // v1.34.88: srinkhol warm-queue (serial, click-age)
     }
     const qq = Number(x.q) || 0;
-    const size = mlsMB(r.cl || 0) || x.size;
+    const size = mlsMB((r && r.cl) || 0) || x.size;
     const ept = isS ? ('E' + (x.epA && x.epB ? x.epA + '-' + x.epB : (x.ep || 1))) : '';
     // ★ v1.33.0: `◧ gdrive` বাদ (সেটাই ডাবল `• movies4u • movies4u` বানাত); গ্লিফ ⧠; সাইজ শুধু শেষ-লাইনে
     const lines = '⊞ Movies4u' + (audio ? ' ⌗ ' + audio : '') + (size ? ' · ' + size : '');
@@ -12612,7 +12709,9 @@ async function m4uPostCards(hit, T, Y, isS, s, e, maxh, T0, maxN, origin) {
       + (isS ? ('\u29e0 S' + (s || 1) + ept + (x.pack && !ept ? ' Pack' : '')) : '\u29e0 Movie') + '\n' + lines;
     cards.push({
       name: '\u25a5 ' + (qq || 'Auto') + ' \u25a5', title: txt, description: txt, quality: String(qq || ''),
-      url: (origin ? m4uSeekUrl(x.href, origin) : m4uCardUrl(r.url, origin)), _srv: 'Google Drive', _src: 'Movies4u', _direct: r.url,
+      url: (r && r.url) ? (origin ? m4uSeekUrl(x.href, origin) : m4uCardUrl(r.url, origin))
+        : (String(origin).replace(/\/+$/, '') + '/m4g/' + Buffer.from(String(x.href)).toString('base64url') + '/v.m3u8'),
+      _lazy: !(r && r.url), _srv: (r && r.url) ? 'Google Drive' : 'NexDrive', _src: 'Movies4u', _direct: (r && r.url) || '',
       behaviorHints: { notWebReady: false, isBingeable: true, filename: 'movies4u-' + (qq || 'auto') + '.mkv' },
       bingeGroup: 'm4u|' + mlsNorm(T) + '::' + (isS ? 'S' + (s || 1) + 'E' + (e || 1) : 'm')
     });
