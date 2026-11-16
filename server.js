@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.243';
+const VERSION = '1.34.244';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -1839,8 +1839,9 @@ async function vidySweep(n) {
     //   ভেরিফাই-করা নোডই পরের অনুরোধে আগে ডাকা হয় ⇒ প্রথম-চেষ্টার হার বাড়ে।
     const _inflight = (Date.now() - LAST_STREAM_AT < 15000) ? Math.max(INFLIGHT_STREAM, 1) : 0;
     const _FRSH = Number(process.env.PXFRESH || 240000);
+    const _readyN = vidyReadyCount();
     const _freshN = [...VIDY_OK.values()].filter(v => v.ts && now - v.ts < _FRSH).length;
-    if (_inflight && _freshN < Number(process.env.PXFLOW || 14)) {
+    if (_inflight && _readyN >= 18 && _freshN < Number(process.env.PXFLOW || 14)) {
       const st = [...VIDY_OK.entries()].filter(([, v]) => !v.ts || now - v.ts > _FRSH).map(([px]) => px).slice(0, 6);
       let _o = 0;
       await Promise.all(st.map(async px => {
@@ -1872,7 +1873,7 @@ async function vidySweep(n) {
     }
     rvCand.sort((a, b) => b[1] - a[1]);
     const rv = rvCand.slice(0, RV).map(x => x[0]);
-    if (rv.length) {
+    if (rv.length && _readyN >= 18) {
       let _rvo = 0, _rvk = 0;
       for (let i = 0; i < rv.length; i += 12) {
         await Promise.all(rv.slice(i, i + 12).map(async px => {
@@ -1909,9 +1910,10 @@ async function vidySweep(n) {
     //   ডুবিয়ে দিত: মাপা ok ৬–৮/১৬ → ০–৩/১৬)।
     // Advance by exactly the batch width: the old 12-step/96-slice loop
     // retested overlapping candidates up to eight times and wasted quota.
-    const scanWidth = Math.max(1, Math.min(96, Number(process.env.PXSCAN || 48) || 48));
+    const scanWidth = _inflight ? 8 : Math.max(1, Math.min(96, Number(process.env.PXSCAN || 48) || 48));
     for (let i = 0; i < cands.length; i += scanWidth) {
-      const _low = VIDY_OK.size < Number(process.env.PXVLOW || 60); // ★ v1.17.56: পুল-শুকিয়ে-গেলে অনুরোধের মাঝেও (ছোট-ব্যাচে) রিফিল
+      const _low = vidyReadyCount() < 18;
+      if (_inflight && i >= 16) break; // ★ v1.17.56: পুল-শুকিয়ে-গেলে অনুরোধের মাঝেও (ছোট-ব্যাচে) রিফিল
       if (!_low && Date.now() - LAST_STREAM_AT < 2500) { if (DBG) console.error('[vsweep] ইউজার-অনুরোধ চলছে — স্ক্যান থামানো'); break; }
       await Promise.all(cands.slice(i, i + scanWidth).map(async px => {   // v1.25.3: 48 -> 96 parallel probe (3x scan rate)
         if (!vpxTake(px)) return;
@@ -2228,6 +2230,47 @@ function vidyScore(px) {
   const age = e.ts ? Math.min(Date.now() - e.ts, 3600000) / 60000 : 40; // মিনিট
   return (e.ms || 4000) + age * 60 + (e.fails || 0) * 1200;
 }
+// Bounded Vidy-specific standby refill. Seed AND decrypted source data must
+// pass on the same proxy before adding a node. It uses the existing quotas,
+// bans and slot locks and never modifies other sources' pools.
+function vidyReadyCount() {
+  const now = Date.now();
+  return [...VIDY_OK.entries()].filter(([px,e]) => e && e.ts && now - e.ts < 600000 && !snBanned(px) && ptunAllowed(px) && vpxLeft(px) >= 2 && !VPX_BUSY.get(px)).length;
+}
+const VY_REFILL = require('./tools/vidy-runtime/active_refill.cjs').create({
+  ready: vidyReadyCount,
+  target: 60, parallel: 12, busyParallel: 4,
+  isBusy: () => INFLIGHT_STREAM > 0 || Date.now() - LAST_STREAM_AT < 3000,
+  candidates: () => {
+    const t = Date.now(), out = [], have = new Set();
+    const add = px => { if (!px || have.has(px) || VIDY_OK.has(px) || VIDY_DROP.has(px) || snBanned(px) || !ptunAllowed(px) || VPX_BUSY.get(px) || vpxLeft(px) < 3 || t - (VIDY_TRIED.get(px) || 0) < 600000) return; have.add(px); out.push(px); };
+    for (const c of POOL) add(c && c.px);
+    for (const m of SPOOL.values()) for (const [px, e] of m) if (spoolFresh(e)) add(px);
+    for (const px of PX_RAW) add(px);
+    return out;
+  },
+  validate: async px => {
+    if (snBanned(px) || !ptunAllowed(px) || vpxLeft(px) < 3 || !vpxTake(px)) return false;
+    let slot = false; const t0 = Date.now();
+    try {
+      await vySlot(1200); slot = true;
+      vpxCharge(px, 1); vpxSeedCharge(px);
+      const seedBody = await proxiedGet(px, API + '/seed?mediaId=278', 2600, null, 'sweep');
+      const seed = JSON.parse(seedBody).seed;
+      if (!seed || vpxSrcLeft(px) < 1) return false;
+      const q = new URLSearchParams({ mediaType:'movie', tmdbId:'278', enc:'2', title:'', seed });
+      vpxCharge(px, 1);
+      const ct = await proxiedGet(px, API + '/miami/sources?' + q.toString(), 2600, null, 'sweep');
+      const j = JSON.parse(vidyDecrypt(ct, seed, '278'));
+      if (!j || !Array.isArray(j.sources) || !j.sources.some(x => x && /^https?:\/\//.test(String(x.url || '')) && (parseInt(String(x.quality || '0'),10) || 0) !== 480)) throw new Error('invalid-sources');
+      const ms = Date.now() - t0;
+      if (ms > 5500) throw new Error('slow-session');
+      vidyNodeOk(px, ms); const entry = VIDY_OK.get(px); if (entry) entry.sessionProof = Date.now(); return true;
+    } catch (e) { if (!/quota|gate-full|http_5\d\d|invalid-sources/.test(String(e && e.message))) VIDY_TRIED.set(px, Date.now()); return false; }
+    finally { if (slot) vyFree(); vpxFree(px); }
+  }
+});
+setTimeout(() => { VY_REFILL.tick().catch(() => {}); setInterval(() => VY_REFILL.tick().catch(() => {}), 5000).unref?.(); }, 20000).unref?.();
 // ===== v1.18.0 (ইউজার: "vidy etoh rate limit … giant server Miami, Boise, Atlanta, also phoenix") =====
 // vidy প্রতি IP-তে মাত্র ২–৪ কল দেয় ⇒ ১৬ সার্ভারের জন্য বিশাল পুল লাগে না, লাগে **বিশেষায়িত তাজা নোড**।
 // তাই গ্ল্যায়ান্ট ৪টি সার্ভারের জন্য আলাদা **HOT-নোড** (প্রতি সার্ভারে ৩টি, ≤৯০সে-যাচাই) + মিনি-sweeper।
@@ -15759,7 +15802,7 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP, requestStart) { // t
     const viaProxy = true; // (ডিরেক্ট-পথ আমাদের IP-তে ৪২৯ ⇒ সবসময় প্রক্সি-পথের বাজেট)
     const ckFor = srv => ['srvc', VERSION, tmdbId, type, s || '', e || '', srv].join('|');
     const allow = srvOrder().filter(srv => !cfg || !Array.isArray(cfg.srv) || !cfg.srv.length || cfg.srv.indexOf(srv) >= 0); // cfg-সার্ভার-সাবসেট
-    const eligibleVidy = () => [...new Set([...pxplGoodAny(24), ...[...VIDY_OK.keys()].sort((a, b) => vidyScore(a) - vidyScore(b))])].filter(px => !snBanned(px) && ptunAllowed(px) && vpxLeft(px) >= 2);
+    const eligibleVidy = () => [...new Set([...pxplGoodAny(24), ...[...VIDY_OK.keys()].sort((a, b) => { const proof = p => { const e = VIDY_OK.get(p) || {}; return e.sessionProof && Date.now() - e.sessionProof < 600000 && (e.fails || 0) < 2 ? 1 : 0; }; return proof(b) - proof(a) || vidyScore(a) - vidyScore(b); })])].filter(px => !snBanned(px) && ptunAllowed(px) && vpxLeft(px) >= 2);
     // Only when the proven Vidy bench is nearly exhausted, try the general
     // proxy bench. A node still has to pass the real seed+sources session;
     // normal per-node quotas, bans, cooling and three-server cap remain.
@@ -15825,6 +15868,7 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP, requestStart) { // t
           if (DBG) console.error('[t1g] ' + srv + ' EMPTY at ' + (Date.now() - tS) + 'ms');
           force = true; return { srv, empty: true };
         }
+        if (vr.px && VIDY_OK.has(vr.px)) VIDY_OK.get(vr.px).sessionProof = Date.now();
         vsjPut(vkey, j); // Empty late attempts must not overwrite a successful session.
         // v1.9.0 filter-aware probing: never spend probe time on assets the filter will discard.
         const allowD = Array.isArray(cfg && cfg.q) ? cfg.q : qToList(cfg && cfg.q);
@@ -18047,7 +18091,7 @@ const server = http.createServer((req, res) => {
       RT_INFLIGHT.set(kRT, pr);
       res = w;
     }
-    if (p === '/_health') { const _vf = [...VIDY_OK.values()].filter(v => v.ts && Date.now() - v.ts < Number(process.env.PXFRESH || 240000)).length; return sendJson(res, 200, { ok: 1, cg: CG_ST, cgDead: CG_DEAD.size, cgSrc: Object.fromEntries([...CG_SRC].map(([k, v]) => [k, { ok: v.ok, fail: v.fail, down: v.down > Date.now() ? Math.round((v.down - Date.now()) / 1000) : 0 }])), version: VERSION, cache: CACHE_ST, bg: BG_ST, pwhy: PART_WHY, up: Math.round(process.uptime()), deploy: 'v' + VERSION, mmpool: { size: MM_POOL.length, bench: MM_SITE.size, resolverFresh: [...MM_RESOLVE_OK.values()].filter(t => Date.now() - t < 600000).length, resolverChecks: MM_RESOLVE_BENCH_STATS, cooling: [...MM_COOL.values()].filter(t => t > Date.now()).length, race: MM_RACE_ST }, pool: POOL.length, pxbench: POOL.filter(c => PX_SITE.has(c.px)).length, pxbf: PX_BF.size, memo: memo.size, gw: (typeof GW !== 'undefined' ? GW.size : -1), nx: NEXBASE ? 1 : 0, nxpool: NXBENCH, nxwaves: NXWAVES, nxsize: NXSIZE, tw: TWBASE ? 1 : 0, rt: RTBASE ? 1 : 0, mls: (process.env.MLSD !== '0') ? 1 : 0, mlsindex: require('./tools/mls-index-lab/runtime_index').stats(), mlslinks: Object.assign({active:mlsLinkRaceActive}, MLS_LINK_METRICS), mlbdRuntime: {queue:MLBD_WL.stats(),net:MLBD_NET_METRICS,mirrorReady:!!MLBD_BASE,mirrorFlight:!!MLBD_MIRROR_FLIGHT,mirrorBlocked:!!(MLBD_BASE && hostBad(MLBD_BASE))}, vsp: VSP_POOL.length, vy: VIDY_OK.size, vyfresh: _vf, vhg: (typeof VHG !== 'undefined' ? VHG : 0), pxpl: (typeof PXPL !== 'undefined' ? PXPL.size : 0), rtmq: RT_MQ_ST, dti: (typeof DT_IDX !== 'undefined' ? DT_IDX : 0), dtst: (typeof DT_ST !== 'undefined' ? DT_ST : 0), dtsh: (typeof DT_SH !== 'undefined' ? { on: DT_SH.on, src: DT_SH.src, pre: DT_SH.pre, loaded: DT_SH.loaded, hits: DT_SH.hits, miss: DT_SH.miss, cache: (typeof DT_SH_CACHE !== 'undefined' ? DT_SH_CACHE.size : 0), err: DT_SH.err, units: (DT_SH.man && DT_SH.man.units) || null, slugs: (DT_SH.man && DT_SH.man.slugs || []).length } : 0), lastreq: { el: LR.el, n: LR.total, pend: LR.pend, p: LR.path, sr: (LR.sr || []).map(x => x[0] + ':' + x[1] + '@' + x[2]) } }); } // v1.34.95, v1.34.105 // ★ v1.21.9: vy=verified vidy নোড, vyfresh=৪মিন-তাজা // v1.15.71: vsp=Vidsrc-পুল-আকার // v1.15.18: pxbench=সাইট-প্রমাণিত-বেঞ্চ (v1.15.8: nxpool=MB-বেঞ্চ)
+    if (p === '/_health') { const _vf = [...VIDY_OK.values()].filter(v => v.ts && Date.now() - v.ts < Number(process.env.PXFRESH || 240000)).length; return sendJson(res, 200, { ok: 1, cg: CG_ST, cgDead: CG_DEAD.size, cgSrc: Object.fromEntries([...CG_SRC].map(([k, v]) => [k, { ok: v.ok, fail: v.fail, down: v.down > Date.now() ? Math.round((v.down - Date.now()) / 1000) : 0 }])), version: VERSION, cache: CACHE_ST, bg: BG_ST, pwhy: PART_WHY, up: Math.round(process.uptime()), deploy: 'v' + VERSION, mmpool: { size: MM_POOL.length, bench: MM_SITE.size, resolverFresh: [...MM_RESOLVE_OK.values()].filter(t => Date.now() - t < 600000).length, resolverChecks: MM_RESOLVE_BENCH_STATS, cooling: [...MM_COOL.values()].filter(t => t > Date.now()).length, race: MM_RACE_ST }, pool: POOL.length, pxbench: POOL.filter(c => PX_SITE.has(c.px)).length, pxbf: PX_BF.size, memo: memo.size, gw: (typeof GW !== 'undefined' ? GW.size : -1), nx: NEXBASE ? 1 : 0, nxpool: NXBENCH, nxwaves: NXWAVES, nxsize: NXSIZE, tw: TWBASE ? 1 : 0, rt: RTBASE ? 1 : 0, mls: (process.env.MLSD !== '0') ? 1 : 0, mlsindex: require('./tools/mls-index-lab/runtime_index').stats(), mlslinks: Object.assign({active:mlsLinkRaceActive}, MLS_LINK_METRICS), mlbdRuntime: {queue:MLBD_WL.stats(),net:MLBD_NET_METRICS,mirrorReady:!!MLBD_BASE,mirrorFlight:!!MLBD_MIRROR_FLIGHT,mirrorBlocked:!!(MLBD_BASE && hostBad(MLBD_BASE))}, vsp: VSP_POOL.length, vy: VIDY_OK.size, vyfresh: _vf, vyReady: vidyReadyCount(), vyRefill: VY_REFILL.stats(), vhg: (typeof VHG !== 'undefined' ? VHG : 0), pxpl: (typeof PXPL !== 'undefined' ? PXPL.size : 0), rtmq: RT_MQ_ST, dti: (typeof DT_IDX !== 'undefined' ? DT_IDX : 0), dtst: (typeof DT_ST !== 'undefined' ? DT_ST : 0), dtsh: (typeof DT_SH !== 'undefined' ? { on: DT_SH.on, src: DT_SH.src, pre: DT_SH.pre, loaded: DT_SH.loaded, hits: DT_SH.hits, miss: DT_SH.miss, cache: (typeof DT_SH_CACHE !== 'undefined' ? DT_SH_CACHE.size : 0), err: DT_SH.err, units: (DT_SH.man && DT_SH.man.units) || null, slugs: (DT_SH.man && DT_SH.man.slugs || []).length } : 0), lastreq: { el: LR.el, n: LR.total, pend: LR.pend, p: LR.path, sr: (LR.sr || []).map(x => x[0] + ':' + x[1] + '@' + x[2]) } }); } // v1.34.95, v1.34.105 // ★ v1.21.9: vy=verified vidy নোড, vyfresh=৪মিন-তাজা // v1.15.71: vsp=Vidsrc-পুল-আকার // v1.15.18: pxbench=সাইট-প্রমাণিত-বেঞ্চ (v1.15.8: nxpool=MB-বেঞ্চ)
     if (p === '/_mem') { /* ★ v1.28.1: মেমোরি-ডিয়াগনস্টিক — OOM-ক্ষতির কারন খুঁজতে (প্রমাণ: ব্যাটারি-চালাকালে node 896MB-তে kernel-OOM-kill) */
       const m = process.memoryUsage(); const sz = o => { try { return o instanceof Map ? o.size : (Array.isArray(o) ? o.length : -1); } catch (e) { return -1; } };
       // ★ v1.28.3-M4: সীমা + purge-পরিসংখ্যান (কতবার, কোন স্তরে) — প্রোডে "মেমরি ফুল" কেন, একনজরে
