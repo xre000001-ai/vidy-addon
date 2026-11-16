@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.241';
+const VERSION = '1.34.242';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -1700,6 +1700,7 @@ function vidySessionP(px, o, tmo) {
     // বাকি (৫xx, read-timeout, খালি/ভাঙা পেলোড) = সার্ভার-হেলথে যায়।
     const _m = String((e && e.message) || '');
     if (e && e.__seedOk && /http_5\d\d|tun-read-timeout|tun-closed|short|decrypt|empty/.test(_m) && typeof o.onSourceFailure === 'function') o.onSourceFailure();
+    if (!VIDY_OK.has(px)) { VY_EXPLORE_FAIL.set(px, Date.now() + 120000); if (VY_EXPLORE_FAIL.size > 5000) VY_EXPLORE_FAIL.delete(VY_EXPLORE_FAIL.keys().next().value); }
     vidyNodeBad(px); throw e;
   });
 }
@@ -2139,6 +2140,7 @@ setTimeout(() => { try { tunWarm(); } catch (e) { } }, Number(process.env.PXTWBO
 // ★ কারণ: vidy প্রতি IP-তে ২–৪ কল। আমরা হিসাব না রেখে একই নোডে বারবার গিয়ে নিজেরাই সেটা ৪২৯-এ
 //   পুড়িয়ে দিতাম ⇒ নোড "dead" দেখাত ⇒ গ্ল্যায়ান্ট বাদ পড়ত। এখন প্রতি নোডের **কল-গণনা**
 //   (১২০সে-উইন্ডো, সর্বোচ্চ PXVUSED=৩) ⇒ নোড কখনো নিজের কোটা শেষ করে না, ৩ কল পর বিশ্রাম নিয়ে আবার তাজা।
+const VY_EXPLORE_FAIL = new Map(); // temporary cooldown for non-Vidy-bench fallback nodes
 const VPX_USED = new Map();      // px -> {n, ts}
 // v1.25.0 (measured): 429s still came on the 3rd call, so the upstream budget is effectively ~2 calls/window
 // on these shared free-proxy IPs. Cap 3 -> 2 = exactly one session (seed+sources); a 3rd call is never made.
@@ -2238,7 +2240,7 @@ const VGIANT = ['miami', 'boise', 'atlanta', 'munich', 'chicago'];   // v1.34.11
 const VSRV_H = new Map(); // key (srv:mediaType) -> {ok, fail, lastOk, until, trips, probing}
 const PXSBR = () => Number(process.env.PXSBR || 300000), PXSFAIL = () => Number(process.env.PXSFAIL || 4), PXSRATIO = () => Number(process.env.PXSRATIO || 0.6);
 const isPrio = srv => (typeof VPRIO !== 'undefined') && VPRIO.indexOf(String(srv)) >= 0;
-function vsrvKey(o) { return o.srv + ':' + ((o.q && o.q.mediaType) || 'any'); }
+function vsrvKey(o) { const q = o.q || {}; return [o.srv, q.mediaType || 'any', o.tmdbId || q.tmdbId || '', q.seasonId || '', q.episodeId || ''].join(':'); }
 // ★ v1.25.3 — "সব কন্টেইনার ভরা" কিনা: vidy verified, warm tunnel bank, generic pool, আর ১২টি সোর্স-পুল।
 //   যতক্ষণ একটাও ভরা নয় ⇒ স্ক্যান সর্বোচ্চ গতিতে (1.5s ক্যাডেন্স)। সব ভরে গেলে ⇒ শুধু রক্ষণাবেক্ষণ।
 // প্রতিটি কন্টেইনার আলাদা পুল দিয়ে চলে — তাই ভরার হিসাব পুল-ধরন অনুযায়ী:
@@ -2271,7 +2273,7 @@ function poolsFill() {
   return out;
 }
 function srcPoolKeys() { try { return Object.keys(SRC_PROBE || {}); } catch (e) { return []; } }
-function vsrvH(k) { let h = VSRV_H.get(k); if (!h) { h = { ok: 0, fail: 0, lastOk: 0, until: 0, trips: 0, probing: 0 }; VSRV_H.set(k, h); } return h; }
+function vsrvH(k) { let h = VSRV_H.get(k); if (!h) { h = { ok: 0, fail: 0, lastOk: 0, until: 0, trips: 0, probing: 0 }; VSRV_H.set(k, h); if (VSRV_H.size > 3000) VSRV_H.delete(VSRV_H.keys().next().value); } return h; }
 function vsrvOk(k) {
   const h = vsrvH(k); h.ok++; h.lastOk = Date.now(); h.fail = Math.max(0, h.fail - 2);
   if (h.trips) { h.trips = 0; h.until = 0; if (DBG) console.error('[vsrv] ' + k + ' সেরে গেছে — আবার চালু'); }
@@ -2513,11 +2515,6 @@ function vidySessionWithSeed(px, o, tmo) { // সিড আগেই আছে �
     return { ct: ct, seed: (o.sc && o.sc.seed) || '', px: px };
   }).catch(e => { pxsRec('vidy:' + o.srv, px, false, Date.now() - t0); throw e; });
 }
-// Explicitly exclude the separately maintained Bangladesh proxy list from Vidy.
-// General-pool nodes can have unknown/rotating exit locations; this is not a
-// substitute for verifying every proxy's actual egress country.
-const VY_KNOWN_BD = (() => { try { const d = JSON.parse(fs.readFileSync(path.join(__dirname, 'mls_px_bd.json'), 'utf8')); return new Set([...(d.good || []), ...(d.backup || [])].map(x => String(x).replace(/^[a-z0-9]+:\/\//i, '').split(':')[0])); } catch (_) { return new Set(); } })();
-const vyKnownBd = px => VY_KNOWN_BD.has(String(px || '').replace(/^[a-z0-9]+:\/\//i, '').split(':')[0]);
 async function vidyFetch(o) { // ★ v1.17.56: verified-pool **ক্রমবর্ধমান-হেজ** + গ্লোবাল-গেট + নোড-স্কোর
   // নীতি (ইউজার): stream fetch সবসময় প্রক্সি-পুল দিয়ে, প্লেব্যাক-লিংক সরাসরি CDN।
   //  • সেরা-স্কোর নোড আগে; #0 সঙ্গে-সঙ্গে, বাকিরা ৩৫০/৯০০/১৮০০/২৮০০ms-এ (কেউ জিতলেই বাকিরা বন্ধ)
@@ -2529,10 +2526,11 @@ async function vidyFetch(o) { // ★ v1.17.56: verified-pool **ক্রমব�
   // attempt, shared by at most three servers. Same-click retry picks another
   // lane; per-node quota, the global concurrency gate, and seed-IP pin remain.
   if (o.group) {
-    const px = o.group.pick(o.srv, o.excl);
+    if (o.group.refresh) o.group.refresh();
+    const px = o.group.pick(o.srv, o.excl, p => !snBanned(p) && ptunAllowed(p) && vpxLeft(p) >= 2 && (VY_EXPLORE_FAIL.get(p) || 0) <= Date.now() && (VPX_BUSY.get(p) || 0) < 3);
     if (!px) throw new Error('vidy-group-no-proxy');
     if (o.attempted) o.attempted.add(px);
-    if (vyKnownBd(px) || snBanned(px) || !ptunAllowed(px) || vpxLeft(px) < 2) throw new Error('vidy-group-unavailable');
+    if (snBanned(px) || !ptunAllowed(px) || vpxLeft(px) < 2) throw new Error('vidy-group-unavailable');
     if (!vpxTake(px, 3)) throw new Error('vidy-group-busy');
     if (!o.group.take(px, o.srv)) { vpxFree(px); throw new Error('vidy-group-full'); }
     let failed = false, gotSlot = false;
@@ -2589,7 +2587,7 @@ async function vidyFetch(o) { // ★ v1.17.56: verified-pool **ক্রমব�
   // the chance that a server group gets nothing is 1e-7 or less, i.e. user-visible failure ~0.
   const Q = [], _sn = new Map(), SNMAX = Number(process.env.PXSN || 2), WAVES = Number(process.env.PXWAVES || 4); // ★ v1.34.21: ঢেউ ৩→৪ (মোট প্রার্থী-নোড বাড়ল)
   const offer = px => {
-    if (!px || vyKnownBd(px) || Q.indexOf(px) >= 0 || snBanned(px) || vpxLeft(px) < 2 || (o.excl && o.excl.has(px))) return;   // v1.34.106: bade-dawa node (remint re-roll)
+    if (!px || Q.indexOf(px) >= 0 || snBanned(px) || vpxLeft(px) < 2 || (o.excl && o.excl.has(px))) return;   // v1.34.106: bade-dawa node (remint re-roll)
     const s2 = sub24(px), used = _sn.get(s2) || 0;
     if (used >= SNMAX) return;
     _sn.set(s2, used + 1); Q.push(px);
@@ -2597,8 +2595,8 @@ async function vidyFetch(o) { // ★ v1.17.56: verified-pool **ক্রমব�
   if (o.group) offer(o.group.first(o.srv));
   for (const px of hot) offer(px);
   for (const px of pool) { if (Q.length >= NQ * (process.env.PXWAVES ? WAVES : (_poor ? 1 : WAVES))) break; offer(px); }   // affinity first
-  if (sc.via === 'proxy' && sc.px && !vyKnownBd(sc.px)) { const i2 = Q.indexOf(sc.px); if (i2 > 0) { Q.splice(i2, 1); Q.unshift(sc.px); } }
-  if (sc.via === 'proxy' && sc.px && !vyKnownBd(sc.px) && Q.indexOf(sc.px) < 0) Q.unshift(sc.px); // সদ্য-যাচাই-করা IP আগে
+  if (sc.via === 'proxy' && sc.px) { const i2 = Q.indexOf(sc.px); if (i2 > 0) { Q.splice(i2, 1); Q.unshift(sc.px); } }
+  if (sc.via === 'proxy' && sc.px && Q.indexOf(sc.px) < 0) Q.unshift(sc.px); // সদ্য-যাচাই-করা IP আগে
   // ★ v1.25.0: প্রতি-নোড সময়সীমা — নোডের নিজের মাপা-লেটেন্সির সাথে (আগে সবার জন্য ২.২সে ⇒ ধীর নোড
   //   সারাক্ষণই read-timeout খেত)। বাকি-বাজেট থাকলে নোড-অনুযায়ী, নাহলে বাজেটই সীমা।
   const sesTmo = px => {
@@ -15761,8 +15759,27 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP, requestStart) { // t
     const viaProxy = true; // (ডিরেক্ট-পথ আমাদের IP-তে ৪২৯ ⇒ সবসময় প্রক্সি-পথের বাজেট)
     const ckFor = srv => ['srvc', VERSION, tmdbId, type, s || '', e || '', srv].join('|');
     const allow = srvOrder().filter(srv => !cfg || !Array.isArray(cfg.srv) || !cfg.srv.length || cfg.srv.indexOf(srv) >= 0); // cfg-সার্ভার-সাবসেট
-    const groupNodes = [...new Set([...pxplGoodAny(24), ...[...VIDY_OK.keys()].sort((a, b) => vidyScore(a) - vidyScore(b))])].filter(px => !vyKnownBd(px) && !snBanned(px) && ptunAllowed(px) && vpxLeft(px) >= 2);
+    const eligibleVidy = () => [...new Set([...pxplGoodAny(24), ...[...VIDY_OK.keys()].sort((a, b) => vidyScore(a) - vidyScore(b))])].filter(px => !snBanned(px) && ptunAllowed(px) && vpxLeft(px) >= 2);
+    // Only when the proven Vidy bench is nearly exhausted, try the general
+    // proxy bench. A node still has to pass the real seed+sources session;
+    // normal per-node quotas, bans, cooling and three-server cap remain.
+    const groupCandidates = () => {
+      const proven = eligibleVidy();
+      if (proven.length >= 9) return proven;
+      const now = Date.now();
+      const usable = px => px && !VIDY_DROP.has(px) && !snBanned(px) && ptunAllowed(px) && vpxLeft(px) >= 2 && (PX_COOL.get(px) || 0) <= now && (VY_EXPLORE_FAIL.get(px) || 0) <= now;
+      const backup = POOL.filter(c => c && usable(c.px)).sort((a,b) => pxScore(a.px,a.ms) - pxScore(b.px,b.ms)).map(c => c.px);
+      // Other source benches are candidates, not proof of Vidy compatibility.
+      // Do not modify those benches; each candidate must pass a Vidy session.
+      const cross = [];
+      for (const m of SPOOL.values()) for (const [px,e] of m) if (spoolFresh(e) && usable(px)) cross.push({px, ms:e.ms || 9999, seeded:!!e.seeded});
+      cross.sort((a,b) => Number(a.seeded)-Number(b.seeded) || a.ms-b.ms);
+      return [...new Set([...proven, ...backup, ...cross.map(x=>x.px)])].slice(0, 400);
+    };
+    const groupNodes = groupCandidates();
     const requestGroup = require('./tools/vidy-tests/proxy_groups.cjs').create(allow, groupNodes, 3);
+    requestGroup.refresh = () => requestGroup.add(groupCandidates());
+    diag('vidy', 'eligible-proxies=' + groupNodes.length + ' verified=' + VIDY_OK.size + ' selected-servers=' + allow.length);
     const attemptedByServer = new Map();
     const raceFailures = new Set();
     const one = async (srv, retry = false) => {
@@ -15906,7 +15923,7 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP, requestStart) { // t
       () => budget(s2),
       () => one(s2, true).then(r => { if (r && r.ok) okWave++; return r; }),
       Number(process.env.VRETRY_DELAY || 4300)
-    ).then(r => { if (!r.srv) r.srv = s2; if (!r.ok && raceFailures.has(s2)) vsrvBad(s2 + ':' + type); part.push(r); return r; })));
+    ).then(r => { if (!r.srv) r.srv = s2; if (!r.ok && raceFailures.has(s2)) vsrvBad(vsrvKey({ srv: s2, tmdbId, q: { mediaType: type, seasonId: type === 'tv' ? String(s || 1) : '', episodeId: type === 'tv' ? String(e || 1) : '' } })); part.push(r); return r; })));
     const picked = await Promise.race([allP, new Promise(r => setTimeout(() => r(null), VPICK))]);
     let rs;
     if (picked === null) {
@@ -15994,7 +16011,7 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP, requestStart) { // t
         if (r.late) return srv + ':late';
         if (r.empty) return srv + ':empty';
         const msg = String(r.err && r.err.message || 'failed');
-        const code = /srv-breaker|srv-budget|vidy-timeout|vidy-allfail/.exec(msg);
+        const code = /srv-breaker|srv-budget|vidy-timeout|vidy-allfail|vidy-group-no-proxy|vidy-group-unavailable|vidy-group-busy|vidy-group-full|http_\d+|tun-[a-z-]+|quota/.exec(msg);
         return srv + ':' + (code ? code[0] : 'failed');
       });
       diag('vidy', 'server-status ' + status.join(' ') + ' @' + (Date.now() - t0) + 'ms');
