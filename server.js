@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.257';
+const VERSION = '1.34.258';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -29,6 +29,12 @@ const SK = { on: process.env.SOCKS === '1', live: new Map(), liveN: 0, made: 0, 
   waited: 0, queued: 0, dropped: 0, fg: 0 };
 const SOCKMAX = Number(process.env.SOCKMAX || 160);
 const FG_CONTEXT = new (require('async_hooks').AsyncLocalStorage)();
+// v1.34.258 (incident): background proxy probing must never saturate the box. When the event loop lags,
+// every proxy connect timer fires late => healthy proxies are reported as "tun-timeout" and get pruned
+// (that is how the Vidy pool was wiped while the MM pool was 2,300 nodes). Probes now stand down on lag.
+const LOOP = { lag: 0, at: Date.now() };
+{ let last = Date.now(); setInterval(() => { const n = Date.now(); LOOP.lag = Math.max(0, n - last - 500); last = n; LOOP.at = n; }, 500).unref?.(); }
+const loopOk = () => LOOP.lag < Number(process.env.BGLAG || 250);
 const VY_SOCKN = { n: 0 };                       // net sockets opened under the reserved Vidy-probe budget
 const VY_SOCK_MAX = Number(process.env.VYSOCK || 64);   // small: other sources' pools must still get sockets
 const socketGate = require('./tools/vidy-runtime/socket_gate.cjs');
@@ -249,12 +255,12 @@ const PX_MISS = new Map(); // v1.15.21 কম্পন-সহনশীলতা:
 const PX_COOL = new Map(); // v1.15.16b: পূর্ণ-মৃত → ১২০সে-শীতল (রেজলভার-প্যারিটি — একই-১২-মৃত-ঢেউয়ে-ঢেউয়ে-পিটানো-বন্ধ; ৬০০সে-কাটার-আগে-৫-সুযোগ)
 let PXCHK = 0, pxChkBusy = false;
 async function pxCheckerWave() {
-  if (pxChkBusy || !POOL.length || Date.now() < MMR_ACTIVE_UNTIL) return;
+  if (pxChkBusy || !POOL.length || Date.now() < MMR_ACTIVE_UNTIL || !loopOk()) return;
   pxChkBusy = true;
   try {
     const tnow = Date.now();
     const wave = POOL.filter(c => (PX_COOL.get(c.px) || 0) <= tnow)
-      .sort((a, b) => (PX_LASTOK.get(a.px) || 0) - (PX_LASTOK.get(b.px) || 0)).slice(0, 420); // v1.15.68: ঢেউ ২× ৪২→৮৪
+      .sort((a, b) => (PX_LASTOK.get(a.px) || 0) - (PX_LASTOK.get(b.px) || 0)).slice(0, Number(process.env.PXWAVEN || 24)); // v1.34.258: 420 -> 24 (socket/loop saturation)
     if (!wave.length) return;
     PXCHK++;
     let cok = 0, cspare = 0, cdead = 0;
@@ -383,6 +389,9 @@ function bfBenchStart() {
 // parallel maps + own file — nothing here touches the vidy pool.
 const MM_CAP = 4620, MM_FILE = path.join(__dirname, 'vidy_mm_pool.json'); // v1.34.64: MM pool space 3x (1540->4620)
 let MM_POOL = []; try { for (const c of JSON.parse(fs.readFileSync(MM_FILE, 'utf8'))) if (c && c.px) MM_POOL.push({ px: c.px, ms: Number(c.ms) || 2000 }); } catch (e) { }
+// v1.34.258 (incident): the saved MM pool had grown to ~2,400 mostly-dead nodes; probing them starved every
+// other source of sockets. Boot keeps the fastest MMSEED entries only (the wave re-discovers the rest).
+try { const seedN = Math.max(120, Math.min(Number(process.env.MMSEED || 900), MM_CAP)); if (MM_POOL.length > seedN) { MM_POOL.sort((a, b) => (a.ms || 2000) - (b.ms || 2000)); MM_POOL = MM_POOL.slice(0, seedN); } } catch (e) { }
 const MM_RUN = new Map(), MM_LASTOK = new Map(), MM_COOL = new Map(), MM_SITE = new Set(), MM_MISS = new Map();
 const MM_RACE_ST = { runs: 0, won: 0, invalid: 0, failed: 0, timeout: 0 };
 const MM_RESOLVE_OK = new Map(); // proxies verified on real resolver responses, independent of homepage bench
@@ -779,7 +788,7 @@ async function mmCheckerWave() { // pxCheckerWave's twin — bench = vidbolt rea
   if (mmChkBusy || !MM_POOL.length || Date.now() < MMR_ACTIVE_UNTIL) return; mmChkBusy = true;
   try {
     const tnow = Date.now();
-    const wave = MM_POOL.filter(c => (MM_COOL.get(c.px) || 0) <= tnow).sort((a, b) => (MM_LASTOK.get(a.px) || 0) - (MM_LASTOK.get(b.px) || 0)).slice(0, 420); // v1.15.68: ঢেউ ২×
+    const wave = MM_POOL.filter(c => (MM_COOL.get(c.px) || 0) <= tnow).sort((a, b) => (MM_LASTOK.get(a.px) || 0) - (MM_LASTOK.get(b.px) || 0)).slice(0, loopOk() ? Number(process.env.MMWAVEN || 28) : 0); // v1.34.258: 420 -> 28, and stand down on loop lag
     if (!wave.length) return;
     await Promise.all(wave.map(c => new Promise(r2 => {
       const t0 = Date.now();
@@ -1871,6 +1880,7 @@ async function vidySweep(n) {
       if (DBG) console.error('[vsweep-t] তাজা-রিফিল tried=' + st.length + ' ok=' + _o + ' fresh=' + _freshN + ' inflight=' + _inflight);
       return;
     }
+    if (!loopOk()) { vidyVSave(); return; }   // v1.34.258: no probing on a lagging loop
     // v1.25.1 (user: 'always active scanning'): no pause during traffic. Tunnel probes are quota-free and
     // the ledger now charges every API call, so scanning can never steal a serving session's budget.
     if (false) return;
@@ -1914,7 +1924,7 @@ async function vidySweep(n) {
     const free = px => !VIDY_OK.has(px) && (now - (VIDY_TRIED.get(px) || 0)) > triedTtl;
     const capN = n || Number(process.env.VPXPASS || 1500);
     const poolC = POOL.filter(c => free(c.px)).sort((a, b) => pxScore(a.px, a.ms) - pxScore(b.px, b.ms)).map(c => c.px);
-    // v1.34.257 (audit): the bulk scanner used to probe POOL first and then PX_RAW from index 0 — PX_RAW is
+    // v1.34.258 (audit): the bulk scanner used to probe POOL first and then PX_RAW from index 0 — PX_RAW is
     // append-only, so it re-tested the OLDEST (already dead) entries every round and never reached the fresh
     // lists. Measured: sweep 0/240 passes for minutes while a direct probe of the same list sources passed
     // 16/120. Now: freshly discovered lists first, then the NEWEST raw candidates, then the pool.
@@ -1935,7 +1945,7 @@ async function vidySweep(n) {
     //   ডুবিয়ে দিত: মাপা ok ৬–৮/১৬ → ০–৩/১৬)।
     // Advance by exactly the batch width: the old 12-step/96-slice loop
     // retested overlapping candidates up to eight times and wasted quota.
-    const scanWidth = _inflight ? 8 : Math.max(1, Math.min(96, Number(process.env.PXSCAN || 48) || 48));
+    const scanWidth = _inflight ? 6 : Math.max(1, Math.min(48, Number(process.env.PXSCAN || 24) || 24));
     for (let i = 0; i < cands.length; i += scanWidth) {
       const _low = vidyReadyCount() < 18;
       if (_inflight && i >= 16) break; // ★ v1.17.56: পুল-শুকিয়ে-গেলে অনুরোধের মাঝেও (ছোট-ব্যাচে) রিফিল
@@ -2303,6 +2313,7 @@ const VY_REFILL = require('./tools/vidy-runtime/active_refill.cjs').create({
     return require('./tools/vidy-runtime/fair_candidates.cjs').merge([proven, VY_DISCOVERY.candidates(), site, pxRawRecent(6000), fallback], allowed);
   },
   validate: async px => {
+    if (!loopOk()) return null;   // v1.34.258: loop lag => defer this check, it is not a proxy fault
     if (snBanned(px) || !ptunAllowed(px) || vpxLeft(px) < 3) return false;
     if (!vpxTake(px)) return null;
     let slot = false; const t0 = Date.now();
