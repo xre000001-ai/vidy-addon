@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.276';
+const VERSION = '1.34.277';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -9438,7 +9438,10 @@ function mlbdLangs(fn) {
   return out.slice(0, 4).join(' \u00b7 ');
 }
 async function mlbdStreams(name, year, type, s, e, cap) {
-  const T0 = Date.now(); const B = Number(process.env.MLBDB || 18000);   // ★ v1.34.172: ৮.২সে-তে শেষ-হপে left=৬০০ms থাকত ⇒ mirror-রেজলভ শেষ হতো না (মাপা)   // v1.27.19: 6500-e প্রোডে resolved হত 6823ms-এ => হারিয়ে যেত
+  // ★★ v1.34.277 (মাপা): B=১৮সে ছিল, কিন্তু প্লেয়ার প্রতিটি সোর্স ৯.৫সে-তে settle করে ⇒ ১৮সে-র
+  //   কাজের ৯সেকাংশ অর্থহীন (কার্ড এসে পৌঁছানোর আগেই উত্তর চলে যায়: প্রোডে mlb=০)। এখন বাজেট
+  //   ৯সে — ভিতরের প্রতিটি হপ ঠিক একইভাবে চলে, শুধু উত্তর সময়মতো বেরোয় (ইউজার-শর্ত: MLSBD <১০সে)।
+  const T0 = Date.now(); const B = Number(process.env.MLBDB || 9000);   // ★ v1.34.172: ৮.২সে-তে শেষ-হপে left=৬০০ms থাকত ⇒ mirror-রেজলভ শেষ হতো না (মাপা)   // v1.27.19: 6500-e প্রোডে resolved হত 6823ms-এ => হারিয়ে যেত
   const left = () => Math.max(400, B - (Date.now() - T0));
   const hard = new Promise(r => setTimeout(() => r(null), B + 250));
   const work = (async () => {
@@ -9513,6 +9516,12 @@ async function mlbdStreams(name, year, type, s, e, cap) {
       const qs = type === 'series'
         ? [name, name + ' S' + S2]
         : [name, name + (year ? ' ' + year : '')];
+      // ★★ v1.34.277 (মাপা: `search 17 qs=2 @4032ms` → `suggest-fallback rows=0` → `picks=0` ⇒ ০ কার্ড):
+      //   ফলব্যাক-সার্চটা মূল-সার্চের **পরে** শুরু হত ⇒ ব্যর্থ পথে ৪সে + ৪সে = ৮সে, তারপর হপের
+      //   জন্য সময়ই থাকত না। এখন দুটোই একসাথে ছোটে; মূল-সার্চ ব্যর্থ হলে ফলাফল প্রস্তুত থাকে।
+      const _altP = left() > 2000
+        ? require('./tools/mlbd-index/direct_search.cjs').search(base, name, mlbdGet, Math.min(3800, left())).catch(() => [])
+        : Promise.resolve([]);
       const ss = await Promise.all(qs.map(q => mlbdSearch(base, q, qw).catch(() => [])));
       let items = [];
       for (const arr of ss) for (const x of (arr || [])) items.push(x);
@@ -9536,10 +9545,10 @@ async function mlbdStreams(name, year, type, s, e, cap) {
       }
       // The site's bounded suggestion snapshot is only a fallback: it can be
       // incomplete, so the regular search remains authoritative when it works.
-      if (!picks.length && left()>2500) {
-        const alt=await require('./tools/mlbd-index/direct_search.cjs').search(base,name,mlbdGet,Math.min(4000,left()));
+      if (!picks.length && left()>1200) {
+        const alt=await _altP;   // ★ আগেই ছোটানো ফলব্যাক — এখন শুধু অপেক্ষা
         picks=mlbdPicks(alt,name,year,type,SE,EP);
-        diag('mlbd','suggest-fallback rows='+alt.length+' picks='+picks.length);
+        diag('mlbd','suggest-fallback rows='+(alt||[]).length+' picks='+picks.length);
       }
       diag('mlbd', 'picks=' + picks.length + ' ' + String((picks[0] || {}).title || '').slice(0, 40));
       if (DBG) console.error('[mlbd] picks=' + picks.length + ' ' + picks.slice(0, 5).map(x => String(x.title).slice(0, 34)).join(' ‖ '));
