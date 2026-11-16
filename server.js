@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.259';
+const VERSION = '1.34.260';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -7880,6 +7880,125 @@ async function mmNova(tmdbId, isSeries, season, episode, ms) {
     return rows.filter(Boolean);
   } catch (_) { return []; }
 }
+// ---------- v1.34.260 (ইউজার: \"Are bhi multimovies spiderman brand new day teh 4k ekta stream dei\") ----------
+// ★ মাপা (১৬-১১-২০২৬): Multimovies-এর **HLS-ইনডেক্স** (Watchout2025/hls) এই ছবির জন্য শুধু ১০৮০ দেয়
+//   (`..._h/master.txt` = একটাই 1920x800 ভ্যারিয়েন্ট), vidbolt/movy resolved সোর্সও একটাই ১০৮০ আর্কাইভ
+//   (`img.rousav.tech/media/cf7947bc68da2631c57a` ⇒ 1080/720/480)। **৪K ওদের সাইটের ডাউনলোড-পেজে**:
+//   `https://m1.multimovies.courses/movie/<slug>-<titleId>` ⇒ `/download/<slug>-<titleId>` ⇒
+//   `4K UHD 2160p · 81.9 GB` ⇒ HubCloud মিরর (`hubcloud.ist/drive/<id>`) ⇒ gamerxyt ⇒ signed R2
+//   (Range-প্রমাণ: 206 · bytes 0-1023/87,937,111,321). তাই MM-কার্ড এখন সেখান থেকেও আসে।
+//   কার্ডে **স্থায়ী** আমাদের-নিজস্ব লিঙ্ক থাকে (`/mmhub/<b64(drive)>/v.mkv`) — signed R2 প্লেব্যাকের
+//   সময়ে রেজলভ হয় (কোনো এক্সপায়ারিং URL কার্ডে/ডিস্কে জমা হয় না; ২০-মিনিট মেমো)।
+const MMHUB_LIB = require('./tools/vidy-runtime/mmhub.cjs');   // v1.34.260: বিশুদ্ধ-পার্সার (tools/vidy-tests/mmhub দিয়ে টেস্টেড)
+const MMHUB_SITE = String(process.env.MMHUB || 'https://m1.multimovies.courses').replace(/\/+$/, '');
+const MMHUB_FIND = new Map();   // tmdbId → {ts, page, slug}      (৩০ মিনিট)
+const MMHUB_PKG = new Map();    // slug|4k → {ts, pkg}            (১০ মিনিট)
+const MMHUB_RES = new Map();    // drive-id → {ts, url, size}     (২০ মিনিট)
+const MMHUB_ST = { find: 0, findHit: 0, pkg: 0, pkgHit: 0, res: 0, resHit: 0, miss: 0, err: 0 };
+function mmHubShrink(m, max) { try { while (m.size > max) { const k = m.keys().next().value; m.delete(k); } } catch (_) { } }
+function mmHubFetch(u, ms, ref) {
+  return fetch(u, {
+    headers: { 'User-Agent': UA, Accept: 'text/html,application/json;q=0.9,*/*;q=0.8', 'Accept-Language': 'en-US,en;q=0.8', Referer: ref || (MMHUB_SITE + '/') },
+    signal: AbortSignal.timeout(Math.max(2200, Math.min(9000, ms || 6000)))
+  }).then(r => (r.ok ? r.text() : '')).catch(() => '');
+}
+const mmHubMatch = (want, cand, wy, cy) => MMHUB_LIB.titleMatch(want, cand, wy, cy);   // ভুল-ফিল্ম-কার্ড প্রতিরোধ: নাম-টোকেন + বছর
+async function mmHubFind(tmdbId, name, year, ms) {
+  const key = String(tmdbId);
+  const hit = MMHUB_FIND.get(key);
+  if (hit && Date.now() - hit.ts < (hit.neg ? 300000 : 1800000)) { if (hit.neg) return null; MMHUB_ST.findHit++; return hit; }
+  const q = String(name || '').trim();
+  if (!q) return null;
+  let txt = '';
+  try { txt = await mmHubFetch(MMHUB_SITE + '/api/search?q=' + encodeURIComponent(q), ms); }
+  catch (_) { MMHUB_ST.err++; return null; }
+  MMHUB_ST.find++;
+  let arr = [];
+  try { const j = txt ? JSON.parse(txt) : null; arr = (j && Array.isArray(j.movies)) ? j.movies : []; } catch (_) { MMHUB_ST.err++; return null; }
+  const cands = arr.filter(x => x && /^\/movie\//.test(String(x.url || '')) && mmHubMatch(q, x.title, year, x.year));
+  for (const c of cands.slice(0, 2)) {
+    const page = MMHUB_SITE + String(c.url);
+    const html = await mmHubFetch(page, Math.min(3200, ms || 3200));
+    if (!html || html.length < 3000) continue;
+    // ★ পরিচয়-যাচাই: MM-পেজের watchConfig-এ TMDB-আইডি থাকতেই হবে (নইলে অন্য ছবির কার্ড ⇒ বাদ)
+    if (!new RegExp('(?:movie/|id=|tmdb[=/])' + String(tmdbId) + '(?![0-9])').test(html)) continue;
+    const rec = { ts: Date.now(), page, slug: String(c.url), title: String(c.title || ''), year: parseInt(c.year, 10) || 0 };
+    MMHUB_FIND.set(key, rec); mmHubShrink(MMHUB_FIND, 160);
+    return rec;
+  }
+  MMHUB_FIND.set(key, { ts: Date.now(), neg: 1 }); mmHubShrink(MMHUB_FIND, 160);   // নেগেটিভ-ক্যাশ ৫মিন
+  return null;
+}
+async function mmHubPkg(rec, want4k, ms) {
+  const key = rec.slug + (want4k ? '|4k' : '|hd');
+  const hit = MMHUB_PKG.get(key);
+  if (hit && Date.now() - hit.ts < 600000) { MMHUB_ST.pkgHit++; return hit.pkg || null; }
+  const dl = MMHUB_SITE + '/download/' + String(rec.slug).replace(/^\/movie\//, '');
+  const html = await mmHubFetch(dl, ms, rec.page);
+  if (!html) return null;
+  const pkgs = MMHUB_LIB.parsePackages(html).filter(p => p.q >= 1080);   // ৪৮০ কখনোই কার্ড নয়
+  MMHUB_ST.pkg++;
+  if (DBG) console.error('[mmhub] dl len=' + html.length + ' pkgs=' + JSON.stringify(pkgs.map(p => [p.q, p.label, p.size, p.drives.length])));
+  const pkg = want4k ? (pkgs.filter(p => p.q === 2160)[0] || null) : (pkgs[0] || null);
+  MMHUB_PKG.set(key, { ts: Date.now(), pkg }); mmHubShrink(MMHUB_PKG, 160);   // null-ও ক্যাশ (১০মিন) — ফাঁকা পেজ বারবার টানা নয়
+  return pkg;
+}
+async function mmHubResolve(drive, ms) {
+  const id = (String(drive).match(/\/drive\/([A-Za-z0-9]+)/) || [])[1] || String(drive);
+  const hit = MMHUB_RES.get(id);
+  if (hit && Date.now() - hit.ts < 1200000) { MMHUB_ST.resHit++; return hit; }
+  if (!/^https:\/\/hubcloud\.[a-z.]+\/drive\/[A-Za-z0-9]+/i.test(String(drive))) return null;
+  const page = await mmHubFetch(drive, ms, 'https://hubcloud.ist/');
+  if (!page) return null;
+  const gx = (page.match(/https:\/\/gamerxyt\.com\/hubcloud\.php\?[^"']+/) || [])[0];
+  const body = gx ? (await mmHubFetch(gx, ms, 'https://hubcloud.ist/')) : page;
+  const cands = [];
+  for (const m2 of String(body || '').matchAll(/https:\/\/[A-Za-z0-9.-]+(?:\.r2\.cloudflarestorage\.com|\.workers\.dev)\/[^"'\s]+/g)) cands.push(m2[0].replace(/&amp;/g, '&'));
+  for (const m3 of String(body || '').matchAll(/pixeldrain\.(?:com|dev)\/u\/([A-Za-z0-9]+)/g)) cands.push('https://pixeldrain.com/api/file/' + m3[1] + '?download');
+  const uniq = cands.filter((v, i, a) => a.indexOf(v) === i).slice(0, 6);
+  const name = ((body || '').match(/<title>([^<]{4,200})<\/title>/i) || [])[1] || '';
+  for (const u of uniq) {
+    try {
+      const r = await fetch(u, { headers: { 'User-Agent': UA, Range: 'bytes=0-1023' }, signal: AbortSignal.timeout(Math.max(2500, Math.min(6000, ms || 5000))) });
+      const ct = String(r.headers.get('content-type') || '').toLowerCase();
+      const cr = String(r.headers.get('content-range') || '');
+      const total = parseInt((cr.split('/')[1] || '0'), 10) || 0;
+      try { if (r.body) await r.body.cancel(); } catch (_) { }
+      if (r.status !== 206 && r.status !== 200) continue;
+      if (!/^(video\/|application\/octet-stream|binary\/octet-stream|application\/x-matroska)/.test(ct)) continue;
+      if (total && total < 8 * 1024 * 1024) continue;   // ট্রেইলার/নমুনা নয়
+      const rec = { ts: Date.now(), url: u, size: total, name: String(name).trim() };
+      MMHUB_RES.set(id, rec); mmHubShrink(MMHUB_RES, 200); MMHUB_ST.res++;
+      return rec;
+    } catch (_) { }
+  }
+  MMHUB_ST.miss++;
+  return null;
+}
+async function mmHub4K(tmdbId, type, ms, name, year) {
+  if (String(type) !== 'movie') return [];   // v1.34.260: MM-সিরিজ-ডাউনলোড এখনো এপিসোড-ভিত্তিক নয় ⇒ সিরিজে চালু নয়
+  const T0 = Date.now();
+  const left = () => Math.max(2000, Math.min(9000, (ms || 6500) - (Date.now() - T0)));
+  try {
+    const nm = name || await nameForTmdb(tmdbId, 'movie').catch(() => '');
+    if (DBG) console.error('[mmhub] start ' + tmdbId + ' "' + String(nm).slice(0, 40) + '"');
+    if (!nm) { if (DBG) console.error('[mmhub] no-name'); return []; }
+    let yr = parseInt(year, 10) || 0;
+    if (!yr) yr = await yearForTmdb(tmdbId, 'movie').catch(() => 0);
+    const rec = await mmHubFind(tmdbId, nm, yr, Math.min(3200, left()));
+    if (!rec) { if (DBG) console.error('[mmhub] no-page'); return []; }
+    const pkg = (await mmHubPkg(rec, true, Math.min(2800, left()))) || (await mmHubPkg(rec, false, Math.min(2400, left())));
+    if (!pkg || !pkg.drives.length) { if (DBG) console.error('[mmhub] no-pkg'); return []; }
+    if (DBG) console.error('[mmhub] pkg q=' + pkg.q + ' size=' + pkg.size + ' drives=' + pkg.drives.length);
+    for (const d of pkg.drives.slice(0, 2)) {   // একই ফাইলের একাধিক মিরর — প্রথম জীবিতটাই প্রমাণ
+      const pr = await mmHubResolve(d, Math.min(4200, left()));
+      if (!pr) continue;
+      if (DBG) console.error('[mmhub] ' + tmdbId + ' ' + pkg.q + 'p ' + pkg.size + ' ' + mlsMB(pr.size) + ' @' + (Date.now() - T0) + 'ms');
+      return [{ h: pkg.q, url: d, ref: 'https://hubcloud.ist/', mp4: 1, lang: '', aud: '', mini: 0, hub: 1, hsize: pkg.size, hname: pr.name, hbytes: pr.size }];
+    }
+    return [];
+  } catch (e) { if (DBG) console.error('[mmhub] err ' + String((e && e.message) || e).slice(0, 90)); return []; }
+}
 // Snapshot successful providers at a shared deadline; never replace them with
 // a failed/late provider. No stream-card cache or cross-request state.
 async function mmHarvestProviders(promises, ms) {
@@ -7900,6 +8019,7 @@ async function mmStreams(tmdbId, title, type, s, e, origin, maxh, rel) { // v1.1
     const vbP = mmVidbolt(tmdbId, isSeries, s, e, left(), origin).catch(() => []);
     const orionP = mmOrionMovie(tmdbId, origin, left(), isSeries, s, e).catch(() => []); // exact episode; parallel with other providers
     const novaP = mmNova(tmdbId, isSeries, s, e, left()).catch(() => []);
+    const hubP = mmHub4K(tmdbId, type, left(), title, 0).catch(() => []);   // v1.34.260: MM-সাইটের ৪K (HubCloud মিরর)
     const subsP = woSubs(tmdbId, type, s, e, 2500).catch(() => []); // v1.15.99: সমান্তরালে সাবটাইটেল ফেচ (শেষে ব্লক না করা)
     // Each provider runs independently. A hung index, master or resolver must
     // not discard cards already obtained from another provider at the outer
@@ -7921,7 +8041,16 @@ async function mmStreams(tmdbId, title, type, s, e, origin, maxh, rel) { // v1.1
       return rows;
     }).catch(() => []);
     const harvested = await mmHarvestProviders([indexP, indexExpandP, vbP, orionP, novaP], Math.max(1, 7200 - (Date.now() - t3)));
+    // ★ v1.34.260: HubCloud-৪K আলাদা ডেডলাইনে — অন্য প্রোভাইডার ফুরালেও এই কার্ড হারায় না
+    //   (উষ্ণ-ক্যাশে <২০০ms, ঠান্ডায় ~২-৪সে; বাজেট ৭৮০০ms-এর মধ্যে সীমিত)
+    let hubRows = [];
+    try {
+      const hubWait = Math.max(250, 7800 - (Date.now() - t3));
+      hubRows = (await Promise.race([hubP, new Promise(r => setTimeout(() => r(null), hubWait))])) || [];
+      if (DBG && hubRows.length) console.error('[mm] hub4k rows=' + hubRows.length + ' q=' + hubRows.map(x => x.h).join(',') + ' @' + (Date.now() - t3) + 'ms');
+    } catch (_) { hubRows = []; }
     const raws = [], seen = new Set();
+    for (const v of hubRows) if (v && v.url) { const k = 'hub|' + v.url; if (!seen.has(k)) { seen.add(k); raws.push(v); } }
     for (const list of harvested) for (const v of list) {
       if (!v || !v.url) continue;
       const k = v.url + '|' + (v.h | 0) + (v.mini ? 'm' : '') + '|' + (v.alang || '');
@@ -7941,14 +8070,14 @@ async function mmStreams(tmdbId, title, type, s, e, origin, maxh, rel) { // v1.1
       const q2 = x.h ? String(x.h) : '';
       const cardSubs = x.subtitles && x.subtitles.length ? x.subtitles : (x.ref === WO_REF ? subs : []);
       const aud = [x.aud, x.lang].filter(Boolean).filter((z, zi, za) => za.indexOf(z) === zi).join(' \u00b7 '); // v1.15.88: "hi · hi" ডুপ-লেবেল বন্ধ
-      const txt = '\u29c9 ' + T + '\n' + epLine + '\n\u229e Multimovies \u00b7 ' + (x.mp4 ? 'MM-MP4' : 'MM-HLS') + (aud ? ' \u2317 ' + aud : '') + (cardSubs.length ? ' \u2022 \ud83c\udfac' : '');
+      const txt = '\u29c9 ' + T + '\n' + epLine + '\n\u229e Multimovies \u00b7 ' + (x.hub ? ('MM-Hub' + (x.hsize ? ' \u00b7 ' + x.hsize : '')) : (x.mp4 ? 'MM-MP4' : 'MM-HLS')) + (aud ? ' \u2317 ' + aud : '') + (cardSubs.length ? ' \u2022 \ud83c\udfac' : '');
       return {
         name: '\u25a5 ' + (q2 || 'Auto') + ' \u25a5',
         title: txt,
         description: txt,
         quality: q2,
-        url: x.autoRef && origin ? origin + '/mm/' + mmMiniKey(x.url, x.ref || WO_REF, 0, '', '', '') + '/mini.m3u8?auto=1' : x.mini ? (origin ? origin + '/mm/' + mmMiniKey(x.url, x.ref || WO_REF, x.h, x.vbq, x.lang, x.alang) + '/mini.m3u8' + (rel ? '?r=1' : '') : x.url) : x.url, // v1.15.30+52+54: mini — রেজো-পিনড+সত্য-অডিও-লেবেল; rel=?r=1
-        behaviorHints: { notWebReady: true, isBingeable: true, filename: x.mp4 ? 'multimovies.mp4' : 'multimovies.m3u8', proxyHeaders: { request: { Referer: x.ref || WO_REF, 'User-Agent': UA } } }, // v1.15.56 (ডক: proxyHeaders শুধু notWebReady:true-তে-কাজ-করে; false-এ-Stremio-হেডার-ফেলে-দেয় → রেফারার-গেটেড-মাস্টার-প্লেয়ারে-404)
+        url: x.hub ? (origin ? origin + '/mmhub/' + Buffer.from(x.url).toString('base64url') + '/v.mkv' : x.url) : x.autoRef && origin ? origin + '/mm/' + mmMiniKey(x.url, x.ref || WO_REF, 0, '', '', '') + '/mini.m3u8?auto=1' : x.mini ? (origin ? origin + '/mm/' + mmMiniKey(x.url, x.ref || WO_REF, x.h, x.vbq, x.lang, x.alang) + '/mini.m3u8' + (rel ? '?r=1' : '') : x.url) : x.url, // v1.15.30+52+54: mini — রেজো-পিনড+সত্য-অডিও-লেবেল; rel=?r=1
+        behaviorHints: { notWebReady: true, isBingeable: true, filename: x.hub ? (x.hname || ('multimovies-' + (x.h || 'auto') + 'p.mkv')) : x.mp4 ? 'multimovies.mp4' : 'multimovies.m3u8', proxyHeaders: { request: { Referer: x.ref || WO_REF, 'User-Agent': UA } } }, // v1.15.56 (ডক: proxyHeaders শুধু notWebReady:true-তে-কাজ-করে; false-এ-Stremio-হেডার-ফেলে-দেয় → রেফারার-গেটেড-মাস্টার-প্লেয়ারে-404)
         // v1.15.96 — **falcon-ধাঁচায় শীর্ষ-স্তরের headers** (প্রমাণ: xre000001-ai/falcon, public/netflix.js buildCard():
         //   `headers: { "Referer": …, "User-Agent": … }`)। Nuvio এই শীর্ষ-স্তরের `headers`-কে
         //   প্লেব্যাক-রিকোয়েস্টে বসায় — তখন আমাদের /mmr/ রিলে-এর দরকারই থাকে না, প্লেয়ার সরাসরি
@@ -18196,7 +18325,7 @@ const server = http.createServer((req, res) => FG_CONTEXT.run({ active: true }, 
       RT_INFLIGHT.set(kRT, pr);
       res = w;
     }
-    if (p === '/_health') { const _vf = [...VIDY_OK.values()].filter(v => v.ts && Date.now() - v.ts < Number(process.env.PXFRESH || 240000)).length; return sendJson(res, 200, { ok: 1, cg: CG_ST, cgDead: CG_DEAD.size, cgSrc: Object.fromEntries([...CG_SRC].map(([k, v]) => [k, { ok: v.ok, fail: v.fail, down: v.down > Date.now() ? Math.round((v.down - Date.now()) / 1000) : 0 }])), version: VERSION, cache: CACHE_ST, bg: BG_ST, pwhy: PART_WHY, up: Math.round(process.uptime()), deploy: 'v' + VERSION, mmpool: { size: MM_POOL.length, bench: MM_SITE.size, discovery: MM_DISCOVERY.stats(), resolverFresh: [...MM_RESOLVE_OK.values()].filter(t => Date.now() - t < 600000).length, resolverChecks: MM_RESOLVE_BENCH_STATS, cooling: [...MM_COOL.values()].filter(t => t > Date.now()).length, race: MM_RACE_ST }, pool: POOL.length, pxbench: POOL.filter(c => PX_SITE.has(c.px)).length, pxbf: PX_BF.size, memo: memo.size, gw: (typeof GW !== 'undefined' ? GW.size : -1), nx: NEXBASE ? 1 : 0, nxpool: NXBENCH, nxwaves: NXWAVES, nxsize: NXSIZE, tw: TWBASE ? 1 : 0, rt: RTBASE ? 1 : 0, mls: (process.env.MLSD !== '0') ? 1 : 0, mlsindex: require('./tools/mls-index-lab/runtime_index').stats(), mlslinks: Object.assign({active:mlsLinkRaceActive}, MLS_LINK_METRICS), mlbdRuntime: {queue:MLBD_WL.stats(),net:MLBD_NET_METRICS,mirrorReady:!!MLBD_BASE,mirrorFlight:!!MLBD_MIRROR_FLIGHT,mirrorBlocked:!!(MLBD_BASE && hostBad(MLBD_BASE))}, vsp: VSP_POOL.length, vy: VIDY_OK.size, vyfresh: _vf, vyReady: vidyReadyCount(), vyBlocks: vidyBlockCounts(), vyRefill: VY_REFILL.stats(), vyDiscovery: VY_DISCOVERY.stats(), vhg: (typeof VHG !== 'undefined' ? VHG : 0), pxpl: (typeof PXPL !== 'undefined' ? PXPL.size : 0), rtmq: RT_MQ_ST, dti: (typeof DT_IDX !== 'undefined' ? DT_IDX : 0), dtst: (typeof DT_ST !== 'undefined' ? DT_ST : 0), dtsh: (typeof DT_SH !== 'undefined' ? { on: DT_SH.on, src: DT_SH.src, pre: DT_SH.pre, loaded: DT_SH.loaded, hits: DT_SH.hits, miss: DT_SH.miss, cache: (typeof DT_SH_CACHE !== 'undefined' ? DT_SH_CACHE.size : 0), err: DT_SH.err, units: (DT_SH.man && DT_SH.man.units) || null, slugs: (DT_SH.man && DT_SH.man.slugs || []).length } : 0), lastreq: { el: LR.el, n: LR.total, pend: LR.pend, p: LR.path, sr: (LR.sr || []).map(x => x[0] + ':' + x[1] + '@' + x[2]) } }); } // v1.34.95, v1.34.105 // ★ v1.21.9: vy=verified vidy নোড, vyfresh=৪মিন-তাজা // v1.15.71: vsp=Vidsrc-পুল-আকার // v1.15.18: pxbench=সাইট-প্রমাণিত-বেঞ্চ (v1.15.8: nxpool=MB-বেঞ্চ)
+    if (p === '/_health') { const _vf = [...VIDY_OK.values()].filter(v => v.ts && Date.now() - v.ts < Number(process.env.PXFRESH || 240000)).length; return sendJson(res, 200, { ok: 1, cg: CG_ST, cgDead: CG_DEAD.size, cgSrc: Object.fromEntries([...CG_SRC].map(([k, v]) => [k, { ok: v.ok, fail: v.fail, down: v.down > Date.now() ? Math.round((v.down - Date.now()) / 1000) : 0 }])), version: VERSION, cache: CACHE_ST, bg: BG_ST, pwhy: PART_WHY, up: Math.round(process.uptime()), deploy: 'v' + VERSION, mmpool: { size: MM_POOL.length, bench: MM_SITE.size, discovery: MM_DISCOVERY.stats(), resolverFresh: [...MM_RESOLVE_OK.values()].filter(t => Date.now() - t < 600000).length, resolverChecks: MM_RESOLVE_BENCH_STATS, hub4k: MMHUB_ST, cooling: [...MM_COOL.values()].filter(t => t > Date.now()).length, race: MM_RACE_ST }, pool: POOL.length, pxbench: POOL.filter(c => PX_SITE.has(c.px)).length, pxbf: PX_BF.size, memo: memo.size, gw: (typeof GW !== 'undefined' ? GW.size : -1), nx: NEXBASE ? 1 : 0, nxpool: NXBENCH, nxwaves: NXWAVES, nxsize: NXSIZE, tw: TWBASE ? 1 : 0, rt: RTBASE ? 1 : 0, mls: (process.env.MLSD !== '0') ? 1 : 0, mlsindex: require('./tools/mls-index-lab/runtime_index').stats(), mlslinks: Object.assign({active:mlsLinkRaceActive}, MLS_LINK_METRICS), mlbdRuntime: {queue:MLBD_WL.stats(),net:MLBD_NET_METRICS,mirrorReady:!!MLBD_BASE,mirrorFlight:!!MLBD_MIRROR_FLIGHT,mirrorBlocked:!!(MLBD_BASE && hostBad(MLBD_BASE))}, vsp: VSP_POOL.length, vy: VIDY_OK.size, vyfresh: _vf, vyReady: vidyReadyCount(), vyBlocks: vidyBlockCounts(), vyRefill: VY_REFILL.stats(), vyDiscovery: VY_DISCOVERY.stats(), vhg: (typeof VHG !== 'undefined' ? VHG : 0), pxpl: (typeof PXPL !== 'undefined' ? PXPL.size : 0), rtmq: RT_MQ_ST, dti: (typeof DT_IDX !== 'undefined' ? DT_IDX : 0), dtst: (typeof DT_ST !== 'undefined' ? DT_ST : 0), dtsh: (typeof DT_SH !== 'undefined' ? { on: DT_SH.on, src: DT_SH.src, pre: DT_SH.pre, loaded: DT_SH.loaded, hits: DT_SH.hits, miss: DT_SH.miss, cache: (typeof DT_SH_CACHE !== 'undefined' ? DT_SH_CACHE.size : 0), err: DT_SH.err, units: (DT_SH.man && DT_SH.man.units) || null, slugs: (DT_SH.man && DT_SH.man.slugs || []).length } : 0), lastreq: { el: LR.el, n: LR.total, pend: LR.pend, p: LR.path, sr: (LR.sr || []).map(x => x[0] + ':' + x[1] + '@' + x[2]) } }); } // v1.34.95, v1.34.105 // ★ v1.21.9: vy=verified vidy নোড, vyfresh=৪মিন-তাজা // v1.15.71: vsp=Vidsrc-পুল-আকার // v1.15.18: pxbench=সাইট-প্রমাণিত-বেঞ্চ (v1.15.8: nxpool=MB-বেঞ্চ)
     if (p === '/_mem') { /* ★ v1.28.1: মেমোরি-ডিয়াগনস্টিক — OOM-ক্ষতির কারন খুঁজতে (প্রমাণ: ব্যাটারি-চালাকালে node 896MB-তে kernel-OOM-kill) */
       const m = process.memoryUsage(); const sz = o => { try { return o instanceof Map ? o.size : (Array.isArray(o) ? o.length : -1); } catch (e) { return -1; } };
       // ★ v1.28.3-M4: সীমা + purge-পরিসংখ্যান (কতবার, কোন স্তরে) — প্রোডে "মেমরি ফুল" কেন, একনজরে
@@ -18678,6 +18807,19 @@ const server = http.createServer((req, res) => FG_CONTEXT.run({ active: true }, 
       } catch { res.writeHead(502, { 'content-type': 'text/plain' }); return res.end('audio-err'); }
     })();
     // v1.15.54+97+98: **উচ্চ-গতির MM-মিডিয়া-রিলে (ইন-মেমরি লুকঅ্যাহেড প্রিফেচ + স্টল-রিজিউমিং)** — /mmr/<b64url(টার্গেট)>/<name>
+    // ★ v1.34.260: MM-৪K কার্ডের স্থায়ী লিঙ্ক — প্লেব্যাকের মুহূর্তে HubCloud⇒R2 রেজলভ (২০-মিনিট মেমো),
+    //   তারপর 302 ⇒ signed CDN URL। Range-হেডার প্লেয়ার-নিজেই রি-রিকোয়েস্ট করে (206 অটুট)।
+    const mmHubR = p.match(/^\/mmhub\/([A-Za-z0-9_=-]{8,400})\/v\.(?:mkv|mp4)$/);
+    if (mmHubR) return (async () => {
+      let tgt = '';
+      try { tgt = Buffer.from(mmHubR[1], 'base64url').toString('utf8'); } catch { }
+      if (!/^https:\/\/hubcloud\.[a-z.]+\/drive\/[A-Za-z0-9]+/i.test(tgt)) { try { res.writeHead(400); } catch { } return res.end('bad'); }
+      let pr = null;
+      try { pr = await mmHubResolve(tgt, 7000); } catch { }
+      if (!pr) { try { res.writeHead(502, { 'cache-control': 'no-store' }); } catch { } return res.end('mmhub'); }
+      try { res.writeHead(302, { location: pr.url, 'cache-control': 'no-store', 'access-control-allow-origin': '*' }); } catch { }
+      return res.end();
+    })();
     const mmRel = p.match(/^\/mmr\/([A-Za-z0-9_=-]+)\/(?:p\.m3u8|s\.m4s)$/);
     if (mmRel) return (() => {
       let tgt = '';
