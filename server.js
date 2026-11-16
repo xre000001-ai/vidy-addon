@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.225';
+const VERSION = '1.34.226';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -3980,7 +3980,8 @@ function mlsGdBg(fileUrl, id) {
   const tick = async (round) => {
     try {
       const st = MLS_GD.get(id);
-      if (st && st.ok) { MLS_GBG.delete(id); return; }
+      if (st && st.ok && require('./tools/mls-index-lab/playback_resolution_cache').fresh(st)) { MLS_GBG.delete(id); return; }
+      if (st && st.ok) MLS_GD.delete(id);
       const r = await mlsGdOnce(fileUrl, 9000, round > 0 && st && st.tokUrl ? { tok: st.tokUrl, cloud: st.cloud, px: st.px } : null);
       if (r && (r.ok || r.done)) {
         MLS_GD.set(id, Object.assign({ ts: Date.now() }, r)); mlsMarkDirty(); MLS_GBG.delete(id);
@@ -4102,8 +4103,9 @@ async function mlsGdOnce(fileUrl, ms, resume) {
 
 async function mlsGd(link, ms, px) {
   const id = mlsGdId(link);
-  const C = MLS_GD.get(id);
-  if (C && C.ok && Date.now() - C.ts < 1800000) return { ok: true, direct: C.direct, size: C.size || 0, ct: C.ct || '', route: 'cache', link: link };
+  let C = MLS_GD.get(id);
+  if (C && C.ok && require('./tools/mls-index-lab/playback_resolution_cache').fresh(C)) return { ok: true, direct: C.direct, size: C.size || 0, ct: C.ct || '', route: 'cache', link: link };
+  if (C && C.ok) { MLS_GD.delete(id); C = null; }
   // A previous background timeout is not a permanent provider failure.
   if (C && C.done && !C.ok && C.route !== 'bg-timeout' && Date.now() - C.ts < 900000) return { ok: false, route: 'known-dead', link: link };
   const started=Date.now(), budget=Math.min(ms || 4000, 8500);
