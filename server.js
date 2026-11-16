@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.250';
+const VERSION = '1.34.251';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -29,6 +29,8 @@ const SK = { on: process.env.SOCKS === '1', live: new Map(), liveN: 0, made: 0, 
   waited: 0, queued: 0, dropped: 0, fg: 0 };
 const SOCKMAX = Number(process.env.SOCKMAX || 160);
 const FG_CONTEXT = new (require('async_hooks').AsyncLocalStorage)();
+const VY_SOCKN = { n: 0 };                       // net sockets opened under the reserved Vidy-probe budget
+const VY_SOCK_MAX = Number(process.env.VYSOCK || 64);
 const socketGate = require('./tools/vidy-runtime/socket_gate.cjs');
 function isLocalOnly(req) { const ip = String((req.headers['x-forwarded-for'] || req.socket.remoteAddress || '')).split(',')[0].trim(); return /^(127\.|::1$|::ffff:127\.)/.test(ip) || DBG; }
 {
@@ -66,6 +68,9 @@ function isLocalOnly(req) { const ip = String((req.headers['x-forwarded-for'] ||
     } catch (e) { }
     const self = this, args = arguments;
     const foreground = () => { const c = FG_CONTEXT.getStore(); return !!(c && c.active); };
+    // Background Vidy probing keeps a small reserved socket budget so playback never starves it
+    // and the generic scanners cannot block replenishment completely.
+    const vidyReserved = () => { const c = FG_CONTEXT.getStore(); return !!(c && c.vidy && !c.active) && VY_SOCKN.n < VY_SOCK_MAX; };
     if (!foreground() && SK.liveN >= capNow() && SK.queued > QMAX) {
       SK.dropped++; self.__sockGateRejected = true;
       process.nextTick(() => { try { self.once('error', () => {}); self.destroy(); } catch (_) {} });
@@ -73,8 +78,14 @@ function isLocalOnly(req) { const ip = String((req.headers['x-forwarded-for'] ||
     }
     return socketGate.schedule({
       socket: self,
-      allowed: () => foreground() || SK.liveN < capNow(),
-      open: () => { count(host, self); return origProto.apply(self, args); },
+      allowed: () => foreground() || SK.liveN < capNow() || vidyReserved(),
+      open: () => {
+        if (!foreground() && SK.liveN >= capNow() && vidyReserved()) {   // reserved slot for a Vidy probe
+          VY_SOCKN.n++; SK.reserved = (SK.reserved || 0) + 1;
+          try { self.once('close', () => { VY_SOCKN.n = Math.max(0, VY_SOCKN.n - 1); }); } catch (_) {}
+        }
+        count(host, self); return origProto.apply(self, args);
+      },
       drop: () => { SK.dropped++; self.__sockGateRejected = true; try { self.once('error', () => {}); self.destroy(); } catch (_) {} },
       onQueue: () => { SK.queued++; SK.waited++; },
       onDequeue: () => { SK.queued = Math.max(0, SK.queued - 1); },
@@ -1265,7 +1276,12 @@ function ptunReq(ent, url, tmo, hdrs, firstTmo) { // এক টানেলে �
     try { s.write(hx + '\r\n'); } catch (e) { fin(new Error('tun-write')); }
   });
 }
-async function apiGetT(px, url, tmo, hdrs, tag) { // vidy-কলের একমাত্র দরজা (টানেল-পুনঃব্যবহার + নিজে-থেকে-পুনরায়-চেষ্টা)
+function apiGetT(px, url, tmo, hdrs, tag) {  // every Vidy API call; runs under the 'vidy' context so its sockets may use the reserved budget
+  const _ctx = FG_CONTEXT.getStore();
+  if (_ctx && (_ctx.vidy || _ctx.active)) return apiGetTRaw(px, url, tmo, hdrs, tag);
+  return FG_CONTEXT.run({ vidy: true, active: false }, () => apiGetTRaw(px, url, tmo, hdrs, tag));
+}
+async function apiGetTRaw(px, url, tmo, hdrs, tag) {
   let last = null;
   for (let attempt = 0; attempt < 3; attempt++) {
     let ent = ptunLive(px), reused = !!(ent && !ent.busy && !PX_NORE.get(px));
@@ -1898,7 +1914,7 @@ async function vidySweep(n) {
     const free = px => !VIDY_OK.has(px) && (now - (VIDY_TRIED.get(px) || 0)) > triedTtl;
     const capN = n || Number(process.env.VPXPASS || 1500);
     const poolC = POOL.filter(c => free(c.px)).sort((a, b) => pxScore(a.px, a.ms) - pxScore(b.px, b.ms)).map(c => c.px);
-    // v1.34.250 (audit): the bulk scanner used to probe POOL first and then PX_RAW from index 0 — PX_RAW is
+    // v1.34.251 (audit): the bulk scanner used to probe POOL first and then PX_RAW from index 0 — PX_RAW is
     // append-only, so it re-tested the OLDEST (already dead) entries every round and never reached the fresh
     // lists. Measured: sweep 0/240 passes for minutes while a direct probe of the same list sources passed
     // 16/120. Now: freshly discovered lists first, then the NEWEST raw candidates, then the pool.
@@ -2270,7 +2286,12 @@ setTimeout(() => { VY_DISCOVERY.tick().catch(() => {}); setInterval(() => VY_DIS
 const VY_REFILL = require('./tools/vidy-runtime/active_refill.cjs').create({
   ready: vidyReadyCount,
   target: 100, parallel: 24, busyParallel: 6,
-  getParallel: () => (INFLIGHT_STREAM > 0 || Date.now() - LAST_STREAM_AT < 3000 || Date.now() < MMR_ACTIVE_UNTIL || SK.liveN >= 145) ? 4 : (SK.liveN >= 110 ? 10 : 24),
+  getParallel: () => {
+    const busy = INFLIGHT_STREAM > 0 || Date.now() - LAST_STREAM_AT < 3000 || Date.now() < MMR_ACTIVE_UNTIL;
+    if (busy) return 6;                            // never race a user's playback for sockets
+    const ready = vidyReadyCount();
+    return ready >= 100 ? 4 : (ready >= 50 ? 12 : 24);   // scale with the shortfall, not with unrelated pool state
+  },
   candidates: () => {
     const t = Date.now(), proven = [], site = [], fallback = [];
     const rTtl = Number(process.env.VYTRIEDR || 300000);
@@ -18163,7 +18184,7 @@ const server = http.createServer((req, res) => FG_CONTEXT.run({ active: true }, 
       const top = [...SK.live.entries()].sort((a, b) => b[1] - a[1]).slice(0, 20);
       const made = [...SK.madeBy.entries()].sort((a, b) => b[1] - a[1]).slice(0, 20);
       return sendJson(res, 200, { on: true, sockmax: SOCKMAX, madeTotal: SK.made, liveTotal: SK.liveN,
-        gated: { dropped: SK.dropped, queued: SK.queued, capNow: 0, fgNow: SK.fg }, liveTop: top, madeTop: made });
+        gated: { dropped: SK.dropped, queued: SK.queued, capNow: 0, fgNow: SK.fg, vyReserved: VY_SOCKN.n, vyReservedMax: VY_SOCK_MAX }, liveTop: top, madeTop: made });
     }
     if (p === '/_handles') {   // ★ v1.28.3-L9: হ্যান্ডেল-ধরন গুনে দেখি কোনটা জমছে (Socket/TLSWrap/Timeout…)
       const ip = String((req.headers['x-forwarded-for'] || req.socket.remoteAddress || '')).split(',')[0].trim();
