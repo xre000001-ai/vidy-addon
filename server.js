@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.246';
+const VERSION = '1.34.247';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -1845,7 +1845,7 @@ async function vidySweep(n) {
     const _readyN = vidyReadyCount();
     const _freshN = [...VIDY_OK.values()].filter(v => v.ts && now - v.ts < _FRSH).length;
     if (_inflight && _readyN >= 18 && _freshN < Number(process.env.PXFLOW || 14)) {
-      const st = [...VIDY_OK.entries()].filter(([, v]) => !v.ts || now - v.ts > _FRSH).map(([px]) => px).slice(0, 6);
+      const st = [...VIDY_OK.entries()].filter(([px, v]) => (!v.ts || now - v.ts > _FRSH) && ptunAllowed(px) && !snBanned(px)).map(([px]) => px).slice(0, 6);
       let _o = 0;
       await Promise.all(st.map(async px => {
         if (!vpxTake(px)) return;
@@ -1871,7 +1871,7 @@ async function vidySweep(n) {
     const rvCand = [];
     for (const [px, e] of VIDY_OK) {
       const age = now - (e.ts || 0);
-      if (age < RVMIN) continue;
+      if (age < RVMIN || !ptunAllowed(px) || snBanned(px)) continue;
       rvCand.push([px, age]);
     }
     rvCand.sort((a, b) => b[1] - a[1]);
@@ -1938,7 +1938,7 @@ async function vidySweep(n) {
     // পুরোনো verified-দের মাঝে-মাঝে পুনঃযাচাই (৩০মিন+) — বাদ-পড়া সরিয়ে ফেলি
     // v1.25.0: re-verifying a 4-min-old node spent its whole quota on the ping and pushed it out of the
     // serving band. Now only nodes older than PXAGE(10min) are re-verified.
-    const stale = [...VIDY_OK.entries()].filter(([, v]) => v.ts && Date.now() - v.ts > Number(process.env.PXAGE || 600000)).slice(0, Number(process.env.PXVRE || 12)); // ★ v1.17.59: তাজা-রাখা
+    const stale = [...VIDY_OK.entries()].filter(([px, v]) => v.ts && Date.now() - v.ts > Number(process.env.PXAGE || 600000) && ptunAllowed(px) && !snBanned(px)).slice(0, Number(process.env.PXVRE || 12)); // ★ v1.17.59: তাজা-রাখা
     await Promise.all(stale.map(async ([px]) => {
       if (!vpxTake(px)) return;
       try { await vySlot(2500); } catch (e) { vpxFree(px); return; }
@@ -1966,7 +1966,7 @@ setInterval(async () => {
   try {
     if (Date.now() < MMR_ACTIVE_UNTIL) return;
     const now = Date.now();
-    const stale = [...VIDY_OK.entries()].filter(([, v]) => now - (v.ts || 0) > 90000).sort((a, b) => (a[1].ts || 0) - (b[1].ts || 0)).slice(0, 60);
+    const stale = [...VIDY_OK.entries()].filter(([px, v]) => now - (v.ts || 0) > 90000 && ptunAllowed(px) && !snBanned(px)).sort((a, b) => (a[1].ts || 0) - (b[1].ts || 0)).slice(0, 60);
     for (let i = 0; i < stale.length; i += 20) {
       await Promise.all(stale.slice(i, i + 20).map(async ([px]) => {
         if (!vpxTake(px)) return;
@@ -2248,28 +2248,25 @@ const VY_DISCOVERY = require('./tools/vidy-runtime/discovery.cjs').create({
   fetchList: url => directGet(url, 10000),
   urls: [
     'https://raw.githubusercontent.com/proxmint/free-proxy-list/main/proxies/http.txt',
+    'https://raw.githubusercontent.com/stormsia/proxy-list/main/http.txt',
     'https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&protocol=http&proxy_format=ipport&format=text&timeout=5000&supports_https=true',
     'https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt',
     'https://raw.githubusercontent.com/Zaeem20/FREE_PROXIES_LIST/master/http.txt'
   ]
 });
-setTimeout(() => { VY_DISCOVERY.tick().catch(() => {}); setInterval(() => VY_DISCOVERY.tick().catch(() => {}), 60000).unref?.(); }, 25000).unref?.();
+setTimeout(() => { VY_DISCOVERY.tick().catch(() => {}); setInterval(() => VY_DISCOVERY.tick().catch(() => {}), 20000).unref?.(); }, 25000).unref?.();
 const VY_REFILL = require('./tools/vidy-runtime/active_refill.cjs').create({
   ready: vidyReadyCount,
   target: 100, parallel: 24, busyParallel: 6,
-  isBusy: () => INFLIGHT_STREAM > 0 || Date.now() - LAST_STREAM_AT < 3000 || SK.liveN >= 110,
+  getParallel: () => (INFLIGHT_STREAM > 0 || Date.now() - LAST_STREAM_AT < 3000 || Date.now() < MMR_ACTIVE_UNTIL || SK.liveN >= 145) ? 4 : (SK.liveN >= 110 ? 10 : 24),
   candidates: () => {
-    const t = Date.now(), out = [], have = new Set();
-    const add = px => { if (!px || have.has(px) || VIDY_OK.has(px) || VIDY_DROP.has(px) || snBanned(px) || !ptunAllowed(px) || VPX_BUSY.get(px) || vpxLeft(px) < 3 || t - (VIDY_TRIED.get(px) || 0) < 600000) return; have.add(px); out.push(px); };
-    // Prioritize current runtime successes, then newly discovered raw entries;
-    // seeded/stale cross-source nodes are only lower-confidence exploration.
-    for (const m of SPOOL.values()) for (const [px,e] of m) if (spoolFresh(e) && !e.seeded) add(px);
-    for (const c of POOL) if (c && PX_SITE.has(c.px)) add(c.px);
-    for (const px of VY_DISCOVERY.candidates()) add(px);
-    for (const px of PX_RAW) add(px);
-    for (const c of POOL) add(c && c.px);
-    for (const m of SPOOL.values()) for (const [px,e] of m) if (spoolFresh(e)) add(px);
-    return out;
+    const t = Date.now(), proven = [], site = [], fallback = [];
+    const allowed = px => !VIDY_OK.has(px) && !VIDY_DROP.has(px) && !snBanned(px) && ptunAllowed(px) && !VPX_BUSY.get(px) && vpxLeft(px) >= 3 && t - (VIDY_TRIED.get(px) || 0) >= 600000;
+    for (const m of SPOOL.values()) for (const [px,e] of m) if (spoolFresh(e) && !e.seeded) proven.push(px);
+    for (const c of POOL) if (c && PX_SITE.has(c.px)) site.push(c.px);
+    for (const c of POOL) if (c) fallback.push(c.px);
+    for (const m of SPOOL.values()) for (const [px,e] of m) if (spoolFresh(e)) fallback.push(px);
+    return require('./tools/vidy-runtime/fair_candidates.cjs').merge([proven, VY_DISCOVERY.candidates(), site, PX_RAW, fallback], allowed);
   },
   validate: async px => {
     if (snBanned(px) || !ptunAllowed(px) || vpxLeft(px) < 3 || !vpxTake(px)) return false;
@@ -2292,7 +2289,7 @@ const VY_REFILL = require('./tools/vidy-runtime/active_refill.cjs').create({
     finally { if (slot) vyFree(); vpxFree(px); }
   }
 });
-setTimeout(() => { VY_REFILL.tick().catch(() => {}); setInterval(() => VY_REFILL.tick().catch(() => {}), 5000).unref?.(); }, 20000).unref?.();
+setTimeout(() => { VY_REFILL.tick().catch(() => {}); setInterval(() => VY_REFILL.tick().catch(() => {}), 3000).unref?.(); }, 20000).unref?.();
 // ===== v1.18.0 (ইউজার: "vidy etoh rate limit … giant server Miami, Boise, Atlanta, also phoenix") =====
 // vidy প্রতি IP-তে মাত্র ২–৪ কল দেয় ⇒ ১৬ সার্ভারের জন্য বিশাল পুল লাগে না, লাগে **বিশেষায়িত তাজা নোড**।
 // তাই গ্ল্যায়ান্ট ৪টি সার্ভারের জন্য আলাদা **HOT-নোড** (প্রতি সার্ভারে ৩টি, ≤৯০সে-যাচাই) + মিনি-sweeper।
