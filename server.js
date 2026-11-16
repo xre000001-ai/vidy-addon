@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.251';
+const VERSION = '1.34.252';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -30,7 +30,7 @@ const SK = { on: process.env.SOCKS === '1', live: new Map(), liveN: 0, made: 0, 
 const SOCKMAX = Number(process.env.SOCKMAX || 160);
 const FG_CONTEXT = new (require('async_hooks').AsyncLocalStorage)();
 const VY_SOCKN = { n: 0 };                       // net sockets opened under the reserved Vidy-probe budget
-const VY_SOCK_MAX = Number(process.env.VYSOCK || 64);
+const VY_SOCK_MAX = Number(process.env.VYSOCK || 24);   // small: other sources' pools must still get sockets
 const socketGate = require('./tools/vidy-runtime/socket_gate.cjs');
 function isLocalOnly(req) { const ip = String((req.headers['x-forwarded-for'] || req.socket.remoteAddress || '')).split(',')[0].trim(); return /^(127\.|::1$|::ffff:127\.)/.test(ip) || DBG; }
 {
@@ -70,7 +70,7 @@ function isLocalOnly(req) { const ip = String((req.headers['x-forwarded-for'] ||
     const foreground = () => { const c = FG_CONTEXT.getStore(); return !!(c && c.active); };
     // Background Vidy probing keeps a small reserved socket budget so playback never starves it
     // and the generic scanners cannot block replenishment completely.
-    const vidyReserved = () => { const c = FG_CONTEXT.getStore(); return !!(c && c.vidy && !c.active) && VY_SOCKN.n < VY_SOCK_MAX; };
+    const vidyReserved = () => { const c = FG_CONTEXT.getStore(); if (!(c && c.vidy && !c.active) || VY_SOCKN.n >= VY_SOCK_MAX) return false; return vidyReadyCount() < Number(process.env.VYTARGET || 100); };
     if (!foreground() && SK.liveN >= capNow() && SK.queued > QMAX) {
       SK.dropped++; self.__sockGateRejected = true;
       process.nextTick(() => { try { self.once('error', () => {}); self.destroy(); } catch (_) {} });
@@ -1914,7 +1914,7 @@ async function vidySweep(n) {
     const free = px => !VIDY_OK.has(px) && (now - (VIDY_TRIED.get(px) || 0)) > triedTtl;
     const capN = n || Number(process.env.VPXPASS || 1500);
     const poolC = POOL.filter(c => free(c.px)).sort((a, b) => pxScore(a.px, a.ms) - pxScore(b.px, b.ms)).map(c => c.px);
-    // v1.34.251 (audit): the bulk scanner used to probe POOL first and then PX_RAW from index 0 — PX_RAW is
+    // v1.34.252 (audit): the bulk scanner used to probe POOL first and then PX_RAW from index 0 — PX_RAW is
     // append-only, so it re-tested the OLDEST (already dead) entries every round and never reached the fresh
     // lists. Measured: sweep 0/240 passes for minutes while a direct probe of the same list sources passed
     // 16/120. Now: freshly discovered lists first, then the NEWEST raw candidates, then the pool.
