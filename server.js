@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.234';
+const VERSION = '1.34.235';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -1661,6 +1661,7 @@ function vidySessionP(px, o, tmo) {
   const t0 = Date.now();
   let reseeded = 0;
   return seedViaPx(px, o.tmdbId, tmo).then(seed => {
+    let currentSeed = seed;
     const q = Object.assign({}, o.q, { seed: seed });
     const u = API + '/' + o.srv + '/sources?' + new URLSearchParams(q).toString();
     vpxCharge(px, 1);
@@ -1670,7 +1671,7 @@ function vidySessionP(px, o, tmo) {
         if (e2 && typeof e2 === 'object') e2.__seedOk = 1;
         if (reseeded || !/http_401/.test(String(e2 && e2.message))) throw e2;
         reseeded = 1; SEED_PX.delete(px + ':' + o.tmdbId); tfail('401-reseed', null);   // v1.34.124 (audit): undeclared `tag`-e ReferenceError — 401-reseed recovery etodin dead chhilo
-        return seedViaPx(px, o.tmdbId, tmo).then(s2 => srcFetch(s2, false));
+        return seedViaPx(px, o.tmdbId, tmo).then(s2 => { currentSeed = s2; return srcFetch(s2, false); });
       });
     return srcFetch(seed, true).then(ct => {
       pxsRec('vidy:' + o.srv, px, true, Date.now() - t0);   // কন্ডিশন-পাস = seed+sources দুটোই
@@ -1678,14 +1679,14 @@ function vidySessionP(px, o, tmo) {
       if (VGIANT.indexOf(o.srv) >= 0) vhotRec(o.srv, px);   // ★ v1.18.0: গ্ল্যায়ান্ট-হটে জমা
       if (DBG) console.error('[vses] ' + o.srv + ' ✓ ' + px + ' ' + (Date.now() - t0) + 'ms');
       vsrvOk(vsrvKey(o)); affOk(o.srv, px); // v1.25.x: server health + affinity (which node serves which server)
-      return { ct: ct, seed: seed, px: px };
+      return { ct: ct, seed: currentSeed, px: px };
     });
   }).catch(e => { // ★ v1.25.0: আগে একই ব্যর্থতা দুটো কী-তে (srv+seed) জমত ⇒ /_pxsrc-এ fail দ্বিগুণ দেখাত। এখন একবারই।
     if (e && e.__seedOk) pxsRec('vidy:' + o.srv, px, false, Date.now() - t0); else pxsRec('vidy:seed', px, false, Date.now() - t0);
     // সার্ভার-দোষ বনাম নোড-দোষ: ৪০৩/৪২৯/HTML/টানেল-কানেক্ট = নোডের সমস্যা (সার্ভার-গণনায় নয়);
     // বাকি (৫xx, read-timeout, খালি/ভাঙা পেলোড) = সার্ভার-হেলথে যায়।
     const _m = String((e && e.message) || '');
-    if (e && e.__seedOk && /http_5\d\d|tun-read-timeout|tun-closed|short|decrypt|empty/.test(_m)) vsrvBad(vsrvKey(o));
+    if (e && e.__seedOk && /http_5\d\d|tun-read-timeout|tun-closed|short|decrypt|empty/.test(_m) && typeof o.onSourceFailure === 'function') o.onSourceFailure();
     vidyNodeBad(px); throw e;
   });
 }
@@ -2523,6 +2524,11 @@ async function vidyFetch(o) { // ★ v1.17.56: verified-pool **ক্রমব�
   const t0 = Date.now(), left = () => Math.max(900, TOT - (Date.now() - t0));
   const sc = o.sc || {};
   const ST = { done: false };
+  // Count at most one server-level failure for a failed race, not one for
+  // every hedged proxy. A winning sibling must not trip the breaker.
+  let sourceFailure = false, failureRecorded = false;
+  const raceOptions = Object.assign({}, o, { onSourceFailure: () => { sourceFailure = true; } });
+  const recordRaceFailure = () => { if (!failureRecorded && sourceFailure) { failureRecorded = true; vsrvBad(_bk); } };
   const off = (typeof o.srv === 'string' ? o.srv.charCodeAt(0) + o.srv.length : 0);
   // ★ v1.18.0: গ্ল্যায়ান্ট হলে **HOT-নোড আগে** (সেই সার্ভারে সদ্য-যাচাই ≤৯০সে), তারপর সাধারণ verified
   // ★★ v1.19.0 — **Multimovies-এর মতোই**: mm `mmRacePool()` করে (score-ক্রমে সাজিয়ে, ব্যান্ড-জুড়ে ছড়ানো
@@ -2561,7 +2567,7 @@ async function vidyFetch(o) { // ★ v1.17.56: verified-pool **ক্রমব�
   const one = async px => {
     if (ST.done || !vpxTake(px)) return null;
     try { await vySlot(left()); } catch (e) { vpxFree(px); return null; }   // v1.34.124 (audit): gate-full-e vpxFree chhara chhilo — VPX_BUSY leak hoye node chirotore brick hoto (baki 6 call-site thik kore)
-    try { return await vidySessionP(px, o, sesTmo(px)); }
+    try { return await vidySessionP(px, raceOptions, sesTmo(px)); }
     catch (e) { if (DBG && process.env.VJDBG) console.error('[vjob] ' + o.srv + ' ' + String(e && e.message).slice(0, 40)); return null; }
     finally { vyFree(); vpxFree(px); }
   };
@@ -2570,7 +2576,7 @@ async function vidyFetch(o) { // ★ v1.17.56: verified-pool **ক্রমব�
   const DELAY = [0, 60, 120, 200, 300, 420, 900, 960, 1020, 1100, 1200, 1320, 1800, 1860, 1920, 2000, 2100, 2220];
   return new Promise((resolve, reject) => {
     let win = false, pending = 0;
-    const to = setTimeout(() => { if (!win) { win = true; ST.done = true; reject(new Error('vidy-timeout')); } }, left());
+    const to = setTimeout(() => { if (!win) { win = true; ST.done = true; recordRaceFailure(); reject(new Error('vidy-timeout')); } }, left());
     const done = r => { if (!win) { win = true; ST.done = true; clearTimeout(to); if (r && o.collect) { const _also = []; ST.alsoSink = _also; const _wp = !!(o.prefer && r.px && o.prefer.has(r.px)); setTimeout(() => { let _out = r, _al = _also; if (o.prefer && !_wp) { const _alt = _also.find(x => x && x.px && x.ct && o.prefer.has(x.px)); if (_alt) { _out = _alt; _al = [r].concat(_also.filter(x => x !== _alt)); } } resolve(Object.assign({}, _out, { also: _al })); }, _wp ? 0 : Number(o.collect)); } else resolve(r); } };   // v1.34.108: winner playlist-proved hole wait noy; rotator jit-le collect-window-te proved runner-up ele card-session takei (born-alive) — remint-call (prefer chara) ager motoi
     const fire = px => { pending++; one(px).then(r => { if (r) { if (!win) done(r); else if (ST.alsoSink && ST.alsoSink.length < 4) ST.alsoSink.push(r); } }, () => { }).finally(() => { pending--; }); };   // v1.34.106: runner-up session joma (remint-er jonno)
     // ★ v1.25.0 (মাপা মূল কারণ): ৩০০০ms-এর হেজ নোডের হাতে মাত্র ~১.৫সে থাকত ⇒ দুই-কলের সেশন কখনো শেষ হত না,
@@ -2586,7 +2592,7 @@ async function vidyFetch(o) { // ★ v1.17.56: verified-pool **ক্রমব�
     // সব-শেষ-হলে allfail/পুল-শেষ
     const iv = setInterval(() => {
       if (win) { clearInterval(iv); return; }
-      if (Date.now() - t0 > TOT - 150 && pending === 0) { clearInterval(iv); win = true; ST.done = true; clearTimeout(to); reject(new Error('vidy-allfail')); }
+      if (Date.now() - t0 > TOT - 150 && pending === 0) { clearInterval(iv); win = true; ST.done = true; clearTimeout(to); recordRaceFailure(); reject(new Error('vidy-allfail')); }
     }, 120); if (iv.unref) iv.unref();
   });
 }
@@ -16789,7 +16795,9 @@ async function vhsServe(req, res, b64) {
   if (!affFresh) try {
     const ac = new AbortController();
     const hto = setTimeout(() => { try { ac.abort(); } catch (e) { } }, 8000);
-    if (req.on) req.on('close', () => { try { ac.abort(); } catch (e) { } });
+    // IncomingMessage close can mean the request finished normally; only a
+    // response disconnect should abort the upstream segment fetch.
+    if (res.on) res.on('close', () => { if (!res.writableEnded) { try { ac.abort(); } catch (e) { } } });
     const r = await fetch(target, { headers: hdr, redirect: 'follow', signal: ac.signal });
     clearTimeout(hto);
     if ((r.status >= 200 && r.status < 300) && r.body) {
@@ -16813,7 +16821,7 @@ async function vhsServe(req, res, b64) {
       if (fb.length) res.write(fb);
       if (!first || first.done) { try { res.end(); } catch (e) { } return; }
       let closed = false;
-      if (req.on) req.on('close', () => { closed = true; try { reader.cancel(); } catch (e) { } });
+      if (res.on) res.on('close', () => { if (!res.writableEnded) { closed = true; try { reader.cancel(); } catch (e) { } } });
       try {
         for (;;) {
           const n = await reader.read();
