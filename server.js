@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.275';
+const VERSION = '1.34.276';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -10419,10 +10419,16 @@ async function hdStreams(imdb, title, type, s, e, origin, maxh) { // v1.17.49: �
     // ★ v1.34.275: hubdrive-ড্রাইভ hdDrive দিয়ে **প্রমাণ করা যায় না** (ওটা hubcloud-পেজের ফাংশন) —
     //   সব ড্রাইভ hubdrive হলে প্রমাণ-দৌড় শুধু HDRACE (৩সে) নষ্ট করত, আর কার্ড সোর্স-সেটেল
     //   (৯.২৫সে)-এর পরে পৌঁছাত (`[srcsettle] hd @9259ms n=0`)। এখন সেটা বাদ ⇒ lazy কার্ড ~৩-৪সে-তে।
+    // ★★ v1.34.276 (মাপা: `[hd] drives=5 @7185ms` তারপর `lazy=3 proven=timeout @10192ms` ⇒ কলার
+    //   deadline (৯.৫সে) পেরিয়ে ০ কার্ড): প্রমাণ-দৌড় আর lazy-কার্ড **একসাথে** হয় না — প্রমাণ আগে
+    //   শেষ হতে হবে। এখন প্রমাণের সময়সীমা **বাকি-বাজেট** দিয়ে ক্ল্যাম্প হয়, আর বাজেট কম থাকলে
+    //   প্রমাণ বাদ দিয়ে সাথে সাথে lazy কার্ড দেওয়া হয় ⇒ কার্ড কখনো deadline-এর পরে যাবে না।
     const _provable = drives.some(d => d.kind !== 'hubdrive');
-    const _proven = !_provable ? null : await Promise.race([
+    const _budget = left() - 800;
+    const _race = Math.max(0, Math.min(Number(process.env.HDRACE || 3000), _budget));
+    const _proven = (!_provable || _race < 700) ? null : await Promise.race([
       _prove().catch(() => null),
-      new Promise(r => { const t = setTimeout(() => r(null), Number(process.env.HDRACE || 3000)); if (t.unref) t.unref(); })
+      new Promise(r => { const t = setTimeout(() => r(null), _race); if (t.unref) t.unref(); })
     ]);
     if (_proven && _proven.length) return _proven;
     const _lz = hdLazyCards();
