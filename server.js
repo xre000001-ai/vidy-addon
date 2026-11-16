@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.226';
+const VERSION = '1.34.227';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -3348,6 +3348,8 @@ function mlsCurl(u, opt) {
     '-H', 'sec-ch-ua: "Chromium";v="147", "Not.A/Brand";v="8"',
     '-H', 'sec-ch-ua-mobile: ?0', '-H', 'sec-ch-ua-platform: "Windows"',
     '-o', tmp, '-w', '%{http_code}|%{content_type}|%{url_effective}'];
+  if (opt.noRedirect) { const i=a.indexOf('-L'); if(i>=0)a.splice(i,1); }
+  if (opt.cookie && /^mlbd_gk=[a-f0-9]{8,64}(?:; mlbd_g2=[a-f0-9]{8,64})?$/i.test(opt.cookie)) a.push('-H','Cookie: '+opt.cookie);
   if (opt.proxy) {
     // ★ v1.28.38: `socks5://ip:port` ⇒ curl-এ `socks5h://` (DNS-ও প্রক্সি-পাশে; mlsbd.co CF-এ এটাই দরকার)
     const px0 = String(opt.proxy);
@@ -3357,8 +3359,8 @@ function mlsCurl(u, opt) {
     a.push('--proxy', pxArg, '--proxy-insecure');
   }
   let hdrFile = '';
-  if (opt.range) {                       // ★ v1.31.1: Range-প্রমাণ (ডাউনলোড-কার্ডের শর্ত)
-    a.push('-r', String(opt.range));
+  if (opt.range || opt.returnHeaders) {  // Capture redirect Location without following external hosts.
+    if (opt.range) a.push('-r', String(opt.range));
     hdrFile = tmp + '.h';
     a.push('-D', hdrFile);
   }
@@ -3368,7 +3370,7 @@ function mlsCurl(u, opt) {
   a.push(u);
   return new Promise(resolve => {
     let done = false;
-    const fin = v => { if (done) return; done = true; try { require('fs').unlink(tmp, () => { }); } catch (e) { } resolve(v); };
+    const fin = v => { if (done) return; done = true; try { require('fs').unlink(tmp, () => { }); if(hdrFile)require('fs').unlink(hdrFile, () => { }); } catch (e) { } resolve(v); };
     try {
       cp.execFile('curl', a, { maxBuffer: 8 * 1024 * 1024, timeout: Math.max(3000, opt.ms || 6000) }, (err, stdout) => {
         if (err && !stdout) return fin(null);
@@ -8439,6 +8441,7 @@ const MLBD_FILE_C = new Map();  // path → {toks:[], ts}              (স্�
 function mlbdNorm(s) { return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); }
 const MLBD_WL = require('./tools/mlbd-index/bounded_queue.cjs').create({limit:Math.max(1,Math.min(8,Number(process.env.MLBDC || 4))),maxQueue:24,waitMs:2500});
 async function mlbdLimit(fn,ms,taskMs) { return MLBD_WL.run(fn,ms,taskMs); }
+const mlbdXcLimit = require('./tools/mlbd-index/bounded_queue.cjs').create({limit:2,maxQueue:8,waitMs:1000});
 const MLBD_NET_METRICS={curlOk:0,curlFail:0,proxyOk:0,queueTimeout:0,mirrorStarted:0};
 // কখনো-throw-নয়: নেটওয়ার্ক-ব্যর্থতায় একবার রিট্রাই, শেষ-ব্যর্থতায় st:0 (কলার তখন [] ফেরায়)
 async function mlbdGet(u, opt) {
@@ -8452,9 +8455,9 @@ async function mlbdGet(u, opt) {
     if(!/(^|\.)movielinkbd\.(?:com|at|app|cc)$/i.test(h))return null;
     const left=BUD-(Date.now()-T0);if(left<900)return null;
     try {
-      const r=await mlbdLimit(()=>mlsCurl(u,{ms:Math.min(3200,left),referer:'https://movielinkbd.com/'}),left,Math.min(4000,left+250));
+      const r=await mlbdLimit(()=>mlsCurl(u,{ms:Math.min(3200,left),referer:'https://movielinkbd.com/',returnHeaders:true}),left,Math.min(4000,left+250));
       if(r && r.st===200 && require('./tools/mlbd-index/proxy_validation.cjs').valid(r.body,u)){
-        MLBD_NET_METRICS.curlOk++;hostOK(u);return {st:200,loc:'',body:r.body,url:r.eu||u};
+        MLBD_NET_METRICS.curlOk++;hostOK(u);const cookie=(/set-cookie:\s*(mlbd_g2=[a-f0-9]{8,64})/i.exec(r.hdr||'')||[])[1]||'';return {st:200,loc:'',body:r.body,url:r.eu||u,cookie};
       }
     } catch (_) {}
     MLBD_NET_METRICS.curlFail++;return null;
@@ -8498,7 +8501,8 @@ async function mlbdGet(u, opt) {
           if (opt.body !== false) { try { body = await r.text(); } catch (e) { } } else if (r.body) { try { await r.body.cancel(); } catch (_) {} }
           hostOK(u);
           if (r.status !== 200) diag('mlbd', 'http ' + r.status + ' ' + String(url).replace(/^https?:\/\//, '').slice(0, 70) + ' len=' + body.length);
-          return { st: r.status, loc: loc, body: body, url: url };
+          const cookie=(/mlbd_g2=[a-f0-9]{8,64}/i.exec(r.headers.get('set-cookie')||'')||[])[0]||'';
+          return { st: r.status, loc: loc, body: body, url: url, cookie };
         }
         return { st: 0, loc: '', body: '' };
       },Math.max(1,BUD-(Date.now()-T0)),Math.max(1,Math.min(3500,BUD-(Date.now()-T0))));
@@ -8804,7 +8808,27 @@ async function mlbdOne(base, fileUrl, dl, labQ, labTxt) {
     } catch (e) { }
     return out;
   };
-  const groups = await Promise.all([fslBranch(), hubBranch(), gdBranch()]);
+  // Keep XCloud parallel to the already working servers. Each request is
+  // capped and does not occupy MovieLinkBD's own four website slots.
+  const xcBranch = async () => {
+    if (!/data-host=["']xcloud["']/i.test(H)) return [];
+    try {
+      const hit=await require('./tools/mlbd-index/xcloud.cjs').resolve({html:H,base,name,quality:labQ,cookie:pg.cookie,
+        get:async (url,opts)=>{
+          const c=await mlbdXcLimit.run(()=>mlsCurl(url,{ms:Math.max(1000,Math.min(2200,dl-Date.now())),referer:opts.referer||fileUrl,noRedirect:!!opts.noRedirect,returnHeaders:!!opts.noRedirect,cookie:opts.cookie}),1000,2600);
+          if(!c)return null;
+          const loc=(String(c.hdr||'').match(/^location:\s*([^\r\n]+)/im)||[])[1]||'';
+          return {st:c.st,body:c.body,location:loc.trim()};
+        },
+        probe:async url=>{const v=await hdProbeD(url,Math.max(1000,Math.min(2000,dl-Date.now()))).catch(()=>null);return !!(v&&v.ok&&v.st===206&&/^bytes\s+0-\d+\/\d+/i.test(v.cr||''));}
+      });
+      return hit?[hit]:[];
+    } catch (_) {return [];}
+  };
+  const allGroups=[[],[],[],[]];
+  const jobs=[fslBranch(),hubBranch(),gdBranch(),xcBranch()].map((p,i)=>Promise.resolve(p).then(v=>{allGroups[i]=v}).catch(()=>{}));
+  let timer;await Promise.race([Promise.all(jobs),new Promise(r=>{timer=setTimeout(r,Math.max(1,Math.min(4500,dl-Date.now()-1000)))})]);clearTimeout(timer);
+  const groups=allGroups.map(x=>x.slice());
   diag('mlbd', 'hop nest=' + (nested ? 1 : 0) + ' hub=' + (hub ? 1 : 0) + ' got=' + groups.map(g => g.length).join('/') + ' st=' + pg.st + ' len=' + H.length);
   if (DBG) console.error('[mlbd1] ' + String(fileUrl).slice(-12) + ' nest=' + (nested ? 1 : 0) + ' hub=' + (hub ? 1 : 0) + ' ic=' + (ic ? 1 : 0) + ' got=' + groups.map(g => g.length).join('/') + ' left=' + left() + 'ms');
   const mirrors = [];
@@ -8967,9 +8991,9 @@ async function mlbdStreams(name, year, type, s, e, cap) {
       if (type === 'movie' && /\bS\d{1,2}E\d{1,4}\b/i.test(String(g.name||''))) continue;                       // সিরিজে ঠিক-এপিসোড ছাড়া নয়
       const h = parseInt((String(g.name).match(/(\d{3,4})p/i) || [])[1], 10) || (g.q || 0);   // v1.27.17: label-fallback
       if (h === 480 || (maxh && h && h > maxh)) continue;
-      for (const m of (g.mirrors || [])) cand.push({ h: h, u: m.u, srv: m.s || srvLabel(m.u) || '', name: g.name });   // চেইন-লেবেল আগে
+      for (const m of (g.mirrors || [])) { if (sm && m.name && !sm.test(m.name)) continue; cand.push({ h: h, u: m.u, srv: m.s || srvLabel(m.u) || '', name: m.name || g.name }); }   // চেইন-লেবেল আগে
     }
-    const rank = x => (x.srv === 'MP4 Fast Cloud' ? 0 : x.srv === 'FSL' || x.srv === 'FSL Worker' ? 1 : x.srv === 'HubCloud' ? 2 : x.srv === 'Pixeldrain' ? 3 : 4);
+    const rank = x => (x.srv === 'MP4 Fast Cloud' ? 0 : x.srv === 'FSL' || x.srv === 'FSL Worker' ? 1 : x.srv === 'XCloud Cloud' ? 2 : x.srv === 'HubCloud' ? 3 : x.srv === 'Pixeldrain' ? 4 : 5);
     cand.sort((a, b) => (b.h - a.h) || (rank(a) - rank(b)));
     for (const c of cand) {
       if (seenU.has(c.u)) continue; seenU.add(c.u);
