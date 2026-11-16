@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.262';
+const VERSION = '1.34.263';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -401,6 +401,7 @@ let MM_POOL = []; try { for (const c of JSON.parse(fs.readFileSync(MM_FILE, 'utf
 // other source of sockets. Boot keeps the fastest MMSEED entries only (the wave re-discovers the rest).
 try { const seedN = Math.max(120, Math.min(Number(process.env.MMSEED || 900), MM_CAP)); if (MM_POOL.length > seedN) { MM_POOL.sort((a, b) => (a.ms || 2000) - (b.ms || 2000)); MM_POOL = MM_POOL.slice(0, seedN); } } catch (e) { }
 const MM_ADDED = new Map();     // px -> first sighting (pruning baseline for never-proven members)
+let MM_PRUNED = 0;               // v1.34.263: কত নোড ছাঁকনি-সূত্রে বাদ পড়েছে (_health.mmpool.pruned)
 const MM_RUN = new Map(), MM_LASTOK = new Map(), MM_COOL = new Map(), MM_SITE = new Set(), MM_MISS = new Map();
 const MM_RACE_ST = { runs: 0, won: 0, invalid: 0, failed: 0, timeout: 0 };
 const MM_RESOLVE_OK = new Map(); // proxies verified on real resolver responses, independent of homepage bench
@@ -823,7 +824,25 @@ async function mmCheckerWave() { // pxCheckerWave's twin — bench = vidbolt rea
     })));
     const t2 = Date.now();
     let cutN = 0;
-    for (let i = MM_POOL.length - 1; i >= 0 && MM_POOL.length > 600; i--) if (t2 - (MM_LASTOK.get(MM_POOL[i].px) || t2) > 600000) { const g = MM_POOL.splice(i, 1)[0]; cutN++; MM_RUN.delete(g.px); MM_LASTOK.delete(g.px); MM_COOL.delete(g.px); MM_SITE.delete(g.px); MM_MISS.delete(g.px); MM_ADDED.delete(g.px); } // v1.34.64: floor 3x
+    // ★★ v1.34.263 (মাপা: প্রোডে MM_POOL 1,290 আর bench ৫ — অর্থাৎ পুলটা মৃত-ভারে ভরা, আর MMCAP-এ ঠেকে
+    //   থাকায় নতুন প্রার্থীও ঢুকতে পারত না): পুরোনো ছাঁকনি ছিল
+    //   `t2 - (MM_LASTOK.get(px) || t2) > 600000` — **যে নোড একবারও সফল হয়নি** তার জন্য এই রাশি সবসময়
+    //   ০ (fallback t2) ⇒ কখনোই বাদ পড়ত না। ফলে কখনো-প্রমাণিত হয়নি এমন হাজারো নোড পুল দখল করে বসে থাকত,
+    //   কুলডাউন শেষে আবার প্রোব হতো, আর জায়গা না থাকায় নতুন (জীবিত হওয়ার সম্ভাবনাময়) নোড ঢুকত না।
+    //   এখন MM_ADDED (প্রথম-দেখা) হলো baseline: অনভিজ্ঞ নোড MMGRACE (১৫মিন) পরে, আর প্রমাণিত-কিন্তু-মৃত
+    //   নোড MMDEAD (১০মিন) পরে বাদ যায় ⇒ পুলে সবসময় তাজা প্রার্থীর জায়গা থাকে।
+    const MMGRACE = Number(process.env.MMGRACE || 900000), MMDEAD = Number(process.env.MMDEAD || 600000);
+    const MMFLOOR = Number(process.env.MMFLOOR || 600);
+    for (let i = MM_POOL.length - 1; i >= 0 && MM_POOL.length > MMFLOOR; i--) {
+      const px = MM_POOL[i] && MM_POOL[i].px;
+      if (!px) continue;
+      const okAt = MM_LASTOK.get(px) || 0, born = MM_ADDED.get(px) || 0;
+      const dead = okAt ? (t2 - okAt > MMDEAD) : (!born || t2 - born > MMGRACE);
+      if (!dead) continue;
+      const g = MM_POOL.splice(i, 1)[0]; cutN++;
+      MM_RUN.delete(g.px); MM_LASTOK.delete(g.px); MM_COOL.delete(g.px); MM_SITE.delete(g.px); MM_MISS.delete(g.px); MM_ADDED.delete(g.px);
+      MM_PRUNED++;
+    }
     if (cutN) mmSave(); // v1.15.29 revise: write only when members were cut (no idle disk churn)
     if (DBG) console.error('[mmchk] pool=' + MM_POOL.length + ' bench=' + MM_POOL.filter(c => MM_SITE.has(c.px)).length);
   } finally { mmChkBusy = false; Promise.resolve(mmResolverBenchWave()).catch(() => {}); }
@@ -18432,7 +18451,7 @@ const server = http.createServer((req, res) => FG_CONTEXT.run({ active: true }, 
       RT_INFLIGHT.set(kRT, pr);
       res = w;
     }
-    if (p === '/_health') { const _vf = [...VIDY_OK.values()].filter(v => v.ts && Date.now() - v.ts < Number(process.env.PXFRESH || 240000)).length; return sendJson(res, 200, { ok: 1, cg: CG_ST, cgDead: CG_DEAD.size, cgSrc: Object.fromEntries([...CG_SRC].map(([k, v]) => [k, { ok: v.ok, fail: v.fail, down: v.down > Date.now() ? Math.round((v.down - Date.now()) / 1000) : 0 }])), version: VERSION, cache: CACHE_ST, bg: BG_ST, pwhy: PART_WHY, up: Math.round(process.uptime()), deploy: 'v' + VERSION, mmpool: { size: MM_POOL.length, bench: MM_SITE.size, discovery: MM_DISCOVERY.stats(), resolverFresh: [...MM_RESOLVE_OK.values()].filter(t => Date.now() - t < 600000).length, resolverChecks: MM_RESOLVE_BENCH_STATS, hub4k: MMHUB_ST, vidrift: VR_ST, cooling: [...MM_COOL.values()].filter(t => t > Date.now()).length, race: MM_RACE_ST }, pool: POOL.length, pxbench: POOL.filter(c => PX_SITE.has(c.px)).length, pxbf: PX_BF.size, memo: memo.size, gw: (typeof GW !== 'undefined' ? GW.size : -1), nx: NEXBASE ? 1 : 0, nxpool: NXBENCH, nxwaves: NXWAVES, nxsize: NXSIZE, tw: TWBASE ? 1 : 0, rt: RTBASE ? 1 : 0, mls: (process.env.MLSD !== '0') ? 1 : 0, mlsindex: require('./tools/mls-index-lab/runtime_index').stats(), mlslinks: Object.assign({active:mlsLinkRaceActive}, MLS_LINK_METRICS), mlbdRuntime: {queue:MLBD_WL.stats(),net:MLBD_NET_METRICS,mirrorReady:!!MLBD_BASE,mirrorFlight:!!MLBD_MIRROR_FLIGHT,mirrorBlocked:!!(MLBD_BASE && hostBad(MLBD_BASE))}, vsp: VSP_POOL.length, vy: VIDY_OK.size, vyfresh: _vf, vyReady: vidyReadyCount(), vyBlocks: vidyBlockCounts(), vyRefill: VY_REFILL.stats(), vyCoolRecheck: VY_COOLRC, vyDiscovery: VY_DISCOVERY.stats(), vhg: (typeof VHG !== 'undefined' ? VHG : 0), pxpl: (typeof PXPL !== 'undefined' ? PXPL.size : 0), rtmq: RT_MQ_ST, dti: (typeof DT_IDX !== 'undefined' ? DT_IDX : 0), dtst: (typeof DT_ST !== 'undefined' ? DT_ST : 0), dtsh: (typeof DT_SH !== 'undefined' ? { on: DT_SH.on, src: DT_SH.src, pre: DT_SH.pre, loaded: DT_SH.loaded, hits: DT_SH.hits, miss: DT_SH.miss, cache: (typeof DT_SH_CACHE !== 'undefined' ? DT_SH_CACHE.size : 0), err: DT_SH.err, units: (DT_SH.man && DT_SH.man.units) || null, slugs: (DT_SH.man && DT_SH.man.slugs || []).length } : 0), lastreq: { el: LR.el, n: LR.total, pend: LR.pend, p: LR.path, sr: (LR.sr || []).map(x => x[0] + ':' + x[1] + '@' + x[2]) } }); } // v1.34.95, v1.34.105 // ★ v1.21.9: vy=verified vidy নোড, vyfresh=৪মিন-তাজা // v1.15.71: vsp=Vidsrc-পুল-আকার // v1.15.18: pxbench=সাইট-প্রমাণিত-বেঞ্চ (v1.15.8: nxpool=MB-বেঞ্চ)
+    if (p === '/_health') { const _vf = [...VIDY_OK.values()].filter(v => v.ts && Date.now() - v.ts < Number(process.env.PXFRESH || 240000)).length; return sendJson(res, 200, { ok: 1, cg: CG_ST, cgDead: CG_DEAD.size, cgSrc: Object.fromEntries([...CG_SRC].map(([k, v]) => [k, { ok: v.ok, fail: v.fail, down: v.down > Date.now() ? Math.round((v.down - Date.now()) / 1000) : 0 }])), version: VERSION, cache: CACHE_ST, bg: BG_ST, pwhy: PART_WHY, up: Math.round(process.uptime()), deploy: 'v' + VERSION, mmpool: { size: MM_POOL.length, bench: MM_SITE.size, discovery: MM_DISCOVERY.stats(), resolverFresh: [...MM_RESOLVE_OK.values()].filter(t => Date.now() - t < 600000).length, resolverChecks: MM_RESOLVE_BENCH_STATS, pruned: MM_PRUNED, hub4k: MMHUB_ST, vidrift: VR_ST, cooling: [...MM_COOL.values()].filter(t => t > Date.now()).length, race: MM_RACE_ST }, pool: POOL.length, pxbench: POOL.filter(c => PX_SITE.has(c.px)).length, pxbf: PX_BF.size, memo: memo.size, gw: (typeof GW !== 'undefined' ? GW.size : -1), nx: NEXBASE ? 1 : 0, nxpool: NXBENCH, nxwaves: NXWAVES, nxsize: NXSIZE, tw: TWBASE ? 1 : 0, rt: RTBASE ? 1 : 0, mls: (process.env.MLSD !== '0') ? 1 : 0, mlsindex: require('./tools/mls-index-lab/runtime_index').stats(), mlslinks: Object.assign({active:mlsLinkRaceActive}, MLS_LINK_METRICS), mlbdRuntime: {queue:MLBD_WL.stats(),net:MLBD_NET_METRICS,mirrorReady:!!MLBD_BASE,mirrorFlight:!!MLBD_MIRROR_FLIGHT,mirrorBlocked:!!(MLBD_BASE && hostBad(MLBD_BASE))}, vsp: VSP_POOL.length, vy: VIDY_OK.size, vyfresh: _vf, vyReady: vidyReadyCount(), vyBlocks: vidyBlockCounts(), vyRefill: VY_REFILL.stats(), vyCoolRecheck: VY_COOLRC, vyDiscovery: VY_DISCOVERY.stats(), vhg: (typeof VHG !== 'undefined' ? VHG : 0), pxpl: (typeof PXPL !== 'undefined' ? PXPL.size : 0), rtmq: RT_MQ_ST, dti: (typeof DT_IDX !== 'undefined' ? DT_IDX : 0), dtst: (typeof DT_ST !== 'undefined' ? DT_ST : 0), dtsh: (typeof DT_SH !== 'undefined' ? { on: DT_SH.on, src: DT_SH.src, pre: DT_SH.pre, loaded: DT_SH.loaded, hits: DT_SH.hits, miss: DT_SH.miss, cache: (typeof DT_SH_CACHE !== 'undefined' ? DT_SH_CACHE.size : 0), err: DT_SH.err, units: (DT_SH.man && DT_SH.man.units) || null, slugs: (DT_SH.man && DT_SH.man.slugs || []).length } : 0), lastreq: { el: LR.el, n: LR.total, pend: LR.pend, p: LR.path, sr: (LR.sr || []).map(x => x[0] + ':' + x[1] + '@' + x[2]) } }); } // v1.34.95, v1.34.105 // ★ v1.21.9: vy=verified vidy নোড, vyfresh=৪মিন-তাজা // v1.15.71: vsp=Vidsrc-পুল-আকার // v1.15.18: pxbench=সাইট-প্রমাণিত-বেঞ্চ (v1.15.8: nxpool=MB-বেঞ্চ)
     if (p === '/_mem') { /* ★ v1.28.1: মেমোরি-ডিয়াগনস্টিক — OOM-ক্ষতির কারন খুঁজতে (প্রমাণ: ব্যাটারি-চালাকালে node 896MB-তে kernel-OOM-kill) */
       const m = process.memoryUsage(); const sz = o => { try { return o instanceof Map ? o.size : (Array.isArray(o) ? o.length : -1); } catch (e) { return -1; } };
       // ★ v1.28.3-M4: সীমা + purge-পরিসংখ্যান (কতবার, কোন স্তরে) — প্রোডে "মেমরি ফুল" কেন, একনজরে
