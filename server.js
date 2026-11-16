@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.232';
+const VERSION = '1.34.233';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -8961,7 +8961,9 @@ async function mlbdStreams(name, year, type, s, e, cap) {
       const ss = await Promise.all(qs.map(q => mlbdSearch(base, q, qw).catch(() => [])));
       let items = [];
       for (const arr of ss) for (const x of (arr || [])) items.push(x);
-      if (!items.length && type === 'series' && left() > 2600) {   // v1.27.26: site-block edate age 4 ta search parallel e jato
+      // A nonempty search can consist entirely of unrelated titles or the
+      // wrong season. Do not let those results suppress season-specific search.
+      if (type === 'series' && !mlbdPicks(items, name, year, type, SE, EP).length && left() > 2600) {
         const qs2 = [name + ' S' + SE, name + ' Season ' + SE];
         const ss2 = await Promise.all(qs2.map(q => mlbdSearch(base, q, Math.min(2800, left())).catch(() => [])));
         for (const arr of ss2) for (const x of (arr || [])) items.push(x);
