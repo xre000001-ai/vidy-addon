@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.264';
+const VERSION = '1.34.266';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -8171,8 +8171,13 @@ async function mmStreams(tmdbId, title, type, s, e, origin, maxh, rel) { // v1.1
     //   পরে তার ভাগে পড়ত মাত্র ~২৫০ms — ঠান্ডা চেইনের (~২.৪সে) জন্য যথেষ্ট নয় ⇒ ৪K কার্ড ঝরে যেত।
     //   এখন **সবাই একই ডেডলাইন** ভাগ করে (hub ও vidrift সহ): আগে যার ফল তৈরি সে দেয়, আর hub-এর
     //   ঠান্ডা-চেইনও পুরো জানালা পায়। উষ্ণ-ক্যাশে খরচ ~৩ms।
-    const harvested = await mmHarvestProviders([indexP, indexExpandP, vbP, orionP, novaP, hubP, vrp], Math.max(1, 7600 - (Date.now() - t3)));
-    const hubRows = harvested.length > 5 ? (harvested[5] || []) : [];
+    // ★★ v1.34.266 (মাপা: প্রোডে MM-শুধু কল ৯.১৫সে, তবু hub4k কার্ড **শূন্য** — hub4k stats: find 9/hit 0,
+    //   pkg 1 ⇒ ঠান্ডা চেইন লোডে ৭.৬সে-ও পেরিয়ে যায়): শুধু "সবাই একই ডেডলাইন" যথেষ্ট নয় — ৪K-কার্ডকে
+    //   **আগে নিশ্চিত একটি জানালা** দিতে হবে। তাই hub-প্রোভাইডার আলাদা করে আগে (≤৫.২সে) নেওয়া হয়,
+    //   বাকি প্রোভাইডাররা নিজেদের ডেডলাইনে চলে। উষ্ণ-ক্যাশে এই অপেক্ষা ~৩ms।
+    const hubWait = Math.max(1200, Math.min(5200, 7600 - (Date.now() - t3)));
+    const hubRows = (await Promise.race([hubP.then(v => (Array.isArray(v) ? v : [])), new Promise(r => setTimeout(() => r(null), hubWait))])) || [];
+    const harvested = await mmHarvestProviders([indexP, indexExpandP, vbP, orionP, novaP, vrp], Math.max(1, 7600 - (Date.now() - t3)));
     if (DBG && hubRows.length) console.error('[mm] hub4k rows=' + hubRows.length + ' q=' + hubRows.map(x => x.h).join(',') + ' @' + (Date.now() - t3) + 'ms');
     const raws = [], seen = new Set();
     for (const v of hubRows) if (v && v.url) { const k = 'hub|' + v.url; if (!seen.has(k)) { seen.add(k); raws.push(v); } }
