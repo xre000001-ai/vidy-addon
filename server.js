@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.231';
+const VERSION = '1.34.232';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -8443,8 +8443,23 @@ const MLBD_WL = require('./tools/mlbd-index/bounded_queue.cjs').create({limit:Ma
 async function mlbdLimit(fn,ms,taskMs) { return MLBD_WL.run(fn,ms,taskMs); }
 const mlbdXcLimit = require('./tools/mlbd-index/bounded_queue.cjs').create({limit:2,maxQueue:8,waitMs:1000});
 const mlbdUltraLimit = require('./tools/mlbd-index/bounded_queue.cjs').create({limit:4,maxQueue:8,waitMs:300});
+const mlbdWorkerProbeLimit = require('./tools/mlbd-index/bounded_queue.cjs').create({limit:4,maxQueue:12,waitMs:300});
 function mlbdRangeBytes(url) {
  return new Promise(resolve=>require('child_process').execFile('curl',['-sS','--max-time','2','--max-filesize','2048','-r','0-1023','-A',UA,'-D','-',url],{encoding:null,maxBuffer:32768,timeout:2400},(err,out)=>{if(err){diag('mlbd','ultra curl error='+String(err.code||'error'));return resolve(null)}const result=require('./tools/mlbd-index/direct_ultra.cjs').parse(out);if(!result)diag('mlbd','ultra bad-range-response');resolve(result)}));
+}
+
+// Race two bounded transports for the same FSL URL. A successful fallback
+// still needs a genuine 206, full Content-Range, and a recognizable video
+// container; a timeout/error from either transport is never treated as proof.
+async function mlbdWorkerVerified(url,ms) {
+ const valid=r=>!!(r&&r.ok&&r.st===206&&/^bytes\s+0-\d+\/\d+/i.test(r.cr||''));
+ const a=hdProbeD(url,Math.min(2200,ms)).then(r=>{if(valid(r))return true;throw Error('node-range')});
+ const b=mlbdWorkerProbeLimit.run(()=>mlbdRangeBytes(url),300,2500).then(r=>{
+  if(!r||r.status!==206||r.size<=1024||!Buffer.isBuffer(r.bytes)||r.bytes.length!==1024)throw Error('curl-range');
+  const bytes=r.bytes;if(!bytes.subarray(0,4).equals(Buffer.from('1a45dfa3','hex'))&&bytes.subarray(4,8).toString()!=='ftyp')throw Error('not-video');
+  return true;
+ });
+ try{return await Promise.any([a,b])}catch(_){return false}
 }
 
 const MLBD_NET_METRICS={curlOk:0,curlFail:0,proxyOk:0,queueTimeout:0,mirrorStarted:0};
@@ -8653,7 +8668,7 @@ function mlbdPicks(items, name, year, type, season, ep) { // ★ v1.27.14: স�
     let s = 0;
     if (n === W) s += 100; else if (n.startsWith(W + ' ') || n === W + '') s += 70;
     else if (n.indexOf(' ' + W + ' ') >= 0 || n.indexOf(W) >= 0) s += 40;
-    if (year && x.year === String(year)) s += 60; else if (year && x.year && x.year !== String(year)) s -= 80;
+    if (year && x.year === String(year)) s += 60; else if (type === 'movie' && year && x.year && x.year !== String(year)) s -= 80;
     if (type !== 'movie' && parseInt(ep, 10)) {      // ★ পোস্টের এপ-রেঞ্জে ইপি থাকলে আগে, না-থাকলে পরে
       const rg = mlbdEpRange(x.title);
       if (rg) s += (parseInt(ep, 10) >= rg[0] && parseInt(ep, 10) <= rg[1]) ? 30 : -40;
@@ -8752,8 +8767,8 @@ async function mlbdOne(base, fileUrl, dl, labQ, labTxt) {
     seenM.add(u);
     // hdProbe intentionally returns unverified candidates; use the real direct
     // probe for the new worker path and require an actual partial response.
-    const tested = requireVerified ? await hdProbeD(u, Math.min(2500, left())).catch(() => null) : null;
-    const ok = requireVerified ? !!(tested && tested.ok && tested.st === 206 && /^bytes\s+0-\d+\/\d+/i.test(tested.cr || '')) : await mlbdRng(u, Math.min(1600, left()));
+    const tested = requireVerified && srv !== 'FSL Worker' ? await hdProbeD(u, Math.min(2500, left())).catch(() => null) : null;
+    const ok = requireVerified ? (srv === 'FSL Worker' ? await mlbdWorkerVerified(u,Math.min(2500,left())) : !!(tested && tested.ok && tested.st === 206 && /^bytes\s+0-\d+\/\d+/i.test(tested.cr || ''))) : await mlbdRng(u, Math.min(1600, left()));
     if (ok) out.push({ u: u, s: srv });
     else if (!requireVerified && mlbdTrusted(u)) out.push({ u: u, s: srv, soft: 1 });
   };
@@ -9043,6 +9058,9 @@ async function mlbdStreams(name, year, type, s, e, cap) {
 
 // নাম/বছর জোগাড় করে mlbdStreams ডাকে (infoP = findTmdbInfo, nameP = nmP/tp) — কখনো-throw-নয়
 function mlbdTask(nameP, infoP, type, s, e, cap) {
+  // Specials (S00) are not ordinary season one episodes. Do not silently
+  // relabel an S01 file as an S00 special when a mapping is not established.
+  if (type === 'series' && Number(s) === 0) return Promise.resolve([]);
   // v1.27.17: infoP (TMDB/IMDb info) dhire ele mlb derite shuru hoto -> cap-e kete jeto.
   //   Name pelei shuru; year/info 1.6s er beshi na dhore.
   const nameR = nameP ? Promise.resolve(nameP).catch(() => '') : Promise.resolve('');
@@ -9056,7 +9074,9 @@ function mlbdTask(nameP, infoP, type, s, e, cap) {
   // ★ v1.27.24 (প্রোড-প্রমাণ: ব্যাটারির-পরে দুই-টাইটেলে mlb ০, অথচ অন্য-সোর্সের কার্ড-আসত)
   //   আগে ফাস্ট-নাম খালি হলে 1.6s-এই বাহানা দিয়ে বাতিল; এখন নাম-খালি-হলে infoP-এর পূর্ণ-ফলের-জন্য অপেক্ষা।
   return Promise.all([nameR, fastInfo]).then(([nm, info]) => {
-    const nmA = String((info && info.name) || nm || '').trim();
+    // IMDb's exact-ID suggestion name is more authoritative for series than
+    // a TMDB search hit that may be a season-specific duplicate or spin-off.
+    const nmA = String((type === 'series' && nm) || (info && info.name) || nm || '').trim();
     if (nmA) return run(nmA, info);
     return infoR.then(info2 => run(String((info2 && info2.name) || nm || '').trim(), info2)).catch(() => []);
   }).catch(() => []);
