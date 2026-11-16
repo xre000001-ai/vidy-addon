@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.242';
+const VERSION = '1.34.243';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -16787,6 +16787,7 @@ async function vhRewrite(body, target, origin) {
   return _out;
 }
 // ★ v1.34.46: vividstone-সেগমেন্ট পাইপ — আপস্ট্রিমে Referer দিয়ে টেনে হুবহু পাইপ (ডিস্ক/বাফার নেই)
+function vhLooksHtml(buf, ct) { return /(?:text\/html|application\/xhtml\+xml)/i.test(String(ct || '')) || /^\s*(?:<!doctype\s+html|<html\b|<head\b|<body\b)/i.test(Buffer.from(buf || []).subarray(0, 512).toString('utf8')); }
 function vhSniffCt(buf, upstreamCt) {
   let ct = String(upstreamCt || '');
   try {
@@ -16840,7 +16841,7 @@ async function vhsFetchViaNodes(target, host, directErr) {
       for (const px of group) {
         proxiedGet(px, target, 10000, { 'Referer': VIDY_REFERER, 'User-Agent': UA }, 'vhs', true).then(buf => {
           if (done) return;
-          if (buf && buf.length >= 1024 && buf[0] !== 0x3c && buf[0] !== 0x7b) { done = true; resolve({ px: px, buf: buf }); return; }
+          if (buf && buf.length >= 1024 && !vhLooksHtml(buf, '') && buf[0] !== 0x7b) { done = true; resolve({ px: px, buf: buf }); return; }
           left--; if (left <= 0) resolve(null);
         }).catch(() => { if (!done) { left--; if (left <= 0) resolve(null); } });
       }
@@ -16873,9 +16874,10 @@ async function vhsServe(req, res, b64) {
   const _aff0 = VHS_AFF.get(host);
   const affFresh = !!(_aff0 && _aff0.px && (Date.now() - _aff0.ts < 600000));
   if (affFresh) directErr = 'aff ' + _aff0.px;
+  let hto;
   if (!affFresh) try {
     const ac = new AbortController();
-    const hto = setTimeout(() => { try { ac.abort(); } catch (e) { } }, 8000);
+    hto = setTimeout(() => { try { ac.abort(); } catch (e) { } }, 8000);
     // IncomingMessage close can mean the request finished normally; only a
     // response disconnect should abort the upstream segment fetch.
     if (res.on) res.on('close', () => { if (!res.writableEnded) { try { ac.abort(); } catch (e) { } } });
@@ -16886,6 +16888,7 @@ async function vhsServe(req, res, b64) {
       const cl = r.headers.get('content-length'); if (cl) h['content-length'] = cl;
       const cr = r.headers.get('content-range'); if (cr) h['content-range'] = cr;
       const upCt = r.headers.get('content-type') || '';
+      if (vhLooksHtml(null, upCt)) { try { if (r.body) await r.body.cancel(); } catch (_) {} throw new Error('segment-html'); }
       if (req.method === 'HEAD') { h['content-type'] = upCt || 'video/mp2t'; res.writeHead(r.status, h); return res.end(); }
       let reader = null;
       try { reader = r.body.getReader(); } catch (e) { reader = null; }
@@ -16897,6 +16900,7 @@ async function vhsServe(req, res, b64) {
       }
       const first = await reader.read();
       const fb = (first && first.value) ? Buffer.from(first.value) : Buffer.alloc(0);
+      if (vhLooksHtml(fb, upCt)) { try { await reader.cancel(); } catch (_) {} throw new Error('segment-html'); }
       h['content-type'] = vhSniffCt(fb, upCt);
       res.writeHead(r.status, h); sent = true;
       if (fb.length) res.write(fb);
@@ -16917,14 +16921,17 @@ async function vhsServe(req, res, b64) {
     }
     directErr = 'http_' + r.status;
     try { if (r.body) await r.body.cancel(); } catch (e) { }
-  } catch (e) { directErr = String((e && e.message) || e || 'fetch-err').slice(0, 60); }
+  } catch (e) { if (hto) clearTimeout(hto); directErr = String((e && e.message) || e || 'fetch-err').slice(0, 60); }
   if (sent) { try { res.end(); } catch (e) { } return; }
   try {
     const buf = await vhsFetchViaNodes(target, host, directErr);
     if (buf) {
       try { VHS_PC.set(target, { buf: buf, ts: Date.now() }); while (VHS_PC.size > 48) VHS_PC.delete(VHS_PC.keys().next().value); } catch (e) { }   // v1.34.122: seek-back/warm
-      res.writeHead(200, { 'content-type': vhSniffCt(buf, ''), 'content-length': buf.length, 'access-control-allow-origin': '*', 'cache-control': 'no-store', 'accept-ranges': 'bytes' });
-      res.end(buf);
+      const ranged = require('./tools/vidy-runtime/range.cjs').slice(buf, req.method === 'HEAD' ? '' : req.headers && req.headers.range);
+      const hh = { 'content-type': vhSniffCt(buf, ''), 'content-length': ranged.body.length, 'access-control-allow-origin': '*', 'cache-control': 'no-store', 'accept-ranges': 'bytes' };
+      if (ranged.contentRange) hh['content-range'] = ranged.contentRange;
+      res.writeHead(ranged.status, hh);
+      res.end(req.method === 'HEAD' ? undefined : ranged.body);
       vhsPrefetch(target);   // v1.34.122
       return;
     }
@@ -16980,8 +16987,9 @@ async function vhSibTry(target) {   // v1.34.112: sibling URL-gulo tader NIJER m
     const m = VH_MINT.get(target); const ctx = m && m.ctx; if (!ctx || !ctx.srv) return null;
     const gk = ctx.srv + '|' + ctx.tmdbId + '|' + (ctx.s || '') + '|' + (ctx.e || '');
     const rec = VH_ALTS.get(gk); if (!rec || Date.now() - rec.ts > 30 * 60e3) return null;
-    let urls = (rec.byQ[m.q || ''] || []).filter(u => u !== target);
-    if (!urls.length) { for (const q2 of Object.keys(rec.byQ)) urls = urls.concat(rec.byQ[q2].filter(u => u !== target)); }
+    if (!m.q) return null;
+    const wantedSig = vhSig(target);
+    let urls = (rec.byQ[m.q] || []).filter(u => u !== target && (!wantedSig || vhSig(u) === wantedSig));
     urls = [...new Set(urls)].slice(0, 5);
     if (!urls.length) return null;
     for (const u of urls) { const ce = VH_C.get(u); if (ce && ce.raw && ce.body && Date.now() - ce.ts < VH_TTL && ce.body.indexOf('#EXTM3U') >= 0) return { body: ce.body, target: u }; }   // v1.34.115: harvest-warm sibling cache-hit (live fetch-er agei)
@@ -17147,7 +17155,7 @@ async function vhRemint(target, force) {   // v1.34.103: force => 45s-guard bypa
   try {
     const fsx = VH_FRESHSET.get(gk);
     if (fsx && Date.now() - fsx.ts < 10 * 60e3) {
-      const nu = fsx.bySig[vhSig(target)] || fsx.first;
+      const nu = (require('./tools/vidy-runtime/rendition.cjs').choose(fsx.sources || [], m.q, vhSig(target), vhSig) || {}).url;
       if (nu && nu !== target) {
         const hdr2 = { 'User-Agent': UA, 'Referer': VIDY_REFERER, 'Accept': '*/*', 'Accept-Encoding': 'gzip' };   // v1.34.98
         const bb = await plFetchVia(fsx.px, nu, 8000, hdr2).catch(() => '');   // v1.34.109: fsx.px '@direct' hote pare
@@ -17155,9 +17163,10 @@ async function vhRemint(target, force) {   // v1.34.103: force => 45s-guard bypa
       }
     }
   } catch (e) { }
-  if (VH_REMINTING.has(gk)) return VH_REMINTING.get(gk);
-  if (!force && Date.now() - (VH_REMINT_AT.get(gk) || 0) < 45000) return null;   // v1.34.103
-  VH_REMINT_AT.set(gk, Date.now());
+  const jobKey = gk + '|' + String(m.q || '') + '|' + (vhSig(target) || target);
+  if (VH_REMINTING.has(jobKey)) return VH_REMINTING.get(jobKey);
+  if (!force && Date.now() - (VH_REMINT_AT.get(jobKey) || 0) < 45000) return null;   // v1.34.103
+  VH_REMINT_AT.set(jobKey, Date.now());
   if (VH_REMINT_AT.size > 500) VH_REMINT_AT.clear();
   const job = (async () => {
     const _jobT0 = Date.now(); const _excl = new Set();   // v1.34.106: re-roll state
@@ -17175,10 +17184,9 @@ async function vhRemint(target, force) {   // v1.34.103: force => 45s-guard bypa
         if (!_srcs.length) continue;
         _excl.add(_sx.px);
         for (const s2 of _srcs) { VH_MINT.set(String(s2.url), { px: _sx.px, ts: Date.now(), ctx: ctx, q: String(s2.quality || '') }); vhAltPut(ctx, s2); }   // v1.34.112: remint session-o sibling-pool-e
-        if (_sx === vr) { try { const bySig = {}; for (const s2 of _srcs) { const sg2 = vhSig(s2.url); if (sg2 && !bySig[sg2]) bySig[sg2] = String(s2.url); } VH_FRESHSET.set(gk, { ts: Date.now(), px: vr.px, bySig: bySig, first: String(_srcs[0].url) }); if (VH_FRESHSET.size > 300) VH_FRESHSET.delete(VH_FRESHSET.keys().next().value); } catch (e) { } }
+        if (_sx === vr) { try { VH_FRESHSET.set(gk, { ts: Date.now(), px: vr.px, sources: _srcs.map(x => ({ url: String(x.url), quality: String(x.quality || '') })) }); if (VH_FRESHSET.size > 300) VH_FRESHSET.delete(VH_FRESHSET.keys().next().value); } catch (e) { } }
         const _want = vhSig(target);
-        let _cand = (_want && _srcs.find(x => vhSig(x.url) === _want)) || null;
-        if (!_cand) { const qm = String(target).match(/(2160|1440|1080|720|480|360)/); _cand = (qm && _srcs.find(x => String(x.quality || '').indexOf(qm[1]) >= 0)) || _srcs[0]; }
+        const _cand = require('./tools/vidy-runtime/rendition.cjs').choose(_srcs, m.q, _want, vhSig);
         if (_cand) _pairs.push({ px: _sx.px, url: String(_cand.url) });
       }
       if (!_pairs.length) { try { diag('vh', 'remint-x nosrc ' + ctx.srv); } catch (e) { } return null; }
@@ -17209,8 +17217,8 @@ async function vhRemint(target, force) {   // v1.34.103: force => 45s-guard bypa
     }
     return null;
   })();
-  VH_REMINTING.set(gk, job);
-  try { return await job; } finally { VH_REMINTING.delete(gk); }
+  VH_REMINTING.set(jobKey, job);
+  try { return await job; } finally { VH_REMINTING.delete(jobKey); }
 }
 function vhCachePut(key, body, base) {
   try {
