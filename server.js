@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.290';
+const VERSION = '1.34.291';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -2407,6 +2407,9 @@ const VY_REFILL = require('./tools/vidy-runtime/active_refill.cjs').create({
     //   প্রস্থ-সীমিত নয়, **প্রার্থীর গুণ**-সীমিত (৬৩% CONNECT-এই মরে)। তাই প্রস্থ .286-এর মাপা-ভালো
     //   মানে ফিরল; বাড়তি সুবিধা রাখলাম কেবল সংরক্ষিত সকেট-বাজেটে (১৭৬) আর টাইপ-অনুযায়ী কুলডাউনে।
     if (busy) return Number(process.env.VYPARB2 || 12);   // never race a user's playback for sockets
+    // ★ v1.34.291: রিফিল যেন সার্ভিং-এর সকেট না খায় — বাক্স-ছাদ প্রায় ভরা হলে সংকুচিত হয়
+    //   (মাপা: liveTotal ১৯২/১৯২, queued ৮৮, dropped ৭৩৩ — অর্থাৎ ছাদটাই স্থায়ীভাবে ভরা ছিল)।
+    if (SK.liveN >= Number(process.env.VYRFSOFT || 150)) return 8;
     const ready = vidyReadyCount();
     return ready >= 100 ? 6 : (ready >= 50 ? 20 : 40);
   },
@@ -2418,7 +2421,11 @@ const VY_REFILL = require('./tools/vidy-runtime/active_refill.cjs').create({
     for (const c of POOL) if (c && PX_SITE.has(c.px)) site.push(c.px);
     for (const c of POOL) if (c) fallback.push(c.px);
     for (const m of SPOOL.values()) for (const [px,e] of m) if (spoolFresh(e)) fallback.push(px);
-    return require('./tools/vidy-runtime/fair_candidates.cjs').merge([proven, VY_DISCOVERY.candidates(), site, pxRawRecent(6000), fallback], allowed);
+    // ★★ v1.34.291 (প্রোড-মাপা): ক্রমটাই ভুল ছিল — `vidy_proxy_pool.json` (এই সোর্সের নিজের, সেশন-যাচাই করা
+    //   নোড) তালিকার **একদম শেষে** ছিল, আর তার আগে VY_DISCOVERY-র ~৫,৭০০ অযাচাইকৃত ঠিকানা। ফলে রিফিল
+    //   জীবিত নোডে পৌঁছানোর আগেই মৃত প্রার্থীর ভিড়ে সকেট-ছাদ (liveTotal ১৯২/১৯২, queued ৮৮, dropped ৭৩৩)
+    //   ভরে যেত ⇒ `why.pre` ৬৩% আর `why.gate` কেবল বাড়ত। এখন যাচাই-করা তালিকা আগে, কাঁচা ঠিকানা পরে।
+    return require('./tools/vidy-runtime/fair_candidates.cjs').merge([proven, fallback, site, VY_DISCOVERY.candidates(), pxRawRecent(6000)], allowed);
   },
   validate: async px => {
     if (!loopOkMid()) return null;   // v1.34.262: mid-tier gate — a lagging loop defers, it is not this node's fault
