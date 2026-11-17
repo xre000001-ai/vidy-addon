@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.287';
+const VERSION = '1.34.288';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -1283,7 +1283,7 @@ function ptunAllowed(px) { const u = PTUN_COOL.get(px); return !(u && u > Date.n
 function ptunConnectFailCool(px, why) {
   const now = Date.now(), e = VIDY_OK.get(px) || {}; const recent = e.sessionProof && now - e.sessionProof < 600000;
   const cong = /timeout|gate|ETIMEDOUT|EAI_AGAIN|socket/.test(String(why || ''));
-  const ms = cong ? Number(process.env.PXTDCONG || 25000) : Number(process.env.PXTDC || (recent ? 45000 : 120000));
+  const ms = cong ? Number(process.env.PXTDCONG || 60000) : Number(process.env.PXTDC || (recent ? 45000 : 120000));
   PTUN_COOL.set(px, Math.max(PTUN_COOL.get(px) || 0, now + ms));
 }
 function ptunDrop(px, ent) { const cur = PTUN.get(px); const t = ent || cur; if (t) { try { t.s.destroy(); } catch (e) {} } if (!ent || cur === ent) PTUN.delete(px); }
@@ -2401,9 +2401,13 @@ const VY_REFILL = require('./tools/vidy-runtime/active_refill.cjs').create({
     // ★ v1.34.287 (প্রোড-মাপা): `vyWhy.pre` ২,০১৮/৩,২২৪ — অর্থাৎ প্রতি চেষ্টার ৬৩% কেবল CONNECT-এই
     //   মরে, আর ওই মৃত প্রার্থীদের একেকটির পেছনে ৩সে নষ্ট হয়। থ্রুপুটই এখানে আসল বাধা (তাই প্রস্থ
     //   আরও বাড়ল) — প্রতি-সেকেন্ডে বেশি প্রার্থী ⇒ verified তালিকা দ্রুত বড় হয় ⇒ ready-ও।
-    if (busy) return Number(process.env.VYPARB2 || 16);   // never race a user's playback for sockets
+    // ★★ v1.34.288 (প্রোড-মাপা): .287-এ প্রস্থ ৫৬ করলাম — pass/৯০০সে বদলাল না (২৯→৩১), বরং
+    //   `vyWhy.gate` ৫৬২ (লোকাল স্লট-গেটই তখন বাধা) আর ready-peak ৪৭→২৬-এ নামল। অর্থাৎ থ্রুপুট
+    //   প্রস্থ-সীমিত নয়, **প্রার্থীর গুণ**-সীমিত (৬৩% CONNECT-এই মরে)। তাই প্রস্থ .286-এর মাপা-ভালো
+    //   মানে ফিরল; বাড়তি সুবিধা রাখলাম কেবল সংরক্ষিত সকেট-বাজেটে (১৭৬) আর টাইপ-অনুযায়ী কুলডাউনে।
+    if (busy) return Number(process.env.VYPARB2 || 12);   // never race a user's playback for sockets
     const ready = vidyReadyCount();
-    return ready >= 100 ? 12 : (ready >= 50 ? 32 : 56);
+    return ready >= 100 ? 6 : (ready >= 50 ? 20 : 40);
   },
   candidates: () => {
     const t = Date.now(), proven = [], site = [], fallback = [];
