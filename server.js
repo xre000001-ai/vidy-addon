@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.295';
+const VERSION = '1.34.296';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -1278,6 +1278,11 @@ function ptunAllowed(px) { const u = PTUN_COOL.get(px); return !(u && u > Date.n
 //   সেশন-যাচাই আগের মতোই আছে)। ব্যর্থ হলে ভদ্র কুলডাউন (৪৫-১২০সে), সফল হলে কোটার স্বাভাবিক হিসাব।
 // Transient CONNECT failures should not park a recently working node for ten
 // minutes. Never shorten an existing, stricter 403/429 or other cooldown.
+// ★★★ v1.34.296 (আজ লোকালে ২৬০টি প্রার্থীতে মাপা, `pxscan/detail.js`): পাস-হার কম হওয়ার আসল কারণ
+//   খুঁজে পাওয়া গেল — **যারা ২.৫–৪সে-তে CONNECT-এর উত্তর দেয়, তাদের ১০০% পাস করে; ৪সে+ হলে ৬১%;
+//   কিন্তু ১.৫সে-র কমে উত্তর দিলে ০–১৭%** (৪৬টির মধ্যে ০টি)। অর্থাৎ দ্রুত-উত্তর-দেওয়া "ভালো" নোডগুলোই
+//   আসলে ভুয়া/ব্লকড, আর আসল নোডগুলো ধীর। আমাদের প্রি-স্ক্রিন ছিল ৩সে ⇒ **ঠিক সেই ধীর নোডগুলোই**
+//   "মৃত" বলে কুলডাউনে যেত। এখন ৬.৫সে — এবং পাস-করা নোডের মোট সময়ের মধ্যমা ৬.৭সে, তাই নয়।
 // ★ v1.34.287: কুলডাউনের মেয়াদ এখন **ব্যর্থতার ধরন** দেখে — `ECONNREFUSED/ENETUNREACH` = সত্যিই মৃত
 //   (১২০সে), কিন্তু `tun-timeout`/`sock-gate`-জাতীয় টাইমআউট বাক্স-ভিড়েরও ফল হতে পারে ⇒ ছোট (২৫সে),
 //   নইলে মাপা `cooling ১২০/১৫৬` হয়ে verified নোডগুলোই সারি থেকে সরে যেত।
@@ -2442,7 +2447,7 @@ const VY_REFILL = require('./tools/vidy-runtime/active_refill.cjs').create({
       let sl0 = false;
       try {
         await vySlot(1200); sl0 = true;
-        await ptunOpen(px, Number(process.env.VYPRETMO || 3000));   // ★ v1.34.286 (মাপা): ২সে-তে যাচাই করলে জীবিত নোডও মৃত পড়ত — লোকালে পূর্ণ সেশনের মধ্যমা ২.৫–৪.৫সে, CONNECT-একাই ১–২সে
+        await ptunOpen(px, Number(process.env.VYPRETMO || 6500));   // ★ v1.34.286 (মাপা): ২সে-তে যাচাই করলে জীবিত নোডও মৃত পড়ত — লোকালে পূর্ণ সেশনের মধ্যমা ২.৫–৪.৫সে, CONNECT-একাই ১–২সে
         VY_COOLRC.pre++;
       } catch (e0) {
         const m0 = String((e0 && e0.message) || e0);
