@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.281';
+const VERSION = '1.34.282';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -8957,7 +8957,7 @@ function mlbdPcSave() {
   } catch (e) { }
 }
 const MLBD_FILE_C = new Map();  // path → {toks:[], ts}              (স্থির-টোকেন)
-function mlbdNorm(s) { return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); }
+function mlbdNorm(s) { return String(s || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); }   // v1.34.282: উচ্চারণ-চিহ্ন-ভাঁজ (Léon→leon)
 // ★ v1.34.279: ৪ → ৩ (মাপা: একসাথে ৪+ অনুরোধে সাইট ৫xx-চ্যালেঞ্জ দিতে শুরু করে ⇒ টোকেন-হপ মৃত)
 const MLBD_WL = require('./tools/mlbd-index/bounded_queue.cjs').create({limit:Math.max(1,Math.min(8,Number(process.env.MLBDC || 3))),maxQueue:24,waitMs:2500});
 async function mlbdLimit(fn,ms,taskMs) { return MLBD_WL.run(fn,ms,taskMs); }
@@ -9608,9 +9608,14 @@ async function mlbdStreams(name, year, type, s, e, cap) {
       //   পোস্ট-ইউনিয়ন নিই ("S04 [Ep 01-08]" পোস্ট আর "S04 [Epi 9-13]" পোস্ট আলাদা দুটো)।
       const qw = Math.min(3800, left());
       const S2 = SE < 10 ? '0' + SE : String(SE);
+      // ★★ v1.34.282 (প্রোড-মাপা: Léon `search 3 qs=2 @443ms` → `picks=0` ⇒ ০ কার্ড): সাইটের সার্চ
+      //   **উচ্চারণ-চিহ্ন (é/ø/ü)** সহ কোয়েরিতে ভুল ফল দেয়, আর আমাদের স্কোরিং তখন সৎভাবে শূন্য হয়
+      //   ⇒ টাইটেলটা mlb-তে হারিয়ে যায়। এখন ASCII-ভাঁজ করা নামটিও একটি কোয়েরি (ভিন্ন হলে), আর
+      //   `mlbdNorm`-ও ভাঁজ করে ⇒ 'Léon' → 'leon' দুই দিকেই মেলে।
+      const _fold = String(name || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '');
       const qs = type === 'series'
-        ? [name, name + ' S' + S2]
-        : [name, name + (year ? ' ' + year : '')];
+        ? [name, name + ' S' + S2].concat(_fold && _fold !== name ? [_fold] : [])
+        : [name, name + (year ? ' ' + year : '')].concat(_fold && _fold !== name ? [_fold + (year ? ' ' + year : '')] : []);
       // ★★ v1.34.277 (মাপা: `search 17 qs=2 @4032ms` → `suggest-fallback rows=0` → `picks=0` ⇒ ০ কার্ড):
       //   ফলব্যাক-সার্চটা মূল-সার্চের **পরে** শুরু হত ⇒ ব্যর্থ পথে ৪সে + ৪সে = ৮সে, তারপর হপের
       //   জন্য সময়ই থাকত না। এখন দুটোই একসাথে ছোটে; মূল-সার্চ ব্যর্থ হলে ফলাফল প্রস্তুত থাকে।
