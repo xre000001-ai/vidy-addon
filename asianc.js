@@ -211,9 +211,9 @@ function acDecrypt(b64) {
    hglink.to/e/<id> শুধু ৮১৯ বাইটের spinner + /main.js পাঠায়; main.js (obfuscated) ব্রাউজারে
    location.href বদলে `https://<mirror>/e/<id>`-তে নিয়ে যায় (মিরর ঘুরতে থাকে: audinifer.com,
    callistanise.com …)। আমরা main.js-টা sandbox-এ চালিয়ে মিরর-হোস্টটা **শিখে নিই** (৬ঘণ্টা ক্যাশ)। */
-const AC_MIRROR = { host: process.env.AC_MIRROR || '', ts: 0 };
-async function acLearnMirror(host) {
-  if (AC_MIRROR.host && Date.now() - AC_MIRROR.ts < 6 * 60 * 60 * 1000) return AC_MIRROR.host;
+const AC_MIRROR = { host: process.env.AC_MIRROR || '', ts: 0, known: String(process.env.AC_MIRRORS || 'audinifer.com,callistanise.com,vibuxer.com').split(',').map(s => s.trim()).filter(Boolean) };
+async function acLearnMirror(host, force) {
+  if (!force && AC_MIRROR.host && Date.now() - AC_MIRROR.ts < 6 * 60 * 60 * 1000) return AC_MIRROR.host;
   try {
     const vm = require('vm');
     const base = host || 'hglink.to';
@@ -239,7 +239,10 @@ async function acLearnMirror(host) {
     try { vm.runInNewContext(js, sb, { timeout: 6000 }); } catch (e) { }
     const finalUrl = nav.map(u => { try { return new URL(u, loc.href).toString(); } catch (e) { return ''; } }).filter(Boolean).pop() || loc.href;
     const h = (() => { try { return new URL(finalUrl).hostname; } catch (e) { return ''; } })();
-    if (h && h !== base) { AC_MIRROR.host = h; AC_MIRROR.ts = Date.now(); ACG.mirror = h; }
+    if (h && h !== base) {
+      AC_MIRROR.host = h; AC_MIRROR.ts = Date.now(); ACG.mirror = h;
+      if (AC_MIRROR.known.indexOf(h) < 0) { AC_MIRROR.known.unshift(h); AC_MIRROR.known = AC_MIRROR.known.slice(0, 6); }
+    }
     return AC_MIRROR.host || '';
   } catch (e) { return AC_MIRROR.host || ''; }
 }
@@ -249,12 +252,23 @@ async function acFollowSpinner(html, url) {
   if (!/Page is loading|loading-text|main\.js\?v=/.test(html)) return '';
   let host = '';
   try { host = new URL(url).hostname; } catch (e) { return ''; }
-  const mirror = await acLearnMirror(host);
-  if (!mirror) return '';
-  const target = url.replace('://' + host + '/', '://' + mirror + '/');
-  if (target === url) return '';
-  const real = await acGet(target, 12000, 'https://' + host + '/');
-  return real && real.length > 3000 ? real : '';
+  const tried = new Set();
+  const cands = [];
+  const m1 = await acLearnMirror(host);
+  if (m1) cands.push(m1);
+  // লার্নড মিরর ঠান্ডা হলে একবার জোর করে আবার শিখি, তারপর জানা-তালিকা
+  const m2 = await acLearnMirror(host, true);
+  if (m2) cands.push(m2);
+  for (const k of AC_MIRROR.known) cands.push(k);
+  for (const mirror of cands) {
+    if (!mirror || mirror === host || tried.has(mirror)) continue;
+    tried.add(mirror);
+    const target = url.replace('://' + host + '/', '://' + mirror + '/');
+    if (target === url) continue;
+    const real = await acGet(target, 12000, 'https://' + host + '/');
+    if (real && real.length > 3000) { ACG.mirrorWin = (ACG.mirrorWin || 0) + 1; return real; }
+  }
+  return '';
 }
 
 /* একটি HTML-পেজ থেকে স্ট্রিম-URL বের করার সব উপায় একসাথে */
