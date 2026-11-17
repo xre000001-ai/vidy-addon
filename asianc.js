@@ -539,6 +539,30 @@ async function acStreams(tmdbId, type, s, e, origin, opt) {
   }
 }
 
+/* ── প্রি-ওয়ার্ম: Stremio সাধারণত একই এপিসোড দুইবার চায়; প্রথমবার ধীর, দ্বিতীয়বার
+   ক্যাশ থেকে। পরের এপিসোডও পেছনে-পেছনে গরম করে রাখি (মোট রিকোয়েস্ট-সংখ্যা প্রায় অপরিবর্তিত)। */
+const AC_WARM = new Map();
+function acPrewarm(tmdbId, type, s, e, opt) {
+  try {
+    const o = opt || {};
+    const k = 'w|' + String(type) + '|' + String(tmdbId) + '|' + String(o.title || '') + '|' + s + ':' + e;
+    if (AC_WARM.has(k)) return;
+    AC_WARM.set(k, Date.now());
+    if (AC_WARM.size > 200) for (const kk of [...AC_WARM.keys()].slice(0, 80)) AC_WARM.delete(kk);
+    setTimeout(() => {
+      acStreams(tmdbId, type, s, e, '', { title: o.title || '', year: o.year || '', ms: 16000 })
+        .then(() => {
+          // পরের এপিসোডও গরম করি (সিরিজে)
+          if (type !== 'movie' && type !== 'film' && Number(s) > 0) {
+            const k2 = 'w|' + type + '|' + tmdbId + '|' + (o.title || '') + '|' + s + ':' + (Number(e) + 1);
+            if (!AC_WARM.has(k2)) { AC_WARM.set(k2, Date.now()); acStreams(tmdbId, type, s, Number(e) + 1, '', { title: o.title || '', year: o.year || '', ms: 16000 }).catch(() => []); }
+          }
+        })
+        .catch(() => []);
+    }, 120);
+  } catch (err) { }
+}
+
 function acDiag() {
   return Object.assign({ base: AC_BASE, mirror: AC_MIRROR.host || '', slugMemo: AC_SLUG.size, epMemo: AC_EP.size, embMemo: AC_EMB.size }, ACG);
 }
@@ -567,4 +591,4 @@ async function acSelftest() {
 }
 
 setTimeout(() => { }, 0);
-module.exports = { acOn, acStreams, acDiag, acSelftest, acDecrypt, acServersOf, acResolveEmbed, acPlayable, acProbe, acFindSlug, acDetail, AC_BASE, AC_UA };
+module.exports = { acOn, acStreams, acPrewarm, acDiag, acSelftest, acDecrypt, acServersOf, acResolveEmbed, acPlayable, acProbe, acFindSlug, acDetail, AC_BASE, AC_UA };
