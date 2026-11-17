@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.289';
+const VERSION = '1.34.290';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -94,6 +94,7 @@ function isLocalOnly(req) { const ip = String((req.headers['x-forwarded-for'] ||
       socket: self,
       allowed: () => foreground() || SK.liveN < capNow() || vidyReserved(),
       open: () => {
+        SK.cap = capNow();   // ★ v1.34.290: `/socks`-এ দেখানোর জন্য (capNow ব্লক-স্কোপড ছিল)
         if (!foreground() && SK.liveN >= capNow() && vidyReserved()) {   // reserved slot for a Vidy probe
           VY_SOCKN.n++; SK.reserved = (SK.reserved || 0) + 1;
           try { self.once('close', () => { VY_SOCKN.n = Math.max(0, VY_SOCKN.n - 1); }); } catch (_) {}
@@ -19002,7 +19003,7 @@ const server = http.createServer((req, res) => FG_CONTEXT.run({ active: true }, 
       //   এখন শুধু **সংখ্যা** (কোনো ঠিকানা নয়) ঢালাও পড়া যায় — ঠিকানা-তালিকা (liveTop/madeTop) আগের মতোই লোকাল-শুধু।
       const full = isLocalOnly(req);
       return sendJson(res, 200, { on: true, sockmax: SOCKMAX, madeTotal: SK.made, liveTotal: SK.liveN, loopLag: LOOP.lag,
-        gated: { dropped: SK.dropped, queued: SK.queued, waited: SK.waited, capNow: capNow(), fgNow: SK.fg, vyReserved: VY_SOCKN.n, vyReservedMax: VY_SOCK_MAX },
+        gated: { dropped: SK.dropped, queued: SK.queued, waited: SK.waited, capNow: (SK.cap || SOCKMAX), fgNow: SK.fg, vyReserved: VY_SOCKN.n, vyReservedMax: VY_SOCK_MAX },
         vyReady: (typeof vidyReadyCount === 'function' ? vidyReadyCount() : -1), inflight: (typeof INFLIGHT_STREAM !== 'undefined' ? INFLIGHT_STREAM : -1),
         liveTop: full ? top : top.length, madeTop: full ? made : made.length });
     }
