@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.285';
+const VERSION = '1.34.286';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -2339,7 +2339,10 @@ function vidyNodeBad(px) {
   e.fails = (e.fails || 0) + 1; e.att = (e.att || 0) + 1; e.last = Date.now();
   // ★ v1.17.56: বাদ দেওয়া কঠিন করা হলো — ৩-ব্যর্থে-বাদ দিলে সার্ভিং-এর সময়ই তালিকা ১৩৯→৩৩-এ নামে
   //   (আর স্ক্যান ইউজার-অনুরোধে থেমে যায় ⇒ পুল শুকিয়ে যায়)। এখন ৬-ব্যর্থ + ৪৫মিন আগে-সফল-নেই ⇒ বাদ।
-  if ((e.fails || 0) >= Number(process.env.PXVF || 6) && (!e.ts || Date.now() - e.ts > 45 * 60 * 1000)) { VIDY_OK.delete(px); try { VIDY_DROP.add(px); } catch (e2) { } TST.pruned = (TST.pruned || 0) + 1; if (DBG) console.error('[vpx] - ' + px + ' (junk: 6 fails)'); }
+  // ★★ v1.34.286 (মাপা): প্রোডে `cooling 66–71 / quota 1–2 / available 2–19` — নোড মরেনি, শুধু ১৮০সে-র
+  //   সিড/সোর্স কোটা শেষ। আগে কোটা-ব্যর্থতাও `fails` বাড়াত ⇒ ৬ ব্যর্থতায় verified তালিকা থেকে **বাদ**
+  //   পড়ত। কোটা তো विराम, শাস্তি নয় — কোটা-ব্যর্থতা আর ছাঁটাইয়ের কারণ হবে না (নোড কোটা ফিরলেই আবার ready)।
+  if (!/quota|http_429/.test(String(e.lastMsg || '')) && (e.fails || 0) >= Number(process.env.PXVF || 6) && (!e.ts || Date.now() - e.ts > 45 * 60 * 1000)) { VIDY_OK.delete(px); try { VIDY_DROP.add(px); } catch (e2) { } TST.pruned = (TST.pruned || 0) + 1; if (DBG) console.error('[vpx] - ' + px + ' (junk: 6 fails)'); }
   else VIDY_OK.set(px, e);
 }
 function vidyScore(px) {
@@ -2412,11 +2415,12 @@ const VY_REFILL = require('./tools/vidy-runtime/active_refill.cjs').create({
       let sl0 = false;
       try {
         await vySlot(1200); sl0 = true;
-        await ptunOpen(px, Number(process.env.VYPRETMO || 2000));   // v1.34.265: মৃত প্রক্সি দ্রুত বাদ ⇒ প্রতি সেকেন্ডে বেশি প্রার্থী
+        await ptunOpen(px, Number(process.env.VYPRETMO || 3000));   // ★ v1.34.286 (মাপা): ২সে-তে যাচাই করলে জীবিত নোডও মৃত পড়ত — লোকালে পূর্ণ সেশনের মধ্যমা ২.৫–৪.৫সে, CONNECT-একাই ১–২সে
         VY_COOLRC.pre++;
       } catch (e0) {
         const m0 = String((e0 && e0.message) || e0);
-        if (/sock-gate/.test(m0)) return null;         // বাক্স-স্যাচুরেশন, নোডের দোষ নয়
+        if (/sock-gate/.test(m0)) { VY_WHY.gate++; return null; }         // বাক্স-স্যাচুরেশন, নোডের দোষ নয়
+        VY_WHY.pre = (VY_WHY.pre || 0) + 1;
         VY_COOLRC.bad++; ptunConnectFailCool(px); return false;
       } finally { if (sl0) vyFree(); }
     }
@@ -2428,7 +2432,8 @@ const VY_REFILL = require('./tools/vidy-runtime/active_refill.cjs').create({
       try { await vySlot(1200); sl = true; await ptunOpen(px, 3500); VY_COOLRC.ok++; }
       catch (e) {
         const m2 = String((e && e.message) || e);
-        if (/sock-gate/.test(m2)) return null;      // বাক্স-স্যাচুরেশন, নোডের দোষ নয়
+        if (/sock-gate/.test(m2)) { VY_WHY.gate++; return null; }      // বাক্স-স্যাচুরেশন, নোডের দোষ নয়
+        VY_WHY.rechk = (VY_WHY.rechk || 0) + 1;
         VY_COOLRC.bad++; ptunConnectFailCool(px); return false;
       } finally { if (sl) vyFree(); }
     }
@@ -2448,10 +2453,24 @@ const VY_REFILL = require('./tools/vidy-runtime/active_refill.cjs').create({
       const ms = Date.now() - t0;
       if (ms > 5500) throw new Error('slow-session');
       vidyNodeOk(px, ms); const entry = VIDY_OK.get(px); if (entry) entry.sessionProof = Date.now(); return true;
-    } catch (e) { const msg = String(e && e.message); if (/gate-full|sock-gate/.test(msg)) return null; if (!/quota|http_5\d\d|invalid-sources/.test(msg)) VIDY_TRIED.set(px, Date.now()); return false; }
+    } catch (e) {
+      // ★★ v1.34.286 (প্রোড-মাপা, ইউজার: "ready node easily 80+ howar kotha"): রিফিল ছিল `attempts 4716
+      //   → passed 23`, আর `_health`-এ `lastWhy` **খালি** — কারণ এখানে ব্যর্থতা **throw করা হয় না**,
+      //   শুধু `false` ফেরত যেত ⇒ কোনো শ্রেণীবিভাগই দেখা যেত না। এখন প্রতিটি ব্যর্থতা তার আসল কারণে
+      //   গণ্য হয় (আচরণ অপরিবর্তিত — শুধু হিসাব)।
+      const msg = String(e && e.message);
+      if (/gate-full|sock-gate/.test(msg)) { VY_WHY.gate++; return null; }
+      const k = /quota|http_429/.test(msg) ? 'quota' : /http_5\d\d/.test(msg) ? 'srv' + msg.replace(/\D+/g, '')
+        : /invalid-sources|undefined|JSON/.test(msg) ? 'badjson' : /timeout|tun-|ECONN|socket/.test(msg) ? 'conn'
+          : /slow-session/.test(msg) ? 'slow' : (msg.slice(0, 18) || 'other');
+      VY_WHY[k] = (VY_WHY[k] || 0) + 1;
+      if (!/quota|http_5\d\d|invalid-sources/.test(msg)) VIDY_TRIED.set(px, Date.now());
+      return false;
+    }
     finally { if (slot) vyFree(); vpxFree(px); }
   }
 });
+const VY_WHY = {};   // v1.34.286: রিফিল-ব্যর্থতার শ্রেণি (আচরণ অপরিবর্তিত — শুধু হিসাব)
 const VY_COOLRC = { ok: 0, bad: 0, pre: 0 };   // v1.34.262: মেয়াদোত্তীর্ণ-নোড পুনঃযাচাইয়ের হিসাব (_health.vyCoolRecheck)
 setTimeout(() => { VY_REFILL.tick().catch(() => {}); setInterval(() => VY_REFILL.tick().catch(() => {}), 3000).unref?.(); }, 20000).unref?.();
 // ===== v1.18.0 (ইউজার: "vidy etoh rate limit … giant server Miami, Boise, Atlanta, also phoenix") =====
@@ -18835,7 +18854,7 @@ const server = http.createServer((req, res) => FG_CONTEXT.run({ active: true }, 
       RT_INFLIGHT.set(kRT, pr);
       res = w;
     }
-    if (p === '/_health') { const _vf = [...VIDY_OK.values()].filter(v => v.ts && Date.now() - v.ts < Number(process.env.PXFRESH || 240000)).length; return sendJson(res, 200, { ok: 1, cg: CG_ST, cgDead: CG_DEAD.size, cgSrc: Object.fromEntries([...CG_SRC].map(([k, v]) => [k, { ok: v.ok, fail: v.fail, down: v.down > Date.now() ? Math.round((v.down - Date.now()) / 1000) : 0 }])), version: VERSION, curlOk: (() => { try { return m4uCurlOK(); } catch (_) { return null; } })(), cache: CACHE_ST, bg: BG_ST, pwhy: PART_WHY, up: Math.round(process.uptime()), deploy: 'v' + VERSION, mmpool: { size: MM_POOL.length, bench: MM_SITE.size, discovery: MM_DISCOVERY.stats(), resolverFresh: [...MM_RESOLVE_OK.values()].filter(t => Date.now() - t < 600000).length, resolverChecks: MM_RESOLVE_BENCH_STATS, pruned: MM_PRUNED, hub4k: MMHUB_ST, vidrift: VR_ST, cooling: [...MM_COOL.values()].filter(t => t > Date.now()).length, race: MM_RACE_ST }, pool: POOL.length, pxbench: POOL.filter(c => PX_SITE.has(c.px)).length, pxbf: PX_BF.size, memo: memo.size, gw: (typeof GW !== 'undefined' ? GW.size : -1), nx: NEXBASE ? 1 : 0, nxpool: NXBENCH, nxwaves: NXWAVES, nxsize: NXSIZE, tw: TWBASE ? 1 : 0, rt: RTBASE ? 1 : 0, mls: (process.env.MLSD !== '0') ? 1 : 0, mlsindex: require('./tools/mls-index-lab/runtime_index').stats(), mlslinks: Object.assign({active:mlsLinkRaceActive}, MLS_LINK_METRICS), mlbdRuntime: {queue:MLBD_WL.stats(),net:MLBD_NET_METRICS,mirrorReady:!!MLBD_BASE,mirrorFlight:!!MLBD_MIRROR_FLIGHT,mirrorBlocked:!!(MLBD_BASE && hostBad(MLBD_BASE))}, vsp: VSP_POOL.length, vy: VIDY_OK.size, vyfresh: _vf, vyReady: vidyReadyCount(), vyBlocks: vidyBlockCounts(), vyRefill: VY_REFILL.stats(), vyCoolRecheck: VY_COOLRC, vyDiscovery: VY_DISCOVERY.stats(), vhg: (typeof VHG !== 'undefined' ? VHG : 0), pxpl: (typeof PXPL !== 'undefined' ? PXPL.size : 0), rtmq: RT_MQ_ST, dti: (typeof DT_IDX !== 'undefined' ? DT_IDX : 0), dtst: (typeof DT_ST !== 'undefined' ? DT_ST : 0), dtsh: (typeof DT_SH !== 'undefined' ? { on: DT_SH.on, src: DT_SH.src, pre: DT_SH.pre, loaded: DT_SH.loaded, hits: DT_SH.hits, miss: DT_SH.miss, cache: (typeof DT_SH_CACHE !== 'undefined' ? DT_SH_CACHE.size : 0), err: DT_SH.err, units: (DT_SH.man && DT_SH.man.units) || null, slugs: (DT_SH.man && DT_SH.man.slugs || []).length } : 0), lastreq: { el: LR.el, n: LR.total, pend: LR.pend, p: LR.path, sr: (LR.sr || []).map(x => x[0] + ':' + x[1] + '@' + x[2]) } }); } // v1.34.95, v1.34.105 // ★ v1.21.9: vy=verified vidy নোড, vyfresh=৪মিন-তাজা // v1.15.71: vsp=Vidsrc-পুল-আকার // v1.15.18: pxbench=সাইট-প্রমাণিত-বেঞ্চ (v1.15.8: nxpool=MB-বেঞ্চ)
+    if (p === '/_health') { const _vf = [...VIDY_OK.values()].filter(v => v.ts && Date.now() - v.ts < Number(process.env.PXFRESH || 240000)).length; return sendJson(res, 200, { ok: 1, cg: CG_ST, cgDead: CG_DEAD.size, cgSrc: Object.fromEntries([...CG_SRC].map(([k, v]) => [k, { ok: v.ok, fail: v.fail, down: v.down > Date.now() ? Math.round((v.down - Date.now()) / 1000) : 0 }])), version: VERSION, curlOk: (() => { try { return m4uCurlOK(); } catch (_) { return null; } })(), cache: CACHE_ST, bg: BG_ST, pwhy: PART_WHY, up: Math.round(process.uptime()), deploy: 'v' + VERSION, mmpool: { size: MM_POOL.length, bench: MM_SITE.size, discovery: MM_DISCOVERY.stats(), resolverFresh: [...MM_RESOLVE_OK.values()].filter(t => Date.now() - t < 600000).length, resolverChecks: MM_RESOLVE_BENCH_STATS, pruned: MM_PRUNED, hub4k: MMHUB_ST, vidrift: VR_ST, cooling: [...MM_COOL.values()].filter(t => t > Date.now()).length, race: MM_RACE_ST }, pool: POOL.length, pxbench: POOL.filter(c => PX_SITE.has(c.px)).length, pxbf: PX_BF.size, memo: memo.size, gw: (typeof GW !== 'undefined' ? GW.size : -1), nx: NEXBASE ? 1 : 0, nxpool: NXBENCH, nxwaves: NXWAVES, nxsize: NXSIZE, tw: TWBASE ? 1 : 0, rt: RTBASE ? 1 : 0, mls: (process.env.MLSD !== '0') ? 1 : 0, mlsindex: require('./tools/mls-index-lab/runtime_index').stats(), mlslinks: Object.assign({active:mlsLinkRaceActive}, MLS_LINK_METRICS), mlbdRuntime: {queue:MLBD_WL.stats(),net:MLBD_NET_METRICS,mirrorReady:!!MLBD_BASE,mirrorFlight:!!MLBD_MIRROR_FLIGHT,mirrorBlocked:!!(MLBD_BASE && hostBad(MLBD_BASE))}, vsp: VSP_POOL.length, vy: VIDY_OK.size, vyfresh: _vf, vyReady: vidyReadyCount(), vyBlocks: vidyBlockCounts(), vyRefill: VY_REFILL.stats(), vyCoolRecheck: VY_COOLRC, vyWhy: VY_WHY, vyBusy: VPX_BUSY.size, vyDiscovery: VY_DISCOVERY.stats(), vhg: (typeof VHG !== 'undefined' ? VHG : 0), pxpl: (typeof PXPL !== 'undefined' ? PXPL.size : 0), rtmq: RT_MQ_ST, dti: (typeof DT_IDX !== 'undefined' ? DT_IDX : 0), dtst: (typeof DT_ST !== 'undefined' ? DT_ST : 0), dtsh: (typeof DT_SH !== 'undefined' ? { on: DT_SH.on, src: DT_SH.src, pre: DT_SH.pre, loaded: DT_SH.loaded, hits: DT_SH.hits, miss: DT_SH.miss, cache: (typeof DT_SH_CACHE !== 'undefined' ? DT_SH_CACHE.size : 0), err: DT_SH.err, units: (DT_SH.man && DT_SH.man.units) || null, slugs: (DT_SH.man && DT_SH.man.slugs || []).length } : 0), lastreq: { el: LR.el, n: LR.total, pend: LR.pend, p: LR.path, sr: (LR.sr || []).map(x => x[0] + ':' + x[1] + '@' + x[2]) } }); } // v1.34.95, v1.34.105 // ★ v1.21.9: vy=verified vidy নোড, vyfresh=৪মিন-তাজা // v1.15.71: vsp=Vidsrc-পুল-আকার // v1.15.18: pxbench=সাইট-প্রমাণিত-বেঞ্চ (v1.15.8: nxpool=MB-বেঞ্চ)
     // ★ v1.34.267 (ডায়াগনস্টিক, হোস্ট-হোয়াইটলিস্টেড): প্রোড-IP থেকে একটি হপ সত্যিই খুলছে কি না দেখা।
     //   শুধু GET, কেবল এই সোর্স-হোস্টগুলোর জন্য, উত্তর ৩০০ বাইটে কাটা — জেনেরিক প্রক্সি নয়।
     if (p === '/_probe') {   // v1.34.270: এক-সোর্স সরাসরি মাপা — **জব-ভিত্তিক** (এজ-টাইমআউটে কাটে না)
