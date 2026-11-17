@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.297';
+const VERSION = '1.34.298';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -980,7 +980,11 @@ async function enrichPool() {
   if (process.uptime() < Number(process.env.PXBOOT || 75)) return; // ★ v1.24.1: বুট-ঝড় রোধ (ডিপ্লয়ের পর ৭৫সে শান্ত)
   // ★ v1.17.56: verified-pool পূর্ণ না হওয়া পর্যন্ত এনরিচ ছোট-বিরতিতে (৯০সে→৩০সে) — POOL-ই
   //   vidy-verified-এর কাঁচামাল; POOL না-বাড়লে verified স্যাচুরেট করে (মাপা: ৩.৫ মিনিটে ৭৩→৮০ থেমে যেত)।
-  const _gap = (VIDY_OK.size < Number(process.env.VPXMAX || 6000)) ? Number(process.env.PXGAP || 30000) : 90000;   // ★ v1.26.9: দুটি ভিন্ন-লক্ষ্য(১৫০০/২৫০০) এক করা হলো
+  // ★★ v1.34.298 (ইউজার: "bench proxy er space 3x koro, kintu scanning speed ekoi thakbe — server e barti
+  //   chap na pore"): জায়গা ৩× হলো, কিন্তু**স্ক্যানের গতি ছোঁয়া হলো না** — এই এনরিচ-বিরতিটাই স্ক্যানের
+  //   তাল-নিয়ন্ত্রক, তাই ৩০সে-ই রাখা হলো (POOL-থ্রেশহোল্ড ১৮০-ও অপরিবর্তিত)। অর্থাৎ পুল বড় জায়গা পাবে,
+  //   ভরবে ঠিক আগের গতিতেই — সার্ভারে বাড়তি চাপ নয়।
+  const _gap = (VIDY_OK.size < Number(process.env.VPXMAX || 18000)) ? Number(process.env.PXGAP || 30000) : 90000;   // ★ v1.26.9: দুটি ভিন্ন-লক্ষ্য (১৫০০/২৫০০) এক করা হলো
   if (POOL.length >= 180 && Date.now() - _lastEnrich < _gap) return; // v1.15.98: প্রতি ১৮ সেকেন্ডে এনরিচ-ঝড় রোধ (কমপক্ষে ৯০সে বিরতি)
   _training = true; _lastEnrich = Date.now();
   try {
@@ -1884,7 +1888,7 @@ function vidyVSave() {
       o[k] = { ms: v.ms, ts: v.ts || 0, ok: v.ok || 0, att: v.att || 0 };
     }
     let ks = Object.keys(o);
-    const cap = Number(process.env.VPXMAX || 6000);
+    const cap = Number(process.env.VPXMAX || 18000);   // ★ v1.34.298 (ইউজার: "bench proxy er space 3x koro") — ভেরিফায়েড-বেঞ্চের জায়গা ৩×
     if (ks.length > cap) { const keep = {}; for (const k of ks.slice(-cap)) keep[k] = o[k]; o = keep; ks = Object.keys(o); }
     require('fs').writeFileSync(vidyVPath(), JSON.stringify(o));
   } catch (e) { }
@@ -2434,7 +2438,9 @@ const VY_REFILL = require('./tools/vidy-runtime/active_refill.cjs').create({
     //   নোড) তালিকার **একদম শেষে** ছিল, আর তার আগে VY_DISCOVERY-র ~৫,৭০০ অযাচাইকৃত ঠিকানা। ফলে রিফিল
     //   জীবিত নোডে পৌঁছানোর আগেই মৃত প্রার্থীর ভিড়ে সকেট-ছাদ (liveTotal ১৯২/১৯২, queued ৮৮, dropped ৭৩৩)
     //   ভরে যেত ⇒ `why.pre` ৬৩% আর `why.gate` কেবল বাড়ত। এখন যাচাই-করা তালিকা আগে, কাঁচা ঠিকানা পরে।
-    return require('./tools/vidy-runtime/fair_candidates.cjs').merge([proven, fallback, site, VY_DISCOVERY.candidates(), pxRawRecent(6000)], allowed);
+    // ★ v1.34.298: কাঁচা-তালিকার পরিধিও ৩× (৬০০০ → ১৮০০০) — বেঞ্চ ৩× জায়গা পেলেও প্রার্থী-পরিধি
+    //   না বাড়লে নতুন নোড খুঁজতে গিয়ে আবার সেই পুরোনো ৬০০০-এই ঘুরত।
+    return require('./tools/vidy-runtime/fair_candidates.cjs').merge([proven, fallback, site, VY_DISCOVERY.candidates(), pxRawRecent(18000)], allowed, 60000);
   },
   validate: async px => {
     if (!loopOkMid()) return null;   // v1.34.262: mid-tier gate — a lagging loop defers, it is not this node's fault
@@ -2523,7 +2529,7 @@ function vsrvKey(o) { const q = o.q || {}; return [o.srv, q.mediaType || 'any', 
 // প্রতিটি কন্টেইনার আলাদা পুল দিয়ে চলে — তাই ভরার হিসাব পুল-ধরন অনুযায়ী:
 //   vidy (verified) · warm tunnel bank · generic POOL · ৬টি spool-সোর্স (SRC_PROBE) + bf · mm-এর নিজের পুল
 function poolsFull() {
-  if (VIDY_OK.size < Number(process.env.VPXMAX || 6000)) return false;   // ★ v1.26.9: verified-লক্ষ্য ১৫০০ → ২০০০
+  if (VIDY_OK.size < Number(process.env.VPXMAX || 18000)) return false;   // ★ v1.34.298: ৬০০০ → ১৮০০০ (৩×); এই গেট শুধু "পুল ভরা"-র হিসাব, স্ক্যানের গতি নয়
   // (টানেল-ব্যাংক ইচ্ছাকৃতভাবে বাদ — ওটা ফ্রি-বোনাস, প্রক্সি-মৃত্যুতে ওঠানামা করে; ভরার শর্ত নয়)
   if (POOL.length < Math.floor(PX_CAP * 0.8)) return false;
   try {
@@ -2539,7 +2545,7 @@ function poolsFull() {
 // কত ভরা — রিপোর্টের জন্য (percent per container)
 function poolsFill() {
   const out = {};
-  out.vidy = [VIDY_OK.size, Number(process.env.VPXMAX || 6000)];
+  out.vidy = [VIDY_OK.size, Number(process.env.VPXMAX || 18000)];
   out.tunnels = [PTUN.size, Number(process.env.PXTWN || 576)];
   out.generic = [POOL.length, Math.floor(PX_CAP * 0.8)];
   try {
