@@ -356,6 +356,67 @@ async function acResolveEmbed(embedUrl) {
   return url;
 }
 
+/* ── প্লেলিস্ট-রিলে: সঠিক content-type + absolute সেগমেন্ট ─────────────────────
+   ★ v1.34.314 (ইউজার: "my royal nemesis e video chole na"): vidbasic-এর প্লেলিস্ট
+   `content-type: image/jpeg` পাঠায় ⇒ অনেক প্লেয়ার (ExoPlayer-এর বাইরে) ম্যানিফেস্ট
+   হিসেবেই মানে না, আবার সেগমেন্ট-লাইনগুলো absolute নয়। তাই:
+     কার্ড → /acs/p/<tok>/p.m3u8  (আমাদের রিলে, সঠিক MIME, CORS)
+     মাস্টার হলে ভ্যারিয়েন্টও রিলে দিয়ে; মিডিয়া-প্লেলিস্টের সেগমেন্ট **সরাসরি CDN**
+   ⇒ ব্যান্ডউইথ খরচ শুধু ছোট প্লেলিস্ট (KB), ভিডিও-বাইট CDN থেকে। */
+const AC_TOK = new Map();
+const AC_TOK_TTL = 45 * 60 * 1000;
+function acRelayUrl(origin, u) {
+  try {
+    const tok = require('crypto').randomBytes(12).toString('base64url');
+    AC_TOK.set(tok, { u: u, ts: Date.now() });
+    if (AC_TOK.size > 900) for (const k of [...AC_TOK.keys()].slice(0, 400)) AC_TOK.delete(k);
+    return String(origin || '').replace(/\/+$/, '') + '/acs/p/' + tok + '/p.m3u8';
+  } catch (e) { return u; }
+}
+function acAbsolute(lines, base) {
+  return lines.map(l => {
+    const t = l.trim();
+    if (!t || t[0] === '#') return l;
+    try { return new URL(t, base).toString(); } catch (e) { return l; }
+  });
+}
+async function acServePlaylist(req, res, tok, origin) {
+  const ent = AC_TOK.get(tok);
+  if (!ent) { res.writeHead(404, { 'content-type': 'text/plain' }); return res.end('expired'); }
+  ent.ts = Date.now();
+  const up = await acBuf(ent.u, 16000, null).catch(() => null);
+  if (!up || (up.st !== 200 && up.st !== 206) || up.buf.slice(0, 7).toString('latin1') !== '#EXTM3U') {
+    res.writeHead(up && up.st ? up.st : 502, { 'content-type': 'text/plain' });
+    return res.end('upstream-' + (up && up.st || 'err'));
+  }
+  ACG.relay = (ACG.relay || 0) + 1;
+  let body = up.buf.toString('utf8');
+  const isMaster = /#EXT-X-STREAM-INF/i.test(body);
+  const lines = body.split('\n');
+  const abs = acAbsolute(lines, ent.u);
+  if (isMaster) {
+    // ভ্যারিয়েন্ট-লাইন → আমাদের রিলে (সেগমেন্টের বদলে)। I-FRAME-URI-ও রিলে করি।
+    body = abs.map(l => {
+      const t = l.trim();
+      if (!t || t[0] === '#') {
+        return l.replace(/URI="([^"]+)"/g, (m0, u1) => {
+          try { return 'URI="' + acRelayUrl(origin, new URL(u1, ent.u).toString()) + '"'; } catch (e) { return m0; }
+        });
+      }
+      return acRelayUrl(origin, t);
+    }).join('\n');
+  } else {
+    body = abs.join('\n');   // মিডিয়া-প্লেলিস্ট: সেগমেন্ট সরাসরি CDN
+  }
+  res.writeHead(200, {
+    'content-type': 'application/vnd.apple.mpegurl',
+    'access-control-allow-origin': '*',
+    'cache-control': 'no-store',
+    'cdn-cache-control': 'no-store'
+  });
+  return res.end(/#EXTM3U/.test(body) ? body : ('#EXTM3U\n' + body));
+}
+
 /* ── প্লেবিলিটি: প্লেলিস্ট/ফাইল সত্যিই আসে কি না ────────────────────────────── */
 /* ── প্রোব: URL সত্যিই মিডিয়া কি না ─────────────────────────────────────────
    ★ v1.34.309 (ইউজার-সংশোধন): "আমাদের ডেটাসেন্টার-IP-তে চলে না" মানে ইউজারের কাছেও
@@ -519,10 +580,11 @@ async function acStreams(tmdbId, type, s, e, origin, opt) {
       const name = q ? ('\u25a5 ' + q + ' \u25a5') : '\u25a5 Auto \u25a5';
       const tag = (l.label && l.label !== 'Standard' ? ' \u2317 ' + l.label : '') + (l.state === 'proven' ? ' \u2713' : '');
       const txt = head + '\n' + epLine + '\n\u229e AsianC' + tag + ' \u00b7 AsianC';
+      const cardUrl = (l.kind === 'hls') ? acRelayUrl(origin, l.url) : l.url;
       cards.push({
         name: name,
         quality: q || '',
-        url: l.url,
+        url: cardUrl,
         title: txt,
         description: txt,
         behaviorHints: { filename: l.kind === 'hls' ? 'asianc.m3u8' : 'asianc.mp4', notWebReady: true, proxyHeaders: { request: { 'User-Agent': AC_UA, 'Referer': AC_BASE + '/' } } },
@@ -591,4 +653,4 @@ async function acSelftest() {
 }
 
 setTimeout(() => { }, 0);
-module.exports = { acOn, acStreams, acPrewarm, acDiag, acSelftest, acDecrypt, acServersOf, acResolveEmbed, acPlayable, acProbe, acFindSlug, acDetail, AC_BASE, AC_UA };
+module.exports = { acOn, acStreams, acPrewarm, acServePlaylist, acDiag, acSelftest, acDecrypt, acServersOf, acResolveEmbed, acPlayable, acProbe, acFindSlug, acDetail, AC_BASE, AC_UA };

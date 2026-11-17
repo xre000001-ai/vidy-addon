@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.313';
+const VERSION = '1.34.314';
 /* ★ v1.34.307: asianc.id — সম্পূর্ণ স্বতন্ত্র সোর্স (নিজস্ব ফাইল asianc.js; Dramacool-ধাঁচের সাইট)
    চেইন: /search?keyword → /drama-detail/<slug> → /<slug>-episode-N.html → li[data-video] (সব সার্ভার)
          → vidbasic/3rdplayer AES-256-CBC ডিক্রিপ্ট (বা hglink→jwplayer unpack) ⇒ আসল HLS/MP4 */
@@ -19513,6 +19513,12 @@ const server = http.createServer((req, res) => FG_CONTEXT.run({ active: true }, 
         return res.end(miniOut);
       } catch { res.writeHead(502, { 'content-type': 'text/plain' }); return res.end('upstream-err'); }
     })();
+    /* ★ v1.34.314: asianc.id প্লেলিস্ট-রিলে — সঠিক content-type (vidbasic image/jpeg পাঠায়) */
+    const acsR = p.match(/^\/acs\/p\/([A-Za-z0-9_\-]{8,64})\/p\.m3u8$/);
+    if (acsR) {
+      if (!ASC || typeof ASC.acServePlaylist !== 'function') { res.writeHead(404, { 'content-type': 'text/plain' }); return res.end('asianc off'); }
+      return ASC.acServePlaylist(req, res, acsR[1], originOf(req)).catch(() => { try { res.writeHead(502, { 'content-type': 'text/plain' }); res.end('relay-err'); } catch (e) { } });
+    }
     // ★ v1.17.50: vidy-প্লেলিস্ট-রিলে — /vh/<b64url(প্লেলিস্ট)>/p.m3u8 (রেফারার-লক-ভাঙা; সেগমেন্ট সরাসরি CDN)
     const vhR = p.match(/^\/vh\/([A-Za-z0-9_=-]{8,2400})\/p\.m3u8$/);
     const vhsR = p.match(/^\/vhs\/([A-Za-z0-9_=-]{8,4000})\/s\.bin$/);
