@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.305';
+const VERSION = '1.34.306';
 /* ★ v1.34.303: vidly.pro — সম্পূর্ণ স্বতন্ত্র সোর্স (নিজস্ব ফাইল vidly.js; sealed-RSC ডিক্রিপ্ট ⇒ আসল HLS;
    সার্ভার: Edge/Prism/Flux/Nimbus/Comet/Citadel - সিল-পেলোড থেকে পড়া, বানানো নয়) */
 let VLY = null;

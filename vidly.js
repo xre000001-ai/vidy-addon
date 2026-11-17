@@ -24,17 +24,103 @@
    ═══════════════════════════════════════════════════════════════════════════════ */
 
 const VL_BASE = process.env.VL_BASE || 'https://vidly.pro';
+
+/* ── প্রক্সি-লেয়ার ────────────────────────────────────────────────────────────
+   কেন: vidly.pro-এর `/api/sources` ডেটাসেন্টার-IP-তে **Cloudflare 403** দেয় (পেজ ফেচ হয়,
+   API নয়)। তাই API-কল আমাদের সাইট-প্রমাণিত প্রক্সি-পুল দিয়ে যায় — তখনই প্রতিটি সার্ভারের
+   (Prism/Flux/Comet/Citadel/Edge) আলাদা স্ট্রিম-তালিকা আসে। মাপা (Squid Game S1E1):
+   Prism ৯, Citadel ২, Flux ১, Comet ১, Edge ১ — পেজে থাকে কেবল ১টি। */
+let VL_PX = [];
+let VL_PX_OK = { px: '', ts: 0 };
+try {
+  const _pj = require('path').join(__dirname, 'vidy_proxy_pool.json');
+  const _pl = JSON.parse(require('fs').readFileSync(_pj, 'utf8'));
+  VL_PX = (Array.isArray(_pl) ? _pl : []).map(x => (typeof x === 'string' ? x : (x && x.px) || '')).filter(Boolean);
+} catch (e) { VL_PX = []; }
+let _VL_AG = null, _VL_AGP = '';
+function vlAgent(px) {
+  try {
+    if (_VL_AGP === px && _VL_AG) return _VL_AG;
+    const und = require('undici');
+    if (!und || !und.ProxyAgent) return null;
+    _VL_AG = new und.ProxyAgent('http://' + String(px).replace(/^https?:\/\//, '')); _VL_AGP = px;
+    return _VL_AG;
+  } catch (e) { return null; }
+}
+async function vlPxFetch(url, px, ms) {
+  try {
+    const und = require('undici');
+    const ag = vlAgent(px);
+    if (!ag) return null;
+    const r = await und.fetch(url, { dispatcher: ag, headers: { 'User-Agent': VL_UA, 'Accept': '*/*', 'Referer': VL_BASE + '/', 'Accept-Language': 'en-US,en;q=0.9' }, signal: AbortSignal.timeout(Math.max(4000, ms || 10000)) });
+    if (r.status === 200) { const b = await r.text(); return { st: 200, body: b, px }; }
+    return { st: r.status, body: '', px };
+  } catch (e) { return null; }
+}
+/* ── API-র জন্য যাচাই-করা প্রক্সি-তালিকা (vidly.pro /api CF-ব্লক এড়াতে) ──────
+   মাপা: পুলের অনেক প্রক্সি পেজ খোলে কিন্তু API-তে 403/429; কাজ-করা কয়েকটাই সব সার্ভারের
+   ডেটা দেয়। একবার যাচাই করে রাখি (ডিস্কে ২০ মিনিট) ⇒ সুইপ দ্রুত। */
+const VL_PX_API = { list: [], ts: 0, busy: false };
+const VL_PX_FILE = require('path').join(__dirname, 'vidly_px_api.json');
+try {
+  const d = JSON.parse(require('fs').readFileSync(VL_PX_FILE, 'utf8'));
+  if (d && Array.isArray(d.list)) { VL_PX_API.list = d.list.slice(0, 12); VL_PX_API.ts = Number(d.ts) || 0; }
+} catch (e) { }
+async function vlPxEnsure(force) {
+  if (VL_PX_API.busy) return VL_PX_API.list;
+  if (!force && VL_PX_API.list.length && Date.now() - VL_PX_API.ts < 20 * 60 * 1000) return VL_PX_API.list;
+  VL_PX_API.busy = true;
+  const probe = VL_BASE + '/api/sources?kind=movie&provider=nimbus&t=x&tmdb=155';
+  const cand = VL_PX.slice(0, 30);
+  const got = [];
+  await Promise.all(cand.map(async px => {
+    const r = await vlPxFetch(probe, px, 5000);
+    if (r && (r.st === 200 || r.st === 404 || r.st === 400)) got.push(px);
+  }));
+  if (got.length) {
+    VL_PX_API.list = got.slice(0, 12); VL_PX_API.ts = Date.now();
+    VL_PX_OK = { px: got[0], ts: Date.now() };
+    try { require('fs').writeFileSync(VL_PX_FILE, JSON.stringify({ ts: VL_PX_API.ts, list: VL_PX_API.list })); } catch (e) { }
+  }
+  VL_PX_API.busy = false;
+  return VL_PX_API.list;
+}
+
+/* পুল থেকে কাজ-করা প্রক্সি — ভালোটা আগে, তারপর অন্যেরা (সর্বোচ্চ ৬ চেষ্টা) */
+async function vlPxGet(url, ms, tries, force) {
+  if (force) {                       // API-কল: সরাসরি নয়, শুধু যাচাই-করা প্রক্সি দিয়েই
+    for (const px of (VL_PX_API.list.length ? VL_PX_API.list : VL_PX.slice(0, 8))) {
+      const r = await vlPxFetch(url, px, ms);
+      if (r && r.st === 200 && r.body) { VL_PX_OK = { px: px, ts: Date.now() }; return r; }
+    }
+    return null;
+  }
+  const order = [];
+  if (VL_PX_API.list.length) for (const x of VL_PX_API.list) order.push(x);
+  if (VL_PX_OK.px && order.indexOf(VL_PX_OK.px) < 0) order.unshift(VL_PX_OK.px);
+  const rest = VL_PX.filter(x => order.indexOf(x) < 0);
+  for (let i = rest.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); const t = rest[i]; rest[i] = rest[j]; rest[j] = t; }
+  for (const x of rest) order.push(x);
+  const cap = Math.min(order.length, tries || 6);
+  for (let i = 0; i < cap; i++) {
+    const r = await vlPxFetch(url, order[i], ms);
+    if (r && r.st === 200 && r.body) { VL_PX_OK = { px: order[i], ts: Date.now() }; return r; }
+  }
+  return null;
+}
+function vlOn(cfg) { return process.env.VLOFF !== '1' && !(cfg && cfg.vl === 0); }
+
 const VL_TR = 'vY7#qL2!mZ9@wK4$';      // বান্ডলের ti() পাসফ্রেজ
 const VL_UA = process.env.VL_UA || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 
+const VL_HFAIL = new Map();            // host → ব্যর্থ-সময় (রিলে-ব্যর্থতাই লেখে)
 const VL_PAGE_TTL = 20 * 60 * 1000;    // sealed → streams
 const VL_MAST_TTL = 5 * 60 * 1000;     // master-প্রোব (ভ্যারিয়েন্ট/ট্র্যাক), ব্যর্থ হলে ২০সে
 const VL_MEMO = new Map(), VL_MAST = new Map(), VL_FAIL = new Map(), VL_INFLIGHT = new Map();
-const VLG = { pages: 0, pageFail: 0, noSeal: 0, zero: 0, cards: 0, serve: 0, serveFail: 0 };
+const VLG = { pages: 0, pageFail: 0, noSeal: 0, zero: 0, cards: 0, serve: 0, serveFail: 0, sweep: 0, pxTries: 0 };
 const VL_BREAK = { fails: 0, until: 0 };
 const VL_SRV = { evion: 'Edge', singularity: 'Edge', prism: 'Prism', flux: 'Flux', nimbus: 'Nimbus', comet: 'Comet', citadel: 'Citadel' };
 
-function vlOn(cfg) { return process.env.VLOFF !== '1' && !(cfg && cfg.vl === 0); }
 function _shrink(m, frac) { for (const k of [...m.keys()].slice(0, Math.ceil(m.size * frac))) m.delete(k); }
 function vlTripped() { return VL_BREAK.until > Date.now(); }
 function vlMark(fail) {
@@ -108,27 +194,87 @@ function vlSealedFrom(html) {
 /* ── পেজ-ফেচ (TLS-রিসেটে শান্ত পুনঃচেষ্টা + এক-বার রিট্রাই) ───────────────── */
 async function vlPageFetch(path, ms) {
   const u = VL_BASE + path;
+  const budget = Math.max(6000, ms || 9000);
   const hdr = { 'User-Agent': VL_UA, 'Accept': 'text/html,application/xhtml+xml', 'Accept-Language': 'en-US,en;q=0.9' };
-  // v1.34.304: parallel-চাপে vidly.pro মাঝে মাঝে TLS-লেভেলে রিসেট করে ⇒ ৩ চেষ্টা, ছোট ব্যাকঅফ।
-  for (let i = 0; i < 3; i++) {
-    try {
-      const r = await fetch(u, { headers: hdr, redirect: 'follow', signal: AbortSignal.timeout(Math.max(5000, ms || 9000)) });
-      const t = await r.text();
-      VLG.pages++;
-      if (r.ok && t.indexOf('v1.') >= 0) { vlMark(false); return t; }
-      if (r.status === 429 || r.status === 403 || r.status >= 500) { await new Promise(z => setTimeout(z, 350 + i * 700)); continue; }
-      return t;
-    } catch (e) { await new Promise(z => setTimeout(z, 350 + i * 700)); }
-  }
+  const ok = t => !!t && t.indexOf('v1.') >= 0;
+  /* ★ v1.34.306: সরাসরি আর প্রক্সি-পথ **সমান্তরালে**, যেটা আগে সফল সেটাই — আগে ৩ চেষ্টা করে
+     তারপর প্রক্সি ⇒ টাইটেল-প্রতি ৩৯সে লেগে যেত (মাপা)। এখন সর্বোচ্চ বাজেট ≈ ms। */
+  const direct = (async () => {
+    for (let i = 0; i < 2; i++) {
+      try {
+        const r = await fetch(u, { headers: hdr, redirect: 'follow', signal: AbortSignal.timeout(Math.max(3000, Math.floor(budget * 0.65))) });
+        const t = await r.text();
+        if (ok(t)) { VLG.pages++; return t; }
+      } catch (e) { }
+      await new Promise(z => setTimeout(z, 200));
+    }
+    return '';
+  })();
+  const viaPx = vlPxGet(u, budget, 2).then(r => (r && ok(r.body)) ? r.body : '').catch(() => '');
+  const pick = pr => pr.then(v => { if (!ok(v)) throw new Error('empty'); return v; });
+  let html = '';
+  try { html = await Promise.any([pick(direct), pick(viaPx)]); } catch (e) { html = ''; }
+  if (html) { vlMark(false); return html; }
   VLG.pageFail++; vlMark(true);
   return '';
 }
+
 async function vlPageSealed(path, ms) {
   const html = await vlPageFetch(path, ms);
   if (!html) return null;
   const s = vlSealedFrom(html);
   if (!s) { VLG.noSeal++; return null; }
   try { return vlSealOpen(s); } catch (e) { VLG.noSeal++; return null; }
+}
+
+/* ── স্ট্রিম-ক্যাশ (ডিস্ক): API-সুইপ ব্যয়বহুল ⇒ ৬ ঘণ্টা ধরে রাখি ──────────── */
+const VL_DISK = require('path').join(__dirname, 'vidly_streams.json');
+let VL_DISK_M = null, VL_DISK_D = false, VL_DISK_N = 0;
+function vlDisk() {
+  if (VL_DISK_M) return VL_DISK_M;
+  try { VL_DISK_M = JSON.parse(require('fs').readFileSync(VL_DISK, 'utf8')) || {}; } catch (e) { VL_DISK_M = {}; }
+  return VL_DISK_M;
+}
+function vlDiskSave() {
+  if (VL_DISK_D) return;
+  VL_DISK_D = true;
+  setTimeout(() => { VL_DISK_D = false; try { require('fs').writeFileSync(VL_DISK, JSON.stringify(VL_DISK_M || {})); } catch (e) { } }, 2500);
+}
+
+/* ── পেজ-টোকেন (`t=<ts36>.<rand22>`) ───────────────────────────────────────── */
+function vlTokenOf(html) {
+  const h = String(html || '').replace(/\\"/g, '"');
+  const m = /"token"\s*:\s*"([A-Za-z0-9._\-]{20,60})"/.exec(h);
+  return m ? m[1] : '';
+}
+
+/* ── সার্ভার-সুইপ: /api/sources?provider=<id> (প্রক্সি দিয়ে) ───────────────── */
+const VL_PROV = ['prism', 'flux', 'comet', 'citadel', 'evion'];      // nimbus মাপা-শূন্য ⇒ বাদ
+async function vlApiSweep(kind, tmdb, S, E, token, ms) {
+  const base = VL_BASE + '/api/sources?kind=' + kind + '&tmdb=' + tmdb + (kind === 'tv' ? '&s=' + S + '&e=' + E : '') + '&t=' + encodeURIComponent(token) + '&provider=';
+  const per = ms || 10000;
+  const one = prov => vlPxGet(base + prov, per, 2, true).then(r => {
+    if (!r || r.st !== 200 || !r.body) return null;
+    const sealed = /^v1\./.test(r.body.trim()) ? r.body.trim() : vlSealedFrom(r.body);
+    if (!sealed) return null;
+    try { const j = vlSealOpen(sealed); const st = Array.isArray(j.streams) ? j.streams : []; return { prov: prov, j: j, streams: st }; } catch (e) { return null; }
+  }).catch(() => null);
+  const t0 = Date.now();
+  const r1 = await Promise.all(VL_PROV.map(one));
+  const bad = [], out = [];
+  VL_PROV.forEach((p, i) => { if (r1[i]) out.push(r1[i]); else bad.push(p); });
+  VLG.pxTries++;
+  if (bad.length && Date.now() - t0 < 9000) {   // দ্বিতীয় রাউন্ড: অন্য প্রক্সি দিয়ে শুধু ব্যর্থগুলো
+    const r2 = await Promise.all(bad.map(async p => {
+      const r = await vlPxGet(base + p, Math.max(5000, per - (Date.now() - t0)), 3, true).catch(() => null);
+      if (!r || r.st !== 200 || !r.body) return null;
+      const sealed = /^v1\./.test(r.body.trim()) ? r.body.trim() : vlSealedFrom(r.body);
+      if (!sealed) return null;
+      try { const j = vlSealOpen(sealed); return { prov: p, j: j, streams: Array.isArray(j.streams) ? j.streams : [] }; } catch (e) { return null; }
+    }));
+    for (const r of r2) if (r && r.streams.length) out.push(r);
+  }
+  return out.filter(x => x.streams.length);
 }
 
 /* ── মাস্টার-প্রোব: ভ্যারিয়েন্ট-রেজো, অডিও-ট্র্যাক, সাবটাইটেল ──────────────── */
@@ -235,42 +381,92 @@ async function vlStreams(tmdbId, type, s, e, origin, opt) {
   if (vlTripped()) return [];
   const fp = VL_FAIL.get(key);
   if (fp && now - fp < 90 * 1000) return [];   // v1.34.304: ব্যর্থ-মেমো ৪মিন → ৯০সে (একবারের রিসেটে টাইটেল হারাক না)
+  // ── ধাপ ১: স্ট্রিম-তালিকা (মেমো → ডিস্ক-ক্যাশ → পেজ-পেলোড + সার্ভার-সুইপ) ──
+  const dkey = 'v306|' + key;
   const memo = VL_MEMO.get(key);
-  let j = (memo && now - memo.ts < VL_PAGE_TTL) ? memo.j : null;
-  if (!j) {
-    if (VL_INFLIGHT.has(key)) { try { j = await VL_INFLIGHT.get(key); } catch (err) { j = null; } }
-    else {
-      const pr = (async () => {
-        const got = await vlPageSealed('/' + (tv ? 'tv/' + id + '/' + S + '/' + E : 'movie/' + id), o.ms || 9000);
-        if (got) { VL_MEMO.set(key, { ts: Date.now(), j: got }); if (VL_MEMO.size > 500) _shrink(VL_MEMO, 0.4); }
-        return got;
-      })();
-      VL_INFLIGHT.set(key, pr);
-      try { j = await pr; } catch (err) { j = null; } finally { VL_INFLIGHT.delete(key); }
-    }
+  let rec = (memo && now - memo.ts < VL_PAGE_TTL) ? memo.rec : null;
+  if (!rec) {
+    const dc = vlDisk()[dkey];
+    if (dc && now - dc.ts < 6 * 60 * 60 * 1000 && Array.isArray(dc.list) && dc.list.length) rec = dc;
   }
-  if (!j) { VL_FAIL.set(key, Date.now()); VLG.zero++; return []; }
-
-  const raw = (Array.isArray(j.streams) ? j.streams : []).filter(x => x && /^https?:\/\//.test(String(x.url || ''))
-    && (!x.type || /hls|m3u8|dash/i.test(String(x.type))));
+  if (!rec && !VL_INFLIGHT.has('R|' + key)) {
+    const pr = (async () => {
+      const page = await vlPageFetch('/' + (tv ? 'tv/' + id + '/' + S + '/' + E : 'movie/' + id), o.ms || 9000);
+      const list = [];
+      const seen = new Set();
+      const prov = (j2) => ({ label: (j2.provider && j2.provider.label) || '', id: (j2.provider && j2.provider.id) || '', tag: (j2.provider && j2.provider.tag) || '', failed: (Array.isArray(j2.failed) ? j2.failed : []).map(f => (f && (f.label || f.id)) || '').filter(Boolean) });
+      const push = (arr, provInfo, srcId) => {
+        for (const st of (arr || [])) {
+          const u = String((st && st.url) || '');
+          if (!/^https?:\/\//.test(u)) continue;
+          const k2 = u.split('?')[0];
+          if (seen.has(k2)) continue;
+          seen.add(k2);
+          list.push({ st: st, prov: provInfo, src: srcId });
+        }
+      };
+      let sealedPage = null;
+      if (page) {
+        const ss = vlSealedFrom(page);
+        if (ss) { try { sealedPage = vlSealOpen(ss); } catch (e) { VLG.noSeal++; } }
+      }
+      if (sealedPage) push(sealedPage.streams, prov(sealedPage), prov(sealedPage).id || 'page');
+      const tok = vlTokenOf(page);
+      if (tok) {
+        // API-সুইপ সর্বোচ্চ ১১সে; না হলে যতটা এসেছে ততটাই
+        const swept = await Promise.race([
+          vlApiSweep(tv ? 'tv' : 'movie', id, S, E, tok, 12000).catch(() => []),
+          new Promise(r => setTimeout(() => r([]), 11000))
+        ]);
+        VLG.sweep += swept.length;
+        for (const r of swept) push(r.streams, prov(r.j), r.prov);
+      }
+      const out = { ts: Date.now(), list: list };
+      if (list.length) {
+        VL_MEMO.set(key, { ts: Date.now(), rec: out });
+        if (VL_MEMO.size > 400) _shrink(VL_MEMO, 0.4);
+        const d = vlDisk(); d[dkey] = out;
+        const ks = Object.keys(d);
+        if (ks.length > 600) { for (const k3 of ks.slice(0, ks.length - 600)) delete d[k3]; }
+        vlDiskSave();
+      }
+      return out;
+    })();
+    VL_INFLIGHT.set('R|' + key, pr);
+    try { rec = await pr; } catch (e) { rec = null; } finally { VL_INFLIGHT.delete('R|' + key); }
+  } else if (!rec) {
+    try { rec = await VL_INFLIGHT.get('R|' + key); } catch (e) { rec = null; }
+  }
+  if (!rec || !rec.list || !rec.list.length) { VL_FAIL.set(key, Date.now()); VLG.zero++; return []; }
+  const raw = rec.list.filter(x => x && x.st && /^https?:\/\//.test(String(x.st.url || ''))
+    && (!x.st.type || /hls|m3u8|dash/i.test(String(x.st.type))));
   if (!raw.length) { VLG.zero++; return []; }
 
-  const prov = (j.provider && (j.provider.label || j.provider.id)) || '';
-  const provTag = (j.provider && j.provider.tag) || '';
-  const failed = (Array.isArray(j.failed) ? j.failed : []).map(f => (f && (f.label || f.id)) || '').filter(Boolean);
+  const failed = [];   // প্রতি-কার্ডে নিজের সার্ভারের failed-তালিকা (নিচে)
   const wantQ = Array.isArray(o.q) ? o.q.map(Number).filter(Boolean) : [];
   const wantL = Array.isArray(o.l) ? o.l.map(vlKey).filter(Boolean) : [];
   const audioMode = String(o.audio || '');   // '' | 'orig' | 'multi'
 
   const out = [];
-  for (const st of raw.slice(0, 8)) {
+  // ★ v1.34.306: সব মাস্টার-প্রোব **সমান্তরালে** (আগে ক্রমিক ⇒ প্রতি স্ট্রিমে ০.৩–১সে যোগ হতো)
+  const items = raw.slice(0, 12);
+  const probes = await Promise.all(items.map(it => vlMaster(String(it.st.url), o.ms ? Math.min(o.ms, 7000) : 7000).catch(() => null)));
+  for (let ii = 0; ii < items.length; ii++) {
+    const item = items[ii];
+    const mi = probes[ii] || { res: [], tracks: [], subs: 0, subUris: [] };
+    const st = item.st;
+    const pInfo = item.prov || {};
+    const prov = pInfo.label || '';
+    const provTag = pInfo.tag || '';
+    const failed = Array.isArray(pInfo.failed) ? pInfo.failed : [];
+    const srvName = prov || (VL_SRV[String(pInfo.id || '')] || '');
     const master = String(st.url);
-    const mi = await vlMaster(master, o.ms ? Math.min(o.ms, 7000) : 7000);
     const sq = /(\d{3,4})/.exec(String(st.quality || ''));
     const sealedQ = sq ? Number(sq[1]) : 0;
     let res = mi.res.map(x => x.h).filter(Boolean);
     if (!res.length && sealedQ) res = [sealedQ];
     let q = res.length ? Math.max.apply(null, res) : (sealedQ || 0);
+    if (!q && !wantQ.length) q = 720;      // রেজো-তথ্য নেই ⇒ সাইটের ডিফল্ট 720p (নিচে এখনো ৭২০-ফ্লোর)
     if (wantQ.length) {
       const okq = res.filter(h => wantQ.indexOf(h) >= 0);
       if (res.length && !okq.length) continue;
@@ -312,13 +508,17 @@ async function vlStreams(tmdbId, type, s, e, origin, opt) {
     for (const x of subs) { const k = x.label.toLowerCase(); if (seenSub.has(k)) continue; seenSub.add(k); subList.push(x); }
     // সাবটাইটেল: sealed-তালিকা থাকলে সেটাই (সরাসরি SRT), নইলে মাস্টারের সাবট্র্যাক (লেজি, ?s=1)
     const subTracks = (mi.subUris || []).map(x => ({ label: (vlLangName(x.lang, x.name) || x.name || '').trim(), m3u8: x.m3u8 })).filter(x => x.label && x.m3u8);
-    out.push({ master, q, audio, subs: subList.length || subTracks.length, tracks: tracks.length, url, prov, provTag, subList, subTracks, srv: VL_SRV[String((j.provider && j.provider.id) || '')] || prov });
+    out.push({ master, q, audio, subs: subList.length || subTracks.length, tracks: tracks.length, url, prov, provTag, subList, subTracks, srv: srvName, srvId: (pInfo.id || '') });
   }
+
+  /* ★ v1.34.306: হোস্ট-ব্যর্থতায় **কার্ড বাদ দিই না** — একবারের রিলে-গাফিলিতে পুরো সার্ভারের
+     সব টাইটেল হারিয়ে যেত (মাপা)। এখন কার্ড থাকে; রিলে-ব্যর্থতা শুধু ডায়াগনস্টিকে গোনা হয়। */
+  const keep = out;
 
   // ডুপ্লিকেট (একই master) — একবারই
   const seen = new Set(), cards = [];
-  for (const c of out) {
-    const k = c.master + '#' + c.q;
+  for (const c of keep) {
+    const k = c.master.split('?')[0] + '#' + c.q + '#' + c.audio;
     if (seen.has(k)) continue;
     seen.add(k); cards.push(c);
   }
@@ -348,9 +548,18 @@ async function vlStreams(tmdbId, type, s, e, origin, opt) {
 
 /* ── /vlh/ রিলে: প্লেলিস্ট আমাদের দিয়ে, মিডিয়া সরাসরি CDN ──────────────────── */
 const VL_C = new Map();   // master(+পিন) → {ts, body}
+function vlNet() { try { const u = require('undici'); return (u && typeof u.fetch === 'function') ? u.fetch : fetch; } catch (e) { return fetch; } }
 async function vlGet(u, ms) {
-  const r = await fetch(u, { headers: { 'User-Agent': VL_UA, 'Accept': '*/*' }, redirect: 'follow', signal: AbortSignal.timeout(Math.max(3000, ms || 8000)) });
-  return (r.status >= 200 && r.status < 300) ? r.text() : '';
+  const f = vlNet();
+  try {
+    const r = await f(u, { headers: { 'User-Agent': VL_UA, 'Accept': '*/*' }, redirect: 'follow', signal: AbortSignal.timeout(Math.max(3000, ms || 8000)) });
+    if (r.status >= 200 && r.status < 300) return await r.text();
+  } catch (e) { }
+  try {   // ফলব্যাক: নোড-নেটিভ fetch (যদি undici-পথ ব্যর্থ হয়)
+    const r2 = await fetch(u, { headers: { 'User-Agent': VL_UA, 'Accept': '*/*' }, redirect: 'follow', signal: AbortSignal.timeout(Math.max(3000, ms || 8000)) });
+    if (r2.status >= 200 && r2.status < 300) return await r2.text();
+  } catch (e2) { }
+  return '';
 }
 async function vlServe(req, res, b64, origin, query) {
   let master = '';
@@ -373,8 +582,28 @@ async function vlServe(req, res, b64, origin, query) {
   if (hit && Date.now() - hit.ts < 4 * 60 * 1000) { VLG.serve++; res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl', 'access-control-allow-origin': '*', 'cache-control': 'no-store' }); return res.end(hit.body); }
   try {
     let body = await vlGet(master, 8000);
-    if (body.indexOf('#EXTM3U') < 0) { await new Promise(z => setTimeout(z, 400)); body = await vlGet(master, 8000); }
-    if (body.indexOf('#EXTM3U') < 0) { VLG.serveFail++; res.writeHead(502, { 'content-type': 'text/plain', 'access-control-allow-origin': '*' }); return res.end('upstream'); }
+    const isPl = b2 => /#EXTM3U/.test(String(b2).slice(0, 600));
+    // ★ v1.34.306: তিন চেষ্টা — কিছু CDN (lamina/proxy.streamrip.fun) প্রথম কলে ফাঁকা/রিসেট দেয়
+    for (let k = 0; k < 3 && !isPl(body); k++) {
+      await new Promise(z => setTimeout(z, 250 + k * 650));
+      body = await vlGet(master, 9000);
+    }
+    if (!isPl(body)) {   // শেষ অস্ত্র: যাচাই-করা প্রক্সি দিয়ে (প্লেলিস্ট KB-আকার, খরচ কম)
+      try {
+        const pr = await vlPxGet(master, 12000, 3, true);
+        if (pr && isPl(pr.body)) { body = pr.body; VLG.pxPl = (VLG.pxPl || 0) + 1; }
+      } catch (e) { }
+    }
+    if (!isPl(body)) {
+      VLG.serveFail++;
+      try {
+        const h0 = new URL(master).host;
+        const st0 = VL_HFAIL.get(h0) || { n: 0, ts: 0 };
+        VL_HFAIL.set(h0, { n: st0.n + 1, ts: Date.now() });
+        if (VL_HFAIL.size > 200) _shrink(VL_HFAIL, 0.4);
+      } catch (e) { }
+      res.writeHead(502, { 'content-type': 'text/plain', 'access-control-allow-origin': '*' }); return res.end('upstream');
+    }
 
     // মিডিয়া-প্লেলিস্ট হলে নন-কমেন্ট লাইন = সেগমেন্ট ⇒ সরাসরি CDN (রিলে নয়)
     const media = /^#EXTINF:|^#EXT-X-TARGETDURATION/m.test(body);
@@ -393,7 +622,9 @@ async function vlServe(req, res, b64, origin, query) {
         continue;
       }
       const abs = vlAbs(L, master);
-      out.push(media ? abs : (REL + Buffer.from(abs).toString('base64url') + '/p.m3u8'));
+      const absOk = /^https?:\/\//.test(abs) ? abs : (/^\/\//.test(abs) ? 'https:' + abs : '');
+      const absUse = absOk || vlAbs(L, (() => { try { const u2 = new URL(master); return u2.origin + u2.pathname.replace(/[^/]*$/, ''); } catch (e) { return master; } })());
+      out.push(media ? absUse : (REL + Buffer.from(absUse).toString('base64url') + '/p.m3u8'));
     }
     let body2 = out.join('\n');
     if (body2.split('\n')[0].trim() !== '#EXTM3U') body2 = '#EXTM3U\n' + body2;
@@ -430,6 +661,7 @@ async function vlServe(req, res, b64, origin, query) {
     if (body2[body2.length - 1] !== '\n') body2 += '\n';
     if (VL_C.size > 600) _shrink(VL_C, 0.4);
     VL_C.set(ck, { ts: Date.now(), body: body2 });
+    try { const h1 = new URL(master).host; if (VL_HFAIL.has(h1)) VL_HFAIL.delete(h1); } catch (e) { }
     VLG.serve++;
     res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl', 'access-control-allow-origin': '*', 'cache-control': 'no-store', 'cdn-cache-control': 'no-store' });
     return res.end(body2);
@@ -482,8 +714,8 @@ async function vlSub(res, b64) {
 function vlDiag() {
   return {
     memo: VL_MEMO.size, master: VL_MAST.size, fail: VL_FAIL.size, serveCache: VL_C.size,
-    pages: VLG.pages, pageFail: VLG.pageFail, noSeal: VLG.noSeal, zero: VLG.zero, cards: VLG.cards,
-    serve: VLG.serve, serveFail: VLG.serveFail, base: VL_BASE,
+    pages: VLG.pages, pageFail: VLG.pageFail, noSeal: VLG.noSeal, zero: VLG.zero, cards: VLG.cards, hfail: VL_HFAIL.size, hfailHosts: [...VL_HFAIL.keys()].slice(0, 6),
+    serve: VLG.serve, serveFail: VLG.serveFail, base: VL_BASE, sweep: VLG.sweep, pxApi: VL_PX_API.list.length, pxOk: (VL_PX_OK.px || ''),
     breaks: VL_BREAK.fails, breakFor: VL_BREAK.until > Date.now() ? Math.round((VL_BREAK.until - Date.now()) / 1000) : 0
   };
 }
@@ -510,4 +742,6 @@ async function vlSelftest(tmdb, s, e) {
   return r;
 }
 
-module.exports = { vlOn, vlStreams, vlServe, vlSub, vlSrtToVtt, vlSealOpen, vlSealedFrom, vlMaster, vlDiag, vlSelftest, VL_LANGS, VL_BASE, VL_UA };
+setTimeout(() => { vlPxEnsure().catch(() => { }); }, 1500);   // বুটে একবার প্রক্সি-যাচাই (ব্লক করে না)
+
+module.exports = { vlOn, vlStreams, vlServe, vlSub, vlSrtToVtt, vlPxEnsure, vlApiSweep, vlSealOpen, vlSealedFrom, vlMaster, vlDiag, vlSelftest, VL_LANGS, VL_BASE, VL_UA };
