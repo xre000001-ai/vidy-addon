@@ -293,8 +293,8 @@ async function vlServe(req, res, b64, origin, query) {
   try { master = Buffer.from(b64, 'base64url').toString('utf8'); } catch (e) { }
   if (!/^https?:\/\//.test(master)) { res.writeHead(400); return res.end('bad'); }
   const q = query || (req && req.url ? (req.url.split('?')[1] || '') : '');
-  const wantA = Number((/[?&]a=(\d+)\.th/.exec(q) || [])[1] || 0);
-  const wantR = Number((/[?&]r(\d{3,4})/.exec(q) || [])[1] || 0);
+  const wantA = Number((/(?:^|[?&])a=(\d+)\.th/.exec(q) || [])[1] || 0);      // মাপা-বাগ: '?'-টা server.js-ই কেটে দেয় ⇒ ^ দরকার
+  const wantR = Number((/(?:^|[?&])r(\d{3,4})(?:&|$)/.exec(q) || [])[1] || 0);
   try {
     let body = await vlGet(master, 8000);
     if (body.indexOf('#EXTM3U') < 0) {   // একবার রিট্রাই (CDN-ব্লিপ)
@@ -332,30 +332,35 @@ async function vlServe(req, res, b64, origin, query) {
     const isMaster = /^#EXT-X-STREAM-INF/mi.test(out);
     if (isMaster && (wantA || wantR)) {
       const keep = [];
-      let mres = 0;
+      const vars = [];   // [{inf,uri,h,bw}]
       for (let i = 0; i < outLines.length; i++) {
         const L = outLines[i].trim();
         if (/^#EXT-X-STREAM-INF/i.test(L)) {
           const rm = /RESOLUTION=\d+x(\d{3,4})/i.exec(L);
-          mres = rm ? Number(rm[1]) : 0;
-          if (wantR && mres === wantR) { keep.push(outLines[i]); if (outLines[i + 1]) keep.push(outLines[i + 1]); }
+          const bw = Number((/BANDWIDTH=(\d+)/i.exec(L) || [])[1] || 0);
+          vars.push({ inf: outLines[i], uri: (outLines[i + 1] || '').trim(), h: rm ? Number(rm[1]) : 0, bw: bw });
           continue;
         }
-        if (!L) continue;
       }
+      // ★ শুধু-অডিও-পিন (r ছাড়া) হলে সবচেয়ে উঁচু ভ্যারিয়েন্টটাই রাখি — নইলে কোনো ভ্যারিয়েন্টই থাকত না।
+      let pick = vars;
+      if (wantR) pick = vars.filter(v => v.h === wantR);
+      else if (vars.length > 1) pick = [vars.slice().sort((a, b) => (b.h - a.h) || (b.bw - a.bw))[0]];
+      for (const v of pick) { keep.push(v.inf); if (v.uri) keep.push(v.uri); }
       if (keep.length) {
-        const audioTag = outLines.filter(l => /^#EXT-X-MEDIA:TYPE=AUDIO/i.test(l))[wantA - 1] || '';
-        const grp = ((/GROUP-ID="([^"]+)"/i.exec(audioTag) || [])[1] || '');
+        const audioAll = outLines.filter(l => /^#EXT-X-MEDIA:TYPE=AUDIO/i.test(l));
+        const audioTag = wantA ? (audioAll[wantA - 1] || '') : '';
+        const aGrp = ((/GROUP-ID="([^"]+)"/i.exec(audioTag) || [])[1] || '');
+        // বাছা-করা ভ্যারিয়েন্টের SUBTITLES গ্রুপ — সাবটাইটেল-ট্যাগ ওই গ্রুপেরই রাখি
+        const sGrp = ((keep.join('\n').match(/SUBTITLES="([^"]+)"/i) || [])[1] || '');
         const head = ['#EXTM3U'];
-        // শুধু বাছা-করা অডিও-ট্র্যাক + তার গ্রুপের সাবটাইটেল-ট্যাগ
-        outLines.forEach(l => {
-          if (/^#EXT-X-MEDIA:TYPE=AUDIO/i.test(l) && l === audioTag) head.push(l);
-          else if (/^#EXT-X-MEDIA:TYPE=SUBTITLES/i.test(l) && grp && ((/GROUP-ID="([^"]+)"/i.exec(l) || [])[1] || '') === grp) head.push(l);
+        if (wantA) { if (audioTag) head.push(audioTag); }
+        else outLines.forEach(l => { if (/^#EXT-X-MEDIA:TYPE=AUDIO/i.test(l)) head.push(l); });   // পিন-না-হলে সব অডিও-ট্র্যাকই থাকুক
+        if (sGrp) outLines.forEach(l => {
+          if (!/^#EXT-X-MEDIA:TYPE=SUBTITLES/i.test(l)) return;
+          if (((/GROUP-ID="([^"]+)"/i.exec(l) || [])[1] || '') === sGrp) head.push(l);              // সাবটাইটেল অটুট (URI আগেই রিলে-করা)
         });
-        if (wantA) {
-          // ভ্যারিয়েন্ট-লাইনে AUDIO গ্রুপ ঠিক রাখি (ট্যাগে গ্রুপ না থাকলে বাদ)
-          if (!grp) for (let i = 0; i < keep.length; i++) if (/^#EXT-X-STREAM-INF/i.test(keep[i])) keep[i] = keep[i].replace(/,?AUDIO="[^"]*"/i, '');
-        }
+        if (wantA && !aGrp) for (let i = 0; i < keep.length; i++) if (/^#EXT-X-STREAM-INF/i.test(keep[i])) keep[i] = keep[i].replace(/,?AUDIO="[^"]*"/i, '');
         out = head.concat(keep).join('\n');
       }
     }
