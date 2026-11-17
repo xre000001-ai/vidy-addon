@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.303';
+const VERSION = '1.34.304';
 /* ★ v1.34.303: vidly.pro — সম্পূর্ণ স্বতন্ত্র সোর্স (নিজস্ব ফাইল vidly.js; sealed-RSC ডিক্রিপ্ট ⇒ আসল HLS;
    সার্ভার: Edge/Prism/Flux/Nimbus/Comet/Citadel - সিল-পেলোড থেকে পড়া, বানানো নয়) */
 let VLY = null;
@@ -17360,7 +17360,7 @@ function fmtCardText(c, hint) {
   return c;
 }
 const fmtCards = (cards, hint) => { if (!Array.isArray(cards)) return cards; for (const c of cards) fmtCardText(c, hint); return cards; };
-const stripCards = cards => (cards || []).map(c => { const { _hq, _lang, _pack, _mlsRange, _mlsSeasonFile, _mlsUnmarked, _exoTwin, _srv, _src, _dl, _direct, quality, headers, subtitles, ...r } = c || {}; if (headers && /^mm\|/.test(String(r.bingeGroup || ''))) r.headers = headers; if (Array.isArray(subtitles) && /^(?:az|mm)\|/.test(String(r.bingeGroup || ''))) r.subtitles = subtitles; return r; }); // v1.34.71: _src/_dl/_direct-o strip (age API-output-e leak hoto; fmtCards _src agei pore ney)
+const stripCards = cards => (cards || []).map(c => { const { _hq, _lang, _pack, _mlsRange, _mlsSeasonFile, _mlsUnmarked, _exoTwin, _srv, _src, _dl, _direct, quality, headers, subtitles, ...r } = c || {}; if (headers && /^mm\|/.test(String(r.bingeGroup || ''))) r.headers = headers; if (Array.isArray(subtitles) && /^(?:az|mm|vl)\|/.test(String(r.bingeGroup || ''))) r.subtitles = subtitles; return r; }); // v1.34.71: _src/_dl/_direct-o strip (age API-output-e leak hoto; fmtCards _src agei pore ney)
 // ---------- v1.15.52: সব-সোর্সের-কার্ড-এক-ফরম্যাটে (ইউজার: "প্রতি-সোর্সের-কার্ড-ফরম্যাট-এমনি-চাই") — decorate()-এর-ভিডি-ফরম্যাট:
 // ⧉ Title | Year |  /  ⧠ Movie|SsEe  /  ⊞ Server ⌗ Audio — mbxr-চাইল্ড-ইতিমধ্যে-এই-ফরম্যাটে-প্রমাণিত; বাকি-সোর্স-এখানে-বসে
 const YEAR_CACHE = new Map();
@@ -19492,6 +19492,8 @@ const server = http.createServer((req, res) => FG_CONTEXT.run({ active: true }, 
        শুধু প্লেলিস্ট (KB-আকার) আমাদের দিয়ে যায়; মিডিয়া-সেগমেন্ট ভেতরেই **সরাসরি CDN**-এ বসে ⇒ ব্যান্ডউইথ ~০, সিক অক্ষত। */
     const vlhR = p.match(/^\/vlh\/([A-Za-z0-9_=\-]{8,4000})\/p\.m3u8$/);
     if (vlhR) { if (!VLY) { res.writeHead(404, { 'content-type': 'text/plain' }); return res.end('vidly off'); } return VLY.vlServe(req, res, vlhR[1], originOf(req), (req.url.split('?')[1] || '')); }
+    const vlsR = p.match(/^\/vls\/([A-Za-z0-9_=\-]{8,4000})\/s\.vtt$/);
+    if (vlsR) { if (!VLY || typeof VLY.vlSub !== 'function') { res.writeHead(404, { 'content-type': 'text/plain' }); return res.end('vidly off'); } return VLY.vlSub(res, vlsR[1]); }
     // ★ v1.17.50: vidy-প্লেলিস্ট-রিলে — /vh/<b64url(প্লেলিস্ট)>/p.m3u8 (রেফারার-লক-ভাঙা; সেগমেন্ট সরাসরি CDN)
     const vhR = p.match(/^\/vh\/([A-Za-z0-9_=-]{8,2400})\/p\.m3u8$/);
     const vhsR = p.match(/^\/vhs\/([A-Za-z0-9_=-]{8,4000})\/s\.bin$/);
@@ -19969,7 +19971,7 @@ const server = http.createServer((req, res) => FG_CONTEXT.run({ active: true }, 
       const vspP = !(cfg && cfg.vsp === 0) ? vspStreams(Number(m[1]), 'movie', 0, 0, cfg && cfg.vspq || []).catch(() => []) : null; // v1.15.71: Vidsrc
       const ottP = !(cfg && cfg.ott === 0) ? ottStreams(Number(m[1]), 'movie', 0, 0, cfg && cfg.ottq || []).catch(() => []) : null; // v1.15.72: AsianTV
       const azP = !(cfg && cfg.az === 0) ? azStreams(Number(m[1]), 'movie', 0, 0, cfg && cfg.azq || [], originOf(req)).catch(() => []) : null; // v1.15.76: AniZone
-      const vlP = (VLY && VLY.vlOn(cfg)) ? Promise.all([raceObjP((typeof infoP !== 'undefined' ? infoP : null), 1200), raceObjP((typeof tp !== 'undefined' ? tp : null), 1200), raceObjP((typeof nmP !== 'undefined' ? nmP : null), 1200)]).then(([info, ttl, nm]) => VLY.vlStreams(Number(m[1]), 'movie', 0, 0, originOf(req), { title: (info && info.name) || ttl || nm || '', year: (info && info.year) || '', q: (cfg && cfg.vlr) || [], l: (cfg && cfg.vll) || [] }).catch(() => [])).catch(() => []) : null;   /* v1.34.303: vidly.pro */
+      const vlP = (VLY && VLY.vlOn(cfg)) ? Promise.all([raceObjP((typeof infoP !== 'undefined' ? infoP : null), 1200), raceObjP((typeof tp !== 'undefined' ? tp : null), 1200), raceObjP((typeof nmP !== 'undefined' ? nmP : null), 1200)]).then(([info, ttl, nm]) => VLY.vlStreams(Number(m[1]), 'movie', 0, 0, originOf(req), { title: (info && info.name) || ttl || nm || '', year: (info && info.year) || '', q: (cfg && cfg.vlr) || [], l: (cfg && cfg.vll) || [], ms: 11000 }).catch(() => [])).catch(() => []) : null;   /* v1.34.303: vidly.pro */
       kickSubs('tmdb' + m[1], 'movie', null, null, cfg);
       const lookP = Promise.all([typeof tp !== 'undefined' ? tp : null, typeof nmP !== 'undefined' ? nmP : null, typeof infoP !== 'undefined' ? infoP : null].filter(Boolean)).catch(() => []); // v1.26.2
       const mlbInfo = mlbdOn(cfg) ? yearForTmdb(Number(m[1]), 'movie').then(year => ({year})).catch(() => null) : null;
@@ -19997,7 +19999,7 @@ cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'movie', s: 0, e: 0 }
       const vspP = !(cfg && cfg.vsp === 0) ? vspStreams(Number(m[1]), 'tv', Number(m[2] || 1), Number(m[3] || 1), cfg && cfg.vspq || []).catch(() => []) : null; // v1.15.71: Vidsrc
       const ottP = !(cfg && cfg.ott === 0) ? ottStreams(Number(m[1]), 'tv', Number(m[2] || 1), Number(m[3] || 1), cfg && cfg.ottq || []).catch(() => []) : null; // v1.15.72: AsianTV
       const azP = !(cfg && cfg.az === 0) ? azStreams(Number(m[1]), 'tv', Number(m[2] || 1), Number(m[3] || 1), cfg && cfg.azq || [], originOf(req)).catch(() => []) : null; // v1.15.76: AniZone
-      const vlP = (VLY && VLY.vlOn(cfg)) ? Promise.all([raceObjP((typeof infoP !== 'undefined' ? infoP : null), 1200), raceObjP((typeof tp !== 'undefined' ? tp : null), 1200), raceObjP((typeof nmP !== 'undefined' ? nmP : null), 1200)]).then(([info, ttl, nm]) => VLY.vlStreams(Number(m[1]), 'series', Number(m[2] || 1), Number(m[3] || 1), originOf(req), { title: (info && info.name) || ttl || nm || '', year: (info && info.year) || '', q: (cfg && cfg.vlr) || [], l: (cfg && cfg.vll) || [] }).catch(() => [])).catch(() => []) : null;   /* v1.34.303: vidly.pro (tmdb-সিরিজ) */
+      const vlP = (VLY && VLY.vlOn(cfg)) ? Promise.all([raceObjP((typeof infoP !== 'undefined' ? infoP : null), 1200), raceObjP((typeof tp !== 'undefined' ? tp : null), 1200), raceObjP((typeof nmP !== 'undefined' ? nmP : null), 1200)]).then(([info, ttl, nm]) => VLY.vlStreams(Number(m[1]), 'series', Number(m[2] || 1), Number(m[3] || 1), originOf(req), { title: (info && info.name) || ttl || nm || '', year: (info && info.year) || '', q: (cfg && cfg.vlr) || [], l: (cfg && cfg.vll) || [], ms: 11000 }).catch(() => [])).catch(() => []) : null;   /* v1.34.303: vidly.pro (tmdb-সিরিজ) */
       if (nxOn) nxPrewarm('series', String(m[1]), Number(m[2] || 1), Number(m[3] || 1));
       twRtPrewarm(tp, 'series', Number(m[2] || 1), Number(m[3] || 1), cfg);
       dtPrewarm(tp, infoP, 'series', Number(m[2] || 1), Number(m[3] || 1), originOf(req), cfg); // ★ v1.34.28
@@ -20028,7 +20030,7 @@ cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'series', s: Number(m
       const vspP = !(cfg && cfg.vsp === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? vspStreams(info.id, 'movie', 0, 0, cfg && cfg.vspq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.71: Vidsrc
       const ottP = !(cfg && cfg.ott === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? ottStreams(info.id, 'movie', 0, 0, cfg && cfg.ottq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.72: AsianTV
       const azP = !(cfg && cfg.az === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? azStreams(info.id, 'movie', 0, 0, cfg && cfg.azq || [], originOf(req)).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.76: AniZone
-      const vlP = (VLY && VLY.vlOn(cfg)) ? Promise.all([raceObjP((typeof infoP !== 'undefined' ? infoP : null), 1200), raceObjP((typeof tp !== 'undefined' ? tp : null), 1200), raceObjP((typeof nmP !== 'undefined' ? nmP : null), 1200)]).then(([info, ttl, nm]) => VLY.vlStreams((info && info.id) || Number(m[1]) || 0, 'movie', 0, 0, originOf(req), { title: (info && info.name) || ttl || nm || '', year: (info && info.year) || '', q: (cfg && cfg.vlr) || [], l: (cfg && cfg.vll) || [] }).catch(() => [])).catch(() => []) : null;   /* v1.34.303: vidly.pro */
+      const vlP = (VLY && VLY.vlOn(cfg)) ? Promise.all([raceObjP((typeof infoP !== 'undefined' ? infoP : null), 1200), raceObjP((typeof tp !== 'undefined' ? tp : null), 1200), raceObjP((typeof nmP !== 'undefined' ? nmP : null), 1200)]).then(([info, ttl, nm]) => VLY.vlStreams((info && info.id) || Number(m[1]) || 0, 'movie', 0, 0, originOf(req), { title: (info && info.name) || ttl || nm || '', year: (info && info.year) || '', q: (cfg && cfg.vlr) || [], l: (cfg && cfg.vll) || [], ms: 11000 }).catch(() => [])).catch(() => []) : null;   /* v1.34.303: vidly.pro */
       kickSubs(m[1], 'movie', null, null, cfg);
       const lookP = Promise.all([typeof tp !== 'undefined' ? tp : null, typeof nmP !== 'undefined' ? nmP : null, typeof infoP !== 'undefined' ? infoP : null].filter(Boolean)).catch(() => []); // v1.26.2
       const mlbMeta = mlbdOn(cfg) ? (infoP || pooledGet(CINEMETA + '/meta/movie/' + encodeURIComponent(m[1]) + '.json', 3000).then(b => { const v=JSON.parse(b).meta || {}; return {name:v.name || '',year:String(v.releaseInfo || v.year || '').slice(0,4)}; }).catch(()=>null)) : null;
@@ -20056,7 +20058,7 @@ cards => { if (DBG) console.error('[rt] RID=' + t0 + ' cards-ready @' + (Date.no
       const vspP = !(cfg && cfg.vsp === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? vspStreams(info.id, 'tv', Number(m[2]), Number(m[3]), cfg && cfg.vspq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.71: Vidsrc
       const ottP = !(cfg && cfg.ott === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? ottStreams(info.id, 'tv', Number(m[2]), Number(m[3]), cfg && cfg.ottq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.72: AsianTV
       const azP = !(cfg && cfg.az === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? azStreams(info.id, 'tv', Number(m[2]), Number(m[3]), cfg && cfg.azq || [], originOf(req)).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.76: AniZone
-      const vlP = (VLY && VLY.vlOn(cfg)) ? Promise.all([raceObjP((typeof infoP !== 'undefined' ? infoP : null), 1200), raceObjP((typeof tp !== 'undefined' ? tp : null), 1200), raceObjP((typeof nmP !== 'undefined' ? nmP : null), 1200)]).then(([info, ttl, nm]) => VLY.vlStreams((info && info.id) || Number(m[1]) || 0, 'series', Number(m[2]), Number(m[3]), originOf(req), { title: (info && info.name) || ttl || nm || '', year: (info && info.year) || '', q: (cfg && cfg.vlr) || [], l: (cfg && cfg.vll) || [] }).catch(() => [])).catch(() => []) : null;   /* v1.34.303: vidly.pro */
+      const vlP = (VLY && VLY.vlOn(cfg)) ? Promise.all([raceObjP((typeof infoP !== 'undefined' ? infoP : null), 1200), raceObjP((typeof tp !== 'undefined' ? tp : null), 1200), raceObjP((typeof nmP !== 'undefined' ? nmP : null), 1200)]).then(([info, ttl, nm]) => VLY.vlStreams((info && info.id) || Number(m[1]) || 0, 'series', Number(m[2]), Number(m[3]), originOf(req), { title: (info && info.name) || ttl || nm || '', year: (info && info.year) || '', q: (cfg && cfg.vlr) || [], l: (cfg && cfg.vll) || [], ms: 11000 }).catch(() => [])).catch(() => []) : null;   /* v1.34.303: vidly.pro */
       if (nxOn) nxPrewarm('series', m[1], Number(m[2]), Number(m[3]));
       twRtPrewarm(nmP, 'series', Number(m[2]), Number(m[3]), cfg);
       dtPrewarm(nmP, infoP, 'series', Number(m[2]), Number(m[3]), originOf(req), cfg); // ★ v1.34.28
@@ -20086,7 +20088,7 @@ cards => { Promise.all([raceObjP(infoP, 1500), raceObjP(nmP, 1500)]).then(([info
       const vspP = !(cfg && cfg.vsp === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? vspStreams(info.id, 'tv', 1, 1, cfg && cfg.vspq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.71: Vidsrc
       const ottP = !(cfg && cfg.ott === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? ottStreams(info.id, 'tv', 1, 1, cfg && cfg.ottq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.72: AsianTV
       const azP = !(cfg && cfg.az === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? azStreams(info.id, 'tv', 1, 1, cfg && cfg.azq || [], originOf(req)).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null;
-      const vlP = (VLY && VLY.vlOn(cfg)) ? Promise.all([raceObjP((typeof infoP !== 'undefined' ? infoP : null), 1200), raceObjP((typeof tp !== 'undefined' ? tp : null), 1200), raceObjP((typeof nmP !== 'undefined' ? nmP : null), 1200)]).then(([info, ttl, nm]) => VLY.vlStreams((info && info.id) || Number(m[1]) || 0, 'series', 1, 1, originOf(req), { title: (info && info.name) || ttl || nm || '', year: (info && info.year) || '', q: (cfg && cfg.vlr) || [], l: (cfg && cfg.vll) || [] }).catch(() => [])).catch(() => []) : null;   /* v1.34.303: vidly.pro (S1E1) */
+      const vlP = (VLY && VLY.vlOn(cfg)) ? Promise.all([raceObjP((typeof infoP !== 'undefined' ? infoP : null), 1200), raceObjP((typeof tp !== 'undefined' ? tp : null), 1200), raceObjP((typeof nmP !== 'undefined' ? nmP : null), 1200)]).then(([info, ttl, nm]) => VLY.vlStreams((info && info.id) || Number(m[1]) || 0, 'series', 1, 1, originOf(req), { title: (info && info.name) || ttl || nm || '', year: (info && info.year) || '', q: (cfg && cfg.vlr) || [], l: (cfg && cfg.vll) || [], ms: 11000 }).catch(() => [])).catch(() => []) : null;   /* v1.34.303: vidly.pro (S1E1) */
       if (nxOn) nxPrewarm('series', m[1], 1, 1);
       twRtPrewarm(nmP, 'series', 1, 1, cfg);
       dtPrewarm(nmP, infoP, 'series', 1, 1, originOf(req), cfg); // ★ v1.34.28
