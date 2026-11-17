@@ -16,7 +16,10 @@ setTimeout(()=>{try{
   let c,o;
   /* সোর্স */
   // v1.15.86+: Pengu-সোর্স সম্পূর্ণ সরানো, Sky Movies ও BollyFlix নিজস্ব সোর্স ⇒ মোট ১১ কার্ড
-  c=d.querySelectorAll('#srcGrid .card').length===15;A('সোর্স-কার্ড ১৫টি (v/nx/rt/tw/mm/m4u/sky/hm/hd/vsp/ott/az/mlb/mls/dt)',c);
+  c=d.querySelectorAll('#srcGrid .card').length===16;A('সোর্স-কার্ড ১৬টি (v/nx/rt/tw/mm/m4u/sky/hm/hd/vsp/ott/az/mlb/mls/dt/vl)',c);
+  /* ★ v1.34.303: Vidly (vidly.pro) — স্বতন্ত্র সোর্স */
+  c=!!d.getElementById('card-vl')&&d.getElementById('card-vl').textContent.indexOf('Vidly')>=0;A('সোর্স-কার্ড: Vidly (নিজস্ব)',c);
+  c=!!d.getElementById('tune-vl')&&chips('tune-vl').length===2;A('Vidly-টিউনে-২-চিপ-সারি (রেজো+ভাষা)',c);
   c=!!d.getElementById('card-sky')&&d.getElementById('card-sky').textContent.indexOf('Sky Movies')>=0;A('সোর্স-কার্ড: Sky Movies (নিজস্ব)',c);
   c=!!d.getElementById('card-dt')&&d.getElementById('card-dt').textContent.indexOf('Deadtoons')>=0;A('সোর্স-কার্ড: Deadtoons (নিজস্ব)',c);
   c=!!d.getElementById('card-mls')&&d.getElementById('card-mls').textContent.indexOf('MLSBD')>=0;A('সোর্স-কার্ড: MLSBD (নিজস্ব)',c);
@@ -80,12 +83,12 @@ setTimeout(()=>{try{
   c=C.st.v===1&&C.st.nx===1;A('দুটোই-আবার-চালু',c);
   /* সব-উৎস-বন্ধ → ব্লক-নয়, শুধু-সতর্কতা */
   var _sv=[];
-  ['v','nx','rt','tw','mm','m4u','sky','hm','hd','vsp','ott','az','mlb','mls','dt'].forEach(function(k){if(C.st[k]===1){var sw=d.getElementById('sw-'+k);if(sw)sw.click();_sv.push(k);}});
-  var allOff=['v','nx','rt','tw','mm','m4u','sky','hm','hd','vsp','ott','az','mlb','mls','dt'].every(function(k){return C.st[k]===0;});
+  ['v','nx','rt','tw','mm','m4u','sky','hm','hd','vsp','ott','az','mlb','mls','dt','vl'].forEach(function(k){if(C.st[k]===1){var sw=d.getElementById('sw-'+k);if(sw)sw.click();_sv.push(k);}});
+  var allOff=['v','nx','rt','tw','mm','m4u','sky','hm','hd','vsp','ott','az','mlb','mls','dt','vl'].every(function(k){return C.st[k]===0;});
   c=allOff;A('সব-উৎস-বন্ধ-করা-গেল (ব্লক-নেই)',c);
   c=d.getElementById('toast').textContent.indexOf('All sources off')>=0;A('সব-বন্ধে-সতর্কতা-টোস্ট',c);
   _sv.forEach(function(k){var sw=d.getElementById('sw-'+k);if(sw&&C.st[k]===0)sw.click();});
-  c=['v','nx','rt','tw','mm','m4u','sky','hm','hd','vsp','ott','az','mlb','mls','dt'].every(function(k){return C.st[k]===1;});A('সব-উৎস-আবার-চালু',c);
+  c=['v','nx','rt','tw','mm','m4u','sky','hm','hd','vsp','ott','az','mlb','mls','dt','vl'].every(function(k){return C.st[k]===1;});A('সব-উৎস-আবার-চালু',c);
   d.getElementById('srvPri').click();c=C.st.srv.length===3;A('srvPri → ৩',c);
   d.getElementById('srvAll').click();c=C.st.srv.length===18;A('srvAll → ১৮',c);
   /* v1.15.81: বুটে-সার্ভার-টাইল-রিড্র (আগে প্রথম-লোডে কোনো-টাইলেই .on থাকত-না) */
@@ -129,7 +132,7 @@ setTimeout(()=>{try{
   c=d.getElementById('pvPq').textContent==='All'&&d.getElementById('pvPh').textContent.indexOf('2160')>0;A('Sky-প্রিভিউ m4ur-মুক্ত (All/2160): '+d.getElementById('pvPq').textContent+' / '+d.getElementById('pvPh').textContent,c);
   C.st.m4ur=0;
   /* rebuild-চুক্তি */
-  const rst=()=>{C.st.q=[];C.st.sub=1;C.st.srv=[];C.st.az=1;C.st.azq=[];C.st.azl=[];C.st.nx=1;C.st.nxq=[];C.st.nxl=[];C.st.rt=1;C.st.rtl=[];C.st.rtq=[];C.st.tw=1;C.st.twq=[];C.st.twl=[];C.st.mm=1;C.st.mmr=0;C.st.mmq=[];C.st.mml=[];C.st.m4u=1;C.st.m4ur=0;C.st.m4uq=[];C.st.m4ul=[];C.st.sky=1;C.st.skyq=[];C.st.skyl=[];C.st.hm=1;C.st.hmr=0;C.st.hmq=[];C.st.hml=[];C.st.hd=1;C.st.hdr=0;C.st.hdq=[];C.st.hdl=[];C.st.mlb=1;C.st.mlbr=0;C.st.mls=1;C.st.mlsr=0;C.st.dt=1;C.st.vsp=1;C.st.vspq=[];C.st.vspl=[];C.st.ott=1;C.st.ottq=[];C.st.ottl=[];};
+  const rst=()=>{C.st.q=[];C.st.sub=1;C.st.srv=[];C.st.az=1;C.st.azq=[];C.st.azl=[];C.st.nx=1;C.st.nxq=[];C.st.nxl=[];C.st.rt=1;C.st.rtl=[];C.st.rtq=[];C.st.tw=1;C.st.twq=[];C.st.twl=[];C.st.mm=1;C.st.mmr=0;C.st.mmq=[];C.st.mml=[];C.st.m4u=1;C.st.m4ur=0;C.st.m4uq=[];C.st.m4ul=[];C.st.sky=1;C.st.skyq=[];C.st.skyl=[];C.st.hm=1;C.st.hmr=0;C.st.hmq=[];C.st.hml=[];C.st.hd=1;C.st.hdr=0;C.st.hdq=[];C.st.hdl=[];C.st.mlb=1;C.st.mlbr=0;C.st.mls=1;C.st.mlsr=0;C.st.dt=1;C.st.vl=1;C.st.vlr=[];C.st.vll=[];C.st.vsp=1;C.st.vspq=[];C.st.vspl=[];C.st.ott=1;C.st.ottq=[];C.st.ottl=[];};
   rst();C.rebuild();
   c=!/\/cfg\//.test(out());A('সব-ডিফল্ট → ব্লব-বিহীন',c);
   C.st.az=0;C.rebuild();o=dec(out());
@@ -142,6 +145,13 @@ setTimeout(()=>{try{
   c=!!o&&JSON.stringify(o.hmq)==='[1080]'&&JSON.stringify(o.hml)==='["hindi"]';A('hmq+hml-নির্গমন: '+JSON.stringify(o),c);
   C.st.dt=0;C.st.mls=0;C.rebuild();o=dec(out());
   c=!!o&&o.dt===0&&o.mls===0;A('dt=0+mls=0-নির্গমন (v1.34.63): '+JSON.stringify(o),c);C.st.dt=1;C.st.mls=1;
+  /* ★ v1.34.303: Vidly-নির্গমন */
+  C.st.vl=0;C.rebuild();o=dec(out());
+  c=!!o&&o.vl===0;A('vl=0 → {"vl":0}: '+JSON.stringify(o),c);C.st.vl=1;
+  C.st.vlr=[1080];C.st.vll=['hindi'];C.rebuild();o=dec(out());
+  c=!!o&&JSON.stringify(o.vlr)==='[1080]'&&JSON.stringify(o.vll)==='["hindi"]';A('vlr+vll-নির্গমন: '+JSON.stringify(o),c);
+  C.st.vlr=[];C.st.vll=[];C.rebuild();o=dec(out());
+  c=!!o&&!('vlr'in o)&&!('vll'in o)&&!('vl'in o);A('Vidly-ডিফল্ট → ব্লবে-কিছু-নেই',c);
   C.st.srv=C.SRVS.map(s=>s[0]);C.rebuild();o=dec(out());
   c=!!o&&!('srv'in o);A('srv-সব → বাদ',c);
   /* preview-সততা */
@@ -151,6 +161,9 @@ setTimeout(()=>{try{
   c=d.getElementById('pvTh').textContent.indexOf('2160')>=0;A('pvTh 2160',c);
   c=d.getElementById('pvAt').textContent.indexOf('Hindi')>=0;A('pvAt Hindi: '+d.getElementById('pvAt').textContent.split('\n')[2],c);
   c=d.getElementById('pvP').style.display!=='none'&&d.getElementById('pvPt').textContent.indexOf('Sky Movies')>=0;A('pvP Sky Movies-দৃশ্যমান',c);
+  C.st.vl=1;C.st.vlr=[1080];C.st.vll=['hindi'];C.rebuild();
+  c=d.getElementById('pvY').style.display!=='none'&&d.getElementById('pvYt').textContent.indexOf('Vidly')>=0&&d.getElementById('pvYq').textContent.indexOf('1080')>=0;A('pvY Vidly-দৃশ্যমান (1080): '+d.getElementById('pvYq').textContent,c);
+  C.st.vlr=[];C.st.vll=[];C.rebuild();
   c=d.getElementById('pvH').style.display!=='none'&&d.getElementById('pvHt').textContent.indexOf('HindMovie')>=0;A('pvH HindMovie-দৃশ্যমান',c);
   C.st.rtl=['tamil','hindi','telugu'];C.st.rtq=[];C.rebuild();
   c=d.getElementById('pvRh').textContent==='\u25a5 1080 \u25a5';A('pvRh-হেডার ▥ 1080 ▥ (Auto-বাদ): '+d.getElementById('pvRh').textContent,c);
