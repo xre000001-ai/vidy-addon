@@ -144,7 +144,7 @@ async function vlMaster(u, ms) {
     } catch (e) { }
     if (!body && !a) await new Promise(z => setTimeout(z, 350));
   }
-  const out = { ts: Date.now(), res: [], tracks: [], subs: 0, ok: false };
+  const out = { ts: Date.now(), res: [], tracks: [], subs: 0, subUris: [], subMap: null, ok: false };
   if (body.indexOf('#EXTM3U') < 0) { VL_MAST.set(u, out); return out; }
   out.ok = true;
   const L = body.split('\n');
@@ -165,11 +165,38 @@ async function vlMaster(u, ms) {
       if (uri) out.tracks.push({ name: name, lang: lang, uri: vlAbs(uri, u), def: /DEFAULT=YES/i.test(ln) });
       continue;
     }
-    if (/^#EXT-X-MEDIA:TYPE=SUBTITLES/i.test(ln)) out.subs++;
+    if (/^#EXT-X-MEDIA:TYPE=SUBTITLES/i.test(ln)) {
+      out.subs++;
+      const uri = ((/URI="([^"]*)"/i.exec(ln)) || [])[1] || '';
+      const name = ((/NAME="([^"]*)"/i.exec(ln)) || [])[1] || '';
+      const lang = ((/LANGUAGE="([^"]*)"/i.exec(ln)) || [])[1] || '';
+      if (uri) out.subUris.push({ name: name, lang: lang, m3u8: vlAbs(uri, u) });
+    }
   }
   out.res = out.res.filter(x => x && x.uri).sort((a, b) => (b.h - a.h) || (b.bw - a.bw));
   if (VL_MAST.size > 400) _shrink(VL_MAST, 0.4);
   VL_MAST.set(u, out);
+  return out;
+}
+
+/* ── সাবটাইটেল-ট্র্যাকের প্লেলিস্ট → এক ফাইলে জোড়া VTT ─────────────────────── */
+async function vlSubTrack(m3u8, ms) {
+  const key = 'S|' + m3u8;
+  const hit = VL_MAST.get(key);
+  if (hit && Date.now() - hit.ts < VL_MAST_TTL) return hit.body;
+  const pl = await vlGet(m3u8, ms || 7000);
+  if (pl.indexOf('#EXTM3U') < 0) { VL_MAST.set(key, { ts: Date.now(), body: '' }); return ''; }
+  const segs = pl.split('\n').map(x => x.trim()).filter(x => x && x[0] !== '#').map(x => vlAbs(x, m3u8)).slice(0, 60);
+  let out = '';
+  for (const sx of segs) {
+    let b = await vlGet(sx, 8000);
+    if (!b) { await new Promise(z => setTimeout(z, 500)); b = await vlGet(sx, 8000); }   // v1.34.305: ঝাপসা-রিসেটে এক পুনঃচেষ্টা
+    if (!b) continue;
+    out += (out ? '\n' : '') + vlSrtToVtt(b).replace(/^WEBVTT\s*/i, '');
+  }
+  out = 'WEBVTT\n\n' + out;
+  if (VL_MAST.size > 400) _shrink(VL_MAST, 0.4);
+  VL_MAST.set(key, { ts: Date.now(), body: out });
   return out;
 }
 
@@ -283,7 +310,9 @@ async function vlStreams(tmdbId, type, s, e, origin, opt) {
     const seenSub = new Set();
     const subList = [];
     for (const x of subs) { const k = x.label.toLowerCase(); if (seenSub.has(k)) continue; seenSub.add(k); subList.push(x); }
-    out.push({ master, q, audio, subs: subList.length || mi.subs, tracks: tracks.length, url, prov, provTag, subList, srv: VL_SRV[String((j.provider && j.provider.id) || '')] || prov });
+    // সাবটাইটেল: sealed-তালিকা থাকলে সেটাই (সরাসরি SRT), নইলে মাস্টারের সাবট্র্যাক (লেজি, ?s=1)
+    const subTracks = (mi.subUris || []).map(x => ({ label: (vlLangName(x.lang, x.name) || x.name || '').trim(), m3u8: x.m3u8 })).filter(x => x.label && x.m3u8);
+    out.push({ master, q, audio, subs: subList.length || subTracks.length, tracks: tracks.length, url, prov, provTag, subList, subTracks, srv: VL_SRV[String((j.provider && j.provider.id) || '')] || prov });
   }
 
   // ডুপ্লিকেট (একই master) — একবারই
@@ -308,7 +337,9 @@ async function vlStreams(tmdbId, type, s, e, origin, opt) {
       url: c.url,
       title: txt,
       description: txt + (i === 0 ? ('\n\u24d8 vidly.pro \u00b7 ' + (c.prov || 'Edge') + (c.tracks ? ' \u00b7 ' + c.tracks + ' audio track' + (c.tracks > 1 ? 's' : '') : '') + (c.subs ? ' \u00b7 ' + c.subs + ' subtitles' : '') + (failed.length ? ' \u00b7 ' + failed.join('/') + ' unavailable' : '')) : ''),
-      subtitles: (c.subList || []).slice(0, 24).map((x, k) => ({ id: 'vl-' + i + '-' + k, url: origin + '/vls/' + Buffer.from(x.url).toString('base64url') + '/s.vtt', lang: x.label })),
+      subtitles: (c.subList && c.subList.length
+        ? c.subList.slice(0, 24).map((x, k) => ({ id: 'vl-' + i + '-' + k, url: origin + '/vls/' + Buffer.from(x.url).toString('base64url') + '/s.vtt', lang: x.label }))
+        : (c.subTracks || []).slice(0, 24).map((x, k) => ({ id: 'vl-' + i + '-' + k, url: origin + '/vlh/' + Buffer.from(x.m3u8).toString('base64url') + '/p.m3u8?s=1', lang: x.label }))),
       behaviorHints: { filename: 'vidly.m3u8', notWebReady: true, proxyHeaders: { request: { 'User-Agent': VL_UA } } },
       bingeGroup: 'vl|' + String(title || 'vidly').toLowerCase() + '::' + (c.audio || 'auto')
     };
@@ -326,6 +357,15 @@ async function vlServe(req, res, b64, origin, query) {
   try { master = Buffer.from(b64, 'base64url').toString('utf8'); } catch (e) { }
   if (!/^https?:\/\//.test(master)) { res.writeHead(400); return res.end('bad'); }
   const q = query || '';
+  if (/^s=1/.test(q) || /[?&]s=1/.test(q)) {                       // সাবটাইটেল-ট্র্যাক ⇒ এক VTT
+    try {
+      const body = await vlSubTrack(master, 8000);
+      res.writeHead(body ? 200 : 502, { 'content-type': body ? 'text/vtt; charset=utf-8' : 'text/plain', 'access-control-allow-origin': '*', 'cache-control': 'public, max-age=600' });
+      return res.end(body || 'sub-empty');
+    } catch (e) {
+      try { res.writeHead(502, { 'content-type': 'text/plain' }); return res.end('sub-err'); } catch (e2) { return; }
+    }
+  }
   const wantA = Number((/(?:^|[?&])a=(\d+)\.th/.exec(q) || [])[1] || 0);
   const wantR = Number((/(?:^|[?&])r(\d{3,4})(?:&|$)/.exec(q) || [])[1] || 0);
   const ck = master + '|' + wantA + '|' + wantR;
