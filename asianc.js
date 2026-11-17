@@ -207,20 +207,63 @@ function acDecrypt(b64) {
   return out.toString('utf8').replace(/\0+$/, '').trim();
 }
 
-async function acResolveEmbedTry(embedUrl) {
-  const embed = await acGet(embedUrl, 11000, AC_BASE + '/');
-  if (!embed) return '';
-  let purl = ((/<iframe[^>]+src="([^"]*3rdplayer[^"]*)"/i.exec(embed) || [])[1] || '');
-  if (!purl) purl = ((/<iframe[^>]+src="([^"]+)"/i.exec(embed) || [])[1] || '');
-  if (!purl) return '';
-  if (purl.indexOf('//') === 0) purl = 'https:' + purl;
-  else if (purl[0] === '/') { try { purl = new URL(purl, embedUrl).toString(); } catch (e) { } }
-  const player = await acGet(purl, 11000, embedUrl);
-  if (!player) return '';
+/* ── hglink-ধাঁচের "লোডিং" পেজ → আসল প্লেয়ার-হোস্ট ───────────────────────────
+   hglink.to/e/<id> শুধু ৮১৯ বাইটের spinner + /main.js পাঠায়; main.js (obfuscated) ব্রাউজারে
+   location.href বদলে `https://<mirror>/e/<id>`-তে নিয়ে যায় (মিরর ঘুরতে থাকে: audinifer.com,
+   callistanise.com …)। আমরা main.js-টা sandbox-এ চালিয়ে মিরর-হোস্টটা **শিখে নিই** (৬ঘণ্টা ক্যাশ)। */
+const AC_MIRROR = { host: process.env.AC_MIRROR || '', ts: 0 };
+async function acLearnMirror(host) {
+  if (AC_MIRROR.host && Date.now() - AC_MIRROR.ts < 6 * 60 * 60 * 1000) return AC_MIRROR.host;
+  try {
+    const vm = require('vm');
+    const base = host || 'hglink.to';
+    const js = await acGet('https://' + base + '/main.js?v=1.1.9', 12000, 'https://' + base + '/');
+    if (!js || js.length < 5000) return AC_MIRROR.host || '';
+    const nav = [];
+    const loc = { hostname: base, host: base, protocol: 'https:', pathname: '/e/x', search: '', hash: '', origin: 'https://' + base,
+      href: 'https://' + base + '/e/x', assign(v) { nav.push(String(v)); }, replace(v) { nav.push(String(v)); } };
+    const el = () => ({ style: {}, setAttribute() { }, appendChild() { }, addEventListener() { }, removeChild() { }, classList: { add() { }, remove() { } } });
+    const sb = {
+      location: loc,
+      document: { referrer: 'https://' + base + '/', cookie: '', createElement: el, head: el(), body: el(), getElementById: () => el(),
+        querySelector: () => null, querySelectorAll: () => [], addEventListener() { }, documentElement: el(), write() { }, URL: loc.href, title: '' },
+      navigator: { userAgent: AC_UA, languages: ['en-US'] },
+      atob: s => Buffer.from(String(s), 'base64').toString('binary'), btoa: s => Buffer.from(String(s), 'binary').toString('base64'),
+      setTimeout: () => 0, setInterval: () => 0, clearTimeout() { }, clearInterval() { }, requestAnimationFrame: () => 0,
+      console: { log() { }, warn() { }, error() { } }, fetch: () => Promise.reject(new Error('x')),
+      XMLHttpRequest: function () { return { open() { }, send() { }, setRequestHeader() { }, addEventListener() { } }; },
+      Math, Date, JSON, parseInt, parseFloat, isNaN, encodeURIComponent, decodeURIComponent, unescape, escape,
+      URL, URLSearchParams, TextEncoder, TextDecoder, Promise, Uint8Array, ArrayBuffer, Object, Array, String, Number, RegExp, Error, TypeError, Boolean
+    };
+    sb.window = sb; sb.self = sb; sb.globalThis = sb; sb.top = sb; sb.parent = sb;
+    try { vm.runInNewContext(js, sb, { timeout: 6000 }); } catch (e) { }
+    const finalUrl = nav.map(u => { try { return new URL(u, loc.href).toString(); } catch (e) { return ''; } }).filter(Boolean).pop() || loc.href;
+    const h = (() => { try { return new URL(finalUrl).hostname; } catch (e) { return ''; } })();
+    if (h && h !== base) { AC_MIRROR.host = h; AC_MIRROR.ts = Date.now(); ACG.mirror = h; }
+    return AC_MIRROR.host || '';
+  } catch (e) { return AC_MIRROR.host || ''; }
+}
+/* "Loading…" পেজ ⇒ আসল প্লেয়ার-হোস্টে গিয়ে আবার চেষ্টা */
+async function acFollowSpinner(html, url) {
+  if (!html || html.length > 3000) return '';
+  if (!/Page is loading|loading-text|main\.js\?v=/.test(html)) return '';
+  let host = '';
+  try { host = new URL(url).hostname; } catch (e) { return ''; }
+  const mirror = await acLearnMirror(host);
+  if (!mirror) return '';
+  const target = url.replace('://' + host + '/', '://' + mirror + '/');
+  if (target === url) return '';
+  const real = await acGet(target, 12000, 'https://' + host + '/');
+  return real && real.length > 3000 ? real : '';
+}
+
+/* একটি HTML-পেজ থেকে স্ট্রিম-URL বের করার সব উপায় একসাথে */
+function acUrlFromHtml(html) {
+  if (!html) return '';
   // পথ ১: vidbasic-এর নিজস্ব 3rdplayer — AES-256-CBC পেলোড
-  const dv = (/data-name="cr[a-z]*"[^>]*data-value="([^"]+)"/i.exec(player) || [])[1]
-    || (/data-value="([A-Za-z0-9+/=]{40,})"[^>]*data-name="cr[a-z]*"/i.exec(player) || [])[1]
-    || (/data-value="([A-Za-z0-9+/=]{60,})"/i.exec(player) || [])[1];
+  const dv = (/data-name="cr[a-z]*"[^>]*data-value="([^"]+)"/i.exec(html) || [])[1]
+    || (/data-value="([A-Za-z0-9+/=]{40,})"[^>]*data-name="cr[a-z]*"/i.exec(html) || [])[1]
+    || (/data-value="([A-Za-z0-9+/=]{60,})"/i.exec(html) || [])[1];
   if (dv) {
     try {
       const url = acDecrypt(dv);
@@ -228,9 +271,33 @@ async function acResolveEmbedTry(embedUrl) {
       ACG.decFail++;
     } catch (e) { ACG.decFail++; }
   } else ACG.noCrypto++;
-  // পথ ২: hglink → jwplayer (packer-eval)
-  const jw = acLinksFromPlayer(player);
+  // পথ ২: hglink/streamwish-ধাঁচের jwplayer প্লেয়ার — packer-eval (`links.hls4|hls3|hls2`)
+  const jw = acLinksFromPlayer(html);
   if (jw) return jw;
+  return '';
+}
+
+async function acResolveEmbedTry(embedUrl) {
+  const embed = await acGet(embedUrl, 11000, AC_BASE + '/');
+  if (!embed) return '';
+  // ★ v1.34.309 (মূল বাগ): hglink-ধাঁচের এপিসোডে **এমবেড-পেজ নিজেই প্লেয়ার**
+  //   (কোনো iframe নেই) — আগে শুধু iframe খোঁজা হতো ⇒ ৪টি শিরোনামে কার্ডই আসত না।
+  const direct = acUrlFromHtml(embed);
+  if (direct) return direct;
+  const embReal = await acFollowSpinner(embed, embedUrl);
+  if (embReal) { const g2 = acUrlFromHtml(embReal); if (g2) return g2; }
+  let purl = ((/<iframe[^>]+src="([^"]*3rdplayer[^"]*)"/i.exec(embed) || [])[1] || '');
+  if (!purl) purl = ((/<iframe[^>]+src="([^"]+)"/i.exec(embed) || [])[1] || '');
+  if (!purl) return '';
+  if (purl.indexOf('//') === 0) purl = 'https:' + purl;
+  else if (purl[0] === '/') { try { purl = new URL(purl, embedUrl).toString(); } catch (e) { } }
+  let player = await acGet(purl, 11000, embedUrl);
+  if (!player) return '';
+  let got = acUrlFromHtml(player);
+  if (got) return got;
+  // spinner-পেজ হলে মিরর-হোস্টে গিয়ে আবার
+  const followed = await acFollowSpinner(player, purl);
+  if (followed) { got = acUrlFromHtml(followed); if (got) return got; }
   return '';
 }
 
@@ -273,34 +340,84 @@ async function acResolveEmbed(embedUrl) {
 }
 
 /* ── প্লেবিলিটি: প্লেলিস্ট/ফাইল সত্যিই আসে কি না ────────────────────────────── */
-async function acQualityOf(url) {
-  // মাপা: vidbasic-এর প্লেলিস্টে RESOLUTION লেখা থাকে না (শুধু BYTERANGE) ⇒ ধরে নিই না, দেখি
-  try {
-    const r = await fetch(url, { headers: { 'User-Agent': AC_UA, 'Referer': AC_BASE + '/' }, signal: AbortSignal.timeout(8000) });
-    if (!r.ok) return '';
-    const head = (await r.text()).slice(0, 6000);
-    const res = [...head.matchAll(/RESOLUTION=(\d+)x(\d+)/g)].map(m => Number(m[2])).filter(Boolean);
-    if (res.length) return String(Math.max.apply(null, res));
-  } catch (e) { }
-  return '';
+/* ── প্রোব: URL সত্যিই মিডিয়া কি না ─────────────────────────────────────────
+   ★ v1.34.309 (ইউজার-সংশোধন): "আমাদের ডেটাসেন্টার-IP-তে চলে না" মানে ইউজারের কাছেও
+   চলবে না — এটা ধরে নেওয়া ভুল। তাই দুই স্তর:
+     proven     = প্লেলিস্ট/ফাইল নামানো গেছে **এবং** ভেতরে আসল মিডিয়া-পেলোড
+                  (ID3 / ftyp / TS-sync+PID) — সম্পূর্ণ প্রমাণ
+     unverified = URL তৈরি হয়েছে (প্লেয়ার-চেইন সফল) কিন্তু আমাদের IP থেকে
+                  403/429/5xx/টাইমআউট — **কার্ড তবু দেওয়া হবে** (ইউজারের ক্লায়েন্ট-IP-তে
+                  সাধারণত চলে; এখান থেকে মিথ্যা "মৃত" ঘোষণা করা যাবে না)
+   আগের বাগ: শুধু `#EXTM3U` দেখেই "প্লে-সত্য" ধরা হতো, অথচ ওই প্লেলিস্টে ৫১২KB-এ
+   ১০০০+ TS-sync/H.264/AAC থাকতেও "Auto" দেখাত — সেটাই ছিল ভুল সিদ্ধান্তের কারণ। */
+function acMediaShape(buf) {
+  if (!buf || buf.length < 1024) return { media: false, why: 'short' };
+  const id3 = buf.slice(0, 3).toString('latin1') === 'ID3';
+  const ftyp = buf.slice(4, 8).toString('latin1') === 'ftyp';
+  let ts = 0;
+  for (let i = 0; i + 1 < buf.length; i++) if (buf[i] === 0x47 && (buf[i + 1] & 0x40)) { ts++; if (ts > 3) break; }
+  const h264 = buf.includes(Buffer.from([0, 0, 0, 1, 0x67])) || buf.includes(Buffer.from([0, 0, 1, 0x67])) || buf.includes(Buffer.from([0, 0, 0, 1, 0x41]));
+  const hevc = buf.includes(Buffer.from([0, 0, 0, 1, 0x40])) || buf.includes(Buffer.from([0, 0, 1, 0x40]));
+  return { media: !!(id3 || ftyp || ts > 3 || h264 || hevc), id3: id3, ftyp: ftyp, tsSync: ts, h264: h264, hevc: hevc, bytes: buf.length };
 }
-async function acPlayable(url, ms) {
+async function acBuf(url, ms, range) {
   for (let i = 0; i < 2; i++) {
     try {
-      const r = await fetch(url, { headers: { 'User-Agent': AC_UA, 'Referer': AC_BASE + '/', 'Accept': '*/*' }, redirect: 'follow', signal: AbortSignal.timeout(Math.max(4000, ms || 9000)) });
-      const ct = String(r.headers.get('content-type') || '');
-      if (r.ok) {
-        if (/mpegurl|m3u8/i.test(ct) || /\.m3u8(\?|$)/i.test(url)) {
-          const t = await r.text();
-          if (t.indexOf('#EXTM3U') >= 0) return { ok: true, kind: 'hls' };
-        } else if (/video\/|octet-stream/i.test(ct)) return { ok: true, kind: 'mp4' };
-        return { ok: true, kind: 'file' };
-      }
-    } catch (e) { }
-    await new Promise(z => setTimeout(z, 350 + i * 600));
+      const h = { 'User-Agent': AC_UA, 'Referer': AC_BASE + '/', 'Accept': '*/*' };
+      if (range) h.Range = range;
+      const r = await fetch(url, { headers: h, redirect: 'follow', signal: AbortSignal.timeout(ms || 12000) });
+      const ab = await r.arrayBuffer().catch(() => new ArrayBuffer(0));
+      return { st: r.status, ct: String(r.headers.get('content-type') || ''), buf: Buffer.from(ab) };
+    } catch (e) {
+      if (i === 1) return { st: 0, ct: '', buf: Buffer.alloc(0), err: (e.cause && e.cause.code) || e.message };
+      await new Promise(z => setTimeout(z, 500));
+    }
   }
-  return { ok: false, kind: '' };
+  return { st: 0, ct: '', buf: Buffer.alloc(0) };
 }
+function acResOf(playlist) {
+  const res = [...String(playlist || '').matchAll(/RESOLUTION=(\d+)x(\d+)/g)].map(m => Number(m[2])).filter(Boolean);
+  return res.length ? String(Math.max.apply(null, res)) : '';
+}
+async function acProbe(url, ms) {
+  /* ★ v1.34.309: master → variant → segment — ৩ ধাপ পর্যন্ত ফলো করি (এক্সটেনশন দেখে নয়,
+     ভেতরের `#EXTM3U` দেখে)। কারণ hglink-CDN master-কে `.txt`/`.woff2` নামে লুকায়। */
+  let cur = url, q = '', chain = 0, last = null, sawPlaylist = false;
+  while (chain < 3) {
+    const isRange = chain > 0;   // সেগমেন্টে Range দিয়ে অর্ধ-MB
+    const r = await acBuf(cur, ms || 16000, isRange ? 'bytes=0-524287' : null);
+    last = r;
+    const head = r.buf.slice(0, 7).toString('latin1');
+    const isPlaylist = (r.st === 200 || r.st === 206) && head.indexOf('#EXTM3U') === 0;
+    if (isPlaylist) {
+      sawPlaylist = true;
+      const wrote = r.buf.toString('utf8');
+      const rq = acResOf(wrote);
+      if (rq) q = rq;
+      const lines = wrote.split('\n').map(l => l.trim()).filter(l => l && l[0] !== '#');
+      if (!lines.length) return { state: 'unverified', kind: 'hls', quality: q, why: 'no-lines' };
+      const nxt = lines[0].startsWith('http') ? lines[0] : new URL(lines[0], cur).toString();
+      chain++;
+      cur = nxt;
+      continue;
+    }
+    // প্লেলিস্ট নয় — মিডিয়া-পেলোড কি না
+    if (r.st === 200 || r.st === 206) {
+      const shape = acMediaShape(r.buf);
+      if (shape.media) return { state: 'proven', kind: sawPlaylist ? 'hls' : 'mp4', quality: q, shape: shape, why: 'media-payload' };
+      return { state: 'unverified', kind: sawPlaylist ? 'hls' : 'mp4', quality: q, shape: shape, why: 'non-media-' + (r.st || 'x') };
+    }
+    // ব্লক/এরর
+    if (r.st === 404 || r.st === 410) return { state: 'dead', dead: true, kind: sawPlaylist ? 'hls' : 'mp4', quality: q, why: 'http-' + r.st };
+    return { state: 'unverified', kind: sawPlaylist ? 'hls' : 'mp4', quality: q, why: 'http-' + (r.st || r.err || 'x') };
+  }
+  // চেইন শেষ, কিন্তু এখনো শুধু প্লেলিস্ট — শেষ প্লেলিস্ট থাকলেও URL বৈধ
+  return { state: 'unverified', kind: 'hls', quality: q, why: 'chain-end' };
+}
+
+// পুরোনো নামগুলো রাখা হলো (রিজার্ভ-পথে ব্যবহৃত)
+async function acPlayable(url, ms) { const p = await acProbe(url, ms); return { ok: p.state === 'proven', kind: p.kind, state: p.state }; }
+async function acQualityOf(url) { const p = await acProbe(url); return p.quality; }
 
 /* ── মূল এন্ট্রি ────────────────────────────────────────────────────────────── */
 async function acStreams(tmdbId, type, s, e, origin, opt) {
@@ -352,13 +469,16 @@ async function acStreams(tmdbId, type, s, e, origin, opt) {
     } catch (e) { }
 
     // ৩) প্রতিটি সার্ভার → এমবেড → AES → URL (সমান্তরাল)
+    /* ★ v1.34.309: ইউজার-সংশোধন — "আমাদের IP-তে চলে না" ⇒ কার্ড বাদ, এটা আর করা হবে না।
+       URL তৈরি হলেই কার্ড; শুধু সত্যিই-মৃত (HTTP 404/410, খালি বডি, মিডিয়া-নয় এমন বডি
+       যা প্লেলিস্টও নয়) বাদ যায়। ডেটাসেন্টার-ব্লক (403/429/5xx/টাইমআউট) = unverified কার্ড। */
     const jobs = await Promise.all(servers.slice(0, 6).map(async sv => {
       const u = await acResolveEmbed(sv.url).catch(() => '');
       if (!u) return null;
-      const p = await acPlayable(u).catch(() => ({ ok: false }));
-      if (!p.ok) { ACG.badPlay++; return null; }
-      const qq = p.kind === 'hls' ? await acQualityOf(u).catch(() => '') : '';
-      return { label: sv.label, url: u, kind: p.kind, quality: qq };
+      const p = await acProbe(u).catch(() => ({ state: 'unverified', kind: /m3u8/i.test(u) ? 'hls' : 'mp4', quality: '', why: 'probe-throw' }));
+      if (p.dead) { ACG.badPlay++; return null; }
+      if (p.state === 'proven') ACG.proven = (ACG.proven || 0) + 1; else ACG.unverified = (ACG.unverified || 0) + 1;
+      return { label: sv.label, url: u, kind: p.kind || (/m3u8/i.test(u) ? 'hls' : 'mp4'), quality: p.quality || '', state: p.state };
     }));
     const live = jobs.filter(Boolean);
 
@@ -368,7 +488,8 @@ async function acStreams(tmdbId, type, s, e, origin, opt) {
     for (const l of live) {
       const q = l.quality || (/(\d{3,4})p/.exec(l.url) || [])[1] || '';   // মাপা কোয়ালিটি, নাহলে Auto
       const name = q ? ('\u25a5 ' + q + ' \u25a5') : '\u25a5 Auto \u25a5';
-      const txt = head + '\n' + epLine + '\n\u229e AsianC' + (l.label && l.label !== 'Standard' ? ' \u2317 ' + l.label : '') + ' \u00b7 AsianC';
+      const tag = (l.label && l.label !== 'Standard' ? ' \u2317 ' + l.label : '') + (l.state === 'proven' ? ' \u2713' : '');
+      const txt = head + '\n' + epLine + '\n\u229e AsianC' + tag + ' \u00b7 AsianC';
       cards.push({
         name: name,
         quality: q || '',
@@ -390,7 +511,7 @@ async function acStreams(tmdbId, type, s, e, origin, opt) {
 }
 
 function acDiag() {
-  return Object.assign({ base: AC_BASE, slugMemo: AC_SLUG.size, epMemo: AC_EP.size, embMemo: AC_EMB.size }, ACG);
+  return Object.assign({ base: AC_BASE, mirror: AC_MIRROR.host || '', slugMemo: AC_SLUG.size, epMemo: AC_EP.size, embMemo: AC_EMB.size }, ACG);
 }
 
 async function acSelftest() {
@@ -408,7 +529,7 @@ async function acSelftest() {
         if (sv[0]) {
           const u = await acResolveEmbed(sv[0].url);
           out.resolved = u;
-          if (u) out.playable = await acPlayable(u);
+          if (u) out.probe = await acProbe(u).catch(e => ({ state: 'err', why: String(e && e.message) }));
         }
       }
     }
@@ -417,4 +538,4 @@ async function acSelftest() {
 }
 
 setTimeout(() => { }, 0);
-module.exports = { acOn, acStreams, acDiag, acSelftest, acDecrypt, acServersOf, acResolveEmbed, acPlayable, acFindSlug, acDetail, AC_BASE, AC_UA };
+module.exports = { acOn, acStreams, acDiag, acSelftest, acDecrypt, acServersOf, acResolveEmbed, acPlayable, acProbe, acFindSlug, acDetail, AC_BASE, AC_UA };
