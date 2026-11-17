@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.301';
+const VERSION = '1.34.302';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -10580,6 +10580,7 @@ async function hdStreams(imdb, title, type, s, e, origin, maxh) { // v1.17.49: �
       }
       return o2.slice(0, Number(process.env.HDCAP || 24));
     };
+    const _hdProv = { done: false, cands: 0, proven: 0 };   // ★ v1.34.302: প্রমাণ-দৌড় শেষ হল কি না + কত প্রার্থী/কত পাশ
     const _prove = async () => {
       const _drvOrd = drives.slice().sort((a, b) => (a.kind === 'hubdrive' ? 1 : 0) - (b.kind === 'hubdrive' ? 1 : 0)).slice(0, 8);
       const resolved = await Promise.all(_drvOrd.map(d => hdDrive(d.hub, Math.min(Number(process.env.HDDRVMS || 2600), left())).catch(() => null)));
@@ -10617,7 +10618,8 @@ async function hdStreams(imdb, title, type, s, e, origin, maxh) { // v1.17.49: �
         const done = new Set(w1.map(c => c.u));
         await Promise.all(uniqC.filter(c => c.k === 'pd' && !done.has(c.u)).slice(0, 3).map(probeOne));
       }
-      if (!proven.length) { if (DBG) console.error('[hd] no-proven @' + (Date.now() - T0) + 'ms cands=' + cands.length); return []; }
+      _hdProv.done = true; _hdProv.cands = cands.length; _hdProv.proven = proven.length;
+      if (!proven.length) { if (DBG) console.error('[hd] no-proven @' + (Date.now() - T0) + 'ms cands=' + cands.length); try { diag('hub', 'no-proven cands=' + cands.length); } catch (e) { } return []; }
       proven.sort((a, b) => (b.h || 0) - (a.h || 0));
       const out = [];
       const us = new Set();
@@ -10652,6 +10654,17 @@ async function hdStreams(imdb, title, type, s, e, origin, maxh) { // v1.17.49: �
       new Promise(r => { const t = setTimeout(() => r(null), _race); if (t.unref) t.unref(); })
     ]);
     if (_proven && _proven.length) return _proven;
+    // ★★ v1.34.302 (প্রোড-মাপা, .301-এও ছিল): Inception-এ ৩টি কার্ড, ৩টিই `502`, তিন রানে হুবহু একই।
+    //   কারণ: প্রমাণ-দৌড় **শেষ হয়ে** গিয়েছিল এবং প্রতিটি প্রার্থী (ওই ড্রাইভগুলোর একমাত্র লিংক =
+    //   `workers.dev` signed, R2-বাকেটে `403 text/html`) বাতিল হয়েছিল — তবু ফলব্যাক লেজি-কার্ড
+    //   (যা /m4g/ ক্লিকে নতুন করে রিজলভ করে) দেখিয়ে দিচ্ছিল। ইউজারের নিয়ম: ৪০৩/৫০২-কার্ড কার্ড নয়।
+    //   এখন প্রমাণ **শেষ** হয়ে শূন্য হলে সৎ-শূন্য; লেজি-কার্ড কেবল তখনই যখন প্রমাণ সময়মতো শেষ হয়নি
+    //   (তখনই সত্যিই অজানা — ক্লিকে রিজলভ হয়ে কার্ড আসতে পারে)।
+    if (_hdProv.done && _hdProv.cands > 0 && _hdProv.proven === 0) {
+      if (DBG) console.error('[hd] all-cands-dead @' + (Date.now() - T0) + 'ms');
+      try { diag('hub', 'all-cands-dead drives=' + drives.length + ' cands=' + _hdProv.cands); } catch (e) { }
+      return [];
+    }
     const _lz = hdLazyCards();
     if (DBG) console.error('[hd] lazy=' + _lz.length + ' proven=' + (_proven ? _proven.length : 'timeout') + ' @' + (Date.now() - T0) + 'ms');
     return _lz;
