@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.284';
+const VERSION = '1.34.285';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -44,7 +44,7 @@ const loopLag = () => LOOP.lag;
 const loopOkMid = () => LOOP.lag < Number(process.env.BGLAGMID || 900);
 const loopOkHeavy = loopOk;
 const VY_SOCKN = { n: 0 };                       // net sockets opened under the reserved Vidy-probe budget
-const VY_SOCK_MAX = Number(process.env.VYSOCK || 64);   // small: other sources' pools must still get sockets
+const VY_SOCK_MAX = Number(process.env.VYSOCK || 112);   // v1.34.285: ৬৪→১১২ (রিফিল ৪০-সমান্তরাল হলে ৬৪-ই বাঁধা হয়ে দাঁড়াত)   // small: other sources' pools must still get sockets
 const socketGate = require('./tools/vidy-runtime/socket_gate.cjs');
 function isLocalOnly(req) { const ip = String((req.headers['x-forwarded-for'] || req.socket.remoteAddress || '')).split(',')[0].trim(); return /^(127\.|::1$|::ffff:127\.)/.test(ip) || DBG; }
 {
@@ -2351,11 +2351,11 @@ function vidyScore(px) {
 // pass on the same proxy before adding a node. It uses the existing quotas,
 // bans and slot locks and never modifies other sources' pools.
 const PTUN_LIVE_FAST = px => { try { const t = ptunLive(px); return !!t; } catch (_) { return false; } };   // v1.34.262
-const VIDY_STALE = px => { const e = VIDY_OK.get(px); return !!(e && e.ts && Date.now() - e.ts > Number(process.env.VYSTALE || 600000)); };   // v1.34.262
+const VIDY_STALE = px => { const e = VIDY_OK.get(px); return !!(e && e.ts && Date.now() - e.ts > Number(process.env.VYSTALE || 900000)); };   // v1.34.285: ১০মিন→১৫মিন — মাপা `fresh` ৫৫-৬৬ অথচ `pool` ১৫৮; verified নোড অকারণে বাসি হয়ে রিফিলের প্রার্থী-তালিকায় ফিরত   // v1.34.262
 function vidyBlockCounts() { const r = { total: VIDY_OK.size, banned: 0, cooling: 0, quota: 0, busy: 0, available: 0 }; for (const px of VIDY_OK.keys()) { if (snBanned(px)) r.banned++; else if (!ptunAllowed(px)) r.cooling++; else if (vpxLeft(px) < 2) r.quota++; else if (VPX_BUSY.get(px)) r.busy++; else r.available++; } return r; }
 function vidyReadyCount() {
   const now = Date.now();
-  return [...VIDY_OK.entries()].filter(([px,e]) => e && e.ts && now - e.ts < 600000 && !snBanned(px) && ptunAllowed(px) && vpxLeft(px) >= 2 && !VPX_BUSY.get(px)).length;
+  return [...VIDY_OK.entries()].filter(([px,e]) => e && e.ts && now - e.ts < Number(process.env.VYREADYAGE || 900000) && !snBanned(px) && ptunAllowed(px) && vpxLeft(px) >= 2 && !VPX_BUSY.get(px)).length;   // v1.34.285: ready-জানালা ১০মিন→১৫মিন (VIDY_STALE-এর সঙ্গে মিলল)
 }
 // Lightweight source-specific discovery stays independent of the large shared
 // enrich wave (which may pause during playback or when its generic pool is full).
@@ -2367,18 +2367,29 @@ const VY_DISCOVERY = require('./tools/vidy-runtime/discovery.cjs').create({
     'https://raw.githubusercontent.com/stormsia/proxy-list/main/http.txt',
     'https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&protocol=http&proxy_format=ipport&format=text&timeout=5000&supports_https=true',
     'https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt',
-    'https://raw.githubusercontent.com/Zaeem20/FREE_PROXIES_LIST/master/http.txt'
+    'https://raw.githubusercontent.com/Zaeem20/FREE_PROXIES_LIST/master/http.txt',
+    // ★ v1.34.285 (লোকাল-মাপা): উপরের ৫টি প্রতি-সোর্স ফলন — proxmint ৫১৫, stormsia ২৮৭, proxyscrape ৩৮১,
+    //   monosans ৪১৫, Zaeem ৮২ ⇒ প্রার্থী-বেস মাত্র ১,৬৪০। নিচের ৫টি যোগে বেস ≈১০ গুণ: proxifly ৪,৯৬৯ ·
+    //   TheSpeedX ২,২২৩ · vakhov ৫২৪ · clarketm ৪০০ · mmpx12 ৪৪০। (MuRongPIG-এর ১,০১,৬২৭ ইচ্ছাকৃত বাদ —
+    //   বিশাল কিন্তু পুরনো-মিশ্র, স্ক্যান-খরচ বেশি।) প্রতিটি লিস্ট শুধুই **প্রার্থী** দেয়, প্রমাণ নয়।
+    'https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/protocols/http/data.txt',
+    'https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt',
+    'https://raw.githubusercontent.com/vakhov/fresh-proxy-list/master/http.txt',
+    'https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt',
+    'https://raw.githubusercontent.com/mmpx12/proxy-list/master/http.txt'
   ]
 });
-setTimeout(() => { VY_DISCOVERY.tick().catch(() => {}); setInterval(() => VY_DISCOVERY.tick().catch(() => {}), 20000).unref?.(); }, 25000).unref?.();
+setTimeout(() => { VY_DISCOVERY.tick().catch(() => {}); setInterval(() => VY_DISCOVERY.tick().catch(() => {}), 8000).unref?.(); }, 12000).unref?.();   // v1.34.285: ২০সে/২৫সে-দেরি → ৮সে/১২সে (১০ লিস্ট ঘুরতে ৮০সে লাগত)
 const VY_REFILL = require('./tools/vidy-runtime/active_refill.cjs').create({
   ready: vidyReadyCount,
-  target: 100, parallel: 32, busyParallel: 6,
+  target: Number(process.env.VYTARGET || 100), parallel: Number(process.env.VYPAR || 32), busyParallel: Number(process.env.VYPARB || 6),
   getParallel: () => {
     const busy = INFLIGHT_STREAM > 0 || Date.now() - LAST_STREAM_AT < 3000 || Date.now() < MMR_ACTIVE_UNTIL;
-    if (busy) return 6;                            // never race a user's playback for sockets
+    // ★ v1.34.285 (মাপা): ready ৬–২২-এ আটকে থাকার সময়ই সবচেয়ে বেশি ট্রাফিক ⇒ busy-অবস্থায় ৬-এ নেমে
+    //   পুল আর ভরত না। এখন busy-তেও ১২, আর মুক্ত-অবস্থায় ২০/৪০ (আগে ১৬/৩২)।
+    if (busy) return Number(process.env.VYPARB2 || 12);   // never race a user's playback for sockets
     const ready = vidyReadyCount();
-    return ready >= 100 ? 4 : (ready >= 50 ? 16 : 32);   // v1.34.265: 24→32 — CONNECT-প্রি-চেক সস্তা করার পরও refill ~১.৬/সে-এ আটকে ছিল (attempts 666/৭মিনিট), লক্ষ্য ৫০+ ready
+    return ready >= 100 ? 6 : (ready >= 50 ? 20 : 40);
   },
   candidates: () => {
     const t = Date.now(), proven = [], site = [], fallback = [];
