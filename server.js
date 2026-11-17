@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.307';
+const VERSION = '1.34.308';
 /* ★ v1.34.307: asianc.id — সম্পূর্ণ স্বতন্ত্র সোর্স (নিজস্ব ফাইল asianc.js; Dramacool-ধাঁচের সাইট)
    চেইন: /search?keyword → /drama-detail/<slug> → /<slug>-episode-N.html → li[data-video] (সব সার্ভার)
          → vidbasic/3rdplayer AES-256-CBC ডিক্রিপ্ট (বা hglink→jwplayer unpack) ⇒ আসল HLS/MP4 */
@@ -17377,7 +17377,7 @@ const UNIFY_SRV = { sky: 'Sky Movies', m4u: 'Movies4u', bf: 'BollyFlix', mm: 'Mu
 async function unifyCards(cards, meta) { // শুধু-টেক্সট-বদলায়: name/quality/url/bingeGroup/_lang/_hq/সাব — সব-অস্পৃশ্য (ফিল্টার-নিরাপদ)
   try {
     if (!cards || !cards.length || !meta || (!meta.tmdbId && !meta.title)) return cards;
-    const tcards = cards.filter(c => /^(sky|m4u|bf|mm|tw|rt|mlb|mls|vl)\|/.test(String(c.bingeGroup || '')));
+    const tcards = cards.filter(c => /^(sky|m4u|bf|mm|tw|rt|mlb|mls|acs|vsp|ott|az|dt|nx|hd|hm)\|/.test(String(c.bingeGroup || '')));
     // ★ v1.27.10: tcards খালি হলেও থামি না — বছর-পূরণের ধাপটা সব-সোর্সে চালু থাকবে
     const _uT=Date.now();
     // ★ v1.27.11 (ইউজার: "Pilot eikhane ep title ja mone hoi IMDb theke newo"): সিরিজে এপিসোড-নাম

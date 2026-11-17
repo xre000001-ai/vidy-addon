@@ -23,6 +23,7 @@ const ACG = { pages: 0, pageFail: 0, noSearch: 0, noDetail: 0, noServer: 0, noCr
 const AC_SLUG = new Map();     // "title|year|s" → {ts, slug, detail}
 const AC_EP = new Map();       // slug|N → {ts, list:[{label,url}]}
 const AC_EMB = new Map();      // embedId → {ts, url}
+const AC_SIB = new Map();      // embedId → [একই ড্রামার অন্য এপিসোডের এমবেড-URL]
 const AC_INFLIGHT = new Map();
 const AC_TTL = 6 * 60 * 60 * 1000, AC_EP_TTL = 90 * 60 * 1000, AC_EMB_TTL = 40 * 60 * 1000;
 
@@ -250,6 +251,14 @@ async function acResolveEmbed(embedUrl) {
         const u = await acResolveEmbedTry(a).catch(() => '');
         if (u) { ACG.altWin = (ACG.altWin || 0) + 1; return u; }
       }
+      // পথ ৪: একই ড্রামার অন্য এপিসোড (মাপা: hglink-এপিসোডে vidbasic-নিজস্ব প্লেয়ার না-থাকলে
+      //        পাশের এপিসোডের vidbasic-এমবেড কাজ করে — একই ফাইল/লিস্ট ধরে রাখে)
+      const sib = (AC_SIB.get(eid) || []).slice(0, 4);
+      for (const su of sib) {
+        if (su === embedUrl) continue;
+        const u = await acResolveEmbedTry(su).catch(() => '');
+        if (u) { ACG.sibWin = (ACG.sibWin || 0) + 1; return u; }
+      }
     } catch (e) { }
     return '';
   })();
@@ -264,6 +273,17 @@ async function acResolveEmbed(embedUrl) {
 }
 
 /* ── প্লেবিলিটি: প্লেলিস্ট/ফাইল সত্যিই আসে কি না ────────────────────────────── */
+async function acQualityOf(url) {
+  // মাপা: vidbasic-এর প্লেলিস্টে RESOLUTION লেখা থাকে না (শুধু BYTERANGE) ⇒ ধরে নিই না, দেখি
+  try {
+    const r = await fetch(url, { headers: { 'User-Agent': AC_UA, 'Referer': AC_BASE + '/' }, signal: AbortSignal.timeout(8000) });
+    if (!r.ok) return '';
+    const head = (await r.text()).slice(0, 6000);
+    const res = [...head.matchAll(/RESOLUTION=(\d+)x(\d+)/g)].map(m => Number(m[2])).filter(Boolean);
+    if (res.length) return String(Math.max.apply(null, res));
+  } catch (e) { }
+  return '';
+}
 async function acPlayable(url, ms) {
   for (let i = 0; i < 2; i++) {
     try {
@@ -324,6 +344,12 @@ async function acStreams(tmdbId, type, s, e, origin, opt) {
     if (!epHtml) { ACG.noServer++; return []; }
     const servers = acServersOf(epHtml);
     if (!servers.length) { ACG.noServer++; return []; }
+    // একই এপিসোড-সেটের এমবেড-আইডি পাশে রাখি (উপরের পথ-৪-এর জন্য)
+    try {
+      const ids = servers.map(s => (/\/embed\/([A-Za-z0-9_-]+)/.exec(s.url) || [])[1]).filter(Boolean);
+      for (const i of ids) if (!AC_SIB.has(i)) AC_SIB.set(i, servers.map(s => s.url));
+      if (AC_SIB.size > 500) _shrink(AC_SIB, 0.4);
+    } catch (e) { }
 
     // ৩) প্রতিটি সার্ভার → এমবেড → AES → URL (সমান্তরাল)
     const jobs = await Promise.all(servers.slice(0, 6).map(async sv => {
@@ -331,7 +357,8 @@ async function acStreams(tmdbId, type, s, e, origin, opt) {
       if (!u) return null;
       const p = await acPlayable(u).catch(() => ({ ok: false }));
       if (!p.ok) { ACG.badPlay++; return null; }
-      return { label: sv.label, url: u, kind: p.kind };
+      const qq = p.kind === 'hls' ? await acQualityOf(u).catch(() => '') : '';
+      return { label: sv.label, url: u, kind: p.kind, quality: qq };
     }));
     const live = jobs.filter(Boolean);
 
@@ -339,7 +366,7 @@ async function acStreams(tmdbId, type, s, e, origin, opt) {
     const head = '\u29c9 ' + (title || detail.title || (tv ? 'Series' : 'Movie')) + (year ? ' | ' + year + ' |' : '');
     const epLine = tv ? ('\u29e0 S' + S + 'E' + E) : '\u29e0 Movie';
     for (const l of live) {
-      const q = (/(\d{3,4})p/.exec(l.url) || [])[1] || '';
+      const q = l.quality || (/(\d{3,4})p/.exec(l.url) || [])[1] || '';   // মাপা কোয়ালিটি, নাহলে Auto
       const name = q ? ('\u25a5 ' + q + ' \u25a5') : '\u25a5 Auto \u25a5';
       const txt = head + '\n' + epLine + '\n\u229e AsianC' + (l.label && l.label !== 'Standard' ? ' \u2317 ' + l.label : '') + ' \u00b7 AsianC';
       cards.push({
