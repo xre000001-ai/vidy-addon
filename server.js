@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.279';
+const VERSION = '1.34.280';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -9630,14 +9630,19 @@ async function mlbdStreams(name, year, type, s, e, cap) {
     let tokAll = res.toks.filter(t => qOf(t)!==480);
     if (capN) tokAll = tokAll.filter(t => { const q = qOf(t); return !q || q <= capN; });
     tokAll.sort((a, b) => (qOf(b) - qOf(a)) || (res.toks.indexOf(a) - res.toks.indexOf(b)));
-    const toks = tokAll.slice(0, Number(process.env.MLBDN || 6));
+    // ★ v1.34.280: ৬ → ৪ (মাপা: `toks=2/3` আর `resolved=1 tok=2` থেকেই ১৩-১৪ কার্ড আসে — বেশি টোকেন
+    //   কেবল সমান্তরাল চাপ বাড়িয়ে মিররের ৫xx-চ্যালেঞ্জ ডেকে আনে) 
+    const toks = tokAll.slice(0, Number(process.env.MLBDN || 4));
     diag('mlbd', 'toks=' + toks.length + '/' + res.toks.length);
     if (DBG) console.error('[mlbd] toks=' + toks.length + '/' + res.toks.length + ' ' + toks.map(t => ((LAB[t] && LAB[t].lab) || '?')).join(' | '));
     if (!toks.length) { if (DBG) console.error('[mlbd] no-tokens @' + (Date.now() - T0) + 'ms (groups=' + (((res.files || {}).groups || []).length) + ')'); return []; }
     const dl = T0 + B;
     const NTOK = Number(process.env.MLBDN || 6);
     const jobs = toks.slice(0, NTOK).map(t => mlbdOne(base, t, dl, qOf(t), (LAB[t] && LAB[t].lab) || '').catch(() => null));
-    const gathered = await require('./tools/mlbd-index/partial_results.cjs').collect(jobs,{started:T0,maxMs:Math.min(B,10000)});
+    // ★★ v1.34.280 (মাপা: হপ ৪.৯সে-তে শেষ, উত্তর ৯.৮সে): `collect`-এর minMs ছিল ৭০০০ — সব টোকেন
+    //   শেষ হলেও ৭সে পর্যন্ত বসে থাকত, তারপর বাকি-ঝুলন্তর জন্য maxMs ১০সে। এখন প্রথম-ফলের পর
+    //   ৯০০ms শান্তি-জানালাতেই ফেরত (কমপক্ষে ৩টি ফল থাকলে), আর সর্বোচ্চ সীমা বাজেটের ভিতরে।
+    const gathered = await require('./tools/mlbd-index/partial_results.cjs').collect(jobs,{started:T0,maxMs:Math.min(B-400,9000),minMs:4000,quietMs:900});
     let got = gathered.results;
     diag('mlbd','partial='+Number(gathered.partial)+' resolved='+got.length+' @'+(Date.now()-T0)+'ms');
     if (!got.length && !gathered.partial && Date.now() < dl - 900) {          // পুরো-ব্যর্থ (SAN-ফ্লেক) ⇒ এক দফা আবার
