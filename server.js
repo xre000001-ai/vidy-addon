@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.288';
+const VERSION = '1.34.289';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -18998,8 +18998,13 @@ const server = http.createServer((req, res) => FG_CONTEXT.run({ active: true }, 
       if (!/^(127\.|::1$|::ffff:127\.)/.test(ip) && !DBG) return sendJson(res, 403, { error: 'local-only' });
       const top = [...SK.live.entries()].sort((a, b) => b[1] - a[1]).slice(0, 20);
       const made = [...SK.madeBy.entries()].sort((a, b) => b[1] - a[1]).slice(0, 20);
-      return sendJson(res, 200, { on: true, sockmax: SOCKMAX, madeTotal: SK.made, liveTotal: SK.liveN,
-        gated: { dropped: SK.dropped, queued: SK.queued, capNow: 0, fgNow: SK.fg, vyReserved: VY_SOCKN.n, vyReservedMax: VY_SOCK_MAX }, liveTop: top, madeTop: made });
+      // ★ v1.34.289: `/socks` লিখতে লগইন লাগত ⇒ প্রোড-নেটওয়ার্ক-প্রশ্নের উত্তর পাওয়া যেত না।
+      //   এখন শুধু **সংখ্যা** (কোনো ঠিকানা নয়) ঢালাও পড়া যায় — ঠিকানা-তালিকা (liveTop/madeTop) আগের মতোই লোকাল-শুধু।
+      const full = isLocalOnly(req);
+      return sendJson(res, 200, { on: true, sockmax: SOCKMAX, madeTotal: SK.made, liveTotal: SK.liveN, loopLag: LOOP.lag,
+        gated: { dropped: SK.dropped, queued: SK.queued, waited: SK.waited, capNow: capNow(), fgNow: SK.fg, vyReserved: VY_SOCKN.n, vyReservedMax: VY_SOCK_MAX },
+        vyReady: (typeof vidyReadyCount === 'function' ? vidyReadyCount() : -1), inflight: (typeof INFLIGHT_STREAM !== 'undefined' ? INFLIGHT_STREAM : -1),
+        liveTop: full ? top : top.length, madeTop: full ? made : made.length });
     }
     if (p === '/_handles') {   // ★ v1.28.3-L9: হ্যান্ডেল-ধরন গুনে দেখি কোনটা জমছে (Socket/TLSWrap/Timeout…)
       const ip = String((req.headers['x-forwarded-for'] || req.socket.remoteAddress || '')).split(',')[0].trim();
