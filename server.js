@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.283';
+const VERSION = '1.34.284';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -2773,7 +2773,11 @@ async function vidyFetch(o) { // ★ v1.17.56: verified-pool **ক্রমব�
     };
     const hedge = String(process.env.VYHEDGE || '900') !== '0';
     if (!hedge) return lane(0);
-    try { return await Promise.any([lane(0), lane(Number(process.env.VYHEDGE || 900))]); }
+    // ★ v1.34.284: দৈত্য-সার্ভারগুলো (miami/boise/atlanta — কার্ডের বড় অংশ) তিন-লেনে; ওদের একটি
+    //   লেন আটকে গেলে পুরো সার্ভারটাই "pending" হয়ে প্রথম ট্যাপের কার্ড কমিয়ে দিত।
+    const lanes = [lane(0), lane(Number(process.env.VYHEDGE || 900))];
+    if (VGIANT && VGIANT.indexOf(o.srv) >= 0) lanes.push(lane(Number(process.env.VYHEDGE3 || 1900)));
+    try { return await Promise.any(lanes); }
     catch (e) { throw ((e && e.errors && e.errors[0]) || e); }   // আসল কারণ-বার্তা অক্ষত (server-status/breaker এই মেসেজ পড়ে)
   }
   // ★ v1.26.0: এক সিড-এক নোড (leader) — আগে এখানেই বেশিরভাগ কল সফল হয়ে যায়, সিড-কোটা বাঁচে
