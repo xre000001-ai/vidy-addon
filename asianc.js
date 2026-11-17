@@ -214,6 +214,9 @@ function acDecrypt(b64) {
 const AC_MIRROR = { host: process.env.AC_MIRROR || '', ts: 0, known: String(process.env.AC_MIRRORS || 'audinifer.com,callistanise.com,vibuxer.com').split(',').map(s => s.trim()).filter(Boolean) };
 async function acLearnMirror(host, force) {
   if (!force && AC_MIRROR.host && Date.now() - AC_MIRROR.ts < 6 * 60 * 60 * 1000) return AC_MIRROR.host;
+  // বাধ্যতামূলক পুনরায়-শেখা প্রতি ২ মিনিটে একবারের বেশি নয় (প্রতিটি এপিসোডে ১-২সে নষ্ট হতো)
+  if (force && AC_MIRROR.forceTs && Date.now() - AC_MIRROR.forceTs < 120000) return AC_MIRROR.host || '';
+  if (force) AC_MIRROR.forceTs = Date.now();
   try {
     const vm = require('vm');
     const base = host || 'hglink.to';
@@ -444,6 +447,7 @@ async function acStreams(tmdbId, type, s, e, origin, opt) {
   const year = String(o.year || '').trim();
   if (!title) { ACG.noSearch++; return []; }
 
+  const _t0 = Date.now();
   try {
     // ১) slug: সরাসরি শিরোনাম-ভিত্তিক অনুমান আগে (দ্রুত), না মিললে সার্চ
     let detail = null, slug = '';
@@ -454,6 +458,7 @@ async function acStreams(tmdbId, type, s, e, origin, opt) {
     if (memo && Date.now() - memo.ts < AC_EP_TTL) return memo.cards;
 
     const found = await acFindSlug(title, year, tv ? S : 1);
+    if (Date.now() - _t0 > (Number(o.ms) || 11000) * 0.6) { ACG.lateBudget = (ACG.lateBudget || 0) + 1; return []; }
     slug = (found && found.slug) || guessForSeason;
     detail = await acDetail(slug);
     if (!detail || !detail.eps || !detail.eps.length) {
@@ -486,10 +491,20 @@ async function acStreams(tmdbId, type, s, e, origin, opt) {
     /* ★ v1.34.309: ইউজার-সংশোধন — "আমাদের IP-তে চলে না" ⇒ কার্ড বাদ, এটা আর করা হবে না।
        URL তৈরি হলেই কার্ড; শুধু সত্যিই-মৃত (HTTP 404/410, খালি বডি, মিডিয়া-নয় এমন বডি
        যা প্লেলিস্টও নয়) বাদ যায়। ডেটাসেন্টার-ব্লক (403/429/5xx/টাইমআউট) = unverified কার্ড। */
+    const _budget = Math.max(4000, Number(o.ms) || 11000);
+    const _left = () => _budget - (Date.now() - _t0);
+    if (_left() < 1200) { ACG.lateBudget = (ACG.lateBudget || 0) + 1; return []; }
     const jobs = await Promise.all(servers.slice(0, 6).map(async sv => {
-      const u = await acResolveEmbed(sv.url).catch(() => '');
+      const _r = await Promise.race([
+        acResolveEmbed(sv.url).catch(() => ''),
+        new Promise(z => setTimeout(() => z(''), Math.max(1500, _left() - 800)))
+      ]);
+      const u = _r || '';
       if (!u) return null;
-      const p = await acProbe(u).catch(() => ({ state: 'unverified', kind: /m3u8/i.test(u) ? 'hls' : 'mp4', quality: '', why: 'probe-throw' }));
+      const p = await Promise.race([
+        acProbe(u, Math.max(2500, _left())).catch(() => ({ state: 'unverified', kind: /m3u8/i.test(u) ? 'hls' : 'mp4', quality: '', why: 'probe-throw' })),
+        new Promise(z => setTimeout(() => z({ state: 'unverified', kind: /m3u8/i.test(u) ? 'hls' : 'mp4', quality: '', why: 'probe-budget' }), Math.max(2000, _left())))
+      ]);
       if (p.dead) { ACG.badPlay++; return null; }
       if (p.state === 'proven') ACG.proven = (ACG.proven || 0) + 1; else ACG.unverified = (ACG.unverified || 0) + 1;
       return { label: sv.label, url: u, kind: p.kind || (/m3u8/i.test(u) ? 'hls' : 'mp4'), quality: p.quality || '', state: p.state };
