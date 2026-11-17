@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.286';
+const VERSION = '1.34.287';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -44,7 +44,7 @@ const loopLag = () => LOOP.lag;
 const loopOkMid = () => LOOP.lag < Number(process.env.BGLAGMID || 900);
 const loopOkHeavy = loopOk;
 const VY_SOCKN = { n: 0 };                       // net sockets opened under the reserved Vidy-probe budget
-const VY_SOCK_MAX = Number(process.env.VYSOCK || 112);   // v1.34.285: ৬৪→১১২ (রিফিল ৪০-সমান্তরাল হলে ৬৪-ই বাঁধা হয়ে দাঁড়াত)   // small: other sources' pools must still get sockets
+const VY_SOCK_MAX = Number(process.env.VYSOCK || 176);   // v1.34.287: ৬৪→১১২→১৭৬ (রিফিল-প্রস্থ ৫৬ হল; সংরক্ষিত বাজেট এর নিচে থাকলে প্রস্থ বাড়িয়েও লাভ নেই)   // small: other sources' pools must still get sockets
 const socketGate = require('./tools/vidy-runtime/socket_gate.cjs');
 function isLocalOnly(req) { const ip = String((req.headers['x-forwarded-for'] || req.socket.remoteAddress || '')).split(',')[0].trim(); return /^(127\.|::1$|::ffff:127\.)/.test(ip) || DBG; }
 {
@@ -1277,7 +1277,15 @@ function ptunAllowed(px) { const u = PTUN_COOL.get(px); return !(u && u > Date.n
 //   সেশন-যাচাই আগের মতোই আছে)। ব্যর্থ হলে ভদ্র কুলডাউন (৪৫-১২০সে), সফল হলে কোটার স্বাভাবিক হিসাব।
 // Transient CONNECT failures should not park a recently working node for ten
 // minutes. Never shorten an existing, stricter 403/429 or other cooldown.
-function ptunConnectFailCool(px) { const now = Date.now(), e = VIDY_OK.get(px) || {}; const recent = e.sessionProof && now - e.sessionProof < 600000; const ms = Number(process.env.PXTDC || (recent ? 45000 : 120000)); PTUN_COOL.set(px, Math.max(PTUN_COOL.get(px) || 0, now + ms)); }
+// ★ v1.34.287: কুলডাউনের মেয়াদ এখন **ব্যর্থতার ধরন** দেখে — `ECONNREFUSED/ENETUNREACH` = সত্যিই মৃত
+//   (১২০সে), কিন্তু `tun-timeout`/`sock-gate`-জাতীয় টাইমআউট বাক্স-ভিড়েরও ফল হতে পারে ⇒ ছোট (২৫সে),
+//   নইলে মাপা `cooling ১২০/১৫৬` হয়ে verified নোডগুলোই সারি থেকে সরে যেত।
+function ptunConnectFailCool(px, why) {
+  const now = Date.now(), e = VIDY_OK.get(px) || {}; const recent = e.sessionProof && now - e.sessionProof < 600000;
+  const cong = /timeout|gate|ETIMEDOUT|EAI_AGAIN|socket/.test(String(why || ''));
+  const ms = cong ? Number(process.env.PXTDCONG || 25000) : Number(process.env.PXTDC || (recent ? 45000 : 120000));
+  PTUN_COOL.set(px, Math.max(PTUN_COOL.get(px) || 0, now + ms));
+}
 function ptunDrop(px, ent) { const cur = PTUN.get(px); const t = ent || cur; if (t) { try { t.s.destroy(); } catch (e) {} } if (!ent || cur === ent) PTUN.delete(px); }
 function ptunLive(px) {
   const t = PTUN.get(px); if (!t) return null;
@@ -2390,9 +2398,12 @@ const VY_REFILL = require('./tools/vidy-runtime/active_refill.cjs').create({
     const busy = INFLIGHT_STREAM > 0 || Date.now() - LAST_STREAM_AT < 3000 || Date.now() < MMR_ACTIVE_UNTIL;
     // ★ v1.34.285 (মাপা): ready ৬–২২-এ আটকে থাকার সময়ই সবচেয়ে বেশি ট্রাফিক ⇒ busy-অবস্থায় ৬-এ নেমে
     //   পুল আর ভরত না। এখন busy-তেও ১২, আর মুক্ত-অবস্থায় ২০/৪০ (আগে ১৬/৩২)।
-    if (busy) return Number(process.env.VYPARB2 || 12);   // never race a user's playback for sockets
+    // ★ v1.34.287 (প্রোড-মাপা): `vyWhy.pre` ২,০১৮/৩,২২৪ — অর্থাৎ প্রতি চেষ্টার ৬৩% কেবল CONNECT-এই
+    //   মরে, আর ওই মৃত প্রার্থীদের একেকটির পেছনে ৩সে নষ্ট হয়। থ্রুপুটই এখানে আসল বাধা (তাই প্রস্থ
+    //   আরও বাড়ল) — প্রতি-সেকেন্ডে বেশি প্রার্থী ⇒ verified তালিকা দ্রুত বড় হয় ⇒ ready-ও।
+    if (busy) return Number(process.env.VYPARB2 || 16);   // never race a user's playback for sockets
     const ready = vidyReadyCount();
-    return ready >= 100 ? 6 : (ready >= 50 ? 20 : 40);
+    return ready >= 100 ? 12 : (ready >= 50 ? 32 : 56);
   },
   candidates: () => {
     const t = Date.now(), proven = [], site = [], fallback = [];
@@ -2419,9 +2430,9 @@ const VY_REFILL = require('./tools/vidy-runtime/active_refill.cjs').create({
         VY_COOLRC.pre++;
       } catch (e0) {
         const m0 = String((e0 && e0.message) || e0);
-        if (/sock-gate/.test(m0)) { VY_WHY.gate++; return null; }         // বাক্স-স্যাচুরেশন, নোডের দোষ নয়
+        if (/sock-gate/.test(m0)) { VY_WHY.gate = (VY_WHY.gate || 0) + 1; return null; }         // বাক্স-স্যাচুরেশন, নোডের দোষ নয়
         VY_WHY.pre = (VY_WHY.pre || 0) + 1;
-        VY_COOLRC.bad++; ptunConnectFailCool(px); return false;
+        VY_COOLRC.bad++; ptunConnectFailCool(px, m0); return false;
       } finally { if (sl0) vyFree(); }
     }
     // ★ v1.34.262: মেয়াদোত্তীর্ণ (ts > ১০মিন) নোড — আগে কখনোই আবার যাচাই হতো না (পুল-সদস্য বলে বাদ পড়ত,
@@ -2432,9 +2443,9 @@ const VY_REFILL = require('./tools/vidy-runtime/active_refill.cjs').create({
       try { await vySlot(1200); sl = true; await ptunOpen(px, 3500); VY_COOLRC.ok++; }
       catch (e) {
         const m2 = String((e && e.message) || e);
-        if (/sock-gate/.test(m2)) { VY_WHY.gate++; return null; }      // বাক্স-স্যাচুরেশন, নোডের দোষ নয়
+        if (/sock-gate/.test(m2)) { VY_WHY.gate = (VY_WHY.gate || 0) + 1; return null; }      // বাক্স-স্যাচুরেশন, নোডের দোষ নয়
         VY_WHY.rechk = (VY_WHY.rechk || 0) + 1;
-        VY_COOLRC.bad++; ptunConnectFailCool(px); return false;
+        VY_COOLRC.bad++; ptunConnectFailCool(px, m2); return false;
       } finally { if (sl) vyFree(); }
     }
     if (!vpxTake(px)) return null;
@@ -2459,7 +2470,7 @@ const VY_REFILL = require('./tools/vidy-runtime/active_refill.cjs').create({
       //   শুধু `false` ফেরত যেত ⇒ কোনো শ্রেণীবিভাগই দেখা যেত না। এখন প্রতিটি ব্যর্থতা তার আসল কারণে
       //   গণ্য হয় (আচরণ অপরিবর্তিত — শুধু হিসাব)।
       const msg = String(e && e.message);
-      if (/gate-full|sock-gate/.test(msg)) { VY_WHY.gate++; return null; }
+      if (/gate-full|sock-gate/.test(msg)) { VY_WHY.gate = (VY_WHY.gate || 0) + 1; return null; }
       const k = /quota|http_429/.test(msg) ? 'quota' : /http_5\d\d/.test(msg) ? 'srv' + msg.replace(/\D+/g, '')
         : /invalid-sources|undefined|JSON/.test(msg) ? 'badjson' : /timeout|tun-|ECONN|socket/.test(msg) ? 'conn'
           : /slow-session/.test(msg) ? 'slow' : (msg.slice(0, 18) || 'other');
