@@ -368,7 +368,24 @@ async function acResolveEmbed(embedUrl) {
    ⇒ ব্যান্ডউইথ খরচ শুধু ছোট প্লেলিস্ট (KB), ভিডিও-বাইট CDN থেকে। */
 const AC_REF = new Map();   // host → প্রয়োজনীয় Referer (মাপা: hglink-CDN রেফারার ছাড়া 404 দেয়)
 function acRefFor(url) {
-  try { return AC_REF.get(new URL(url).hostname) || (AC_BASE + '/'); } catch (e) { return AC_BASE + '/'; }
+  try {
+    const h = new URL(url).hostname;
+    if (AC_REF.has(h)) return AC_REF.get(h);
+    if (AC_MIRROR.host) return 'https://' + AC_MIRROR.host + '/';   // চলতি প্লেয়ার-হোস্টই সবচেয়ে বিশ্বাসযোগ্য
+    return AC_BASE + '/';
+  } catch (e) { return AC_BASE + '/'; }
+}
+function acRefCandidates(url) {
+  const out = [];
+  try {
+    const h = new URL(url).hostname;
+    if (AC_REF.has(h)) out.push(AC_REF.get(h));
+    if (AC_MIRROR.host) out.push('https://' + AC_MIRROR.host + '/');
+    for (const k of AC_MIRROR.known) out.push('https://' + k + '/');
+    out.push(AC_BASE + '/');
+    out.push('https://' + h + '/');
+  } catch (e) { out.push(AC_BASE + '/'); }
+  return [...new Set(out.filter(Boolean))];
 }
 const AC_TOK = new Map();
 const AC_TOK_TTL = 45 * 60 * 1000;
@@ -396,12 +413,15 @@ async function acServePlaylist(req, res, tok, origin) {
   if (!ent) { res.writeHead(404, { 'content-type': 'text/plain' }); return res.end('expired'); }
   ent.ts = Date.now();
   let up = null;
-  try {
-    const h = { 'User-Agent': AC_UA, 'Referer': acRefFor(ent.u), 'Accept': '*/*' };
-    const r = await fetch(ent.u, { headers: h, redirect: 'follow', signal: AbortSignal.timeout(16000) });
-    const ab = await r.arrayBuffer().catch(() => new ArrayBuffer(0));
-    up = { st: r.status, ct: String(r.headers.get('content-type') || ''), buf: Buffer.from(ab) };
-  } catch (e) { up = null; }
+  for (const ref of acRefCandidates(ent.u)) {
+    try {
+      const r = await fetch(ent.u, { headers: { 'User-Agent': AC_UA, 'Referer': ref, 'Accept': '*/*' }, redirect: 'follow', signal: AbortSignal.timeout(14000) });
+      const ab = await r.arrayBuffer().catch(() => new ArrayBuffer(0));
+      const cand = { st: r.status, ct: String(r.headers.get('content-type') || ''), buf: Buffer.from(ab), ref: ref };
+      if (cand.buf.slice(0, 7).toString('latin1') === '#EXTM3U') { up = cand; try { AC_REF.set(new URL(ent.u).hostname, ref); } catch (e) { } break; }
+      if (!up) up = cand;
+    } catch (e) { }
+  }
   if (!up || (up.st !== 200 && up.st !== 206) || up.buf.slice(0, 7).toString('latin1') !== '#EXTM3U') {
     res.writeHead(up && up.st ? up.st : 502, { 'content-type': 'text/plain' });
     return res.end('upstream-' + (up && up.st || 'err'));
