@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.278';
+const VERSION = '1.34.279';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -8958,7 +8958,8 @@ function mlbdPcSave() {
 }
 const MLBD_FILE_C = new Map();  // path → {toks:[], ts}              (স্থির-টোকেন)
 function mlbdNorm(s) { return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); }
-const MLBD_WL = require('./tools/mlbd-index/bounded_queue.cjs').create({limit:Math.max(1,Math.min(8,Number(process.env.MLBDC || 4))),maxQueue:24,waitMs:2500});
+// ★ v1.34.279: ৪ → ৩ (মাপা: একসাথে ৪+ অনুরোধে সাইট ৫xx-চ্যালেঞ্জ দিতে শুরু করে ⇒ টোকেন-হপ মৃত)
+const MLBD_WL = require('./tools/mlbd-index/bounded_queue.cjs').create({limit:Math.max(1,Math.min(8,Number(process.env.MLBDC || 3))),maxQueue:24,waitMs:2500});
 async function mlbdLimit(fn,ms,taskMs) { return MLBD_WL.run(fn,ms,taskMs); }
 const mlbdXcLimit = require('./tools/mlbd-index/bounded_queue.cjs').create({limit:2,maxQueue:8,waitMs:1000});
 const mlbdUltraLimit = require('./tools/mlbd-index/bounded_queue.cjs').create({limit:4,maxQueue:8,waitMs:300});
@@ -9050,10 +9051,19 @@ async function mlbdGet(u, opt) {
       },Math.max(1,BUD-(Date.now()-T0)),Math.max(1,Math.min(3500,BUD-(Date.now()-T0))));
       // HTTP challenges are normal responses, not thrown exceptions. The old
       // early return skipped the validated general-proxy fallback on 403/429.
-      if (answer && (answer.st === 403 || answer.st === 429) && Date.now()-T0 < BUD-900) {
+      // ★★ v1.34.279 (প্রোড-ম্যাপ: `http 503 …/file/BNuKAPrj… len=9699` চারটি টোকেনে, তারপর
+      //   `partial=0 resolved=0`): সাইটের লিমিটার মাঝে-মাঝে **৫xx চ্যালেঞ্জ-পাতা** (৯.৭KB) দেয়,
+      //   আর আগে কেবল ৪০৩/৪২৯-এ প্রক্সি-ফলব্যাক ছিল — ৫xx সাথে সাথে ফেরত যেত ⇒ টোকেন-হপ মৃত।
+      //   এখন ৫xx-ও একই পথ: প্রক্সি-রেস, তারপর ছোট বিরতি দিয়ে curl-পুনরায় (লিমিটার সাধারণত
+      //   সাথে সাথে ছেড়ে দেয়)। *)
+      if (answer && (answer.st === 403 || answer.st === 429 || answer.st >= 500) && Date.now()-T0 < BUD-900) {
         let h=''; try { h=new URL(u).hostname; } catch (_) {}
         if (/(^|\.)movielinkbd\.(?:com|at|app|cc|tv)$/i.test(h)) {
           const pr=await pxTry(); if (pr) { hostOK(u); return pr; }
+          if (answer.st >= 500) {
+            await new Promise(r => setTimeout(r, 300 + Math.floor(Math.random() * 250)));
+            const d2 = await curlTry(); if (d2) return d2;
+          }
         }
       }
       return answer;
