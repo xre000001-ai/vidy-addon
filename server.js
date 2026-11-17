@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.291';
+const VERSION = '1.34.292';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -27,7 +27,7 @@ const LT = { iv: new Set(), to: new Set(), on: process.env.LEAK === '1' };
 //   deadlock নয়)। ফোরগ্রাউন্ড (ইউজার-অনুরোধ চলাকালে) গেট **বাইপাস** করে ⇒ প্লেব্যাক ধীর হবে না।
 const SK = { on: process.env.SOCKS === '1', live: new Map(), liveN: 0, made: 0, madeBy: new Map(),
   waited: 0, queued: 0, dropped: 0, fg: 0 };
-const SOCKMAX = Number(process.env.SOCKMAX || 160);
+const SOCKMAX = Number(process.env.SOCKMAX || 200);   // ★ v1.34.292 (মাপা): রিফিলের কানেকশন সারি (queued ৪৫–১৮৭, waited ২৩,০৬২) দেখাল বাক্স-ছাদই ভিড়ের আসল কারণ; loopLag তখনো ০ (মানে হেডরুম আছে)
 const FG_CONTEXT = new (require('async_hooks').AsyncLocalStorage)();
 // v1.34.259 (incident): background proxy probing must never saturate the box. When the event loop lags,
 // every proxy connect timer fires late => healthy proxies are reported as "tun-timeout" and get pruned
