@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.294';
+const VERSION = '1.34.295';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -855,7 +855,7 @@ const MM_DISCOVERY = require('./tools/vidy-runtime/discovery.cjs').create({
   urls: [
     'https://raw.githubusercontent.com/proxmint/free-proxy-list/main/proxies/http.txt',
     'https://raw.githubusercontent.com/stormsia/proxy-list/main/http.txt',
-    'https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&protocol=http&proxy_format=ipport&format=text&timeout=5000&supports_https=true',
+    'https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&protocol=http&proxy_format=ipport&format=text&timeout=2000&supports_https=true',
     'https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt',
     'https://raw.githubusercontent.com/Zaeem20/FREE_PROXIES_LIST/master/http.txt'
   ],
@@ -1015,7 +1015,7 @@ async function enrichPool() {
                    // ★ v1.25.6: proxifly-http বাদ (মাপা ৩.৩%, মিডিয়ান ৩.৯সে)
                    // ★ v1.18.5 (ইউজার: "Proxyscrape er API use koro") — v4 ফ্রি-লিস্ট API, HTTPS-সক্ষম ও দেশভিত্তিক
                    'https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&protocol=http&proxy_format=ipport&format=text&timeout=5000',
-                   'https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&protocol=http&proxy_format=ipport&format=text&timeout=5000&supports_https=true',
+                   'https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&protocol=http&proxy_format=ipport&format=text&timeout=2000&supports_https=true',
                    'https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&protocol=http&proxy_format=ipport&format=text&timeout=5000&country=us',
                    'https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&protocol=http&proxy_format=ipport&format=text&timeout=5000&country=in',
                    'https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&protocol=http&proxy_format=ipport&format=text&timeout=5000&country=de',
@@ -2277,7 +2277,11 @@ const VPX_USED = new Map();      // px -> {n, ts}
 // ★★★ v1.26.0 (মাপা): **সিড আর সোর্সের কোটা আলাদা বাকেট।**
 //   একই নোডে ১টি `/seed` + ১৪টি `/sources` ⇒ কোনো ৪২৯ নেই; কিন্তু `/seed` লুপে ৫–৬টি ২০০-র পর ৪২৯।
 //   আগে একটাই বাকেট (৫) ছিল ⇒ ফ্যান-আউট করার সঙ্গে সঙ্গেই নিজের লেজারই "quota" বলে আটকে দিত।
-const VUSED = Number(process.env.PXVUSED || 5);          // সিড/উইন্ডো (মাপা)
+// ★★★ v1.34.295 (আজ লোকালে সত্যিই মাপা, ৮টি যাচাই-করা নোডে `/seed` একটানা ডেকে):
+//   প্রমাণ — ২০০ ২০০ ২০০ ২০০ ২০০ ২০০ ২০০ ২০০ ৪২৯ ⇒ একটি ভালো নোড **৭–৯ সেশন** দেয়, তারপর ৪২৯;
+//   এবং ৯০সে পরেও ফেরেনি (আমাদের ১৮০সে-উইন্ডো ধারণাটাই সঠিক দিক)। আগের সীমা ছিল ৫ ⇒ প্রতিটি
+//   নোডের ২–৪ সেশন প্রতিবারই অপচয় হতো, অথচ ২৭টি লেনের (৯ সার্ভার × ৩) জন্য ঠিক এই কোটা-ই দরকার।
+const VUSED = Number(process.env.PXVUSED || 7);          // সিড/উইন্ডো (মাপা ৭–৯, নিরাপদে ৭)
 const VUSEC = Number(process.env.PXVUSEC || 26);         // মোট কল/উইন্ডো (সোর্স সহ; মাপা ≥১৪ নিরাপদে)
 const VWIN = Number(process.env.PXVWIN || 180000);       // বার্স্টে ৪২৯ খেলে নোড ২–৩ মিনিট বন্ধ থাকে
 const VPX_SEED = new Map();                              // px -> {n, ts} সিড-বাকেট
@@ -2377,7 +2381,7 @@ const VY_DISCOVERY = require('./tools/vidy-runtime/discovery.cjs').create({
   urls: [
     'https://raw.githubusercontent.com/proxmint/free-proxy-list/main/proxies/http.txt',
     'https://raw.githubusercontent.com/stormsia/proxy-list/main/http.txt',
-    'https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&protocol=http&proxy_format=ipport&format=text&timeout=5000&supports_https=true',
+    'https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&protocol=http&proxy_format=ipport&format=text&timeout=2000&supports_https=true',
     'https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt',
     'https://raw.githubusercontent.com/Zaeem20/FREE_PROXIES_LIST/master/http.txt',
     // ★ v1.34.285 (লোকাল-মাপা): উপরের ৫টি প্রতি-সোর্স ফলন — proxmint ৫১৫, stormsia ২৮৭, proxyscrape ৩৮১,
