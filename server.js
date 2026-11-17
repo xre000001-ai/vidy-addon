@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.280';
+const VERSION = '1.34.281';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -9298,7 +9298,8 @@ async function mlbdRng(u, ms) { try { const x = await hdProbe(u, Math.max(1500, 
 // ★ v1.27.12: **মাপা-হোস্ট** — FSL / r2-presigned / workers.dev তিনটিই ২০৬-প্রমাণিত (রিসার্চ-ম্যাট্রিক্স)।
 //   তাই পুরো-সার্ভারে ১২ সোর্স একসাথে চলার চাপে আমাদের প্রোব-টাইমআউট হলে কার্ড ফেলে দেওয়া হয় না
 //   (প্রোব-ব্যর্থতা ≠ Range-অনুপস্থিতি)। অচেনা হোস্টে প্রমাণ ছাড়া কার্ড **নেই**।
-const MLBD_RANGE_TRUST = /^(?:[a-z0-9.-]*\.)?(?:fsldownload\.com|r2\.cloudflarestorage\.com|[a-z0-9.-]*\.workers\.dev)$/i;
+// ★ v1.34.281: `fsl.movielink.tv` (২০৬-প্রমাণিত, Range-নেটিভ) ও movielink-এর নিজের FSL-হোস্ট família যোগ
+const MLBD_RANGE_TRUST = /^(?:[a-z0-9.-]*\.)?(?:fsldownload\.com|r2\.cloudflarestorage\.com|[a-z0-9.-]*\.workers\.dev|fsl\.movielink\.tv|fsl\.[a-z0-9.-]*movielink[a-z0-9.-]*)$/i;
 function mlbdTrusted(u) { try { return MLBD_RANGE_TRUST.test(new URL(u).hostname); } catch (e) { return false; } }
 // ★★ v1.34.273 (প্রোড-ম্যাপ: `hop nest=1 hub=0 ic=0 got=0/0/0/0/0/0` — ফাইল-পেজ ঠিক, কিন্তু নেস্টেড
 //   পেজ থেকে শুধু **fsldownload আর r2** খোঁজা হত) — মিরর-পেজে ওই দুটো ছাড়াও pixeldrain /
@@ -9306,7 +9307,16 @@ function mlbdTrusted(u) { try { return MLBD_RANGE_TRUST.test(new URL(u).hostname
 //   সেকেন্ড-সার্ভার দেয় (ইউজার-শর্ত: Watch/Pixeldrain/GDFlix থাকবে)। এখন একটাই তালিকা-তৈরি-ফাংশন;
 //   প্রতিটি লিংক `pick`-এ যায় ⇒ ২০৬-প্রমাণ ছাড়া (বা মাপা-trust-হোস্ট ছাড়া) কার্ড হয় না।
 const MLBD_LINK_PATS = [
-  [/https?:\/\/fsldownload\.com\/d\/[A-Za-z0-9._-]+/gi, 'FSL'],
+  // ★★ v1.34.281 (মাপা, ১৬-১১-২০২৬): FSL-এর ডাউনলোড-হোস্ট এখন **fsl.movielink.tv/d/<token>**
+  //   (`fsldownload.com` নয়)। প্রমাণ: `Range 0-1023 → 206, content-type video/x-matroska,
+  //   content-range bytes 0-1023/1842103304` — অর্থাৎ সত্যিকারের সিকেবল স্ট্রিম, অথচ পুরোনো
+  //   প্যাটার্নে কোনোদিন মিলত না ⇒ `got=0/0/0/1/0/0` (শুধু XCloud) ⇒ ১ কার্ড।
+  [/https?:\/\/fsl\.[a-z0-9.-]+\/d\/[A-Za-z0-9._-]+/gi, 'FSL'],
+  [/https?:\/\/[a-z0-9.-]*fsldownload\.[a-z.]+\/d\/[A-Za-z0-9._-]+/gi, 'FSL'],
+  // সাইটের vikingfile / buzzheavier মিরর (আগে চেনাই যেত না ⇒ বাটন থাকলেও কার্ড হত না)
+  [/https?:\/\/vikingfile\.com\/[A-Za-z0-9/_.-]+/gi, 'VikingFile'],
+  [/https?:\/\/buzzheavier\.com\/[A-Za-z0-9]+/gi, 'BuzzHeavier'],
+  [/https?:\/\/video-downloads\.googleusercontent\.com\/[^"'\s<>]+/gi, 'Google'],
   [/https?:\/\/[a-z0-9.-]+\.r2\.cloudflarestorage\.com\/[^"'\s<>]+/gi, 'FSL'],
   [/https?:\/\/fsl\.[a-z0-9-]+\.workers\.dev\/[^"'\s<>]+/gi, 'FSL Worker'],
   [/https?:\/\/pixeldrain\.com\/(?:u|api\/file)\/[A-Za-z0-9]+/gi, 'Pixeldrain'],
@@ -9316,6 +9326,25 @@ const MLBD_LINK_PATS = [
   [/https?:\/\/(?:gdflix|gdlink)\.[a-z.]+\/file\/[A-Za-z0-9_-]+/gi, 'GDFlix'],
   [/https?:\/\/[a-z0-9.-]+\.r2\.dev\/[^"'\s<>]+?\.(?:mkv|mp4)(?:\?[^"'\s<>]*)?/gi, 'R2']
 ];
+// ★★ v1.34.281: ফাইল-পেজের প্রতিটি মিরর-বাটন `data-host="…"` + `href="/file/<token>"`।
+//   আগে `nested_pages.choose` **সর্বোচ্চ ২টি** পেজ বেছে নিত (mp4-entry/fsl আগে) ⇒ instantcloud,
+//   oneclick, vikingfile, buzzheavier, gphotos সব বাদ পড়ত ⇒ এক-একটি টোকেনে এক-একটি কার্ড।
+//   এখন বাটনগুলোর নিজের `data-host` পড়ে দরকারি সব পেজ (সর্বোচ্চ MLBDBTN) খোলা হয়।
+const MLBD_BTN_ORDER = ['oneclick', 'mp4-entry', 'fsl', 'instantcloud', 'mirror-servers-entry', 'mirror-vikingfile', 'mirror-buzzheavier', 'gphotos-entry'];
+const MLBD_BTN_SKIP = /telegram|promo/i;
+function mlbdButtons(html) {
+  const out = []; const seen = new Set();
+  for (const tag of (String(html || '').match(/<a\b[^>]*>/g) || [])) {
+    const dh = (tag.match(/\bdata-host\s*=\s*["']([^"']+)["']/i) || [])[1] || '';
+    if (!dh || MLBD_BTN_SKIP.test(dh)) continue;
+    const href = (tag.match(/\bhref\s*=\s*["']([^"']+)["']/i) || [])[1] || '';
+    if (!/^\/file\/[A-Za-z0-9_-]{10,}$/.test(href) || seen.has(href)) continue;
+    seen.add(href);
+    out.push({ host: dh.toLowerCase(), path: href });
+  }
+  const rank = h => { const i = MLBD_BTN_ORDER.indexOf(h); return i < 0 ? 50 : i; };
+  return out.sort((a, b) => rank(a.host) - rank(b.host));
+}
 function mlbdLinks(html, base) {
   const b = String(html || '').replace(/&amp;/g, '&');
   const out = []; const seen = new Set();
@@ -9344,7 +9373,9 @@ async function mlbdOne(base, fileUrl, dl, labQ, labTxt) {
   if (DBG) console.error('[mlbd] file ' + String(fileUrl).slice(-14) + ' st=' + pg.st + ' len=' + H.length + ' name=' + name.slice(0, 40));
   const size = ((H.match(/fa-database[^>]*><\/i>\s*([^<]+)/) || [])[1] || '').trim();
   const hub = (H.match(/https:\/\/hubcloud\.[a-z.]+\/drive\/[A-Za-z0-9]+/) || [])[0] || '';
-  const nestedPaths=require('./tools/mlbd-index/nested_pages.cjs').choose(H);
+  const _btns=mlbdButtons(H);
+  const _btnPaths=(_btns.length?_btns.map(x=>x.path):require('./tools/mlbd-index/nested_pages.cjs').choose(H)).slice(0,Math.max(1,Number(process.env.MLBDBTN||4)));
+  const nestedPaths=_btnPaths;
   const nested=nestedPaths[0]||'';
   const nested2=nestedPaths.slice(1);
   const ic = (H.match(/https:\/\/instantcloud\.org\/file\/[A-Za-z0-9]+/) || [])[0] || '';
@@ -9376,7 +9407,7 @@ async function mlbdOne(base, fileUrl, dl, labQ, labTxt) {
     // The site commonly puts R2 and FSL Worker on different nested pages.
     // Resolve both independently; one success must not suppress the other.
     // At most two pages per token; mlbdLimit still bounds total requests.
-    const pages=await Promise.all([nested].concat(nested2).map(async nx=>{
+    const pages=await Promise.all(nestedPaths.map(async nx=>{
       const out=[];
       try {
         if (!nx || left()<1500) return out;
@@ -9486,7 +9517,7 @@ async function mlbdOne(base, fileUrl, dl, labQ, labTxt) {
   await Promise.race([Promise.all(jobs),baseGrace,new Promise(r=>{timer=setTimeout(r,Math.max(1,Math.min(4500,dl-Date.now()-1000)))})]);
   done=true;clearTimeout(timer);clearTimeout(baseTimer);
   const groups=allGroups.map(x=>x.slice());
-  diag('mlbd', 'hop nest=' + (nested ? 1 : 0) + ' hub=' + (hub ? 1 : 0) + ' got=' + groups.map(g => g.length).join('/') + ' st=' + pg.st + ' len=' + H.length);
+  diag('mlbd', 'hop btn=' + _btns.map(b => b.host).join(',') + ' nest=' + nestedPaths.length + ' hub=' + (hub ? 1 : 0) + ' got=' + groups.map(g => g.length).join('/') + ' st=' + pg.st + ' len=' + H.length);
   if (DBG) console.error('[mlbd1] ' + String(fileUrl).slice(-12) + ' nest=' + (nested ? 1 : 0) + ' hub=' + (hub ? 1 : 0) + ' ic=' + (ic ? 1 : 0) + ' got=' + groups.map(g => g.length).join('/') + ' left=' + left() + 'ms');
   const mirrors = [];
   for (const g of groups) for (const m of g) if (!mirrors.some(x => x.u === m.u)) mirrors.push(m);
