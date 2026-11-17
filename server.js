@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.282';
+const VERSION = '1.34.283';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -8957,7 +8957,17 @@ function mlbdPcSave() {
   } catch (e) { }
 }
 const MLBD_FILE_C = new Map();  // path → {toks:[], ts}              (স্থির-টোকেন)
-function mlbdNorm(s) { return String(s || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); }   // v1.34.282: উচ্চারণ-চিহ্ন-ভাঁজ (Léon→leon)
+// ★★ v1.34.283 (মাপা, Léon tt0110413): সাইটের শিরোনাম **HTML-এনকোডেড** — `L&eacute;on: The Professional
+//   (1994)`। আমাদের নরমালাইজ সেটাকে `l eacute on the professional` বানাত ⇒ পরিচয়-মিল কখনো হত না
+//   (সার্চ ৮টি আইটেম ফেরাত, `picks=0` ⇒ ০ কার্ড)। এখন সাধারণ Latin-1 এন্টিটি + সংখ্যাসূচক এন্টিটি ডিকোড হয়।
+const MLBD_ENT = { eacute: 'é', egrave: 'è', ecirc: 'ê', euml: 'ë', aacute: 'á', agrave: 'à', acirc: 'â', auml: 'ä', atilde: 'ã', aring: 'å', iacute: 'í', igrave: 'ì', icirc: 'î', iuml: 'ï', oacute: 'ó', ograve: 'ò', ocirc: 'ô', ouml: 'ö', otilde: 'õ', uacute: 'ú', ugrave: 'ù', ucirc: 'û', uuml: 'ü', ntilde: 'ñ', ccedil: 'ç', szlig: 'ß', oslash: 'ø', aring_: 'å', aelig: 'æ', oelig: 'œ', apos: "'", quot: '"', amp: '&', lt: '<', gt: '>', nbsp: ' ', ndash: '-', mdash: '-', hellip: '...' };
+function mlbdEnt(x) {
+  return String(x || '')
+    .replace(/&#x([0-9a-f]+);/gi, (m2, h) => { try { return String.fromCharCode(parseInt(h, 16)); } catch (e) { return m2; } })
+    .replace(/&#(\d+);/g, (m2, d) => { try { return String.fromCharCode(parseInt(d, 10)); } catch (e) { return m2; } })
+    .replace(/&([a-z][a-z0-9]{1,10});/gi, (m2, n) => (MLBD_ENT[String(n).toLowerCase()] !== undefined ? MLBD_ENT[String(n).toLowerCase()] : m2));
+}
+function mlbdNorm(s) { return mlbdEnt(s).normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); }   // v1.34.282: উচ্চারণ-চিহ্ন-ভাঁজ (Léon→leon)
 // ★ v1.34.279: ৪ → ৩ (মাপা: একসাথে ৪+ অনুরোধে সাইট ৫xx-চ্যালেঞ্জ দিতে শুরু করে ⇒ টোকেন-হপ মৃত)
 const MLBD_WL = require('./tools/mlbd-index/bounded_queue.cjs').create({limit:Math.max(1,Math.min(8,Number(process.env.MLBDC || 3))),maxQueue:24,waitMs:2500});
 async function mlbdLimit(fn,ms,taskMs) { return MLBD_WL.run(fn,ms,taskMs); }
@@ -9167,7 +9177,7 @@ async function mlbdSearch(base, q, ms) {
     const blk = m[4] || '';
     const title = ((blk.match(/mlbd-lm-title">([^<]+)/) || [])[1] || (blk.match(/alt="([^"]+)"/) || [])[1] || '').trim();
     const year = (title.match(/\((\d{4})\)/) || [])[1] || '';
-    items.push({ path: path, title: title.replace(/\([^)]*\)/g, ' ').trim(), year: year, category: m[2].toLowerCase(), type: /series|anime|drama/i.test(m[2]) ? 'series' : 'movie' });
+    items.push({ path: path, title: mlbdEnt(title).replace(/\([^)]*\)/g, ' ').trim(), year: year, category: m[2].toLowerCase(), type: /series|anime|drama/i.test(m[2]) ? 'series' : 'movie' });
   }
   // ★★ v1.34.268 (প্রোড-মাপা): `movielinkbd.com/search?q=…` ৩০২ হয়ে **ল্যান্ডিং-পেজ** (`/?q=…`)
   //   ফেরে — ৪০টি জনপ্রিয় আইটেম, সার্চ-ফল নয়। `valid()` কেবল `/movie/` লিংক দেখে বলে ওটা
