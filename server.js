@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.300';
+const VERSION = '1.34.301';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -10006,6 +10006,29 @@ function hdProbeD(u, ms) {
       return { ok: (r.status === 206 || r.status === 200) && !/text\/html/i.test(ct) && (!!cr || cl > 2000), ct: ct, cr: cr, st: r.status };
     }).catch(() => ({ ok: false, ct: '', cr: '', st: 0 }));
 }
+// ★★ v1.34.301 (প্রোড-মাপা, .300-এর পরেও): hd-কার্ডের `*.workers.dev` লিংক প্রমাণ-বিহীন ছিল —
+//   `hdProbe` ইচ্ছাকৃতভাবে সাথে সাথে `{ok:true, unverified:true}` ফেরত দেয় (কার্ড-তৈরি দ্রুত রাখতে),
+//   তাই R2-বাকেটের `403 text/html` (gzip HTML) লিংকও কার্ড হয়ে যেত। মাপা (.300 প্রোড, hd-only):
+//   TDK ২ কার্ডের ১টি · Oppenheimer ৪-এর ১টি · Inception ৫-এর ৪টি · Interstellar ৮-এর ৪টি = ২০-এর ১০টি
+//   অচল ৪০৩। এখানে workers.dev-এর জন্য **একবার সত্যিকারের GET** (Range নয় — মাপা: Range-প্রুফ এখানে
+//   মিথ্যা-সবুজ দেয়) ⇒ ২০০/২০৬ + non-html তবেই কার্ড। pixeldrain-এর মতো প্রমাণিত পথ আগে রাখা হয়।
+function hdWkGate(u, ms) {
+  return new Promise(resolve => {
+    let fin = false; const done = v => { if (!fin) { fin = true; resolve(v); } };
+    try {
+      const req = https.get(u, { headers: { 'User-Agent': UA, Connection: 'close' }, timeout: Math.max(900, Math.min(3500, ms || 2500)) }, res => {
+        const ct = String(res.headers['content-type'] || '').toLowerCase();
+        const cr = String(res.headers['content-range'] || '');
+        const ok = (res.statusCode === 200 || res.statusCode === 206) && !/text\/|html|xml/i.test(ct);
+        try { res.destroy(); } catch (e) { }
+        try { diag('hub', 'wk-gate ' + res.statusCode + ' ' + ct.slice(0, 18) + (ok ? ' ok' : ' dead')); } catch (e) { }
+        done({ ok: ok, ct: ct, cr: cr, st: res.statusCode });
+      });
+      req.on('timeout', () => { try { req.destroy(); } catch (e) { } done({ ok: false, ct: '', cr: '', st: 0 }); });
+      req.on('error', () => done({ ok: false, ct: '', cr: '', st: 0 }));
+    } catch (e) { done({ ok: false, ct: '', cr: '', st: 0 }); }
+  });
+}
 async function hdDrive(driveUrl, ms) { // hubcloud drive → gamerxyt → প্রার্থী লিঙ্ক + আসল ফাইলনাম
   const p1 = await hdText(driveUrl, HD_BASE + '/', ms);
   const nm = (String(p1.t).match(/<title>([^<]*)<\/title>/) || [])[1] || '';
@@ -10569,7 +10592,7 @@ async function hdStreams(imdb, title, type, s, e, origin, maxh) { // v1.17.49: �
       if (!cands.length) { if (DBG) console.error('[hd] no-cands @' + (Date.now() - T0) + 'ms'); return []; }
       // ★ v1.17.49 (মাপা: Dorothy ৬.৬সে): সব প্রার্থী একসাথে প্রোব করলে pixeldrain-গেট (PD_MAX=6, m4u-ও
       //   ব্যবহার করে) লাইনে দাঁড়িয়ে বাজেট খেয়ে ফেলে। তাই আগে **s3/workers** (গেট-মুক্ত, দ্রুত), পরে pd।
-      const prio = c => (c.k === 's3' ? 0 : c.k === 'wk' ? 1 : 2);
+      const prio = c => (c.k === 's3' ? 0 : c.k === 'pd' ? 1 : 2);   // ★ v1.34.301: pixeldrain আগে, workers.dev পরে (মাপা: pd ২০৬ video/matroska, wk ৪০৩)
       const uniqC = []; const seenU = new Set();
       // ★ v1.17.49: **রেজোলিউশন-আগে** (পোস্টের ক্রম ৪৮০p-দিয়ে-শুরু ⇒ আগে ২১৬০p বাদ পড়ত), হোস্ট-ধরন tiebreak
       for (const c of cands.slice().sort((a, b) => ((b.h || 0) - (a.h || 0)) || (prio(a) - prio(b)))) {
@@ -10582,7 +10605,9 @@ async function hdStreams(imdb, title, type, s, e, origin, maxh) { // v1.17.49: �
         if (left() < 800) return false;
         const pr = c.k === 'pd'
           ? await pdProbe(c.u).then(x => ({ ok: !!(x && x.alive), sz: (x && x.total) || 0, nm: (x && x.name) || '' }))
-          : await hdProbe(c.u, Math.min(2800, left())).then(x => ({ ok: !!x.ok, sz: +((String(x.cr || '').match(/\/(\d+)\s*$/) || [])[1] || 0), nm: '' }));
+          : c.k === 'wk'
+            ? await hdWkGate(c.u, Math.min(2500, left())).then(x => ({ ok: !!x.ok, sz: 0, nm: '' }))   // ★ v1.34.301: প্রমাণহীন-সবুজ নয় — সত্যিকারের GET
+            : await hdProbe(c.u, Math.min(2800, left())).then(x => ({ ok: !!x.ok, sz: +((String(x.cr || '').match(/\/(\d+)\s*$/) || [])[1] || 0), nm: '' }));
         if (pr.ok) { c.sz = pr.sz || 0; if (pr.nm && !c.fn) c.fn = hdFileOf(pr.nm).fn; proven.push(c); }
         return pr.ok;
       };
