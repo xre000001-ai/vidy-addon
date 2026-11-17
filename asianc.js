@@ -311,10 +311,13 @@ async function acResolveEmbedTry(embedUrl) {
   let player = await acGet(purl, 11000, embedUrl);
   if (!player) return '';
   let got = acUrlFromHtml(player);
-  if (got) return got;
+  if (got) { try { AC_REF.set(new URL(got).hostname, new URL(purl).origin + '/'); } catch (e) { } return got; }
   // spinner-পেজ হলে মিরর-হোস্টে গিয়ে আবার
   const followed = await acFollowSpinner(player, purl);
-  if (followed) { got = acUrlFromHtml(followed); if (got) return got; }
+  if (followed) {
+    got = acUrlFromHtml(followed);
+    if (got) { try { AC_REF.set(new URL(got).hostname, 'https://' + (AC_MIRROR.host || new URL(purl).hostname) + '/'); } catch (e) { } return got; }
+  }
   return '';
 }
 
@@ -363,6 +366,10 @@ async function acResolveEmbed(embedUrl) {
      কার্ড → /acs/p/<tok>/p.m3u8  (আমাদের রিলে, সঠিক MIME, CORS)
      মাস্টার হলে ভ্যারিয়েন্টও রিলে দিয়ে; মিডিয়া-প্লেলিস্টের সেগমেন্ট **সরাসরি CDN**
    ⇒ ব্যান্ডউইথ খরচ শুধু ছোট প্লেলিস্ট (KB), ভিডিও-বাইট CDN থেকে। */
+const AC_REF = new Map();   // host → প্রয়োজনীয় Referer (মাপা: hglink-CDN রেফারার ছাড়া 404 দেয়)
+function acRefFor(url) {
+  try { return AC_REF.get(new URL(url).hostname) || (AC_BASE + '/'); } catch (e) { return AC_BASE + '/'; }
+}
 const AC_TOK = new Map();
 const AC_TOK_TTL = 45 * 60 * 1000;
 const AC_ORI = { last: '' };
@@ -388,7 +395,13 @@ async function acServePlaylist(req, res, tok, origin) {
   const ent = AC_TOK.get(tok);
   if (!ent) { res.writeHead(404, { 'content-type': 'text/plain' }); return res.end('expired'); }
   ent.ts = Date.now();
-  const up = await acBuf(ent.u, 16000, null).catch(() => null);
+  let up = null;
+  try {
+    const h = { 'User-Agent': AC_UA, 'Referer': acRefFor(ent.u), 'Accept': '*/*' };
+    const r = await fetch(ent.u, { headers: h, redirect: 'follow', signal: AbortSignal.timeout(16000) });
+    const ab = await r.arrayBuffer().catch(() => new ArrayBuffer(0));
+    up = { st: r.status, ct: String(r.headers.get('content-type') || ''), buf: Buffer.from(ab) };
+  } catch (e) { up = null; }
   if (!up || (up.st !== 200 && up.st !== 206) || up.buf.slice(0, 7).toString('latin1') !== '#EXTM3U') {
     res.writeHead(up && up.st ? up.st : 502, { 'content-type': 'text/plain' });
     return res.end('upstream-' + (up && up.st || 'err'));
@@ -594,7 +607,7 @@ async function acStreams(tmdbId, type, s, e, origin, opt) {
         url: cardUrl,
         title: txt,
         description: txt,
-        behaviorHints: { filename: l.kind === 'hls' ? 'asianc.m3u8' : 'asianc.mp4', notWebReady: true, proxyHeaders: { request: { 'User-Agent': AC_UA, 'Referer': AC_BASE + '/' } } },
+        behaviorHints: { filename: (_looksPl ? 'asianc.m3u8' : 'asianc.mp4'), notWebReady: true, proxyHeaders: { request: { 'User-Agent': AC_UA, 'Referer': acRefFor(l.url) } } },
         bingeGroup: 'acs|' + acSlugify(title) + '::' + (l.label || 'Standard')
       });
     }
