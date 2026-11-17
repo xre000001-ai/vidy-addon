@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.299';
+const VERSION = '1.34.300';
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -11763,6 +11763,10 @@ async function m4uTdServe(req, res, target) {
     if (m4uHubHost(host)) {
       const hc = M4U_TD_USED.get('hub:' + target);
       let f = (hc && Date.now() - hc.ts < 4 * 60e3) ? hc.final : '';   // v1.34.41: ৪মিনিটের বেশি পুরনো হলে m4uHubFinal দিয়ে revalidate
+      // ★ v1.34.300: lazy-পথে আগে **pixeldrain** (HUB_PD-তে drive-এর id থাকে; cached — বাড়তি নেটওয়ার্ক নয়),
+      //   তারপর signed-worker পথ। মাপা: hd-কার্ডের যেটুকু সত্যিই চলে (২০৬ video/x-matroska) তার সবই
+      //   pixeldrain, আর signed worker-গুলো `text/html 403`। ফলে দেখতে-ভালো-কিন্তু-অচল কার্ড আর যাবে না।
+      if (!f && process.env.HUBPDFIRST !== '0') { try { f = await m4uHubPdFinal(target).catch(() => ''); } catch (e2) { } }
       if (!f) { f = await m4uHubFinal(target).catch(() => ''); if (f) M4U_TD_USED.set('hub:' + target, { ts: Date.now(), final: f }); }   // v1.34.38: proof-সহ
       if (!f) { try { diag('hub', 'serve-no-fsl tgt=' + String(target).slice(-24)); } catch (e) { } return okJson(502, { error: 'hub-no-fsl' }); }
       if (m4uDirectOk(f)) { res.writeHead(302, { location: f, 'cache-control': 'no-store', 'access-control-allow-origin': '*' }); return res.end(); } // v1.34.31: সরাসরি
@@ -12104,6 +12108,22 @@ async function m4uHubFinal(drive) {   // serve-পথের জন্য: পু
   const e = HUB_R2.get(drive);
   // ★ v1.34.42 (মাপা-ছিদ্র): তাজা scrape-এর ts=এখন ⇒ বয়স-শর্তে proof এড়িয়ে মৃত-bucket-এর তাজা presigned-ও 302 হচ্ছিল।
   //   এখন proof-সময় (e.pf) আলাদা: proof না-হওয়া/৪মিনিটের পুরনো-proof ⇒ আগে proof, তারপরই 302।
+  // ★★ v1.34.300 (প্রোড-মাপা: hd-only Inception ৫ কার্ডের ৫টিই `workers.dev` signed আর সবগুলো
+  //   `403 text/html` — Range-probe এখানে সত্যিই চলে না)। তাই signed-worker কার্ড serve করার আগে
+  //   **একবার GET** (Range নয়) — সেটাই প্লেবিলিটির আসল প্রশ্ন; আর ব্যর্থ হলে নিচের pixeldrain
+  //   ফলব্যাক (যা ২০৬ video/matroska প্রমাণিত) আগে-ই আছে, কিন্তু `f` ফেরত যাওয়ায় সেটা আর চলত না।
+  if (e && e.pf && /workers\.dev/.test(String(f)) && Date.now() - e.pf > 60e3) {
+    const g = await fetch(f, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(5000) }).catch(() => null);
+    if (g && (g.status === 200 || g.status === 206)) { try { g.body && g.body.cancel && g.body.cancel(); } catch (x) { } e.pf = Date.now(); return f; }
+    if (g && g.status >= 400) {
+      try { diag('hub', 'signed-worker-' + g.status + ' drv=' + String(drive).slice(-18)); } catch (x) { }
+      HUB_R2.delete(drive);
+      const pd0 = await m4uHubPdFinal(drive).catch(() => '');
+      if (pd0) return pd0;
+      HUB_DEAD.set(drive, Date.now());
+      return '';
+    }
+  }
   if (!e || !e.pf || Date.now() - e.pf > 4 * 60e3) {
     if (await m4uProof(f)) { HUB_GX_DEAD = 0; if (e) { e.pf = Date.now(); e.ts = Date.now(); } return f; }
     HUB_R2.delete(drive);
@@ -16784,13 +16804,18 @@ function getSources(tmdbId, type, s, e, title, cfg, titleP, requestStart) { // t
     try {
       // v1.14.2 অভিযোজিত-অপেক্ষা: স্ক্যান-দেরি-হলে-সাজসজ্জার-বাড়তি-অপেক্ষা-আর-যোগ-হয়-না (মোট-স্ক্যান+সাজ ~৪.৬সে-ছোঁয়-না);
       // দ্রুত-স্ক্যানে-পুরো ১.৫সে-বেড়ি থাকে (সাধারণত-মেটা-ইতিমধ্যে-এসে-গেছে — তাৎক্ষণিক-ফেরত)
-      const metaWait = Math.max(0, Math.min(1500, 4600 - (Date.now() - t0)));
+      const metaWait = Math.max(0, Math.min(Number(process.env.VMETAW || 600), Number(process.env.VMETAWMAX || 900) - (Date.now() - t0)));
       const _mT=Date.now();
       const [em, olc] = await Promise.all([ // দুই-মেটা-একসাথে — worst-case +১.৫সে (স্ক্যান-বাজেটের-সাথে-মসৃণ)
         Promise.race([epMetaP.catch(() => null), new Promise(r => setTimeout(() => r(null), metaWait))]),
         raceVal(olP, metaWait) // আসল-ভাষা-নাম (hi→Hindi, bn→Bengali, ta→Tamil…)
       ]);
       if (em || olc) EXT0 = { year: (em && em.year) || '', epT: (em && em.epT) || '', audio: langName(olc) || '' };
+      // ★★ v1.34.300 (ইউজার: "vidy er timing ta o dhoro"): এখানেই VIDY-এর টাইমিং লুকিয়ে ছিল —
+      //   `metaWait` = max(0, min(1500, 4600-এলাপ্সড)) ⇒ স্ক্যান ৪.৬সে-র আগে শেষ হলে **অতিরিক্ত ১.৫সে**
+      //   শুধু মেটা-ডেটার (বছর/এপি-নাম/অডিও) জন্য বসে থাকা, অথচ মেটা সাধারণত আগেই ক্যাশে থাকে। মাপা
+      //   প্রথম-ট্যাপ ৯.৫–১০সে-র মধ্যে এই ১.৫সে-ই সবচেয়ে সস্তা বাদ-দেওয়া। এখন ৬০০ms (+ শুধু মেটা-নেই
+      //   হলে অতিরিক্ত ২০০ms) — কার্ডের সংখ্যা বদলায় না, শুধু অপেক্ষা কমে।
       if (DBG) console.error('[t1g] metaWait=' + metaWait + ' actual=' + (Date.now() - _mT) + 'ms em=' + !!em + ' ol=' + !!olc);
     } catch (eE) {}
     // মার্জ: কোনো-ক্রস-সার্ভার-ডিউপ-নয় — প্রতিটা-সার্ভারের-প্রতিটা-স্ট্রিম-কার্ড-থাকবে;
