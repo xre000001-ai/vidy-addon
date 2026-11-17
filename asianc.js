@@ -365,12 +365,16 @@ async function acResolveEmbed(embedUrl) {
    ⇒ ব্যান্ডউইথ খরচ শুধু ছোট প্লেলিস্ট (KB), ভিডিও-বাইট CDN থেকে। */
 const AC_TOK = new Map();
 const AC_TOK_TTL = 45 * 60 * 1000;
+const AC_ORI = { last: '' };
 function acRelayUrl(origin, u) {
   try {
+    const base = String(origin || AC_ORI.last || '').replace(/\/+$/, '');
+    if (!base) return u;                 // origin অজানা ⇒ রিলে নয়, সরাসরি CDN URL (relative কখনো নয়)
+    if (!AC_ORI.last && origin) AC_ORI.last = base;
     const tok = require('crypto').randomBytes(12).toString('base64url');
     AC_TOK.set(tok, { u: u, ts: Date.now() });
     if (AC_TOK.size > 900) for (const k of [...AC_TOK.keys()].slice(0, 400)) AC_TOK.delete(k);
-    return String(origin || '').replace(/\/+$/, '') + '/acs/p/' + tok + '/p.m3u8';
+    return base + '/acs/p/' + tok + '/p.m3u8';
   } catch (e) { return u; }
 }
 function acAbsolute(lines, base) {
@@ -510,6 +514,7 @@ async function acStreams(tmdbId, type, s, e, origin, opt) {
 
   const _t0 = Date.now();
   try {
+    if (origin) AC_ORI.last = String(origin).replace(/\/+$/, '');
     // ১) slug: সরাসরি শিরোনাম-ভিত্তিক অনুমান আগে (দ্রুত), না মিললে সার্চ
     let detail = null, slug = '';
     const guessForSeason = tv && S > 1 ? (acSlugify(title) + '-season-' + S) : acSlugify(title);
@@ -609,12 +614,13 @@ const AC_WARM = new Map();
 function acPrewarm(tmdbId, type, s, e, opt) {
   try {
     const o = opt || {};
+    if (o.origin) AC_ORI.last = String(o.origin).replace(/\/+$/, '');
     const k = 'w|' + String(type) + '|' + String(tmdbId) + '|' + String(o.title || '') + '|' + s + ':' + e;
     if (AC_WARM.has(k)) return;
     AC_WARM.set(k, Date.now());
     if (AC_WARM.size > 200) for (const kk of [...AC_WARM.keys()].slice(0, 80)) AC_WARM.delete(kk);
     setTimeout(() => {
-      acStreams(tmdbId, type, s, e, '', { title: o.title || '', year: o.year || '', ms: 16000 })
+      acStreams(tmdbId, type, s, e, o.origin || '', { title: o.title || '', year: o.year || '', ms: 16000 })
         .then(() => {
           // পরের এপিসোডও গরম করি (সিরিজে)
           if (type !== 'movie' && type !== 'film' && Number(s) > 0) {

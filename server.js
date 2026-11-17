@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.315';
+const VERSION = '1.34.316';
 /* ★ v1.34.307: asianc.id — সম্পূর্ণ স্বতন্ত্র সোর্স (নিজস্ব ফাইল asianc.js; Dramacool-ধাঁচের সাইট)
    চেইন: /search?keyword → /drama-detail/<slug> → /<slug>-episode-N.html → li[data-video] (সব সার্ভার)
          → vidbasic/3rdplayer AES-256-CBC ডিক্রিপ্ট (বা hglink→jwplayer unpack) ⇒ আসল HLS/MP4 */
@@ -19998,7 +19998,7 @@ const server = http.createServer((req, res) => FG_CONTEXT.run({ active: true }, 
       const azP = !(cfg && cfg.az === 0) ? azStreams(Number(m[1]), 'movie', 0, 0, cfg && cfg.azq || [], originOf(req)).catch(() => []) : null; // v1.15.76: AniZone
       /* v1.34.307: asianc.id source (replaces vidly) */
       const acsP = (ASC && ASC.acOn(cfg)) ? Promise.all([raceObjP((typeof infoP !== 'undefined' ? infoP : null), 1200), raceObjP((typeof tp !== 'undefined' ? tp : null), 1200), raceObjP((typeof nmP !== 'undefined' ? nmP : null), 1200)]).then(([info, ttl, nm]) => ASC.acStreams(Number(m[1]), 'movie', 0, 0, originOf(req), { title: (info && info.name) || ttl || nm || '', year: (info && info.year) || '', q: (cfg && cfg.acr) || [], ms: 11000 })).catch(() => []).catch(() => []) : null;
-      try { if (ASC && ASC.acPrewarm) Promise.all([raceObjP((typeof infoP !== 'undefined' ? infoP : null), 600), raceObjP((typeof tp !== 'undefined' ? tp : null), 600)]).then(([info, ttl]) => ASC.acPrewarm(Number(m[1]), 'movie', 0, 0, { title: (info && info.name) || ttl || '', year: (info && info.year) || '' })).catch(() => {}); } catch (e0) { }
+      try { if (ASC && ASC.acPrewarm) Promise.all([raceObjP((typeof infoP !== 'undefined' ? infoP : null), 600), raceObjP((typeof tp !== 'undefined' ? tp : null), 600)]).then(([info, ttl]) => ASC.acPrewarm(Number(m[1]), 'movie', 0, 0, { title: (info && info.name) || ttl || '', year: (info && info.year) || '', origin: originOf(req) })).catch(() => {}); } catch (e0) { }
       kickSubs('tmdb' + m[1], 'movie', null, null, cfg);
       const lookP = Promise.all([typeof tp !== 'undefined' ? tp : null, typeof nmP !== 'undefined' ? nmP : null, typeof infoP !== 'undefined' ? infoP : null].filter(Boolean)).catch(() => []); // v1.26.2
       const mlbInfo = mlbdOn(cfg) ? yearForTmdb(Number(m[1]), 'movie').then(year => ({year})).catch(() => null) : null;
@@ -20028,7 +20028,7 @@ cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'movie', s: 0, e: 0 }
       const azP = !(cfg && cfg.az === 0) ? azStreams(Number(m[1]), 'tv', Number(m[2] || 1), Number(m[3] || 1), cfg && cfg.azq || [], originOf(req)).catch(() => []) : null; // v1.15.76: AniZone
       /* v1.34.307: asianc.id source (replaces vidly) */
       const acsP = (ASC && ASC.acOn(cfg)) ? Promise.all([raceObjP((typeof infoP !== 'undefined' ? infoP : null), 1200), raceObjP((typeof tp !== 'undefined' ? tp : null), 1200), raceObjP((typeof nmP !== 'undefined' ? nmP : null), 1200)]).then(([info, ttl, nm]) => ASC.acStreams(Number(m[1]), 'series', Number(m[2] || 1), Number(m[3] || 1), originOf(req), { title: (info && info.name) || ttl || nm || '', year: (info && info.year) || '', q: (cfg && cfg.acr) || [], ms: 11000 })).catch(() => []).catch(() => []) : null;
-      try { if (ASC && ASC.acPrewarm) Promise.all([raceObjP((typeof infoP !== 'undefined' ? infoP : null), 600), raceObjP((typeof tp !== 'undefined' ? tp : null), 600)]).then(([info, ttl]) => ASC.acPrewarm(Number(m[1]), 'series', Number(m[2] || 1), Number(m[3] || 1), { title: (info && info.name) || ttl || '', year: (info && info.year) || '' })).catch(() => {}); } catch (e0) { }
+      try { if (ASC && ASC.acPrewarm) Promise.all([raceObjP((typeof infoP !== 'undefined' ? infoP : null), 600), raceObjP((typeof tp !== 'undefined' ? tp : null), 600)]).then(([info, ttl]) => ASC.acPrewarm(Number(m[1]), 'series', Number(m[2] || 1), Number(m[3] || 1), { title: (info && info.name) || ttl || '', year: (info && info.year) || '', origin: originOf(req) })).catch(() => {}); } catch (e0) { }
       if (nxOn) nxPrewarm('series', String(m[1]), Number(m[2] || 1), Number(m[3] || 1));
       twRtPrewarm(tp, 'series', Number(m[2] || 1), Number(m[3] || 1), cfg);
       dtPrewarm(tp, infoP, 'series', Number(m[2] || 1), Number(m[3] || 1), originOf(req), cfg); // ★ v1.34.28
