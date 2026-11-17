@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.310';
+const VERSION = '1.34.311';
 /* ★ v1.34.307: asianc.id — সম্পূর্ণ স্বতন্ত্র সোর্স (নিজস্ব ফাইল asianc.js; Dramacool-ধাঁচের সাইট)
    চেইন: /search?keyword → /drama-detail/<slug> → /<slug>-episode-N.html → li[data-video] (সব সার্ভার)
          → vidbasic/3rdplayer AES-256-CBC ডিক্রিপ্ট (বা hglink→jwplayer unpack) ⇒ আসল HLS/MP4 */
@@ -19286,6 +19286,31 @@ const server = http.createServer((req, res) => FG_CONTEXT.run({ active: true }, 
     /* v1.34.307: asianc.id ডায়াগনস্টিকস — পেজ-ফেচ/ডিক্রিপ্ট/কার্ড-গণনা; ?t=1 হলে লাইভ সেলফ-টেস্ট */
     if (p === '/_acs') { if (!ASC) return sendJson(res, 200, { on: 0, why: 'module-missing' });
       const _ao = Object.assign({ on: ASC.acOn(cfg) ? 1 : 0 }, ASC.acDiag());
+      /* v1.34.311: প্রোড-থেকে সরাসরি টাইটেল-ডায়াগনস্টিক:
+         /_acs?title=Train%20to%20Busan&year=2016&ty=movie&s=1&e=1 */
+      let _dbg = null;
+      try {
+        const u2 = new URL(req.url, 'http://x');
+        const tq = u2.searchParams.get('title');
+        if (tq) {
+          const ty = (u2.searchParams.get('ty') || 'series').toLowerCase();
+          const sN = Number(u2.searchParams.get('s') || 1), eN = Number(u2.searchParams.get('e') || 1);
+          _dbg = { title: tq, year: u2.searchParams.get('year') || '', ty: ty, s: sN, e: eN };
+          _ao.dbg = _dbg;
+          return ASC.acFindSlug(tq, u2.searchParams.get('year') || '', sN).then(sl => {
+            _dbg.slug = sl && sl.slug; _dbg.siteTitle = sl && sl.text;
+            if (!sl) return sendJson(res, 200, _ao);
+            return ASC.acDetail(sl.slug).then(d => {
+              _dbg.detailTitle = d && d.title; _dbg.episodes = d && d.eps && d.eps.length;
+              return ASC.acStreams(987654, ty === 'movie' ? 'movie' : 'series', sN, eN, originOf(req), { title: tq, year: u2.searchParams.get('year') || '' }).then(cards => {
+                _dbg.cards = cards.length;
+                _dbg.items = cards.map(c => ({ name: c.name, url: String(c.url).slice(0, 120) }));
+                return sendJson(res, 200, _ao);
+              });
+            });
+          }).catch(e => { _dbg.err = String(e && e.message); return sendJson(res, 200, _ao); });
+        }
+      } catch (e) { }
       if (!/[?&]t=1/.test(req.url)) return sendJson(res, 200, _ao);
       return ASC.acSelftest().then(st => { _ao.selftest = st; return sendJson(res, 200, _ao); }).catch(e => { _ao.selftest = { err: String(e && e.message) }; return sendJson(res, 200, _ao); }); }
     if (p === '/_diag') { // v1.27.18: ?g=mlbd|hm|src|all&n=200
