@@ -580,7 +580,9 @@ async function acStreams(tmdbId, type, s, e, origin, opt) {
       const name = q ? ('\u25a5 ' + q + ' \u25a5') : '\u25a5 Auto \u25a5';
       const tag = (l.label && l.label !== 'Standard' ? ' \u2317 ' + l.label : '') + (l.state === 'proven' ? ' \u2713' : '');
       const txt = head + '\n' + epLine + '\n\u229e AsianC' + tag + ' \u00b7 AsianC';
-      const cardUrl = (l.kind === 'hls') ? acRelayUrl(origin, l.url) : l.url;
+      // `.txt`-নামেও মাস্টার-প্লেলিস্ট লুকানো থাকে ⇒ হোস্ট-নাম/ext দেখে রিলে করি
+      const _looksPl = (l.kind === 'hls') || /\.(m3u8|txt)(\?|$)/i.test(l.url) || /\/hls\d?\//i.test(l.url);
+      const cardUrl = _looksPl ? acRelayUrl(origin, l.url) : l.url;
       cards.push({
         name: name,
         quality: q || '',
