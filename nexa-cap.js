@@ -44,6 +44,10 @@ const OUT = (o) => { process.stdout.write(JSON.stringify(o) + '\n'); };
       return route.continue();
     });
     const page = await ctx.newPage();
+    page.on('crash', () => { out.crash = 1; });
+    ctx.on('close', () => { });
+    browser.on('disconnected', () => { out.disc = (out.disc || 0) + 1; });
+    page.on('requestfailed', (r) => { if (!out.reqfail) out.reqfail = r.url().slice(0, 90) + ' ' + ((r.failure() || {}).errorText || ''); });
     page.on('response', async (r) => {
       const u = r.url();
       if (!u.includes('cdn-m3u8') || got.master || got.single) return;

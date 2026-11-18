@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.345';
+const VERSION = '1.34.346';
 /* ★ v1.34.322: nexa.mov — নতুন সোর্স (মুভি/সিরিজ ৫ সার্ভার: nova/onyx/orion/flux/sylver;
    অ্যানিমে ৪: kyoto/tokyo/hokkaido/fuji)। প্লেব্যাক-প্রোটোকল wasm-এ সিল করা, nexa.js রিভার্স করেছে। */
 let NEX = null;
@@ -19294,9 +19294,23 @@ const server = http.createServer((req, res) => FG_CONTEXT.run({ active: true }, 
         const cargs = [require('path').join(__dirname, 'nexa-cap.js'), '--id', String(sp.get('cap')), '--timeout', String(sp.get('to') || 20)];
         if (sp.get('e')) cargs.push('--s', String(sp.get('s') || 1), '--e', String(sp.get('e')));
         if (sp.get('px')) cargs.push('--proxy', String(sp.get('px')));
-        const cc = require('child_process').spawnSync(process.execPath, cargs, { timeout: 90000, encoding: 'utf8' });
+        const cc = require('child_process').spawnSync(process.execPath, cargs, { timeout: 90000, encoding: 'utf8', env: Object.assign({}, process.env, { DEBUG: 'pw:browser*' }) });
         let cj = null;
-        try { cj = JSON.parse(String(cc.stdout || '').trim().split('\n').filter(Boolean).pop()); } catch (e) { cj = { raw: String(cc.stdout || '').slice(-300), err2: String(cc.stderr || '').slice(-300) }; }
+        try { cj = JSON.parse(String(cc.stdout || '').trim().split('\n').filter(Boolean).pop()); } catch (e) { cj = { raw: String(cc.stdout || '').slice(-300) }; }
+        cj.stderrTail = String(cc.stderr || '').split('\n').filter(l => l && !l.includes('Failed to connect to the bus') && !l.includes('Failed to call method')).slice(-6).join(' | ').slice(0, 800);
+        try {   /* ★ v1.34.346: প্রোডের নিজের IP-তে nexa session কোটা কেমন — সরাসরি মাপ */
+          cj.sessProbe = (function(f){return new Promise(f)})(async (resolve) => {
+            const https = require('https');
+            try {
+              const rq = https.request('https://providers.nexa.mov/v1/session', { method: 'GET', timeout: 12000, headers: { 'user-agent': 'Mozilla/5.0', accept: 'application/json', origin: 'https://nexa.mov', referer: 'https://nexa.mov/' } }, rs => {
+                let b = ''; rs.on('data', d => { b += d; }); rs.on('end', () => resolve({ code: rs.statusCode, bytes: b.length, body: b.slice(0, 120) }));
+              });
+              rq.on('error', e => resolve({ err: String(e && e.message || e).slice(0, 80) }));
+              rq.on('timeout', () => { rq.destroy(); resolve({ err: 'timeout' }); });
+              rq.end();
+            } catch (e) { resolve({ err: 'threw' }); }
+          });
+        } catch (e) { cj.sessProbe = 'err'; }
         return sendJson(res, 200, cj);
       }
 
