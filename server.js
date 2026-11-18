@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.331';
+const VERSION = '1.34.332';
 /* ★ v1.34.322: nexa.mov — নতুন সোর্স (মুভি/সিরিজ ৫ সার্ভার: nova/onyx/orion/flux/sylver;
    অ্যানিমে ৪: kyoto/tokyo/hokkaido/fuji)। প্লেব্যাক-প্রোটোকল wasm-এ সিল করা, nexa.js রিভার্স করেছে। */
 let NEX = null;
@@ -19287,6 +19287,17 @@ const server = http.createServer((req, res) => FG_CONTEXT.run({ active: true }, 
     /* ★ v1.34.322: nexa.mov ডায়াগনস্টিক — সেশন/প্ল্যান/প্লেলিস্ট/প্রোব প্রতিটি ধাপ আলাদা দেখায়
        /_nex                        → কাউন্টার + সার্ভার-ক্যাটালগ + সেশন-অবস্থা
        /_nex?t=1&id=1368337&ty=movie&s=1&e=1 → ওই টাইটেলের পুরো চেইন লাইভ */
+    if (p === '/_nexcap') {   /* ★ v1.34.332: ক্যাপচার-চেইন ডায়াগনস্টিক (কনটেইনারে playwright/chromium আছে?) */
+      const out = { cwd: process.cwd(), node: process.version, platform: process.platform };
+      try { out.playwright = require.resolve('playwright'); } catch (e) { out.playwright = 'missing'; }
+      try {
+        const cp = require('child_process').spawnSync(process.execPath, ['-e', "const{chromium}=require('playwright');chromium.launch({args:['--no-sandbox','--disable-dev-shm-usage','--disable-gpu']}).then(b=>b.version().then(v=>{console.log('OK '+v);return b.close()})).catch(e=>console.log('ERR '+String(e&&e.message||e).slice(0,160)))"], { timeout: 45000, encoding: 'utf8' });
+        out.launch = String((cp.stdout || '') + (cp.stderr || '')).trim().slice(0, 300);
+      } catch (e) { out.launch = 'spawn-fail:' + String(e && e.message || e).slice(0, 120); }
+      try { out.capScript = require('fs').existsSync(require('path').join(__dirname, 'nexa-cap.js')); } catch (e) { out.capScript = false; }
+      try { out.nexaCapExe = (NEX && NEX.nexDiag && JSON.stringify(NEX.nexDiag().last || []).slice(0, 400)) || ''; } catch (e) { }
+      return sendJson(res, 200, out);
+    }
     if (p === '/_nex') { if (!NEX) return sendJson(res, 200, { on: 0, why: 'module-missing' });
       const base = Object.assign({ on: NEX.nexOn(cfg) ? 1 : 0 }, NEX.nexDiag());
       let live = null;
