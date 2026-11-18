@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.359';
+const VERSION = '1.34.360';
 /* ★ v1.34.322: nexa.mov — নতুন সোর্স (মুভি/সিরিজ ৫ সার্ভার: nova/onyx/orion/flux/sylver;
    অ্যানিমে ৪: kyoto/tokyo/hokkaido/fuji)। প্লেব্যাক-প্রোটোকল wasm-এ সিল করা, nexa.js রিভার্স করেছে। */
 let NEX = null;
@@ -19298,8 +19298,9 @@ const server = http.createServer((req, res) => FG_CONTEXT.run({ active: true }, 
         return Promise.resolve().then(async () => {
           const r1 = await nx.capWorker(id, 0, 0);
           const t1 = Date.now() - t0;
-          const r2 = await nx.capWorker(id, 0, 0);
-          const t2 = Date.now() - t0 - t1;
+          const doTwo = String(sp.get('n') || '2') !== '1';
+          const r2 = doTwo ? await nx.capWorker(id, 0, 0) : null;
+          const t2 = doTwo ? (Date.now() - t0 - t1) : 0;
           sendJson(res, 200, {
             stats: nx.capWorkerStats(),
             cold: { ok: !!(r1 && r1.ok), ms: t1, err: r1 && r1.err, total: r1 && r1.total, variants: (r1 && r1.variants || []).length },
