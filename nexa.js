@@ -24,6 +24,10 @@ const MOVIE_SRV = ['nova', 'onyx', 'orion', 'flux', 'sylver'];       // মু�
 const ANIME_SRV = ['kyoto', 'tokyo', 'hokkaido', 'fuji'];             // অ্যানিমে
 
 let API = null, API_P = null, HS_P = null, SESS_AT = 0, BLOCK_UNTIL = 0;
+let MAP = null, MAP_AT = 0, MAP_P = null;          // tmdb ⇄ anilist (অ্যানিমে সার্ভারগুলো এর উপর চলে)
+const MAP_URL = process.env.NEXA_MAP_URL || 'https://backend.nexa.mov/v1/mapping/anilist-tmdb';
+const MAP_TTL = Number(process.env.NEXA_MAP_TTL || 21600000);   // ৬ ঘণ্টা
+const ENV_BAD_UNTIL = new Map();                    // codename → cooldown (BAD_ENVELOPE হলে খরচ বাঁচে)
 const DIAG = { init: 0, initErr: '', sess: 0, sessErr: '', plan: 0, planErr: 0, pl200: 0, pl404: 0, pl400: 0, open: 0, cards: 0, probeOk: 0, probeFail: 0, last: [] };
 const CARD_CACHE = new Map();   // key → {at, cards}
 const PROBE_CACHE = new Map();  // url → {at, ok, quality, ct}
@@ -134,6 +138,7 @@ async function playlistFor(api, plan, ms) {
     } catch (e) { DIAG.planErr++; note('open-fail: ' + String((e && e.message) || e)); return null; }
   }
   if (r.status === 429) { BLOCK_UNTIL = Date.now() + 60000; note('playlist-429 → 60s backoff'); }
+  if (r.status === 400) { ENV_BAD_UNTIL.set(plan.codename, Date.now() + 300000); note(plan.codename + ' envelope rejected → 5m cooldown'); }  // v1.34.323
   if (r.status === 404) DIAG.pl404++; else DIAG.pl400++;
   note(plan.codename + ' -> ' + r.status + ' ' + r.body.slice(0, 12).toString('latin1').trim());
   return null;
@@ -173,6 +178,44 @@ async function probe(u, hdrs, ms) {
   if (PROBE_CACHE.size > 600) PROBE_CACHE.clear();
   PROBE_CACHE.set(u, out);
   return out;
+}
+
+/* ───────────── tmdb ⇄ anilist ম্যাপিং (অ্যানিমে ৪ সার্ভারের জন্য) ─────────────
+   আপস্ট্রিম ফরম্যাট: {schema:'anilist-tmdb/1', a:[[anilistId, ?, [[type, tmdbId, ?, '1-26'], ...]], ...]}
+   type: 0=movie, 1=tv. আমরা tmdbId → [anilistId…] আর anilistId → tmdbId দুই দিকেই সূচি বানাই। */
+async function getMapping(ms) {
+  if (MAP && Date.now() - MAP_AT < MAP_TTL) return MAP;
+  if (MAP_P) return MAP_P;
+  MAP_P = (async () => {
+    try {
+      const ctl = new AbortController();
+      const tm = setTimeout(() => { try { ctl.abort(); } catch (e) { } }, Math.max(4000, ms || 12000));
+      const r = await fetch(MAP_URL, { signal: ctl.signal, headers: { 'user-agent': UA, 'origin': 'https://nexa.mov', 'referer': 'https://nexa.mov/' } });
+      clearTimeout(tm);
+      if (r.status !== 200) { note('map http-' + r.status); return MAP; }
+      const j = await r.json();
+      const t2a = new Map(), a2t = new Map();
+      const rows = Array.isArray(j && j.a) ? j.a : [];
+      for (const row of rows) {
+        const aid = Number(row && row[0]) || 0; if (!aid) continue;
+        const list = Array.isArray(row[2]) ? row[2] : [];
+        for (const e of list) {
+          const tmdbId = Number(e && e[1]) || 0; if (!tmdbId) continue;
+          const isTv = Number(e[0]) === 1;
+          if (!t2a.has(tmdbId)) t2a.set(tmdbId, []);
+          const arr = t2a.get(tmdbId);
+          if (arr.indexOf(aid) < 0) arr.push(aid);
+          if (!a2t.has(aid)) a2t.set(aid, { tmdbId: tmdbId, tv: isTv });
+        }
+      }
+      MAP = { t2a: t2a, a2t: a2t, ids: t2a.size, at: Date.now() };
+      MAP_AT = Date.now();
+      note('map loaded ' + t2a.size + ' tmdb ids');
+      return MAP;
+    } catch (e) { note('map-fail: ' + String((e && e.message) || e).slice(0, 80)); return MAP; }
+    finally { MAP_P = null; }
+  })();
+  return MAP_P;
 }
 
 /* ───────────── মূল এন্ট্রি ───────────── */
@@ -222,9 +265,30 @@ async function nexStreams(tmdbId, type, s, e, origin, opts) {
   } catch (err) { note('plan-fail: ' + String((err && err.message) || err)); return []; }
   if (!plans.length) { note('plan-empty tmdb' + id); return []; }
 
+  /* ★ v1.34.323: টাইটেলটা অ্যানিমে হলে anilist-আইডি দিয়ে বাড়তি প্ল্যান — তাতেই ৪টি অ্যানিমে সার্ভার
+     (kyoto/tokyo/hokkaido/fuji) ওই টাইটেলে হাজির হয়। tmdb-প্ল্যানের সাথে codename-এ ডিডুপ। */
+  let animeNote = '';
+  try {
+    const mp = await getMapping(3000);
+    const aids = mp && mp.t2a ? (mp.t2a.get(id) || []) : [];
+    if (aids.length) {
+      const have = new Set(plans.map(p => p.codename));
+      let added = 0;
+      for (const aid of aids.slice(0, 3)) {
+        const aq = isSeries ? { platform: 'anilist', id: aid, season: S, episode: E } : { platform: 'anilist', id: aid };
+        let ap = [];
+        try { ap = api.plan(aq) || []; } catch (e) { continue; }
+        for (const p of ap) { if (!have.has(p.codename)) { have.add(p.codename); plans.push(p); added++; } }
+      }
+      if (added) animeNote = ' +anilist(' + aids.slice(0, 3).join('/') + '):' + added;
+    }
+  } catch (e) { }
+
   const cat = (() => { try { return api.catalogue() || []; } catch (e) { return []; } })();
   const nameOf = new Map(cat.map(c => [c.codename, c.name]));
 
+  const now0 = Date.now();
+  plans = plans.filter(p => !(ENV_BAD_UNTIL.get(p.codename) > now0));   // BAD_ENVELOPE-এ ভরা সার্ভার খরচ করে না
   const deadline = t0 + ms;
   const jobs = plans.map(p => (async () => {
     if (Date.now() > deadline) return null;
@@ -259,6 +323,9 @@ function nexDiag() {
   d.hasSession = null; d.cat = null;
   try { if (API) { d.hasSession = API.hasSession(); d.cat = (API.catalogue() || []).map(c => c.codename); } } catch (e) { }
   d.cardCache = CARD_CACHE.size; d.probeCache = PROBE_CACHE.size;
+  d.mapping = MAP ? { tmdbIds: MAP.ids, at: new Date(MAP_AT).toISOString() } : null;
+  d.envCool = [...ENV_BAD_UNTIL.entries()].filter(([, v]) => v > Date.now()).map(([k, v]) => k + ':' + Math.round((v - Date.now()) / 1000) + 's');
+  d.blocked = BLOCK_UNTIL > Date.now() ? Math.round((BLOCK_UNTIL - Date.now()) / 1000) + 's' : 0;
   d.last = DIAG.last.slice(-8);
   return d;
 }
