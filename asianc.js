@@ -666,6 +666,37 @@ function acPrewarm(tmdbId, type, s, e, opt) {
   } catch (err) { }
 }
 
+/* কাঁচা-পেজ ডায়াগনস্টিক: সার্চ/ডিটেইল/এপিসোড — কী ফেরত আসছে তার প্রমাণ */
+async function acRawDiag(kind, arg) {
+  const out = { kind: kind, arg: arg };
+  try {
+    let url = '';
+    if (kind === 'search') url = AC_BASE + '/search?keyword=' + encodeURIComponent(arg);
+    else if (kind === 'detail') url = AC_BASE + '/drama-detail/' + arg;
+    else url = AC_BASE + arg;
+    out.url = url;
+    const t0 = Date.now();
+    const html = await acGet(url, 15000);
+    out.ms = Date.now() - t0;
+    out.len = html.length;
+    out.head = String(html).slice(0, 240).replace(/\s+/g, ' ');
+    out.has = {
+      dramaDetail: (html.match(/\/drama-detail\//g) || []).length,
+      dataVideo: (html.match(/data-video=/g) || []).length,
+      episodeLink: (html.match(/-episode-\d+\.html/g) || []).length,
+      mutiLink: html.indexOf('muti_link') >= 0,
+      cf: /just a moment|cf-browser-verification|challenge-platform|Attention Required/i.test(html),
+      drm: /DMCA|not available in your|blocked/i.test(html)
+    };
+    const m = /<a[^>]+href="(\/drama-detail\/[^"#?]+)"/.exec(html);
+    if (m) out.firstSlug = m[1].replace('/drama-detail/', '');
+    const e = /href="(\/[a-z0-9\-]+?-episode-\d+\.html)"/i.exec(html);
+    if (e) out.firstEp = e[1];
+    if (kind === 'detail') { const h1 = /<h1[^>]*>([\s\S]{0,120}?)<\/h1>/.exec(html); out.h1 = h1 ? h1[1].replace(/<[^>]+>/g, '').trim() : ''; }
+    return out;
+  } catch (err) { out.err = String(err && err.message); return out; }
+}
+
 function acDiag() {
   return Object.assign({ base: AC_BASE, mirror: AC_MIRROR.host || '', slugMemo: AC_SLUG.size, epMemo: AC_EP.size, embMemo: AC_EMB.size }, ACG);
 }
@@ -694,4 +725,4 @@ async function acSelftest() {
 }
 
 setTimeout(() => { }, 0);
-module.exports = { acOn, acStreams, acPrewarm, acServePlaylist, acDiag, acSelftest, acDecrypt, acServersOf, acResolveEmbed, acPlayable, acProbe, acFindSlug, acDetail, AC_BASE, AC_UA };
+module.exports = { acOn, acStreams, acPrewarm, acServePlaylist, acRawDiag, acDiag, acSelftest, acDecrypt, acServersOf, acResolveEmbed, acPlayable, acProbe, acFindSlug, acDetail, AC_BASE, AC_UA };

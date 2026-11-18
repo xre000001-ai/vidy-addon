@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.318';
+const VERSION = '1.34.319';
 /* ★ v1.34.307: asianc.id — সম্পূর্ণ স্বতন্ত্র সোর্স (নিজস্ব ফাইল asianc.js; Dramacool-ধাঁচের সাইট)
    চেইন: /search?keyword → /drama-detail/<slug> → /<slug>-episode-N.html → li[data-video] (সব সার্ভার)
          → vidbasic/3rdplayer AES-256-CBC ডিক্রিপ্ট (বা hglink→jwplayer unpack) ⇒ আসল HLS/MP4 */
@@ -19289,6 +19289,23 @@ const server = http.createServer((req, res) => FG_CONTEXT.run({ active: true }, 
       /* v1.34.311: প্রোড-থেকে সরাসরি টাইটেল-ডায়াগনস্টিক:
          /_acs?title=Train%20to%20Busan&year=2016&ty=movie&s=1&e=1 */
       let _dbg = null;
+      /* v1.34.319: কাঁচা-পেজ ডায়াগনস্টিক — asianc.id প্রোডে ঠিক কী ফেরত দিচ্ছে */
+      if (/[?&]raw=1/.test(req.url)) {
+        return (async () => {
+          const u2 = new URL(req.url, 'http://x');
+          const t = u2.searchParams.get('title') || 'Squid Game';
+          const out = { title: t };
+          try {
+            const sr = await ASC.acRawDiag('search', t);
+            out.search = sr;
+            if (sr && sr.firstSlug) {
+              out.detail = await ASC.acRawDiag('detail', sr.firstSlug);
+              if (out.detail && out.detail.firstEp) out.episode = await ASC.acRawDiag('episode', out.detail.firstEp);
+            }
+          } catch (e) { out.err = String(e && e.message); }
+          return sendJson(res, 200, out);
+        })();
+      }
       try {
         const u2 = new URL(req.url, 'http://x');
         const tq = u2.searchParams.get('title');
