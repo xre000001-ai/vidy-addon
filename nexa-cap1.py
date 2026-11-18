@@ -10,7 +10,8 @@ def main():
     ap.add_argument('--id', required=True)
     ap.add_argument('--s', default=None)
     ap.add_argument('--e', default=None)
-    ap.add_argument('--timeout', type=float, default=26)
+    ap.add_argument('--timeout', type=float, default=20)
+    ap.add_argument('--tabs', type=int, default=4)
     ap.add_argument('--ua', default='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36')
     a = ap.parse_args()
     t0 = time.time()
@@ -49,38 +50,55 @@ def main():
                 ctx.route('**/*', _route)
             except Exception:
                 pass
-            pg = ctx.new_page()
-
-            def on_resp(r):
-                if 'cdn-m3u8' not in r.url or got.get('master') or got.get('single'):
-                    return
+            def mk_handler():
+                def on_resp(r):
+                    if 'cdn-m3u8' not in r.url or got.get('master') or got.get('single'):
+                        return
+                    try:
+                        body = r.body()
+                    except Exception:
+                        return
+                    if not body or body[:4] != b'#EXT':
+                        return
+                    txt = body.decode('latin1')
+                    if 'EXT-X-STREAM-INF' in txt:
+                        got['master'] = {'url': r.url, 'body': txt}
+                    elif 'EXTINF' in txt:
+                        got['single'] = {'url': r.url, 'body': txt}
+                return on_resp
+            # ★ একাধিক ট্যাব = আলাদা session/ticket ⇒ nexa-র ব্যাকএন্ড যখন ওঠাপড়া করে,
+            #   একটার বদলে কয়েকটা সেশনে চেষ্টা করলে সফল হওয়ার হার অনেক বাড়ে।
+            pages = []
+            for k in range(max(1, min(4, a.tabs))):
+                p2 = ctx.new_page()
+                p2.on('response', mk_handler())
+                pages.append(p2)
                 try:
-                    body = r.body()
-                except Exception:
-                    return
-                if not body or body[:4] != b'#EXT':
-                    return
-                txt = body.decode('latin1')
-                if 'EXT-X-STREAM-INF' in txt:
-                    got['master'] = {'url': r.url, 'body': txt}
-                elif 'EXTINF' in txt:
-                    got['single'] = {'url': r.url, 'body': txt}
-            pg.on('response', on_resp)
-            try:
-                pg.goto('https://nexa.mov/watch/' + path, wait_until='commit', timeout=15000)
-            except Exception:
-                pass
-            while time.time() - t0 < a.timeout and not (got.get('master') or got.get('single')):
-                try:
-                    loc = pg.locator('[aria-label*="lay" i]').first
-                    if loc.count():
-                        loc.click(timeout=700, force=True)
+                    p2.goto('https://nexa.mov/watch/' + path, wait_until='commit', timeout=15000)
                 except Exception:
                     pass
-                for _ in range(10):
+            while time.time() - t0 < a.timeout and not (got.get('master') or got.get('single')):
+                for p2 in pages:
+                    try:
+                        loc = p2.locator('[aria-label*="lay" i]').first
+                        if loc.count():
+                            loc.click(timeout=600, force=True)
+                    except Exception:
+                        pass
+                if time.time() - t0 > (a.timeout * 0.55):
+                    for p2 in pages:      # অর্ধেক সময় পার হলে নতুন সেশন (reload)
+                        try:
+                            p2.reload(wait_until='commit', timeout=8000)
+                        except Exception:
+                            pass
+                        break
+                for _ in range(6):
                     if got.get('master') or got.get('single'):
                         break
-                    pg.wait_for_timeout(200)
+                    try:
+                        pages[0].wait_for_timeout(200)
+                    except Exception:
+                        time.sleep(0.2)
             try:
                 ctx.close()
             except Exception:

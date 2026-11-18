@@ -31,18 +31,26 @@ const ANIME_SRV = ['kyoto', 'tokyo', 'hokkaido', 'fuji'];             // অ্�
    তাই NEXA_CAP_URL (ডিফল্ট http://127.0.0.1:8899) সার্ভিসকে টাইটেল-আইডি দেওয়া হয়,
    সে headless chromium-এ সাইটের প্লেয়ার চালিয়ে রিয়েল HLS URL + রেজলিউশন-লিস্ট ফেরত দেয়। */
 const CAP_URL = process.env.NEXA_CAP_URL === undefined ? 'http://127.0.0.1:8899' : process.env.NEXA_CAP_URL;
-const CAP_TTL = Number(process.env.NEXA_CAP_TTL || 900000);        // ১৫ মিনিট (URL-এ এক্সপায়ারি-টোকেন থাকে ⇒ ডিস্কে লেখা হয় না)
+const CAP_TTL = Number(process.env.NEXA_CAP_TTL || 1800000);       // ৩০ মিনিট (সফল ক্যাপচার দীর্ঘ সময় ব্যবহার) (URL-এ এক্সপায়ারি-টোকেন থাকে ⇒ ডিস্কে লেখা হয় না)
 const CAP_CACHE = new Map();     // key → {at, val}
 /* ★ v1.34.328: সার্ভিস-লুপ (nexa-cap.py) এই বক্সে মাঝে মাঝে আটকে যায় (র‍্যাম ২GB),
    তাই ডিফল্ট পথ = এক-শট CLI প্রসেস (nexa-cap1.py): প্রতিবার নতুন chromium, শেষে পুরো
    মেমরি ফেরত, ঝুলে থাকার ঝুঁকি নেই। NEXA_CAP_CLI=0 দিলে সার্ভিস-পথ। */
 const CAP_CLI = process.env.NEXA_CAP_CLI === undefined ? 1 : (String(process.env.NEXA_CAP_CLI) !== '0');
-const CAP_PY = process.env.NEXA_CAP_PY || require('path').join(__dirname, 'nexa-cap1.py');
+/* ★ v1.34.329: প্রমাণিত পথ — প্রক্সি দিয়ে এক-শট ক্যাপচার (nexa-proxy1.py)।
+   কারণ: nexa /v1/session rate-limit করে (429); আমাদের DC IP-র কোটা শেষ, প্রক্সি-নোড = নতুন কোটা।
+   পরিমাপ (3/3 সফল): session 200 @4.6সে → playlist 200 @9.4সে → master @10.6সে। */
+const CAP_PY = process.env.NEXA_CAP_PY || require('path').join(__dirname, 'nexa-proxy1.py');
+const CAP_PROXY = process.env.NEXA_CAP_PROXY || '130.110.103.245:3128';   // ফাঁকা = ডিরেক্টে (প্রোক্সি-URL গুলো অন্য IP-তে বাঁধা)
+const CAP_PROXY_LIST = String(process.env.NEXA_CAP_PROXIES || CAP_PROXY + ',102.244.78.61:8086,4.144.146.21:80').split(',').filter(Boolean);
+let CAP_PX_I = 0;
 const CAP_PYTHON = process.env.NEXA_CAP_PYTHON || 'python3';
 function capCliOnce(platform, id, S, E, ms) {
   return new Promise(resolve => {
     let out = '', done = false;
-    const args = [CAP_PY, '--platform', platform, '--id', String(id), '--timeout', String(Math.max(14, Math.round((ms || 26000) / 1000)))];
+    const px = CAP_PROXY ? CAP_PROXY_LIST[CAP_PX_I++ % CAP_PROXY_LIST.length] : '';
+    const args = [CAP_PY, '--platform', platform, '--id', String(id), '--timeout', String(Math.max(16, Math.round((ms || 26000) / 1000)))];
+    if (px) args.push('--proxy', px); else args.push('--proxy', '');
     if (E) { args.push('--s', String(S), '--e', String(E)); }
     let ch;
     try { ch = require('child_process').spawn(CAP_PYTHON, args, { stdio: ['ignore', 'pipe', 'ignore'] }); }
@@ -520,14 +528,14 @@ async function capFetch(platform, id, S, E, ms) {
   if (hit && Date.now() - hit.at < CAP_TTL) return hit.val;
   if (hit && hit.bad) return null;
   if (CAP_CLI) {
-    const j = await capCliOnce(platform, id, S, E, ms);
+    const j = await capCliOnce(platform, id, S, E, Math.min(ms || 20000, 20000));
     if (j && j.ok && Array.isArray(j.variants) && j.variants.length) {
       if (CAP_CACHE.size > CAP_MAX) CAP_CACHE.clear();
       CAP_CACHE.set(key, { at: Date.now(), val: j });
       note('cap-cli ' + key + ': ' + j.variants.length + ' res (' + (j.ms || 0) + 'ms)');
       return j;
     }
-    note('cap-cli-miss ' + key + ': ' + ((j && (j.err || j.error)) || 'no-out'));
+    note('cap-cli-miss ' + key + ': ' + ((j && (j.err || j.error)) || 'no-out') + ' (' + ((j && j.ms) || 0) + 'ms)');
     CAP_CACHE.set(key, { at: Date.now(), bad: 1, val: null });
     return null;
   }
@@ -602,17 +610,22 @@ async function nexStreams(tmdbId, type, s, e, origin, opts) {
   const _ck = capKey('tmdb', id, S, E);
   const _ch = CAP_CACHE.get(_ck);
   const _hasCap = _ch && Date.now() - _ch.at < CAP_TTL && _ch.val;
+  /* ★ v1.34.329: 1.34.327-এর বাগ — ক্যাশ না থাকলে এখানেই `return []` করতাম, ফলে Stremio-র
+     *প্রথম* রিকোয়েস্টে nexa কার্ডই আসত না (Stremio দ্বিতীয়বার চায় না!) ⇒ "nexa থেকে কিছু
+     পাচ্ছি না"। এখন প্রথমবারও ক্যাপচার-চেষ্টা করি (অ্যাডঅন-বাজেটের ভিতরে), ক্যাশ থাকলে তো কথাই নেই। */
   if (!_hasCap) {
-    warmNexa('tmdb', id, S, E, ms);
+    /* ★ v1.34.329b: এখানে warmNexa ডাকতাম — তাতে একই সময়ে দুটো chromium চালু হয়ে
+       দুটোই ফেল করত (মেমরি+প্রক্সি দ্বন্দ্ব)। এখন শুধু একটা blocking ক্যাপচার। */
     try {
       const mp0 = await getMapping(1500);
       const aids0 = mp0 && mp0.t2a ? (mp0.t2a.get(id) || []) : [];
       if (aids0.length) warmNexa('anilist', aids0[0], S, E, ms);
     } catch (e) { }
-    if (!(opts.awaitCap)) { note('cap-warm-started tmdb' + id); return []; }
+    note('cap-first-attempt tmdb' + id);
   }
   try {
     const j = await capFetch('tmdb', id, S, E, ms);
+    if (!j) note('cap-null tmdb' + id);
     if (j) {
       const cards = capCards(j, Object.assign({ label: 'nova' }, meta0), origin);
       if (cards.length) {
@@ -641,7 +654,7 @@ async function nexStreams(tmdbId, type, s, e, origin, opts) {
         }
       } catch (e) { }
     }
-  } catch (e) { note('cap-path-err ' + String((e && e.message) || e).slice(0, 80)); }
+  } catch (e) { note('cap-path-err ' + String((e && e.message) || e).slice(0, 120)); }
 
   const api = await ensureSession(ms);
   if (!api) return [];
