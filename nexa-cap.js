@@ -13,6 +13,11 @@ const OUT = (o) => { process.stdout.write(JSON.stringify(o) + '\n'); };
   try { ({ chromium } = require('playwright')); } catch (e) { out.err = 'no-playwright'; return OUT(out); }
   /* ★ v1.34.333: BeamUp ইমেজে chromium বাইনারি থাকে না — দরকারে নামিয়ে নিই */
   try { require('./nexa-browser').ensure(); } catch (e) { }
+  /* ★ v1.34.338: কনটেইনারে chromium libs নেই — টার থেকে খুলে LD_LIBRARY_PATH সেট করি */
+  try {
+    const nl = require('./nexa-libs'); const st = nl.ensure();
+    if (st && st.ld) process.env.LD_LIBRARY_PATH = st.ld + (process.env.LD_LIBRARY_PATH ? ':' + process.env.LD_LIBRARY_PATH : '');
+  } catch (e) { }
   const id = String(args.id || '');
   if (!/^\d+$/.test(id)) { out.err = 'bad-id'; return OUT(out); }
   const platform = args.platform || 'tmdb';

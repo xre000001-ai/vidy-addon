@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.337';
+const VERSION = '1.34.338';
 /* ★ v1.34.322: nexa.mov — নতুন সোর্স (মুভি/সিরিজ ৫ সার্ভার: nova/onyx/orion/flux/sylver;
    অ্যানিমে ৪: kyoto/tokyo/hokkaido/fuji)। প্লেব্যাক-প্রোটোকল wasm-এ সিল করা, nexa.js রিভার্স করেছে। */
 let NEX = null;
@@ -19292,6 +19292,7 @@ const server = http.createServer((req, res) => FG_CONTEXT.run({ active: true }, 
       const cp = require('child_process');
       const sh = (c) => { try { const r = cp.spawnSync(c, { shell: true, encoding: 'utf8', timeout: 60000 }); return ((r.stdout || '') + (r.stderr || '')).trim().slice(0, 400); } catch (e) { return 'ERR'; } };
       try { out.exe = require('./nexa-browser').exePath(); } catch (e) { out.exe = null; }
+      try { const nl = require('./nexa-libs'); out.libs = { ld: nl.ldPath(), missing: out.exe ? nl.missingLibs(out.exe).slice(0, 8) : [] }; } catch (e) { out.libs = 'err'; }
       const DIR = '/app/.cache/ms-playwright';
       out.ls = sh('ls ' + DIR + ' 2>/dev/null');
       out.os = sh('cat /etc/os-release 2>/dev/null | head -3');
@@ -20313,7 +20314,15 @@ function startEmbeddedNx() {
 }
 const PORT = Number(process.env.PORT || 7000);
 /* ★ v1.34.333: nexa ক্যাপচারের জন্য chromium দরকার — বুটে (ব্যাকগ্রাউন্ডে) নিশ্চিত করি */
-try { setTimeout(() => { try { require('./nexa-browser').ensure(); } catch (e) { } }, 15000); } catch (e) { }
+try {
+  setTimeout(() => {
+    try {
+      const nl = require('./nexa-libs'); const st = nl.ensure();
+      if (st && st.ld) process.env.LD_LIBRARY_PATH = st.ld + (process.env.LD_LIBRARY_PATH ? ':' + process.env.LD_LIBRARY_PATH : '');
+      require('./nexa-browser').ensure();
+    } catch (e) { }
+  }, 8000);
+} catch (e) { }
 let NXBENCH = -1, NXWAVES = -1, NXSIZE = -1; // v2.10.1: waves=চাইল্ডের-মোট-স্ক্যান-ঢেউ (কম্পাঙ্ক-যাচাইযোগ্য)
 function nxBenchHealth() {
   if (!NEXBASE) { NXBENCH = -1; return Promise.resolve(-1); }
