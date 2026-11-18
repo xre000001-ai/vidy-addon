@@ -538,14 +538,29 @@ async function capFetch(platform, id, S, E, ms) {
   if (hit && Date.now() - hit.at < CAP_TTL) return hit.val;
   if (hit && hit.bad) return null;
   if (CAP_CLI) {
-    const j = await capCliOnce(platform, id, S, E, Math.min(ms || 20000, 20000));
-    if (j && j.ok && Array.isArray(j.variants) && j.variants.length) {
-      if (CAP_CACHE.size > CAP_MAX) CAP_CACHE.clear();
-      CAP_CACHE.set(key, { at: Date.now(), val: j });
-      note('cap-cli ' + key + ': ' + j.variants.length + ' res (' + (j.ms || 0) + 'ms)');
-      return j;
+    /* ★ v1.34.349: প্রোডে প্রমাণ — প্রোক্সি-পুলের নোডগুলো মরা (BAD_PROXY/ERR_TUNNEL) অথচ
+       কনটেইনারের নিজের IP-তে nexa ঠিকই playlist দেয় (3840x1600, ৭.৯সে)। তাই ক্রম:
+       ১) ডিরেক্ট (প্রোক্সি ছাড়া)  ২) ব্যর্থ হলে তবেই ২টি ভেরিফায়েড নোড। */
+    const budget = Math.max(12000, ms || 20000);
+    /* ★ v1.34.350: লোকাল স্যান্ডবক্স IP-তে nexa ৪০সে+ ঝুলে থাকে, প্রোড IP-তে ৮সে-তে দেয়।
+       তাই প্রোড-প্রমাণিত ক্রম (ডিরেক্ট আগে); লোকাল ডিবাগে NEXA_CAP_PX_FIRST=1 দিলে প্রোক্সি আগে। */
+    const tries = (process.env.NEXA_CAP_PX_FIRST === '1')
+      ? CAP_PROXY_LIST.slice(0, 3)
+      : [''].concat(CAP_PROXY_LIST.slice(0, 2));
+    const per = Math.max(9000, Math.min(16000, Math.round(budget / 3) + 5000));
+    for (let i = 0; i < tries.length; i++) {
+      const px = tries[i];
+      const j = await capCliOnce(platform, id, S, E, per, px);
+      if (j && j.ok && Array.isArray(j.variants) && j.variants.length) {
+        if (CAP_CACHE.size > CAP_MAX) CAP_CACHE.clear();
+        CAP_CACHE.set(key, { at: Date.now(), val: j });
+        note('cap-cli ' + key + ': ' + j.variants.length + ' res (' + (j.ms || 0) + 'ms, '
+          + (px ? 'px ' + px : 'direct') + ')');
+        return j;
+      }
+      note('cap-cli-miss ' + key + ' #' + i + ': ' + ((j && (j.err || j.error)) || 'no-out')
+        + ' (' + ((j && j.ms) || 0) + 'ms, ' + (px ? px : 'direct') + ')');
     }
-    note('cap-cli-miss ' + key + ': ' + ((j && (j.err || j.error)) || 'no-out') + ' (' + ((j && j.ms) || 0) + 'ms)');
     CAP_CACHE.set(key, { at: Date.now(), bad: 1, val: null });
     return null;
   }
