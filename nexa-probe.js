@@ -5,6 +5,15 @@ const { spawnSync } = require('child_process');
 const mode = process.argv[2] || 'shell';
 const out = { mode };
 try {
+  const fs = require('fs');
+  out.cgroup = {};
+  for (const f of ['/sys/fs/cgroup/memory.max', '/sys/fs/cgroup/memory/memory.limit_in_bytes', '/sys/fs/cgroup/memory.high']) {
+    if (fs.existsSync(f)) out.cgroup[f.split('/').pop()] = String(fs.readFileSync(f, 'utf8')).trim().slice(0, 20);
+  }
+  out.meminfo = String(fs.readFileSync('/proc/meminfo', 'utf8')).split('\n').slice(0, 3).join(' | ');
+  out.shm = String(require('child_process').execSync('df -h /dev/shm 2>/dev/null | tail -1 || echo none', { encoding: 'utf8' })).trim();
+} catch (e) { }
+try {
   const b = require('./nexa-browser');
   const exe = b.exePath();
   out.exe = exe;
@@ -17,11 +26,13 @@ try {
     return console.log(JSON.stringify(out));
   }
   const { chromium } = require('playwright');
-  const args = mode === 'full-single'
+  const args = mode === 'shell1'
+    ? ['--no-sandbox', '--disable-dev-shm-usage', '--single-process', '--no-zygote', '--disable-gpu']
+    : mode === 'full-single'
     ? ['--no-sandbox', '--disable-dev-shm-usage', '--single-process', '--no-zygote', '--disable-gpu']
     : ['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu'];
   const opts = { args, timeout: 30000 };
-  if (mode === 'full' || mode === 'full-single') opts.executablePath = exe;
+  if (mode === 'full' || mode === 'full-single' || mode === 'shell1') opts.executablePath = exe;
   (async () => {
     try {
       const br = await chromium.launch(opts);

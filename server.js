@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.344';
+const VERSION = '1.34.345';
 /* ★ v1.34.322: nexa.mov — নতুন সোর্স (মুভি/সিরিজ ৫ সার্ভার: nova/onyx/orion/flux/sylver;
    অ্যানিমে ৪: kyoto/tokyo/hokkaido/fuji)। প্লেব্যাক-প্রোটোকল wasm-এ সিল করা, nexa.js রিভার্স করেছে। */
 let NEX = null;
@@ -19307,9 +19307,10 @@ const server = http.createServer((req, res) => FG_CONTEXT.run({ active: true }, 
         o.node = process.version; o.uid = (() => { try { return process.getuid(); } catch (e) { return null; } })();
         return sendJson(res, 200, o);
       }
-      const cp = require('child_process').spawnSync(process.execPath, [require('path').join(__dirname, 'nexa-probe.js'), mode], { timeout: 120000, encoding: 'utf8' });
+      const cp = require('child_process').spawnSync(process.execPath, [require('path').join(__dirname, 'nexa-probe.js'), mode], { timeout: 120000, encoding: 'utf8', env: Object.assign({}, process.env, { DEBUG: 'pw:browser*' }) });
       let parsed = null;
-      try { parsed = JSON.parse(String(cp.stdout || '').trim().split('\n').pop()); } catch (e) { parsed = { raw: String(cp.stdout || '').slice(-400), stderr: String(cp.stderr || '').slice(-400) }; }
+      try { parsed = JSON.parse(String(cp.stdout || '').trim().split('\n').pop()); } catch (e) { parsed = { raw: String(cp.stdout || '').slice(-300) }; }
+      parsed.stderrTail = String(cp.stderr || '').split('\n').filter(l => l && !l.includes('Failed to connect to the bus')).slice(-8).join(' | ').slice(0, 900);
       return sendJson(res, 200, parsed);
     }
     if (p === '/_nex') { if (!NEX) return sendJson(res, 200, { on: 0, why: 'module-missing' });
