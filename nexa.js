@@ -25,6 +25,16 @@ const WASM = path.join(__dirname, 'nexa-sources.wasm');
 const MOVIE_SRV = ['nova', 'onyx', 'orion', 'flux', 'sylver'];       // মুভি/সিরিজ
 const ANIME_SRV = ['kyoto', 'tokyo', 'hokkaido', 'fuji'];             // অ্যানিমে
 
+/* ★ v1.34.327: ব্রাউজার-ক্যাপচার পথ (প্রমাণিত) ──────────────────────────────
+   wasm-পথ সেশন পায় (200+accept) কিন্তু নেক্সার AS এনভেলপ AS-এ BAD_ENVELOPE দেয়; আসল
+   প্লেয়ার ব্রাউজারে (web worker + ফন্ট-পাজল + ফিঙ্গারপ্রিন্ট) master-paylist পায়।
+   তাই NEXA_CAP_URL (ডিফল্ট http://127.0.0.1:8899) সার্ভিসকে টাইটেল-আইডি দেওয়া হয়,
+   সে headless chromium-এ সাইটের প্লেয়ার চালিয়ে রিয়েল HLS URL + রেজলিউশন-লিস্ট ফেরত দেয়। */
+const CAP_URL = process.env.NEXA_CAP_URL === undefined ? 'http://127.0.0.1:8899' : process.env.NEXA_CAP_URL;
+const CAP_TTL = Number(process.env.NEXA_CAP_TTL || 900000);        // ১৫ মিনিট (URL-এ এক্সপায়ারি-টোকেন থাকে ⇒ ডিস্কে লেখা হয় না)
+const CAP_CACHE = new Map();     // key → {at, val}
+const CAP_MAX = 300;
+
 let API = null, API_P = null, HS_P = null, SESS_AT = 0, BLOCK_UNTIL = 0;
 let MAP = null, MAP_AT = 0, MAP_P = null;          // tmdb ⇄ anilist (অ্যানিমে সার্ভারগুলো এর উপর চলে)
 const MAP_URL = process.env.NEXA_MAP_URL || 'https://backend.nexa.mov/v1/mapping/anilist-tmdb';
@@ -453,6 +463,86 @@ function mkCards(list, meta) {
 }
 function mlsNorm(s) { return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60); }
 
+/* ───────────── ব্রাউজার-ক্যাপচার ক্লায়েন্ট ───────────── */
+/* ★ v1.34.327: স্ট্রিম-রিকোয়েস্ট ব্লক করা যায় না (সাইটের কোল্ড-লোড ৩–২৭সে),
+   তাই ব্যাকগ্রাউন্ডে ক্যাপচার শুরু হয় আর ক্যাশ ভরে গেলে পরের রিকোয়েস্টে কার্ড আসে।
+   (server.js-এর SDL বাজেট ১০সে — অন্য ১৬ সোর্সের সময় কেড়ে নেওয়া চলবে না।) */
+const WARM = new Map();          // key → startedAt (একই টাইটেলে বারবার ক্যাপচার নয়)
+const WARM_TTL = Number(process.env.NEXA_WARM_TTL || 1200000);   // ২০ মিনিট
+function warmNexa(platform, id, S, E, ms) {
+  if (!CAP_URL) return;
+  const key = capKey(platform, id, S, E);
+  const hit = CAP_CACHE.get(key);
+  if (hit && Date.now() - hit.at < CAP_TTL) return;          // ক্যাশ ঠিক আছে
+  const w = WARM.get(key);
+  if (w && Date.now() - w < WARM_TTL) return;                 // ইতিমধ্যে চলছে/হয়েছে
+  WARM.set(key, Date.now());
+  if (WARM.size > 500) WARM.clear();
+  capFetch(platform, id, S, E, Math.max(45000, ms || 0))
+    .then(j => { if (j) note('warm-ok ' + key + ' (' + (j.variants || []).length + ' res)'); })
+    .catch(() => { });
+}
+
+function capKey(platform, id, S, E) { return platform + ':' + id + ':' + (E ? 'S' + S + 'E' + E : 'm'); }
+
+async function capFetch(platform, id, S, E, ms) {
+  if (!CAP_URL) return null;
+  const key = capKey(platform, id, S, E);
+  const hit = CAP_CACHE.get(key);
+  if (hit && Date.now() - hit.at < CAP_TTL) return hit.val;
+  if (hit && hit.bad) return null;
+  const q = new URLSearchParams({ platform, id: String(id) });
+  if (E) { q.set('s', String(S)); q.set('e', String(E)); }
+  q.set('timeout', String(Math.max(12, Math.round((ms || 26000) / 1000))));
+  try {
+    const r = await directReq(CAP_URL.replace(/\/+$/, '') + '/cap?' + q.toString(), 'GET', null,
+      { accept: 'application/json' }, Math.max(22000, (ms || 26000) + 14000), 262144);
+    if (r.code !== 200) { CAP_CACHE.set(key, { at: Date.now(), bad: 1, val: null }); return null; }
+    const j = JSON.parse(r.body.toString('utf8'));
+    if (!j || !j.ok || !Array.isArray(j.variants) || !j.variants.length) {
+      note('cap-miss ' + key + ': ' + ((j && (j.err || j.error)) || 'empty'));
+      CAP_CACHE.set(key, { at: Date.now(), bad: 1, val: null });
+      return null;
+    }
+    if (CAP_CACHE.size > CAP_MAX) CAP_CACHE.clear();
+    CAP_CACHE.set(key, { at: Date.now(), val: j });
+    return j;
+  } catch (e) {
+    CAP_CACHE.set(key, { at: Date.now(), bad: 1, val: null });
+    return null;
+  }
+}
+
+/* ক্যাপচার-ফল → কার্ড। রেজলিউশন আসে master-paylist-এর RESOLUTION= থেকে (বানানো নয়);
+   URL রিলে-র মাধ্যমে যায় (রিলে referer বসায়, নাহলে totallyacdn 302/ডিকয় দেয়)। */
+function capCards(j, meta, origin, extraHdrs) {
+  const out = [];
+  const seen = new Set();
+  const vs = (j.variants || []).slice(0, 4);
+  for (const v of vs) {
+    if (!v || !v.url || seen.has(v.url)) continue;
+    seen.add(v.url);
+    const h = Number(v.h) || 0;
+    const q = h >= 2160 ? 2160 : h >= 1440 ? 1440 : h >= 1080 ? 1080 : h >= 720 ? 720 : h >= 480 ? 480 : 0;
+    const srv = meta.label || 'nexa';
+    const txt = '\u25a4 ' + (meta.title || '') + ' (' + (meta.year || '') + ')'
+      + '\n' + '\u25a6 ' + srv + ' \u00b7 ' + (v.res || 'auto') + (j.audio ? ' \u22b7 audio' : '')
+      + '\n' + '\u229e nexa \u25e7 ' + (q ? q + 'p' : 'Auto');
+    const bh = { notWebReady: false, isBingeable: true, filename: 'nexa-' + mlsNorm(srv) + '-' + (q || 'auto') + '.m3u8' };
+    const hdrs = Object.assign({}, j.headers || {}, extraHdrs || {});
+    if (Object.keys(hdrs).length) bh.proxyHeaders = { request: hdrs };
+    out.push({
+      name: '\u25a5 ' + (q || 'Auto') + ' \u25a5',
+      title: txt, description: txt,
+      quality: q ? String(q) : '',
+      url: nexRelayUrl(v.url, origin),
+      behaviorHints: bh,
+      bingeGroup: 'nex|' + mlsNorm(meta.title || '') + '::' + (meta.e ? 'S' + meta.s + 'E' + meta.e : 'm'),
+    });
+  }
+  return out;
+}
+
 async function nexStreams(tmdbId, type, s, e, origin, opts) {
   opts = opts || {};
   const t0 = Date.now();
@@ -465,6 +555,53 @@ async function nexStreams(tmdbId, type, s, e, origin, opts) {
   const key = 'tmdb:' + id + ':' + (isSeries ? 'S' + S + 'E' + E : 'm');
   const hit = CARD_CACHE.get(key);
   if (hit && Date.now() - hit.at < CARD_TTL) return hit.cards;
+
+  /* ★ v1.34.327: পথ ১ — ব্রাউজার-ক্যাপচার (একমাত্র প্রমাণিত পথ) */
+  const meta0 = { title: opts.title || '', year: opts.year || '', type: isSeries ? 'series' : 'movie', s: S, e: E };
+  /* ক্যাশ না থাকলে: ব্যাকগ্রাউন্ডে ওয়ার্ম শুরু — এই রিকোয়েস্টে অপেক্ষা করি না (SDL বাজেট) */
+  const _ck = capKey('tmdb', id, S, E);
+  const _ch = CAP_CACHE.get(_ck);
+  const _hasCap = _ch && Date.now() - _ch.at < CAP_TTL && _ch.val;
+  if (!_hasCap) {
+    warmNexa('tmdb', id, S, E, ms);
+    try {
+      const mp0 = await getMapping(1500);
+      const aids0 = mp0 && mp0.t2a ? (mp0.t2a.get(id) || []) : [];
+      if (aids0.length) warmNexa('anilist', aids0[0], S, E, ms);
+    } catch (e) { }
+    if (!(opts.awaitCap)) { note('cap-warm-started tmdb' + id); return []; }
+  }
+  try {
+    const j = await capFetch('tmdb', id, S, E, ms);
+    if (j) {
+      const cards = capCards(j, Object.assign({ label: 'nova' }, meta0), origin);
+      if (cards.length) {
+        DIAG.cards += cards.length;
+        note('cap tmdb' + id + ' (' + (isSeries ? 'S' + S + 'E' + E : 'movie') + '): '
+          + (j.variants || []).length + ' res → ' + cards.length + ' cards'); 
+        if (CARD_CACHE.size > MAXC) CARD_CACHE.clear();
+        CARD_CACHE.set(key, { at: Date.now(), cards });
+        return cards;
+      }
+      /* অ্যানিমে: anilist আইডি দিয়ে ক্যাপচার (৪টি অ্যানিমে সার্ভার) */
+      try {
+        const mp = await getMapping(3000);
+        const aids = mp && mp.t2a ? (mp.t2a.get(id) || []) : [];
+        for (const aid of aids.slice(0, 2)) {
+          const aj = await capFetch('anilist', aid, S, E, ms);
+          if (!aj) continue;
+          const ac = capCards(aj, Object.assign({ label: 'kyoto' }, meta0), origin);
+          if (ac.length) {
+            DIAG.cards += ac.length;
+            note('cap anilist' + aid + ': ' + ac.length + ' cards');
+            if (CARD_CACHE.size > MAXC) CARD_CACHE.clear();
+            CARD_CACHE.set(key, { at: Date.now(), cards: ac });
+            return ac;
+          }
+        }
+      } catch (e) { }
+    }
+  } catch (e) { note('cap-path-err ' + String((e && e.message) || e).slice(0, 80)); }
 
   const api = await ensureSession(ms);
   if (!api) return [];
@@ -569,7 +706,19 @@ async function nexSelftest(tmdbId, type, s, e) {
    nexaRelayUrl: কার্ডে বসানো URL (আমাদের সার্ভার) ; nexaServe: প্লেলিস্ট+সেগমেন্ট দুটোই
    প্রোক্সি-পুল দিয়ে এনে Rewrite করে দেয় ⇒ ডিভাইসে কোনো স্পেশাল হেডার/আইপি লাগে না। */
 function nexB(u) { return Buffer.from(String(u), 'utf8').toString('base64url'); }
-function nexIsPl(u) { return /\.m3u8(\?|$)/i.test(String(u)) || /\/playlist(\?|$)/i.test(String(u)); }
+/* ★ v1.34.327: nexa/totallyacdn প্লেলিস্ট-URL-এ `.m3u8` থাকে না — `/cdn-m3u8?payload=…`;
+   আর সেগমেন্টের ছাঁচ `/cdn-m3u8/<name>.png|.jpg?payload=…`। তাই path+ext দুটোই দেখে ঠিক করি,
+   নাহয় সেগমেন্টকে প্লেলিস্ট ভেবে বডি-টেক্সট ফেরত যেত (প্লেয়ারে "http://..." দেখাত)। */
+function nexIsPl(u) {
+  const s = String(u);
+  let p = s, q = '';
+  try { const U = new URL(s); p = U.pathname; q = U.search; } catch (e) { }
+  if (/\.(png|jpe?g|webp|gif|ts|m4s|mp4|m4a|aac|vtt|key)$/i.test(p)) return false;   // সেগমেন্ট/কি
+  if (/\.m3u8$/i.test(p) || /\/playlist$/i.test(p)) return true;
+  if (/^\/cdn-m3u8\/?$/i.test(p) && /[?&](payload|psig)=/i.test(q)) return true;      // nexa-প্লেলিস্ট
+  if (/m3u8/i.test(s)) return true;
+  return false;
+}
 function nexRelayUrl(u, origin) {
   if (!u) return '';
   if (!origin) return u;                     // no origin ⇒ direct (আগের নিয়মই)
@@ -585,8 +734,18 @@ async function nexaServe(req, res, b64, originIn) {
   try {
     const hdrs = {};
     if (req.headers.range && !pl) hdrs['range'] = String(req.headers.range);
-    const r = await upFetch(tgt, { ms: pl ? 12000 : 25000, headers: hdrs, maxBytes: pl ? 262144 : 0 });
+    const r = await upFetch(tgt, { ms: pl ? 15000 : 25000, headers: hdrs, maxBytes: pl ? 2097152 : 0 });
     if (r.code !== 200 && r.code !== 206) { try { res.writeHead(502, { 'content-type': 'text/plain' }); } catch (e) { } return res.end('up ' + r.code); }
+    const bodyHead = r.body.slice(0, 7).toString('latin1');
+    if (pl && bodyHead !== '#EXTM3U') {
+      /* ★ v1.34.327: একই URL-ছাঁচ (`/cdn-m3u8?payload=…`) প্লেলিস্ট ও AES-128 কী দুটোতেই —
+         বডি `#EXTM3U` না হলে ওটা কী/বাইনারি, rewrite নয় (নাহয় প্লেয়ার ১৬B কী-র জায়গায় টেক্সট পায়)। */
+      const isKey = r.body.length === 16;
+      const hh = { 'content-type': isKey ? 'application/octet-stream' : 'application/octet-stream',
+        'access-control-allow-origin': '*', 'cache-control': 'no-store', 'x-nex': isKey ? 'key' : 'bin' };
+      try { res.writeHead(r.code, hh); } catch (e) { }
+      return res.end(r.body);
+    }
     if (pl) {
       const txt = String(r.body.toString('utf8')).split('\n').map(line => {
         const raw = line.trim();
@@ -606,7 +765,11 @@ async function nexaServe(req, res, b64, originIn) {
     const isMp4 = b0.length > 12 && b0.slice(4, 8).toString('latin1') === 'ftyp';
     const isVtt = b0.slice(0, 6).toString('latin1') === 'WEBVTT';
     let outCt = 'application/octet-stream';
-    if (/mpegurl/.test(ct) || isVtt === false && /m3u8/.test(tgt)) outCt = 'application/vnd.apple.mpegurl';
+    /* ★ v1.34.327: `/cdn-m3u8/<name>.png?payload=` সেগমেন্ট (এনক্রিপ্টেড বাইনারি) — path-এ "m3u8"
+       থাকলেও ওটা প্লেলিস্ট নয়। তাই আগে বডি sniff, পরে হেডার। */
+    const startsM3u8 = b0.slice(0, 7).toString('latin1') === '#EXTM3U';
+    if (startsM3u8 || (/mpegurl/.test(ct) && startsM3u8)) outCt = 'application/vnd.apple.mpegurl';
+    else if (/mpegurl/.test(ct) && nexIsPl(tgt)) outCt = 'application/vnd.apple.mpegurl';
     if (isTs) outCt = 'video/mp2t';
     else if (isMp4) outCt = 'video/mp4';
     else if (isVtt) outCt = 'text/vtt';
