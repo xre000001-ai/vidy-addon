@@ -140,6 +140,46 @@ async function capture(args, shared) {
    node nexa-cap.js --serve                     → stdin থেকে {"args":{...}} নিয়ে লাইভ ব্রাউজার পুনর্ব্যবহার
    ★ v1.34.351: কোল্ড লঞ্চ ৯–১৪সে (গেটওয়ের ১২s সীমা ভাঙে); warm ব্রাউজারে ৩–৫সে। */
 if (require.main === module) {
+  if (args.dom) {   /* DOM জরিপ: সার্ভার-বাটন/সোর্স/প্লে-রেসপন্স */
+    const { chromium } = require('playwright');
+    (async () => {
+      try { require('./nexa-browser').ensure(); } catch (e) { }
+      try { const nl = require('./nexa-libs'); const st = nl.ensure(); if (st && st.ld && !st.skip) process.env.LD_LIBRARY_PATH = st.ld; } catch (e) { }
+      const out = { t0: Date.now() };
+      let b = null;
+      try {
+        b = await chromium.launch({ args: ['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--renderer-process-limit=1'] });
+        const ctx = await b.newContext({ userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', viewport: { width: 1000, height: 700 } });
+        await ctx.route('**/*', r => { const t = r.request().resourceType(); const u = r.request().url(); if (t === 'image' || t === 'media' || u.includes('tmdb.org')) return r.abort(); return r.continue(); });
+        const page = await ctx.newPage();
+        const resp = [];
+        page.on('response', async (r) => {
+          const u = r.url();
+          if (u.includes('cdn-m3u8') || u.includes('/v1/playlist')) {
+            let kind = '?';
+            try { const t = await r.text(); kind = t.startsWith('#EXTM3U') ? (t.includes('STREAM-INF') ? 'master' : 'media') : t.slice(0, 20).replace(/\s+/g, ' '); } catch (e) { kind = 'unreadable'; }
+            resp.push({ h: u.includes('cdn-m3u8') ? 'cdn' : 'api', c: r.status(), k: kind });
+          }
+        });
+        const id = String(args.id || '27205');
+        const p2 = args.e ? ('tmdb-tv/' + id + '/s' + (args.s || 1) + '-e' + args.e) : ('tmdb-movie/' + id);
+        try { await page.goto('https://nexa.mov/watch/' + p2, { waitUntil: 'commit', timeout: 20000 }); } catch (e) { }
+        await page.waitForTimeout(7000);
+        const sel = 'button,[role="button"],[role="tab"],[role="option"]';
+        out.title = await page.title();
+        out.btns = await page.evaluate((s2) => [...document.querySelectorAll(s2)].map(e => (e.getAttribute('aria-label') || e.innerText || e.title || '').trim().replace(/\s+/g, ' ').slice(0, 26)).filter(Boolean).slice(0, 40), sel);
+        out.txt = (await page.evaluate(() => document.body.innerText)).replace(/\s+/g, ' ').slice(0, 400);
+        try { await page.locator('[aria-label*="lay" i]').first().click({ timeout: 2500, force: true }); out.click = 1; } catch (e) { out.click = 0; }
+        await page.waitForTimeout(Number(args.wait || 14000));
+        out.btns2 = await page.evaluate((s2) => [...document.querySelectorAll(s2)].map(e => (e.getAttribute('aria-label') || e.innerText || e.title || '').trim().replace(/\s+/g, ' ').slice(0, 26)).filter(Boolean).slice(0, 40), sel);
+        out.resp = resp.slice(0, 14);
+      } catch (e) { out.err = String(e && e.message || e).slice(0, 200); }
+      try { if (b) await b.close(); } catch (e) { }
+      out.ms = Date.now() - out.t0;
+      console.log(JSON.stringify(out));
+    })();
+    return;
+  }
   if (args.serve) {
     let browserP = null, chain = Promise.resolve();
     setTimeout(() => { try { browserP = getBrowser(); } catch (e) { } }, 50);   /* ★ আগেই গরম */

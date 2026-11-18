@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.375';
+const VERSION = '1.34.376';
 /* ★ v1.34.322: nexa.mov — নতুন সোর্স (মুভি/সিরিজ ৫ সার্ভার: nova/onyx/orion/flux/sylver;
    অ্যানিমে ৪: kyoto/tokyo/hokkaido/fuji)। প্লেব্যাক-প্রোটোকল wasm-এ সিল করা, nexa.js রিভার্স করেছে। */
 let NEX = null;
@@ -19290,6 +19290,14 @@ const server = http.createServer((req, res) => FG_CONTEXT.run({ active: true }, 
     if (p === '/_nexcap') {   /* ★ v1.34.340: প্রোড chromium-প্রোব (shell|full|full-single|raw) */
       const sp = new URLSearchParams(String(req.url || '').split('?')[1] || '');
       const mode = sp.get('m') || 'status';
+      if (sp.get('dom')) {   /* ★ v1.34.376: watch-পেজের DOM জরিপ (সার্ভার-বাটন/সোর্স) */
+        const dargs = [require('path').join(__dirname, 'nexa-cap.js'), '--dom', '--id', String(sp.get('dom')), '--wait', String(sp.get('wait') || 14000)];
+        if (sp.get('e')) dargs.push('--s', String(sp.get('s') || 1), '--e', String(sp.get('e')));
+        const dc = require('child_process').spawnSync(process.execPath, dargs, { timeout: 90000, encoding: 'utf8' });
+        let dj = null;
+        try { dj = JSON.parse(String(dc.stdout || '').trim().split('\n').filter(Boolean).pop()); } catch (e) { dj = { raw: String(dc.stdout || '').slice(-200) }; }
+        return sendJson(res, 200, dj);
+      }
       if (sp.get('warm')) {   /* ★ v1.34.355: ওয়ার্কার-প্রোব: একই টাইটেল দুইবার (কোল্ড+ওয়ার্ম) */
         const nx = require('./nexa.js');
         const id = String(sp.get('warm'));
