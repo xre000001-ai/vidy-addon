@@ -127,7 +127,17 @@ function capWorker(platform, id, S, E, ms) {
     let done = false;
     const payload = { args: { platform, id: String(id), timeout: String(Math.max(10, Math.round((ms || 20000) / 1000))) } };
     if (E) { payload.args.s = String(S); payload.args.e = String(E); }
-    const entry = (j) => { if (done) return; done = true; clearTimeout(tm); WK_LAST = { ok: !!(j && j.ok), ms: (j && (j.total || j.ms)) || 0, tries: j && j.tries, err: j && j.err, nav: j && j.navMs, at: Date.now() };
+    const entry = (j) => { if (done) return; done = true; clearTimeout(tm);
+      if (j && j.ok && Array.isArray(j.variants) && j.variants.length) {
+        /* ★ v1.34.371: worker-এর সফল ফল সরাসরি CAP_CACHE-এ (আগে capFetch-এর ক্যাশ-চেক আগেই
+           bad-এন্ট্রি ফেরত দিত ⇒ ক্যাপচার সফল হয়েও কার্ড ০) */
+        try {
+          const k2 = capKey(platform, id, S, E);
+          if (CAP_CACHE.size > CAP_MAX) CAP_CACHE.clear();
+          CAP_CACHE.set(k2, { at: Date.now(), val: j });
+          note('cap-worker-cached ' + k2);
+        } catch (e) { }
+      } WK_LAST = { ok: !!(j && j.ok), ms: (j && (j.total || j.ms)) || 0, tries: j && j.tries, err: j && j.err, nav: j && j.navMs, at: Date.now() };
     if (j && j.ok) { WK_OK++; note('cap-worker ok ' + platform + id + ' (' + ((j && (j.ms || j.total)) || 0) + 'ms, ' + ((j.variants || []).length) + ' res)'); } else { WK_ERR++; note('cap-worker-miss ' + platform + id + ': ' + ((j && j.err) || 'timeout') + ' (' + ((j && (j.total || j.ms)) || 0) + 'ms, launch ' + ((j && j.launchMs) || '?') + ', nav ' + ((j && j.navMs) || '?') + ', first ' + ((j && j.firstAt) || '-') + ')'); } resolve(j); };
     WK_WAIT.push(entry);
     try { ch.stdin.write(JSON.stringify(payload) + '\n'); } catch (e) { entry(null); return; }
@@ -693,7 +703,7 @@ function capCards(j, meta, origin, extraHdrs) {
   return out;
 }
 
-const NEX_VER = '1.34.368';
+const NEX_VER = '1.34.371';
 async function nexStreams(tmdbId, type, s, e, origin, opts) {
   opts = opts || {};
   note('enter ' + NEX_VER + ' tmdb' + tmdbId + ' ' + type + ' capCl=' + CAP_CLI + ' wk=' + WORKER_ON);
