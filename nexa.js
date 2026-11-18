@@ -40,7 +40,10 @@ const CAP_CLI = process.env.NEXA_CAP_CLI === undefined ? 1 : (String(process.env
 /* ★ v1.34.329: প্রমাণিত পথ — প্রক্সি দিয়ে এক-শট ক্যাপচার (nexa-proxy1.py)।
    কারণ: nexa /v1/session rate-limit করে (429); আমাদের DC IP-র কোটা শেষ, প্রক্সি-নোড = নতুন কোটা।
    পরিমাপ (3/3 সফল): session 200 @4.6সে → playlist 200 @9.4সে → master @10.6সে। */
-const CAP_PY = process.env.NEXA_CAP_PY || require('path').join(__dirname, 'nexa-proxy1.py');
+/* ★ v1.34.331: BeamUp কনটেইনারে python নেই ⇒ ক্যাপচার এখন Node-এই (nexa-cap.js)।
+   playwright package.json-এ যোগ করা (npm i playwright) — chromium বাইনারি ইমেজে থাকে। */
+const CAP_PY = process.env.NEXA_CAP_PY || require('path').join(__dirname, 'nexa-cap.js');
+const CAP_NODE = process.env.NEXA_CAP_NODE || 1;
 /* ★ v1.34.330: nexa-র নিজস্ব যাচাই-করা পুল (vidy-র পুল অপরিবর্তিত)।
    nexa /v1/session-এ IP-কোটা (429) আছে, তাই একাধিক নোড ঘুরিয়ে চেষ্টা করি; সফল হলে ৩০ মিনিট ক্যাশ। */
 const NEXA_PX_FALLBACK = "147.161.246.246:10924,18.188.168.99:8741,52.56.143.248:3128,35.43.246.3:23571,103.237.102.191:11111,172.235.157.127:3128,34.43.46.91:80,147.161.246.246:10081,147.161.246.246:10634,147.161.246.246:11452,176.111.37.5:39811,147.161.246.246:12393";
@@ -56,7 +59,11 @@ function capCliOnce(platform, id, S, E, ms, pxOverride) {
     if (px) args.push('--proxy', px); else args.push('--proxy', '');
     if (E) { args.push('--s', String(S), '--e', String(E)); }
     let ch;
-    try { ch = require('child_process').spawn(CAP_PYTHON, args, { stdio: ['ignore', 'pipe', 'ignore'] }); }
+    try {
+      ch = CAP_NODE
+        ? require('child_process').spawn(process.execPath, args, { stdio: ['ignore', 'pipe', 'ignore'] })
+        : require('child_process').spawn(CAP_PYTHON, args, { stdio: ['ignore', 'pipe', 'ignore'] });
+    }
     catch (e) { return resolve(null); }
     const tm = setTimeout(() => { if (!done) { done = true; try { ch.kill('SIGKILL'); } catch (e) { } resolve(null); } },
       Math.max(45000, (ms || 26000) + 25000));
