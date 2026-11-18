@@ -539,11 +539,12 @@ function nexRelayUrl(u, origin) {
   if (!origin) return u;                     // no origin ⇒ direct (আগের নিয়মই)
   return origin.replace(/\/+$/, '') + '/nexp/' + nexB(u) + (nexIsPl(u) ? '/p.m3u8' : '/s');
 }
-async function nexaServe(req, res, b64) {
+async function nexaServe(req, res, b64, originIn) {
   let tgt = '';
   try { tgt = Buffer.from(b64, 'base64url').toString('utf8'); } catch (e) { }
   if (!/^https?:\/\//i.test(tgt)) { try { res.writeHead(400, { 'content-type': 'text/plain' }); } catch (e) { } return res.end('bad'); }
-  const origin = (req.headers['x-fwd-host'] ? ('https://' + req.headers['x-fwd-host']) : '') || ('http://' + (req.headers.host || 'localhost'));
+  /* ★ origin একটাই সূত্র: server.js-এর originOf(req) (beamup-এর অভ্যন্তরীণ হোস্ট-হেডার সামলায়) */
+  const origin = originIn ? String(originIn).replace(/\/+$/, '') : ('http://' + (req.headers.host || 'localhost'));
   const pl = nexIsPl(tgt);
   try {
     const hdrs = {};

@@ -19513,7 +19513,7 @@ const server = http.createServer((req, res) => FG_CONTEXT.run({ active: true }, 
     const nexR = p.match(/^\/nexp\/([A-Za-z0-9_=-]{8,4000})\/(?:p\.m3u8|s)$/);
     if (nexR) {
       if (!NEX || typeof NEX.nexaServe !== 'function') { try { res.writeHead(404, { 'content-type': 'text/plain' }); } catch (e) { } return res.end('nexa off'); }
-      return NEX.nexaServe(req, res, nexR[1]).catch(() => { try { res.writeHead(502, { 'content-type': 'text/plain' }); res.end('nex-relay-err'); } catch (e) { } });
+      return NEX.nexaServe(req, res, nexR[1], originOf(req)).catch(() => { try { res.writeHead(502, { 'content-type': 'text/plain' }); res.end('nex-relay-err'); } catch (e) { } });
     }
     // Native rousav single-file WebVTT rendition. Do not combine segmented
     // WebVTT blindly: timestamps can depend on X-TIMESTAMP-MAP.
