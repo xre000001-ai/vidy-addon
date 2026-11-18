@@ -126,7 +126,7 @@ function capWorker(platform, id, S, E, ms) {
     let done = false;
     const payload = { args: { platform, id: String(id), timeout: String(Math.max(10, Math.round((ms || 20000) / 1000))) } };
     if (E) { payload.args.s = String(S); payload.args.e = String(E); }
-    const entry = (j) => { if (done) return; done = true; clearTimeout(tm); if (j && j.ok) { WK_OK++; note('cap-worker ok ' + platform + id + ' (' + ((j && (j.ms || j.total)) || 0) + 'ms, ' + ((j.variants || []).length) + ' res)'); } else { WK_ERR++; note('cap-worker-miss ' + platform + id + ': ' + ((j && j.err) || 'timeout') + ' (' + ((j && (j.total || j.ms)) || 0) + 'ms)'); } resolve(j); };
+    const entry = (j) => { if (done) return; done = true; clearTimeout(tm); if (j && j.ok) { WK_OK++; note('cap-worker ok ' + platform + id + ' (' + ((j && (j.ms || j.total)) || 0) + 'ms, ' + ((j.variants || []).length) + ' res)'); } else { WK_ERR++; note('cap-worker-miss ' + platform + id + ': ' + ((j && j.err) || 'timeout') + ' (' + ((j && (j.total || j.ms)) || 0) + 'ms, launch ' + ((j && j.launchMs) || '?') + ', nav ' + ((j && j.navMs) || '?') + ', first ' + ((j && j.firstAt) || '-') + ')'); } resolve(j); };
     WK_WAIT.push(entry);
     try { ch.stdin.write(JSON.stringify(payload) + '\n'); } catch (e) { entry(null); return; }
     const tm = setTimeout(() => entry(null), Math.max(20000, (ms || 20000) + 12000));

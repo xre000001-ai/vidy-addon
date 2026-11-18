@@ -56,7 +56,10 @@ async function capture(args, shared) {
   };
   try {
     if (own) { browser = await chromium.launch(launch); out.launchMs = Date.now() - t0; }
-    ctx = await browser.newContext({ viewport: { width: 1000, height: 700 }, locale: 'en-US' });
+    ctx = await browser.newContext({
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36',
+      viewport: { width: 1000, height: 700 }, locale: 'en-US',
+    });   /* ★ v1.34.363: রিরাইটে UA স্পুফ হারিয়ে গিয়েছিল — nexa headless UA-তে playlist দেয় না */
     await ctx.route('**/*', (route) => {
       const t = route.request().resourceType(); const u2 = route.request().url();
       if (t === 'image' || t === 'media' || u2.includes('.ts') || u2.includes('tmdb.org') || u2.includes('anilist.co')) return route.abort();
