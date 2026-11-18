@@ -46,6 +46,25 @@ try {
   if (fs.existsSync(pf)) PX = JSON.parse(fs.readFileSync(pf, 'utf8')) || [];
 } catch (e) { PX = []; }
 const PX_STAT = new Map();   // px → {ok,fail,ms}
+/* ইউজার-নিজের প্রোক্সি (রেসিডেন্সিয়াল/মোবাইল) — সবচেয়ে আগে চেষ্টা হয়:
+   NEXA_RESI_PX="host:port:user:pass,host2:port2:u2:p2"  অথবা  "http://user:pass@host:port"   (কমা-বিভক্ত)
+   এছাড়া nexa_proxy.json = [{px:"host:port", user:"…", pass:"…"}] হলেও চলে। */
+const RESI = [];
+(function () {
+  const add = (host, port, user, pass) => { if (host && port) RESI.push({ px: host + ':' + port, user: user || '', pass: pass || '' }); };
+  try {
+    const raw = String(process.env.NEXA_RESI_PX || '').trim();
+    for (const item of raw.split(',')) {
+      const t = item.trim(); if (!t) continue;
+      const m1 = t.match(/^https?:\/\/(?:([^:@]+):([^@]*)@)?([^:/]+):(\d+)/);
+      if (m1) { add(m1[3], m1[4], m1[1] ? decodeURIComponent(m1[1]) : '', m1[2] ? decodeURIComponent(m1[2]) : ''); continue; }
+      const p4 = t.split(':');
+      if (p4.length >= 2) add(p4[0], p4[1], p4[2] || '', p4[3] || '');
+    }
+    const jf = path.join(__dirname, 'nexa_proxy.json');
+    if (fs.existsSync(jf)) for (const c of (JSON.parse(fs.readFileSync(jf, 'utf8')) || [])) add(String(c.px || '').split(':')[0], String(c.px || '').split(':')[1] || c.port, c.user, c.pass);
+  } catch (e) { note('resi-px-parse: ' + String((e && e.message) || e).slice(0, 60)); }
+})();
 function pxRec(px, good, ms) {
   const h = PX_STAT.get(px) || { ok: 0, fail: 0, ms: 0 };
   if (good) { h.ok++; h.ms = h.ms ? Math.round(h.ms * 0.7 + ms * 0.3) : ms; } else h.fail++;
@@ -66,14 +85,20 @@ function pxReq(px, method, url, body, hdrs, timeoutMs, maxBytes) {
     let u; try { u = new URL(url); } catch (e) { return reject(new Error('bad-url')); }
     const isHttps = u.protocol === 'https:';
     const port = Number(u.port) || (isHttps ? 443 : 80);
-    const ci = String(px).indexOf(':');
-    const phost = String(px).slice(0, ci), pport = Number(String(px).slice(ci + 1)) || 8080;
+    const pxs = typeof px === 'string' ? { px: px } : px;
+    const ci = String(pxs.px).indexOf(':');
+    const phost = String(pxs.px).slice(0, ci), pport = Number(String(pxs.px).slice(ci + 1)) || 8080;
+    px = pxs;
     const sock = net.connect({ host: phost, port: pport });
     let done = false;
     const to = setTimeout(() => { bail(new Error('px-timeout')); }, Math.max(3000, timeoutMs || 12000));
     function bail(e) { if (done) return; done = true; clearTimeout(to); try { sock.destroy(); } catch (e2) { } reject(e); }
     sock.once('error', bail);
-    sock.once('connect', () => sock.write('CONNECT ' + u.hostname + ':' + port + ' HTTP/1.1\r\nHost: ' + u.hostname + ':' + port + '\r\n\r\n'));
+    sock.once('connect', () => {
+      let ch = 'CONNECT ' + u.hostname + ':' + port + ' HTTP/1.1\r\nHost: ' + u.hostname + ':' + port + '\r\n';
+      if (px.user) ch += 'Proxy-Authorization: Basic ' + Buffer.from(px.user + ':' + px.pass).toString('base64') + '\r\n';
+      sock.write(ch + '\r\n');
+    });
     let buf = Buffer.alloc(0);
     const onData = d => {
       buf = Buffer.concat([buf, d]);
@@ -205,7 +230,17 @@ async function upFetch(url, opts) {
   } catch (e) {
     if (String(process.env.NEXA_PROXY || '1') === '0' || !PX.length) throw e;
   }
-  /* ২) প্রোক্সি-পুল (প্যারালাল, ছোট বাজেট) */
+  /* ২ক) ইউজার-নিজের (রেসিডেন্সিয়াল) প্রোক্সি — থাকলে সবচেয়ে আগে */
+  if (RESI.length) {
+    for (const c of RESI.slice(0, 2)) {
+      try {
+        const r = await pxReq(c, method, url, body, hdrs, Math.min(ms, 12000), opts.maxBytes);
+        if (r.code !== 403 && r.code !== 407) { note('resi-px ok ' + c.px); return r; }
+        note('resi-px ' + r.code + ' ' + c.px);
+      } catch (e) { note('resi-px-fail ' + c.px + ' ' + String((e && e.message) || e).slice(0, 40)); }
+    }
+  }
+  /* ২খ) প্রোক্সি-পুল (প্যারালাল, ছোট বাজেট) */
   const cands = pxRank().slice(0, PXTRIES);
   const one = c => pxReq(c.px, method, url, body, hdrs, Math.min(ms, 7000), opts.maxBytes)
     .then(r => { pxRec(c.px, r.code < 400, 1); if (r.code === 403 || r.code === 407) throw new Error('px-http-' + r.code); return r; })
@@ -499,6 +534,7 @@ function nexDiag() {
   try { if (API) { d.hasSession = API.hasSession(); d.cat = (API.catalogue() || []).map(c => c.codename); } } catch (e) { }
   d.cardCache = CARD_CACHE.size; d.probeCache = PROBE_CACHE.size;
   d.mapping = MAP ? { tmdbIds: MAP.ids, at: new Date(MAP_AT).toISOString() } : null;
+  d.proxies = { pool: PX.length, resi: RESI.length, bestPool: (pxRank()[0] || {}).px || null };
   d.envCool = [...ENV_BAD_UNTIL.entries()].filter(([, v]) => v > Date.now()).map(([k, v]) => k + ':' + Math.round((v - Date.now()) / 1000) + 's');
   d.blocked = BLOCK_UNTIL > Date.now() ? Math.round((BLOCK_UNTIL - Date.now()) / 1000) + 's' : 0;
   d.last = DIAG.last.slice(-8);
