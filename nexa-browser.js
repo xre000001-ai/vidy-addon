@@ -4,7 +4,7 @@
 'use strict';
 /* ★ v1.34.339: দরকার হলে প্রথমে .nexalibs → LD_LIBRARY_PATH (chromium লঞ্চের আগেই) */
 try {
-  let exe0 = null; try { const b = require('./nexa-browser'); exe0 = b.exePath(); } catch (e) { }
+  let exe0 = null; try { exe0 = exePathDelegate(); } catch (e) { }
   const path = require('path');
   const dirs = [path.join(__dirname, '.nexalibs/root/usr/lib/x86_64-linux-gnu'), path.join(__dirname, '.nexalibs/root/usr/lib')];
   if (exe0) {
@@ -19,6 +19,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
 
+function exePathDelegate() { try { const { chromium } = require('playwright'); const p = chromium.executablePath(); return p && fs.existsSync(p) ? p : null; } catch (e) { return null; } }
 function safe(fn, dflt) { try { return fn(); } catch (e) { return dflt; } }
 
 function exePath() {

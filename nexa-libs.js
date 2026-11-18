@@ -30,16 +30,19 @@ function ensure() {
     let exe = null;
     try { exe = require('./nexa-browser').exePath(); } catch (e) { }
     if (!exe) return { ok: false, why: 'no-exe' };
-    const miss = missingLibs(exe);
+    const miss = missingLibs(exe, false);   /* ★ LD_LIBRARY_PATH ছাড়া */
     if (!miss.length) return { ok: true, skip: true, why: 'libs-ok' };
     const st = install();
     return Object.assign({}, st, { missing: miss.slice(0, 6) });
   } catch (e) { return { ok: false, why: String(e && e.message || e).slice(0, 120) }; }
 }
 
-function missingLibs(exe) {
+function missingLibs(exe, useOurLibs) {
   try {
-    const cp = spawnSync('ldd', [exe], { encoding: 'utf8', timeout: 60000, env: Object.assign({}, process.env, { LD_LIBRARY_PATH: ldPath() }) });
+    const env = Object.assign({}, process.env);
+    if (useOurLibs) env.LD_LIBRARY_PATH = ldPath();
+    else delete env.LD_LIBRARY_PATH;      /* ★ সিস্টেমে সত্যিই আছে কি না — নিরপেক্ষ চেক */
+    const cp = spawnSync('ldd', [exe], { encoding: 'utf8', timeout: 60000, env: env });
     return String(cp.stdout || '').split('\n').filter(l => l.includes('not found')).map(l => l.trim().slice(0, 60));
   } catch (e) { return ['ldd-fail']; }
 }
