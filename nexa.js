@@ -109,6 +109,7 @@ function wkSpawn() {
         if (!line.trim()) continue;
         let j = null;
         try { j = JSON.parse(line); } catch (e) { j = null; }
+        if (j && j.ready) { note('worker-ready pid=' + j.pid); return; }
         const f = WK_WAIT.shift();
         if (f) f(j);
       }

@@ -131,6 +131,7 @@ async function capture(args, shared) {
 if (require.main === module) {
   if (args.serve) {
     let browserP = null, chain = Promise.resolve();
+    setTimeout(() => { try { browserP = getBrowser(); } catch (e) { } }, 50);   /* ★ আগেই গরম */
     const getBrowser = async () => {
       /* ★ v1.34.358: ওয়ার্কারেও chromium-এর libs/executable ঠিক করতে হবে (এক-শট পথে হয়, এখানে হচ্ছিল না) */
       try { require('./nexa-browser').ensure(); } catch (e) { }
