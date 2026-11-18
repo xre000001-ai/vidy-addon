@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.361';
+const VERSION = '1.34.362';
 /* ★ v1.34.322: nexa.mov — নতুন সোর্স (মুভি/সিরিজ ৫ সার্ভার: nova/onyx/orion/flux/sylver;
    অ্যানিমে ৪: kyoto/tokyo/hokkaido/fuji)। প্লেব্যাক-প্রোটোকল wasm-এ সিল করা, nexa.js রিভার্স করেছে। */
 let NEX = null;
@@ -19296,17 +19296,17 @@ const server = http.createServer((req, res) => FG_CONTEXT.run({ active: true }, 
         const t0 = Date.now();
         try { if (nx.capWarm) nx.capWarm(); } catch (e) { }
         if (sp.get('bg')) {   /* ★ v1.34.361: ব্যাকগ্রাউন্ডে চালিয়ে শুধু শুরু-নিশ্চিত করি (গেটওয়ে ১২s) */
-          nx.capWorker(id, 0, 0).then(r => {
+          nx.capWorker('tmdb', id, 0, 0).then(r => {
             try { nx.nexDiag(); } catch (e) { }
             console.log('[nexabg] ' + JSON.stringify({ id, ok: !!(r && r.ok), total: r && r.total, ms: r && r.ms, err: r && r.err, v: (r && r.variants || []).length }));
           }).catch(() => { });
           return sendJson(res, 200, { started: 1, id, worker: nx.capWorkerStats() });
         }
         return Promise.resolve().then(async () => {
-          const r1 = await nx.capWorker(id, 0, 0);
+          const r1 = await nx.capWorker('tmdb', id, 0, 0);
           const t1 = Date.now() - t0;
           const doTwo = String(sp.get('n') || '2') !== '1';
-          const r2 = doTwo ? await nx.capWorker(id, 0, 0) : null;
+          const r2 = doTwo ? await nx.capWorker('tmdb', id, 0, 0) : null;
           const t2 = doTwo ? (Date.now() - t0 - t1) : 0;
           sendJson(res, 200, {
             stats: nx.capWorkerStats(),
