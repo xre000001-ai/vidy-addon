@@ -703,7 +703,26 @@ async function nexStreams(tmdbId, type, s, e, origin, opts) {
     note('cap-first-attempt tmdb' + id);
   }
   try {
-    const j = await capFetch('tmdb', id, S, E, ms);
+    /* ★ v1.34.352: nexa-র কোল্ড ক্যাপচার ৫–১৪সে ⇒ BeamUp গেটওয়ে ১২s-এ ৫০৪ দেয়।
+       তাই শুধু ~৬সে অপেক্ষা করি; দেরি হলে ক্যাপচার ব্যাকগ্রাউন্ডে চলতে থাকে আর
+       ক্যাশ ভরে যায় ⇒ ইউজার পরেরবার ওই টাইটেল খুললেই কার্ড সাথে সাথে আসে। */
+    const _aw = Math.max(4000, Math.min(Number(process.env.NEXA_CAP_AWAIT || 6000), ms - 1000));
+    const _capP = capFetch('tmdb', id, S, E, Math.max(ms, 20000));
+    let j = await Promise.race([_capP, new Promise(r => { const t = setTimeout(() => r(null), _aw); if (t.unref) t.unref(); })]);
+    if (!j) {
+      note('cap-awaited-out tmdb' + id + ' (' + _aw + 'ms) → ব্যাকগ্রাউন্ডে চলবে');
+      _capP.then(jj => {
+        if (!jj || !jj.ok || !Array.isArray(jj.variants) || !jj.variants.length) return;
+        try {
+          const bg = capCards(jj, Object.assign({ label: 'nova' }, meta0), origin);
+          if (bg.length) {
+            if (CARD_CACHE.size > MAXC) CARD_CACHE.clear();
+            CARD_CACHE.set(key, { at: Date.now(), cards: bg });
+            note('cap-bg-filled tmdb' + id + ': ' + bg.length + ' cards (পরের রিকোয়েস্টে সাথে সাথে)');
+          }
+        } catch (e) { }
+      }).catch(() => { });
+    }
     if (!j) note('cap-null tmdb' + id);
     if (j) {
       const cards = capCards(j, Object.assign({ label: 'nova' }, meta0), origin);
