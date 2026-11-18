@@ -127,6 +127,12 @@ if (require.main === module) {
   if (args.serve) {
     let browserP = null, chain = Promise.resolve();
     const getBrowser = async () => {
+      /* ★ v1.34.358: ওয়ার্কারেও chromium-এর libs/executable ঠিক করতে হবে (এক-শট পথে হয়, এখানে হচ্ছিল না) */
+      try { require('./nexa-browser').ensure(); } catch (e) { }
+      try {
+        const nl = require('./nexa-libs'); const st = nl.ensure();
+        if (st && st.ld && !st.skip) process.env.LD_LIBRARY_PATH = st.ld + (process.env.LD_LIBRARY_PATH ? ':' + process.env.LD_LIBRARY_PATH : '');
+      } catch (e) { }
       const { chromium } = require('playwright');
       const launch = { args: ['--no-sandbox', '--mute-audio', '--disable-dev-shm-usage', '--disable-gpu',
         '--disable-software-rasterizer', '--renderer-process-limit=1', '--disable-blink-features=AutomationControlled'] };
