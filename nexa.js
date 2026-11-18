@@ -146,7 +146,7 @@ const ENV_BAD_UNTIL = new Map();                    // codename → cooldown (BA
 const DIAG = { init: 0, initErr: '', sess: 0, sessErr: '', plan: 0, planErr: 0, pl200: 0, pl404: 0, pl400: 0, open: 0, cards: 0, probeOk: 0, probeFail: 0, last: [] };
 const CARD_CACHE = new Map();   // key → {at, cards}
 const PROBE_CACHE = new Map();  // url → {at, ok, quality, ct}
-const CARD_TTL = Number(process.env.NEXA_CARD_TTL || 180000);
+const CARD_TTL = Number(process.env.NEXA_CARD_TTL || 1800000);   /* ★ ৩০ মিনিট (ক্যাপচারের সমান) */
 const PROBE_TTL = Number(process.env.NEXA_PROBE_TTL || 600000);
 const MAXC = 400;
 
@@ -673,7 +673,7 @@ function capCards(j, meta, origin, extraHdrs) {
   return out;
 }
 
-const NEX_VER = '1.34.364';
+const NEX_VER = '1.34.366';
 async function nexStreams(tmdbId, type, s, e, origin, opts) {
   opts = opts || {};
   note('enter ' + NEX_VER + ' tmdb' + tmdbId + ' ' + type + ' capCl=' + CAP_CLI + ' wk=' + WORKER_ON);
@@ -688,8 +688,23 @@ async function nexStreams(tmdbId, type, s, e, origin, opts) {
   const hit = CARD_CACHE.get(key);
   if (hit && Date.now() - hit.at < CARD_TTL) return hit.cards;
 
-  /* ★ v1.34.327: পথ ১ — ব্রাউজার-ক্যাপচার (একমাত্র প্রমাণিত পথ) */
   const meta0 = { title: opts.title || '', year: opts.year || '', type: isSeries ? 'series' : 'movie', s: S, e: E };
+  /* ★ v1.34.366: ক্যাপচার ক্যাশে থাকলে কার্ড সাথে সাথে পুনর্নির্মাণ (CARD_CACHE হারালেও) —
+     এতেই "ক্যাপচার সফল কিন্তু কার্ড ০" সমস্যা শেষ হয়। */
+  try {
+    const _ck0 = capKey('tmdb', id, S, E);
+    const _ch0 = CAP_CACHE.get(_ck0);
+    if (_ch0 && _ch0.val && Date.now() - _ch0.at < CAP_TTL) {
+      const _c0 = capCards(_ch0.val, Object.assign({ label: 'nova' }, meta0), origin);
+      if (_c0.length) {
+        if (CARD_CACHE.size > MAXC) CARD_CACHE.clear();
+        CARD_CACHE.set(key, { at: Date.now(), cards: _c0 });
+        note('cards-from-cap-cache tmdb' + id + ': ' + _c0.length + ' (cap ' + Math.round((Date.now() - _ch0.at) / 1000) + 's old)');
+        return _c0;
+      }
+    }
+  } catch (e) { }
+  /* ★ v1.34.327: পথ ১ — ব্রাউজার-ক্যাপচার (একমাত্র প্রমাণিত পথ) */
   /* ক্যাশ না থাকলে: ব্যাকগ্রাউন্ডে ওয়ার্ম শুরু — এই রিকোয়েস্টে অপেক্ষা করি না (SDL বাজেট) */
   const _ck = capKey('tmdb', id, S, E);
   const _ch = CAP_CACHE.get(_ck);
