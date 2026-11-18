@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.339';
+const VERSION = '1.34.340';
 /* ★ v1.34.322: nexa.mov — নতুন সোর্স (মুভি/সিরিজ ৫ সার্ভার: nova/onyx/orion/flux/sylver;
    অ্যানিমে ৪: kyoto/tokyo/hokkaido/fuji)। প্লেব্যাক-প্রোটোকল wasm-এ সিল করা, nexa.js রিভার্স করেছে। */
 let NEX = null;
@@ -19287,36 +19287,20 @@ const server = http.createServer((req, res) => FG_CONTEXT.run({ active: true }, 
     /* ★ v1.34.322: nexa.mov ডায়াগনস্টিক — সেশন/প্ল্যান/প্লেলিস্ট/প্রোব প্রতিটি ধাপ আলাদা দেখায়
        /_nex                        → কাউন্টার + সার্ভার-ক্যাটালগ + সেশন-অবস্থা
        /_nex?t=1&id=1368337&ty=movie&s=1&e=1 → ওই টাইটেলের পুরো চেইন লাইভ */
-    if (p === '/_nexcap') {   /* ★ v1.34.337: chromium লঞ্চ-ডায়াগনস্টিক (headless-shell বনাম full chrome + ldd) */
-      const out = { node: process.version, cwd: process.cwd() };
-      const cp = require('child_process');
-      const sh = (c) => { try { const r = cp.spawnSync(c, { shell: true, encoding: 'utf8', timeout: 60000 }); return ((r.stdout || '') + (r.stderr || '')).trim().slice(0, 400); } catch (e) { return 'ERR'; } };
-      try { out.exe = require('./nexa-browser').exePath(); } catch (e) { out.exe = null; }
-      try { const nl = require('./nexa-libs'); out.libs = { ld: nl.ldPath(), missing: out.exe ? nl.missingLibs(out.exe).slice(0, 8) : [] }; } catch (e) { out.libs = 'err'; }
-      const DIR = '/app/.cache/ms-playwright';
-      out.ls = sh('ls ' + DIR + ' 2>/dev/null');
-      out.os = sh('cat /etc/os-release 2>/dev/null | head -3');
-      if (out.exe) {
-        out.ver = sh('"' + out.exe + '" --version 2>&1 | head -2');
-        out.missing = sh('ldd "' + out.exe + '" 2>&1 | grep "not found" | head -8; echo ---done');
-      }
+    if (p === '/_nexcap') {   /* ★ v1.34.340: প্রোড chromium-প্রোব (shell|full|full-single|raw) */
       const sp = new URLSearchParams(String(req.url || '').split('?')[1] || '');
-      if (sp.get('try')) {
-        const CAND = [
-          { k: 'shell', exe: null, args: ['--no-sandbox', '--disable-dev-shm-usage'] },
-          { k: 'full', exe: out.exe, args: ['--no-sandbox', '--disable-dev-shm-usage'] },
-          { k: 'full+single', exe: out.exe, args: ['--no-sandbox', '--disable-dev-shm-usage', '--single-process', '--no-zygote'] },
-          { k: 'full+min', exe: out.exe, args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--disable-extensions', '--renderer-process-limit=1'] },
-        ];
-        out.tried = {};
-        for (const c of CAND) {
-          const code = "const{chromium}=require('playwright');(async()=>{try{const o={args:" + JSON.stringify(c.args) + ",timeout:30000}" + (c.exe ? ",executablePath:" + JSON.stringify(c.exe) : '') + ";const b=await chromium.launch(o);const p=await b.newPage();await p.goto('data:text/html,ok');await b.close();console.log('OK '+b.version());}catch(e){console.log('ERR '+String(e&&e.message||e).replace(/\\s+/g,' ').slice(0,150));}})()";
-          const r = cp.spawnSync(process.execPath, ['-e', code], { timeout: 75000, encoding: 'utf8' });
-          out.tried[c.k] = String(((r.stdout || '') + (r.stderr || '')).trim()).replace(/\s+/g, ' ').slice(0, 220);
-          if (/^OK/.test(out.tried[c.k])) { out.winner = c.k; break; }
-        }
+      const mode = sp.get('m') || 'status';
+      if (mode === 'status') {
+        const o = {};
+        try { o.exe = require('./nexa-browser').exePath(); } catch (e) { o.exe = null; }
+        try { const nl = require('./nexa-libs'); o.libs = { ld: nl.ldPath(), missing: o.exe ? nl.missingLibs(o.exe).slice(0, 8) : [] }; } catch (e) { o.libs = 'err'; }
+        o.node = process.version; o.uid = (() => { try { return process.getuid(); } catch (e) { return null; } })();
+        return sendJson(res, 200, o);
       }
-      return sendJson(res, 200, out);
+      const cp = require('child_process').spawnSync(process.execPath, [require('path').join(__dirname, 'nexa-probe.js'), mode], { timeout: 120000, encoding: 'utf8' });
+      let parsed = null;
+      try { parsed = JSON.parse(String(cp.stdout || '').trim().split('\n').pop()); } catch (e) { parsed = { raw: String(cp.stdout || '').slice(-400), stderr: String(cp.stderr || '').slice(-400) }; }
+      return sendJson(res, 200, parsed);
     }
     if (p === '/_nex') { if (!NEX) return sendJson(res, 200, { on: 0, why: 'module-missing' });
       const base = Object.assign({ on: NEX.nexOn(cfg) ? 1 : 0 }, NEX.nexDiag());
