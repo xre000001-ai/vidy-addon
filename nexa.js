@@ -675,6 +675,33 @@ async function capFetch(platform, id, S, E, ms) {
 
 /* ক্যাপচার-ফল → কার্ড। রেজলিউশন আসে master-paylist-এর RESOLUTION= থেকে (বানানো নয়);
    URL রিলে-র মাধ্যমে যায় (রিলে referer বসায়, নাহলে totallyacdn 302/ডিকয় দেয়)। */
+
+/* ───────── অডিও-ট্র্যাক মেটা (v1.34.377) ─────────
+   nexa-র ভিডিও-প্লেলিস্ট প্রায়ই *নীরব* — অডিও আলাদা `#EXT-X-MEDIA:…TYPE=AUDIO` ইউআরআই-তে।
+   আমরা ওই অডিও-ভ্যারিয়েন্টটি জানি (capture-এর `audio`), তাই master-বানিয়ে দিই ⇒ প্লেয়ারে সাউন্ড আসে। */
+function capAudioInfo(j) {
+  const h = j && j.headers || {};
+  const a = String((j && j.audio) || '');
+  const m = a.match(/[?&]lang=([a-zA-Z-]{2,8})/) || a.match(/\.([a-z]{2})(?:\.|\?|$)/);
+  return {
+    has: !!a,
+    lang: (m && m[1]) ? m[1].toLowerCase() : '',
+    name: (j && j.audioName) || '',
+    forced: /&forced=1|FORCED=YES/i.test(a),
+  };
+}
+/* এক ভিডিও-ভ্যারিয়েন্ট + অডিও-ট্র্যাক ⇒ রিলে-র `/p.m3u8` রেন্ডার করার সময় master বানানো হবে */
+function capIsMuxed(j, v) {
+  const au = capAudioInfo(j);
+  if (!au.has || !v || !v.url) return false;
+  return true;
+}
+function capAudioTag(j) {
+  const au = capAudioInfo(j);
+  if (!au.has) return '';
+  return ' \u266b ' + (au.name || au.lang || 'audio');
+}
+
 function capCards(j, meta, origin, extraHdrs) {
   const out = [];
   const seen = new Set();
@@ -686,7 +713,7 @@ function capCards(j, meta, origin, extraHdrs) {
     const q = h >= 2160 ? 2160 : h >= 1440 ? 1440 : h >= 1080 ? 1080 : h >= 720 ? 720 : h >= 480 ? 480 : 0;
     const srv = meta.label || 'nexa';
     const txt = '\u25a4 ' + (meta.title || '') + ' (' + (meta.year || '') + ')'
-      + '\n' + '\u25a6 ' + srv + ' \u00b7 ' + (v.res || 'auto') + (j.audio ? ' \u22b7 audio' : '')
+      + '\n' + '\u25a6 ' + srv + ' \u00b7 ' + (v.res || 'auto') + capAudioTag(j)
       + '\n' + '\u229e nexa \u25e7 ' + (q ? q + 'p' : 'Auto');
     const bh = { notWebReady: false, isBingeable: true, filename: 'nexa-' + mlsNorm(srv) + '-' + (q || 'auto') + '.m3u8' };
     const hdrs = Object.assign({}, j.headers || {}, extraHdrs || {});
@@ -695,7 +722,7 @@ function capCards(j, meta, origin, extraHdrs) {
       name: '\u25a5 ' + (q || 'Auto') + ' \u25a5',
       title: txt, description: txt,
       quality: q ? String(q) : '',
-      url: nexRelayUrl(v.url, origin),
+      url: nexRelayUrl(v.url, origin) + (capIsMuxed(j, v) ? '?a=' + nexB(j.audio) : ''),
       behaviorHints: bh,
       bingeGroup: 'nex|' + mlsNorm(meta.title || '') + '::' + (meta.e ? 'S' + meta.s + 'E' + meta.e : 'm'),
     });
@@ -703,7 +730,7 @@ function capCards(j, meta, origin, extraHdrs) {
   return out;
 }
 
-const NEX_VER = '1.34.375';
+const NEX_VER = '1.34.377';
 async function nexStreams(tmdbId, type, s, e, origin, opts) {
   opts = opts || {};
   note('enter ' + NEX_VER + ' tmdb' + tmdbId + ' ' + type + ' capCl=' + CAP_CLI + ' wk=' + WORKER_ON);
@@ -935,13 +962,33 @@ function nexRelayUrl(u, origin) {
   if (!origin) return u;                     // no origin ⇒ direct (আগের নিয়মই)
   return origin.replace(/\/+$/, '') + '/nexp/' + nexB(u) + (nexIsPl(u) ? '/p.m3u8' : '/s');
 }
-async function nexaServe(req, res, b64, originIn) {
+async function nexaServe(req, res, b64, originIn, query) {
   let tgt = '';
   try { tgt = Buffer.from(b64, 'base64url').toString('utf8'); } catch (e) { }
   if (!/^https?:\/\//i.test(tgt)) { try { res.writeHead(400, { 'content-type': 'text/plain' }); } catch (e) { } return res.end('bad'); }
   /* ★ origin একটাই সূত্র: server.js-এর originOf(req) (beamup-এর অভ্যন্তরীণ হোস্ট-হেডার সামলায়) */
   const origin = originIn ? String(originIn).replace(/\/+$/, '') : ('http://' + (req.headers.host || 'localhost'));
   const pl = nexIsPl(tgt);
+  /* ★ v1.34.377: `?a=<audio-url>` ⇒ ভিডিও-প্লেলিস্টের বদলে ছোট master দিই যাতে অডিও-ট্র্যাকও থাকে
+     (nexa-র ভিডিও স্ট্রিম নীরব; অডিও আলাদা রেন্ডিশনে)। */
+  const audioB64 = (query && (query.get ? query.get('a') : (query.a || ''))) || '';
+  if (pl && audioB64) {
+    let audioTgt = '';
+    try { audioTgt = Buffer.from(String(audioB64), 'base64url').toString('utf8'); } catch (e) { }
+    if (/^https?:\/\//i.test(audioTgt)) {
+      const p2 = (() => { try { const u = new URL(tgt); ['lang', 'forced', 'name', 'langs'].forEach(k => u.searchParams.delete(k)); return u.toString(); } catch (e) { return tgt; } })();
+      const master = [
+        '#EXTM3U',
+        '#EXT-X-VERSION:3',
+        '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="nexa",DEFAULT=YES,AUTOSELECT=YES,URI="' + nexRelayUrl(audioTgt, origin) + '"',
+        '#EXT-X-STREAM-INF:BANDWIDTH=8000000,AUDIO="aud"',
+        nexRelayUrl(p2, origin),
+        '',
+      ].join('\n');
+      try { res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl', 'access-control-allow-origin': '*', 'cache-control': 'no-store', 'x-nex': 'master' }); } catch (e) { }
+      return res.end(master);
+    }
+  }
   try {
     const hdrs = {};
     if (req.headers.range && !pl) hdrs['range'] = String(req.headers.range);

@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.376';
+const VERSION = '1.34.377';
 /* ★ v1.34.322: nexa.mov — নতুন সোর্স (মুভি/সিরিজ ৫ সার্ভার: nova/onyx/orion/flux/sylver;
    অ্যানিমে ৪: kyoto/tokyo/hokkaido/fuji)। প্লেব্যাক-প্রোটোকল wasm-এ সিল করা, nexa.js রিভার্স করেছে। */
 let NEX = null;
@@ -19586,7 +19586,8 @@ const server = http.createServer((req, res) => FG_CONTEXT.run({ active: true }, 
     const nexR = p.match(/^\/nexp\/([A-Za-z0-9_=-]{8,4000})\/(?:p\.m3u8|s)$/);
     if (nexR) {
       if (!NEX || typeof NEX.nexaServe !== 'function') { try { res.writeHead(404, { 'content-type': 'text/plain' }); } catch (e) { } return res.end('nexa off'); }
-      return NEX.nexaServe(req, res, nexR[1], originOf(req)).catch(() => { try { res.writeHead(502, { 'content-type': 'text/plain' }); res.end('nex-relay-err'); } catch (e) { } });
+      /* ★ v1.34.377: ?a=<audio-url> — রিলে master বানায় (ভিডিও+অডিও) */
+      return NEX.nexaServe(req, res, nexR[1], originOf(req), (() => { try { return new URLSearchParams(String(req.url || '').split('?')[1] || ''); } catch (e) { return null; } })()).catch(() => { try { res.writeHead(502, { 'content-type': 'text/plain' }); res.end('nex-relay-err'); } catch (e) { } });
     }
     // Native rousav single-file WebVTT rendition. Do not combine segmented
     // WebVTT blindly: timestamps can depend on X-TIMESTAMP-MAP.
