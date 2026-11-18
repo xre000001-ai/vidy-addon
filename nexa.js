@@ -822,6 +822,7 @@ function nexDiag() {
   try { if (API) { d.hasSession = API.hasSession(); d.cat = (API.catalogue() || []).map(c => c.codename); } } catch (e) { }
   d.cardCache = CARD_CACHE.size; d.probeCache = PROBE_CACHE.size;
   d.mapping = MAP ? { tmdbIds: MAP.ids, at: new Date(MAP_AT).toISOString() } : null;
+  try { d.worker = (typeof capWorkerStats === 'function') ? capWorkerStats() : null; } catch (e) { d.worker = 'err'; }
   d.proxies = { pool: PX.length, resi: RESI.length, bestPool: (pxRank()[0] || {}).px || null };
   d.envCool = [...ENV_BAD_UNTIL.entries()].filter(([, v]) => v > Date.now()).map(([k, v]) => k + ':' + Math.round((v - Date.now()) / 1000) + 's');
   d.blocked = BLOCK_UNTIL > Date.now() ? Math.round((BLOCK_UNTIL - Date.now()) / 1000) + 's' : 0;
