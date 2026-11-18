@@ -20,6 +20,13 @@ const AC_KEY = '94588293375053432799222445521289';     // প্লেয়া�
 const AC_IV = '5259228356829423';
 
 const ACG = { pages: 0, pageFail: 0, noSearch: 0, noDetail: 0, noServer: 0, noCrypto: 0, decFail: 0, cards: 0, badPlay: 0 };
+const AC_LAST = [];   // শেষ ২৫টি টাইটেলের রায়: কেন কার্ড এল/এল না (প্রমাণ-লগ)
+function acNote(title, year, stage, extra) {
+  try {
+    AC_LAST.unshift({ t: String(title || '').slice(0, 40), y: String(year || ''), stage: stage, x: extra || '', at: Date.now() });
+    if (AC_LAST.length > 25) AC_LAST.length = 25;
+  } catch (e) { }
+}
 const AC_SLUG = new Map();     // "title|year|s" → {ts, slug, detail}
 const AC_EP = new Map();       // slug|N → {ts, list:[{label,url}]}
 const AC_EMB = new Map();      // embedId → {ts, url}
@@ -114,14 +121,59 @@ async function acFindSlug(title, year, season) {
   if (hit && Date.now() - hit.ts < AC_TTL) return hit;
   const q = String(title || '').trim();
   if (!q) { ACG.noSearch++; return null; }
-  const html = await acGet(AC_BASE + '/search?keyword=' + encodeURIComponent(q), 11000);
-  if (!html) { ACG.noSearch++; return null; }
-  const pick = acPickResult(html, q, year, season);
-  if (!pick) { ACG.noSearch++; return null; }
-  const rec = { ts: Date.now(), slug: pick.slug, text: pick.text };
-  AC_SLUG.set(ck, rec);
-  if (AC_SLUG.size > 400) _shrink(AC_SLUG, 0.4);
-  return rec;
+  /* ★ v1.34.320: ধাপে-ধাপে শিথিল খোঁজ — আগে হুবহু, না মিললে সংক্ষিপ্ত কীওয়ার্ড,
+     তারপর মিল-স্কোর (কিন্তু টাইটেলের সব অর্থপূর্ণ শব্দ থাকতেই হবে ⇒ ভুল-ড্রামা নয়) */
+  const queries = [q];
+  const words = q.replace(/[^A-Za-z0-9\s]/g, ' ').split(/\s+/).filter(Boolean);
+  if (words.length > 2) queries.push(words.slice(0, 2).join(' '));
+  if (words.length > 3) queries.push(words.slice(0, 3).join(' '));
+  for (const query of queries) {
+    const html = await acGet(AC_BASE + '/search?keyword=' + encodeURIComponent(query), 11000);
+    if (!html) continue;
+    let pick = acPickResult(html, q, year, season);
+    if (!pick) pick = acPickLoose(html, q, year, season);   // শিথিল: সব শব্দ থাকলেই চলবে
+    if (!pick) continue;
+    const rec = { ts: Date.now(), slug: pick.slug, text: pick.text };
+    AC_SLUG.set(ck, rec);
+    if (AC_SLUG.size > 400) _shrink(AC_SLUG, 0.4);
+    return rec;
+  }
+  ACG.noSearch++;
+  return null;
+}
+/* শিথিল ম্যাচ: সাইট-টাইটেলে আমাদের সব অর্থপূর্ণ শব্দ উপস্থিত ⇒ গ্রহণ (সিজন/বছর পছন্দ) */
+function acPickLoose(html, title, year, season) {
+  const out = [];
+  const seen = new Set();
+  const re = /<a[^>]+href="(\/drama-detail\/[^"#?]+)"([^>]*)>/g;
+  let m;
+  while ((m = re.exec(html))) {
+    const slug = m[1].replace('/drama-detail/', '');
+    if (seen.has(slug)) continue;
+    seen.add(slug);
+    const attrs = m[2] || '';
+    let txt = ((/title="([^"]+)"/i.exec(attrs) || [])[1] || '').replace(/&amp;/g, '&').replace(/&#0?39;/g, "'").trim();
+    if (!txt) continue;
+    const y = Number((/\((\d{4})\)/.exec(txt) || [])[1] || 0);
+    const name = txt.replace(/^\d+\s*/, '').replace(/\(\d{4}\)\s*$/, '').trim();
+    const sm = /season\s*(\d+)/i.exec(name);
+    const sn = sm ? Number(sm[1]) : 0;
+    const base = sm ? name.replace(/season\s*\d+/i, ' ') : name;
+    const k = acKey(base);
+    const ws = String(title).toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length > 2);
+    if (!ws.length) continue;
+    const hits = ws.filter(w => k.indexOf(w) >= 0).length;
+    if (hits < ws.length) continue;            // সব শব্দ থাকতেই হবে (ভুল-ড্রামা নয়)
+    if (year && y && Math.abs(y - Number(year)) > 2) continue;
+    out.push({ slug: slug, text: txt, sn: sn, y: y, exactWords: hits });
+  }
+  if (!out.length) return null;
+  const S = Math.max(1, Number(season) || 1);
+  let pool = out.filter(c => (S > 1 ? c.sn === S : c.sn === 0));
+  if (!pool.length) pool = out.filter(c => c.sn === 0);
+  if (!pool.length) pool = out;
+  pool.sort((a, b) => (b.exactWords - a.exactWords) || (a.slug.length - b.slug.length));
+  return { slug: pool[0].slug, text: pool[0].text };
 }
 
 /* ── ডিটেইল: শিরোনাম + এপিসোড-তালিকা ──────────────────────────────────────── */
@@ -567,7 +619,7 @@ async function acStreams(tmdbId, type, s, e, origin, opt) {
         if (d2 && d2.eps && d2.eps.length) { detail = d2; slug = guessForSeason; }
       }
     }
-    if (!detail || !detail.eps.length) { ACG.noServer++; return []; }
+    if (!detail || !detail.eps.length) { ACG.noServer++; acNote(title, year, 'detail-empty', slug); return []; }
 
     // ২) এপিসোড বাছাই (মুভি হলে N=1 / últime এপিসোড)
     let epRec = null;
@@ -578,7 +630,7 @@ async function acStreams(tmdbId, type, s, e, origin, opt) {
     const epHtml = await acGet(AC_BASE + epRec.path, 11000, AC_BASE + '/drama-detail/' + slug);
     if (!epHtml) { ACG.noServer++; return []; }
     const servers = acServersOf(epHtml);
-    if (!servers.length) { ACG.noServer++; return []; }
+    if (!servers.length) { ACG.noServer++; acNote(title, year, 'no-data-video', epRec.path); return []; }
     // একই এপিসোড-সেটের এমবেড-আইডি পাশে রাখি (উপরের পথ-৪-এর জন্য)
     try {
       const ids = servers.map(s => (/\/embed\/([A-Za-z0-9_-]+)/.exec(s.url) || [])[1]).filter(Boolean);
@@ -631,8 +683,9 @@ async function acStreams(tmdbId, type, s, e, origin, opt) {
         bingeGroup: 'acs|' + acSlugify(title) + '::' + (l.label || 'Standard')
       });
     }
-    if (!cards.length) return [];
+    if (!cards.length) { acNote(title, year, 'resolve-empty', slug); return []; }
     ACG.cards += cards.length;
+    acNote(title, year, 'ok', String(cards.length) + ' cards via ' + slug);
     AC_EP.set(epKey, { ts: Date.now(), cards: cards });
     if (AC_EP.size > 300) _shrink(AC_EP, 0.4);
     return cards;
@@ -698,7 +751,7 @@ async function acRawDiag(kind, arg) {
 }
 
 function acDiag() {
-  return Object.assign({ base: AC_BASE, mirror: AC_MIRROR.host || '', slugMemo: AC_SLUG.size, epMemo: AC_EP.size, embMemo: AC_EMB.size }, ACG);
+  return Object.assign({ base: AC_BASE, mirror: AC_MIRROR.host || '', slugMemo: AC_SLUG.size, epMemo: AC_EP.size, embMemo: AC_EMB.size, last: AC_LAST.slice(0, 25) }, ACG);
 }
 
 async function acSelftest() {
