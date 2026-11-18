@@ -127,7 +127,8 @@ function capWorker(platform, id, S, E, ms) {
     let done = false;
     const payload = { args: { platform, id: String(id), timeout: String(Math.max(10, Math.round((ms || 20000) / 1000))) } };
     if (E) { payload.args.s = String(S); payload.args.e = String(E); }
-    const entry = (j) => { if (done) return; done = true; clearTimeout(tm); if (j && j.ok) { WK_OK++; note('cap-worker ok ' + platform + id + ' (' + ((j && (j.ms || j.total)) || 0) + 'ms, ' + ((j.variants || []).length) + ' res)'); } else { WK_ERR++; note('cap-worker-miss ' + platform + id + ': ' + ((j && j.err) || 'timeout') + ' (' + ((j && (j.total || j.ms)) || 0) + 'ms, launch ' + ((j && j.launchMs) || '?') + ', nav ' + ((j && j.navMs) || '?') + ', first ' + ((j && j.firstAt) || '-') + ')'); } resolve(j); };
+    const entry = (j) => { if (done) return; done = true; clearTimeout(tm); WK_LAST = { ok: !!(j && j.ok), ms: (j && (j.total || j.ms)) || 0, tries: j && j.tries, err: j && j.err, nav: j && j.navMs, at: Date.now() };
+    if (j && j.ok) { WK_OK++; note('cap-worker ok ' + platform + id + ' (' + ((j && (j.ms || j.total)) || 0) + 'ms, ' + ((j.variants || []).length) + ' res)'); } else { WK_ERR++; note('cap-worker-miss ' + platform + id + ': ' + ((j && j.err) || 'timeout') + ' (' + ((j && (j.total || j.ms)) || 0) + 'ms, launch ' + ((j && j.launchMs) || '?') + ', nav ' + ((j && j.navMs) || '?') + ', first ' + ((j && j.firstAt) || '-') + ')'); } resolve(j); };
     WK_WAIT.push(entry);
     try { ch.stdin.write(JSON.stringify(payload) + '\n'); } catch (e) { entry(null); return; }
     const tm = setTimeout(() => entry(null), Math.max(20000, (ms || 20000) + 12000));
@@ -135,7 +136,8 @@ function capWorker(platform, id, S, E, ms) {
 }
 
 function capWarm() { if (WORKER_ON) wkSpawn(); }
-function capWorkerStats() { return { on: WORKER_ON ? 1 : 0, up: WK ? Math.round((Date.now() - WK_STARTED) / 1000) : 0, ok: WK_OK, err: WK_ERR, queued: WK_WAIT.length, started: WK_STARTED ? 1 : 0 }; }
+let WK_LAST = null;
+function capWorkerStats() { return { on: WORKER_ON ? 1 : 0, up: WK ? Math.round((Date.now() - WK_STARTED) / 1000) : 0, ok: WK_OK, err: WK_ERR, queued: WK_WAIT.length, started: WK_STARTED ? 1 : 0, last: WK_LAST }; }
 
 
 let API = null, API_P = null, HS_P = null, SESS_AT = 0, BLOCK_UNTIL = 0;

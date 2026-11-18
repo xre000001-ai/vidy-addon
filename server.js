@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.368';
+const VERSION = '1.34.369';
 /* ★ v1.34.322: nexa.mov — নতুন সোর্স (মুভি/সিরিজ ৫ সার্ভার: nova/onyx/orion/flux/sylver;
    অ্যানিমে ৪: kyoto/tokyo/hokkaido/fuji)। প্লেব্যাক-প্রোটোকল wasm-এ সিল করা, nexa.js রিভার্স করেছে। */
 let NEX = null;
@@ -20358,6 +20358,16 @@ try {
       try { if (NEX && NEX.capWarm) NEX.capWarm(); } catch (e) {
         try { const nx = require('./nexa.js'); if (nx.capWarm) nx.capWarm(); } catch (e2) { }
       }
+      /* ★ v1.34.369: ওয়ার্কার গরম হলে জনপ্রিয় টাইটেলের ক্যাপচার আগেই করে রাখি (ক্যাশ-ফিল) */
+      setTimeout(() => {
+        try {
+          const nx = require('./nexa.js');
+          const pres = String(process.env.NEXA_PRE || '27205').split(',').filter(Boolean).slice(0, 2);
+          for (const pid of pres) {
+            try { nx.nexStreams(Number(pid), 'movie', 0, 0, 'http://127.0.0.1:' + PORT, { title: '', ms: 25000 }).then(cs => { try { console.log('[prewarm] ' + pid + ' → ' + (cs ? cs.length : 0) + ' cards'); } catch (e) { } }).catch(() => { }); } catch (e) { }
+          }
+        } catch (e) { }
+      }, 14000);
     } catch (e) { }
   }, 6000);
 } catch (e) { }
