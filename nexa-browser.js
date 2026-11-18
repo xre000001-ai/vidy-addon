@@ -1,37 +1,55 @@
 #!/usr/bin/env node
-/* nexa-browser.js — chromium বাইনারি নিশ্চিত করে (BeamUp ইমেজে থাকে না)।
-   "node nexa-browser.js install"  → postinstall-এ চলে (ব্যর্থ হলেও npm install ভাঙে না)
-   require('./nexa-browser').ensure() → রানটাইমে দরকার হলে নামায় */
+/* nexa-browser.js — chromium বাইনারি নিশ্চিত করে (BeamUp/Heroku-ish ইমেজে থাকে না)।
+   ★ কখনো নন-জিরো এক্সিট নয়: postinstall ব্যর্থ হলেও অ্যাডঅনের build ভাঙবে না। */
 'use strict';
-const { spawnSync } = require('child_process');
 const fs = require('fs');
+const path = require('path');
+const { spawnSync } = require('child_process');
+
+function safe(fn, dflt) { try { return fn(); } catch (e) { return dflt; } }
 
 function exePath() {
-  try {
+  return safe(() => {
     const { chromium } = require('playwright');
     const p = chromium.executablePath();
     return p && fs.existsSync(p) ? p : null;
-  } catch (e) { return null; }
+  }, null);
+}
+
+function cliCandidates() {
+  const out = [];
+  const r = safe(() => require.resolve('playwright/cli.js'), null);
+  if (r) out.push(r);
+  out.push(path.join(__dirname, 'node_modules', 'playwright', 'cli.js'));
+  out.push(path.join(__dirname, 'node_modules', 'playwright-core', 'cli.js'));
+  return out.filter(p => safe(() => fs.existsSync(p), false));
 }
 
 function install(timeoutMs) {
-  const cp = spawnSync(process.execPath, [require.resolve('playwright/cli.js'), 'install', 'chromium'], {
-    stdio: 'inherit', timeout: timeoutMs || 600000, env: Object.assign({}, process.env, { PLAYWRIGHT_BROWSERS_PATH: undefined }),
-  });
-  return cp.status === 0;
+  const t = timeoutMs || 480000;
+  for (const cli of cliCandidates()) {
+    const cp = spawnSync(process.execPath, [cli, 'install', 'chromium'], { stdio: 'inherit', timeout: t });
+    if (cp.status === 0) return true;
+  }
+  /* শেষ চেষ্টা: npx */
+  const cp2 = spawnSync('npx', ['--yes', 'playwright', 'install', 'chromium'], { stdio: 'inherit', timeout: t, shell: true });
+  return cp2.status === 0;
 }
 
 function ensure() {
   if (exePath()) return true;
-  try { install(600000); } catch (e) { }
+  safe(() => install(480000), false);
   return !!exePath();
 }
 
 if (require.main === module) {
-  const arg = process.argv[2] || 'install';
-  if (arg === 'check') { console.log(exePath() ? 'OK ' + exePath() : 'MISSING'); process.exit(0); }
-  const ok = install(600000);
-  console.log(ok ? 'chromium ready' : 'chromium install failed');
-  process.exit(0);   /* ★ কখনো নন-জিরো নয়: postinstall ব্যর্থ হলেও অ্যাডঅন চলবে */
+  try {
+    const arg = process.argv[2] || 'install';
+    if (arg === 'check') { console.log(exePath() ? 'OK ' + exePath() : 'MISSING'); }
+    else { const ok = install(480000); console.log(ok ? 'chromium ready' : 'chromium install failed (non-fatal)'); }
+  } catch (e) {
+    console.log('nexa-browser: non-fatal error ' + String(e && e.message || e).slice(0, 120));
+  }
+  process.exit(0);      /* ★ সবসময় ০ */
 }
 module.exports = { ensure, exePath, install };
