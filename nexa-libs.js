@@ -12,7 +12,7 @@ const EXT = path.join(ROOT, 'root');
 const TAR = path.join(__dirname, 'libs', 'chromium-libs-ubuntu22.04.tgz');
 
 function ldPath() {
-  const dirs = [path.join(EXT, 'usr/lib/x86_64-linux-gnu'), path.join(EXT, 'usr/lib'), path.join(EXT, 'lib/x86_64-linux-gnu'), path.join(EXT, 'lib')];
+  const dirs = [path.join(EXT, 'usr/lib/x86_64-linux-gnu'), path.join(EXT, 'usr/lib/x86_64-linux-gnu/nss'), path.join(EXT, 'usr/lib'), path.join(EXT, 'lib/x86_64-linux-gnu'), path.join(EXT, 'lib')];
   return dirs.filter(d => fs.existsSync(d)).join(':');
 }
 

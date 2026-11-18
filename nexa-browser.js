@@ -6,7 +6,7 @@
 try {
   let exe0 = null; try { exe0 = exePathDelegate(); } catch (e) { }
   const path = require('path');
-  const dirs = [path.join(__dirname, '.nexalibs/root/usr/lib/x86_64-linux-gnu'), path.join(__dirname, '.nexalibs/root/usr/lib')];
+  const dirs = [path.join(__dirname, '.nexalibs/root/usr/lib/x86_64-linux-gnu'), path.join(__dirname, '.nexalibs/root/usr/lib/x86_64-linux-gnu/nss'), path.join(__dirname, '.nexalibs/root/usr/lib')];
   if (exe0) {
     const cp0 = spawnSync('ldd', [exe0], { encoding: 'utf8', timeout: 30000 });
     if (String(cp0.stdout || '').includes('not found')) {
