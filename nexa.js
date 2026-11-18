@@ -705,6 +705,49 @@ function capAudioTag(j) {
 function capCards(j, meta, origin, extraHdrs) {
   const out = [];
   const seen = new Set();
+  /* ★ v1.34.379: একাধিক সোর্স (Nova/Onyx/Flux/Sylver/Orion) — প্রতিটির সবচেয়ে ভালো ২টি রেজলিউশন */
+  const list = (j && Array.isArray(j.sources2) && j.sources2.length) ? j.sources2 : [j];
+  for (const S of list) {
+    const srvName = S.server || (j.server) || (meta.label || 'nexa');
+    const vs = (S.variants || []).slice(0, 2);
+    const sj = { headers: j.headers, audio: S.audio, audioName: S.audioName, codecs: S.codecs };
+    for (const v of vs) {
+      if (!v || !v.url || seen.has(v.url)) continue;
+      seen.add(v.url);
+      const h = Number(v.h) || 0;
+      const q = h >= 2160 ? 2160 : h >= 1440 ? 1440 : h >= 1080 ? 1080 : h >= 720 ? 720 : h >= 480 ? 480 : 0;
+      const srv = srvName;
+      const cod = (() => {
+        const c = String(sj.codecs || '').toLowerCase();
+        if (!c) return '';
+        if (c.indexOf('hvc1') >= 0 || c.indexOf('hev1') >= 0) return 'HEVC';
+        if (c.indexOf('avc1') >= 0) return 'H.264';
+        if (c.indexOf('av01') >= 0) return 'AV1';
+        if (c.indexOf('vp09') >= 0) return 'VP9';
+        return '';
+      })();
+      const txt = '\u25a4 ' + (meta.title || '') + ' (' + (meta.year || '') + ')'
+        + '\n' + '\u25a6 ' + srv + ' \u00b7 ' + (v.res || 'auto') + (cod ? ' \u00b7 ' + cod : '') + capAudioTag(sj)
+        + '\n' + '\u229e nexa \u25e7 ' + (q ? q + 'p' : 'Auto');
+      const bh = { notWebReady: false, isBingeable: true, filename: 'nexa-' + mlsNorm(srv) + '-' + (q || 'auto') + '.m3u8' };
+      const hdrs = Object.assign({}, j.headers || {}, extraHdrs || {});
+      if (Object.keys(hdrs).length) bh.proxyHeaders = { request: hdrs };
+      out.push({
+        name: '\u25a5 ' + (q || 'Auto') + ' \u25a5',
+        title: txt, description: txt,
+        quality: q ? String(q) : '',
+        url: nexRelayUrl(v.url, origin) + (S.audio ? '?a=' + nexB(S.audio) : ''),
+        behaviorHints: bh,
+        bingeGroup: 'nex|' + mlsNorm(srv) + '|' + mlsNorm(meta.title || '') + '::' + (meta.e ? 'S' + meta.s + 'E' + meta.e : 'm'),
+      });
+    }
+  }
+  return out;
+}
+
+function __legacyCapCards(j, meta, origin, extraHdrs) {
+  const out = [];
+  const seen = new Set();
   const vs = (j.variants || []).slice(0, 4);
   for (const v of vs) {
     if (!v || !v.url || seen.has(v.url)) continue;
@@ -739,7 +782,7 @@ function capCards(j, meta, origin, extraHdrs) {
   return out;
 }
 
-const NEX_VER = '1.34.378';
+const NEX_VER = '1.34.379';
 async function nexStreams(tmdbId, type, s, e, origin, opts) {
   opts = opts || {};
   note('enter ' + NEX_VER + ' tmdb' + tmdbId + ' ' + type + ' capCl=' + CAP_CLI + ' wk=' + WORKER_ON);

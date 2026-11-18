@@ -114,7 +114,16 @@ async function capture(args, shared) {
       }
       out.tries.push(Date.now() - tA);
       out.hops = hops;
-      if (got.master || got.single) break;
+      if (got.master || got.single) {
+        /* ★ v1.34.379: এক সোর্স পাওয়া গেল — সময় থাকলে পরের সোর্সও দেখি (সব সোর্সের কার্ড) */
+        if (!out.sources) out.sources = [];
+        out.sources.push({ idx: hops, src: got.master ? got.master.body : got.single.body, url: (got.master || got.single).url });
+        got.master = null; got.single = null;
+        const more = Number(args.sources || 3);
+        if (hops + 1 >= more || Date.now() - t0 > timeout - 4000) { out.done = 1; break; }
+        if (await clickNext()) { hops++; await page.waitForTimeout(900); continue; }
+        break;
+      }
       const st = await statusOf();
       if (st.length) out.statuses = st;
       if (hops >= 4) { stale++; if (stale >= 2) break; }
@@ -134,9 +143,54 @@ async function capture(args, shared) {
   try { if (ctx) await ctx.close(); } catch (e) { }
   try { if (own && browser) await browser.close(); } catch (e) { }
   out.ms = Date.now() - t0;
-  const src = got.master || got.single;
-  if (!src) { out.err = 'no-playlist'; return out; }
-  const body = src.body;
+  const col = (out.sources && out.sources.length) ? out.sources : ((got.master || got.single) ? [{ idx: out.hops || 0, src: (got.master || got.single).body, url: (got.master || got.single).url }] : []);
+  if (!col.length) { out.err = 'no-playlist'; return out; }
+  const NAMES = ['nova', 'onyx', 'flux', 'sylver', 'orion'];
+  const parseOne = (bodyObj) => {
+    const body = bodyObj.src, u0 = bodyObj.url;
+    const isMaster = body.includes('EXT-X-STREAM-INF');
+    const o1 = { server: NAMES[Math.min(NAMES.length - 1, Math.max(0, bodyObj.idx || 0))] || 'nexa', master: u0 };
+    if (isMaster) {
+      const lines = body.split('\n'); const vs = []; let audio = null, audioName = '';
+      for (let i = 0; i < lines.length; i++) {
+        const ln = lines[i].trim();
+        if (ln.startsWith('#EXT-X-STREAM-INF')) {
+          const mRes = ln.match(/RESOLUTION=(\d+)x(\d+)/);
+          const mBw = ln.match(/BANDWIDTH=(\d+)/);
+          let u3 = null;
+          for (let j = i + 1; j < Math.min(i + 4, lines.length); j++) { const t2 = lines[j].trim(); if (t2 && !t2.startsWith('#')) { u3 = t2; break; } }
+          if (u3) { const h = mRes ? Math.min(Number(mRes[1]), Number(mRes[2])) : null; vs.push({ res: mRes ? mRes[1] + 'x' + mRes[2] : null, h, bw: mBw ? Number(mBw[1]) : 0, url: u3 }); }
+        }
+        const mA = ln.match(/^#EXT-X-MEDIA[^\n]*TYPE=AUDIO[^\n]*/);
+        if (mA && !audio) {
+          const mu = mA[0].match(/URI="([^"]+)"/); if (mu) audio = mu[1];
+          const mn = mA[0].match(/NAME="([^"]+)"/); if (mn) audioName = mn[1];
+        }
+      }
+      vs.sort((a, b) => ((b.h || 0) - (a.h || 0)) || ((b.bw || 0) - (a.bw || 0)));
+      o1.variants = vs; o1.audio = audio; o1.audioName = audioName;
+      o1.codecs = (body.match(/CODECS="([^"]+)"/) || [])[1] || '';
+    } else {
+      const segs = (body.match(/#EXTINF/g) || []).length;
+      o1.variants = [{ res: null, h: null, bw: 0, url: u0 }]; o1.segs = segs;
+    }
+    return o1;
+  };
+  const perSource = col.map(parseOne).filter(o2 => (o2.variants || []).length);
+  if (!perSource.length) { out.err = 'master-empty'; return out; }
+  /* সামঞ্জস্যের জন্য প্রথম সোর্সের ফলাফল শীর্ষস্তরে রাখি (পুরনো কোড-পথ অপরিবর্তিত থাকে) */
+  const first = perSource[0];
+  out.sources2 = perSource;
+  out.server = first.server;
+  out.variants = first.variants; out.audio = first.audio; out.audioName = first.audioName;
+  out.codecs = first.codecs || ''; out.master = first.master;
+  out.ok = true;
+  out.ms = Date.now() - t0;
+  return out;
+}
+
+/* ---- পুরনো একক-সোর্স পার্সিং (আর ব্যবহার হয় না, রেফারেন্সের জন্য রাখা) ---- */
+function __legacyParse(body, src) {
   if (got.master) {
     const lines = body.split('\n'); const variants = []; let audio = null;
     for (let i = 0; i < lines.length; i++) {
@@ -181,6 +235,7 @@ async function capture(args, shared) {
   }
   return out;
 }
+
 
 /* ───────── CLI / persistent worker ─────────
    node nexa-cap.js --id 27205 [...]            → এক-শট, এক লাইন JSON
