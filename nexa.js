@@ -33,6 +33,34 @@ const ANIME_SRV = ['kyoto', 'tokyo', 'hokkaido', 'fuji'];             // অ্�
 const CAP_URL = process.env.NEXA_CAP_URL === undefined ? 'http://127.0.0.1:8899' : process.env.NEXA_CAP_URL;
 const CAP_TTL = Number(process.env.NEXA_CAP_TTL || 900000);        // ১৫ মিনিট (URL-এ এক্সপায়ারি-টোকেন থাকে ⇒ ডিস্কে লেখা হয় না)
 const CAP_CACHE = new Map();     // key → {at, val}
+/* ★ v1.34.328: সার্ভিস-লুপ (nexa-cap.py) এই বক্সে মাঝে মাঝে আটকে যায় (র‍্যাম ২GB),
+   তাই ডিফল্ট পথ = এক-শট CLI প্রসেস (nexa-cap1.py): প্রতিবার নতুন chromium, শেষে পুরো
+   মেমরি ফেরত, ঝুলে থাকার ঝুঁকি নেই। NEXA_CAP_CLI=0 দিলে সার্ভিস-পথ। */
+const CAP_CLI = process.env.NEXA_CAP_CLI === undefined ? 1 : (String(process.env.NEXA_CAP_CLI) !== '0');
+const CAP_PY = process.env.NEXA_CAP_PY || require('path').join(__dirname, 'nexa-cap1.py');
+const CAP_PYTHON = process.env.NEXA_CAP_PYTHON || 'python3';
+function capCliOnce(platform, id, S, E, ms) {
+  return new Promise(resolve => {
+    let out = '', done = false;
+    const args = [CAP_PY, '--platform', platform, '--id', String(id), '--timeout', String(Math.max(14, Math.round((ms || 26000) / 1000)))];
+    if (E) { args.push('--s', String(S), '--e', String(E)); }
+    let ch;
+    try { ch = require('child_process').spawn(CAP_PYTHON, args, { stdio: ['ignore', 'pipe', 'ignore'] }); }
+    catch (e) { return resolve(null); }
+    const tm = setTimeout(() => { if (!done) { done = true; try { ch.kill('SIGKILL'); } catch (e) { } resolve(null); } },
+      Math.max(45000, (ms || 26000) + 25000));
+    ch.stdout.on('data', d => { out += d.toString(); if (out.length > 400000) out = out.slice(-200000); });
+    ch.on('error', () => { if (!done) { done = true; clearTimeout(tm); resolve(null); } });
+    ch.on('close', () => {
+      if (done) return; done = true; clearTimeout(tm);
+      const lines = out.trim().split('\n').filter(Boolean);
+      for (let i = lines.length - 1; i >= 0; i--) {
+        try { const j = JSON.parse(lines[i]); if (j && typeof j === 'object') return resolve(j); } catch (e) { }
+      }
+      resolve(null);
+    });
+  });
+}
 const CAP_MAX = 300;
 
 let API = null, API_P = null, HS_P = null, SESS_AT = 0, BLOCK_UNTIL = 0;
@@ -491,6 +519,18 @@ async function capFetch(platform, id, S, E, ms) {
   const hit = CAP_CACHE.get(key);
   if (hit && Date.now() - hit.at < CAP_TTL) return hit.val;
   if (hit && hit.bad) return null;
+  if (CAP_CLI) {
+    const j = await capCliOnce(platform, id, S, E, ms);
+    if (j && j.ok && Array.isArray(j.variants) && j.variants.length) {
+      if (CAP_CACHE.size > CAP_MAX) CAP_CACHE.clear();
+      CAP_CACHE.set(key, { at: Date.now(), val: j });
+      note('cap-cli ' + key + ': ' + j.variants.length + ' res (' + (j.ms || 0) + 'ms)');
+      return j;
+    }
+    note('cap-cli-miss ' + key + ': ' + ((j && (j.err || j.error)) || 'no-out'));
+    CAP_CACHE.set(key, { at: Date.now(), bad: 1, val: null });
+    return null;
+  }
   const q = new URLSearchParams({ platform, id: String(id) });
   if (E) { q.set('s', String(S)); q.set('e', String(E)); }
   q.set('timeout', String(Math.max(12, Math.round((ms || 26000) / 1000))));

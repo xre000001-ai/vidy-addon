@@ -14,15 +14,22 @@ import queue
 JOBQ = queue.Queue()
 STATE = {'err': '', 'n': 0, 'ok': 0, 'dead': ''}
 
+LOGT = []
 def log(*a):
-    sys.stderr.write('[nexa-cap] ' + ' '.join(str(x) for x in a) + '\n'); sys.stderr.flush()
+    line = ' '.join(str(x) for x in a)
+    LOGT.append(line[:160])
+    if len(LOGT) > 200:
+        del LOGT[:100]
+    sys.stderr.write('[nexa-cap] ' + line + '\n'); sys.stderr.flush()
 
 def get_browser(pw, hold):
     if hold.get('b') is None or not hold['b'].is_connected():
         # headless "new" mode (full chrome build) — পুরনো headless-এ wasm ওয়েব-ওয়ার্কার ব্লক হয়
-        hold['b'] = pw.chromium.launch(channel='chromium', headless=True, args=[
+        hold['b'] = pw.chromium.launch(args=[
             '--no-sandbox', '--mute-audio', '--autoplay-policy=no-user-gesture-required',
-            '--disable-blink-features=AutomationControlled', '--disable-dev-shm-usage'])
+            '--disable-blink-features=AutomationControlled', '--disable-dev-shm-usage',
+            '--disable-gpu', '--disable-software-rasterizer', '--renderer-process-limit=1',
+            '--js-flags=--max-old-space-size=96'])
         log('browser launched')
     return hold['b']
 
@@ -35,6 +42,19 @@ def watch_path(platform, tid, s, e):
 
 def capture(b, platform, tid, s, e, timeout):
     ctx = b.new_context(user_agent=UA, viewport={'width': 1400, 'height': 900}, locale='en-US')
+    def _route(route):
+        try:
+            rt = route.request.resource_type
+            u = route.request.url
+            if rt in ('image', 'media') or '.ts' in u or 'tmdb.org' in u or 'anilist.co' in u:
+                return route.abort()
+        except Exception:
+            pass
+        return route.continue_()
+    try:
+        ctx.route('**/*', _route)
+    except Exception:
+        pass
     pg = ctx.new_page()
     got = {'master': None, 'single': None, 'err': ''}
     t0 = time.time()
@@ -53,26 +73,58 @@ def capture(b, platform, tid, s, e, timeout):
         elif 'EXTINF' in txt:
             got['single'] = {'url': r.url, 'body': txt}
     pg.on('response', on_resp)
+    def on_req(r):
+        u = r.url
+        if any(k in u for k in ('/v1/session', '/v1/playlist', 'cdn-m3u8')):
+            log('req %s' % u.split('/')[-1][:40])
+    pg.on('request', on_req)
     t_commit = [0.0]; t_click = [0.0]
     try:
         try:
-            pg.goto(WATCH % watch_path(platform, tid, s, e), wait_until='commit', timeout=min(25000, timeout * 1000 // 3))
+            pg.goto(WATCH % watch_path(platform, tid, s, e), wait_until='commit', timeout=20000)
         except Exception as ex:
             log('goto warn', str(ex)[:80])
         t_commit[0] = time.time()
-        # ★ v1.34.327: প্লে-বাটন যেই আসে সেই মুহূর্তেই ক্লিক (আগে ফিক্সড ৫সে অপেক্ষা=নষ্ট)
-        deadline_click = t_commit[0] + 12
-        while time.time() < deadline_click:
-            done = got['master'] or got['single']
-            if done:
-                break
-            try:
-                pg.locator('[aria-label*="lay" i]').first.click(timeout=1200)
-                t_click[0] = time.time()
-                break
-            except Exception:
-                pass
-            pg.wait_for_timeout(250)
+        # ★ v1.34.327: প্লে-বাটন খোঁজা কঠিন — একাধিক সিলেক্টর + কোঅর্ডিনেট + কীবোর্ড, ফেল হলে ১ বার রিলোড
+        CLICKS = ['[aria-label*="lay" i]', 'button:has-text("Play")', '[class*="play" i]',
+                  'video', '.player', 'main']
+        attempts = 0
+        rounds = 0
+        while time.time() - t0 < min(timeout, 45) and not (got['master'] or got['single']):
+            rounds += 1
+            hit = False
+            for sel in CLICKS:
+                try:
+                    loc = pg.locator(sel).first
+                    if loc.count():
+                        loc.click(timeout=900, force=True)
+                        t_click[0] = time.time()
+                        hit = True
+                        break
+                except Exception:
+                    continue
+            if not hit:
+                try:
+                    pg.mouse.click(700, 430)          # প্লেয়ার-এরিয়া (ভিডিওতে ক্লিক)
+                    t_click[0] = time.time()
+                except Exception:
+                    pass
+            for _ in range(12):                        # ~2.4সে অপেক্ষা
+                if got['master'] or got['single']:
+                    break
+                pg.wait_for_timeout(200)
+            attempts += 1
+            if rounds in (2, 6):
+                try:
+                    pg.screenshot(path='/tmp/capdbg_%d_%d.png' % (rounds, int(time.time())), timeout=4000)
+                    log('shot round %d ok' % rounds)
+                except Exception as ex2:
+                    log('shot fail %s' % str(ex2)[:40])
+            if attempts == 3 and not (got['master'] or got['single']):
+                try:
+                    pg.reload(wait_until='commit', timeout=15000)
+                except Exception:
+                    pass
         while time.time() - t0 < timeout and not (got['master'] or got['single']):
             pg.wait_for_timeout(200)
         vid = None
@@ -89,6 +141,16 @@ def capture(b, platform, tid, s, e, timeout):
         log('timing %s%s: commit %.1fs click %.1fs first-pl %.1fs' % (
             platform, tid, t_commit[0] - t0, (t_click[0] - t0) if t_click[0] else -1, time.time() - t0))
     out = {'ok': False, 'ms': int((time.time() - t0) * 1000), 'video': vid}
+    if os.environ.get('NEXA_CAP_DEBUG'):
+        out['trace'] = LOGT[-40:]
+        try:
+            out['dom'] = pg.evaluate("()=>({title:document.title,vids:document.querySelectorAll('video').length,btns:[...document.querySelectorAll('button')].map(b=>(b.getAttribute('aria-label')||b.innerText||'').trim()).filter(Boolean).slice(0,12)})")
+        except Exception:
+            pass
+        try:
+            pg.screenshot(path='/tmp/capdbg.png', timeout=5000); out['shot'] = '/tmp/capdbg.png'
+        except Exception as ex3:
+            out['shot'] = 'fail:' + str(ex3)[:40]
     src = got['master'] or got['single']
     if not src:
         out['err'] = 'no-playlist'
