@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.343';
+const VERSION = '1.34.344';
 /* ★ v1.34.322: nexa.mov — নতুন সোর্স (মুভি/সিরিজ ৫ সার্ভার: nova/onyx/orion/flux/sylver;
    অ্যানিমে ৪: kyoto/tokyo/hokkaido/fuji)। প্লেব্যাক-প্রোটোকল wasm-এ সিল করা, nexa.js রিভার্স করেছে। */
 let NEX = null;
@@ -19290,14 +19290,7 @@ const server = http.createServer((req, res) => FG_CONTEXT.run({ active: true }, 
     if (p === '/_nexcap') {   /* ★ v1.34.340: প্রোড chromium-প্রোব (shell|full|full-single|raw) */
       const sp = new URLSearchParams(String(req.url || '').split('?')[1] || '');
       const mode = sp.get('m') || 'status';
-      if (mode === 'status') {
-        const o = {};
-        try { o.exe = require('./nexa-browser').exePath(); } catch (e) { o.exe = null; }
-        try { const nl = require('./nexa-libs'); o.libs = { ld: nl.ldPath(), missing: o.exe ? nl.missingLibs(o.exe, false).slice(0, 8) : [] }; } catch (e) { o.libs = 'err'; }
-        o.node = process.version; o.uid = (() => { try { return process.getuid(); } catch (e) { return null; } })();
-        return sendJson(res, 200, o);
-      }
-      if (sp.get('cap')) {   /* ★ v1.34.343: প্রোডে সরাসরি ক্যাপচার টেস্ট (?cap=27205&px=host:port) */
+      if (sp.get('cap')) {   /* ★ v1.34.344: status-এর আগেই ক্যাপচার-টেস্ট */   /* ★ v1.34.343: প্রোডে সরাসরি ক্যাপচার টেস্ট (?cap=27205&px=host:port) */
         const cargs = [require('path').join(__dirname, 'nexa-cap.js'), '--id', String(sp.get('cap')), '--timeout', String(sp.get('to') || 20)];
         if (sp.get('e')) cargs.push('--s', String(sp.get('s') || 1), '--e', String(sp.get('e')));
         if (sp.get('px')) cargs.push('--proxy', String(sp.get('px')));
@@ -19305,6 +19298,14 @@ const server = http.createServer((req, res) => FG_CONTEXT.run({ active: true }, 
         let cj = null;
         try { cj = JSON.parse(String(cc.stdout || '').trim().split('\n').filter(Boolean).pop()); } catch (e) { cj = { raw: String(cc.stdout || '').slice(-300), err2: String(cc.stderr || '').slice(-300) }; }
         return sendJson(res, 200, cj);
+      }
+
+      if (mode === 'status') {
+        const o = {};
+        try { o.exe = require('./nexa-browser').exePath(); } catch (e) { o.exe = null; }
+        try { const nl = require('./nexa-libs'); o.libs = { ld: nl.ldPath(), missing: o.exe ? nl.missingLibs(o.exe, false).slice(0, 8) : [] }; } catch (e) { o.libs = 'err'; }
+        o.node = process.version; o.uid = (() => { try { return process.getuid(); } catch (e) { return null; } })();
+        return sendJson(res, 200, o);
       }
       const cp = require('child_process').spawnSync(process.execPath, [require('path').join(__dirname, 'nexa-probe.js'), mode], { timeout: 120000, encoding: 'utf8' });
       let parsed = null;
