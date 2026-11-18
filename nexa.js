@@ -41,14 +41,17 @@ const CAP_CLI = process.env.NEXA_CAP_CLI === undefined ? 1 : (String(process.env
    কারণ: nexa /v1/session rate-limit করে (429); আমাদের DC IP-র কোটা শেষ, প্রক্সি-নোড = নতুন কোটা।
    পরিমাপ (3/3 সফল): session 200 @4.6সে → playlist 200 @9.4সে → master @10.6সে। */
 const CAP_PY = process.env.NEXA_CAP_PY || require('path').join(__dirname, 'nexa-proxy1.py');
-const CAP_PROXY = process.env.NEXA_CAP_PROXY || '130.110.103.245:3128';   // ফাঁকা = ডিরেক্টে (প্রোক্সি-URL গুলো অন্য IP-তে বাঁধা)
+/* ★ v1.34.330: nexa-র নিজস্ব যাচাই-করা পুল (vidy-র পুল অপরিবর্তিত)।
+   nexa /v1/session-এ IP-কোটা (429) আছে, তাই একাধিক নোড ঘুরিয়ে চেষ্টা করি; সফল হলে ৩০ মিনিট ক্যাশ। */
+const NEXA_PX_FALLBACK = "147.161.246.246:10924,18.188.168.99:8741,52.56.143.248:3128,35.43.246.3:23571,103.237.102.191:11111,172.235.157.127:3128,34.43.46.91:80,147.161.246.246:10081,147.161.246.246:10634,147.161.246.246:11452,176.111.37.5:39811,147.161.246.246:12393";
+const CAP_PROXY = process.env.NEXA_CAP_PROXY === undefined ? NEXA_PX_FALLBACK : process.env.NEXA_CAP_PROXY;
 const CAP_PROXY_LIST = String(process.env.NEXA_CAP_PROXIES || CAP_PROXY + ',102.244.78.61:8086,4.144.146.21:80').split(',').filter(Boolean);
 let CAP_PX_I = 0;
 const CAP_PYTHON = process.env.NEXA_CAP_PYTHON || 'python3';
-function capCliOnce(platform, id, S, E, ms) {
+function capCliOnce(platform, id, S, E, ms, pxOverride) {
   return new Promise(resolve => {
     let out = '', done = false;
-    const px = CAP_PROXY ? CAP_PROXY_LIST[CAP_PX_I++ % CAP_PROXY_LIST.length] : '';
+    const px = pxOverride || '';
     const args = [CAP_PY, '--platform', platform, '--id', String(id), '--timeout', String(Math.max(16, Math.round((ms || 26000) / 1000)))];
     if (px) args.push('--proxy', px); else args.push('--proxy', '');
     if (E) { args.push('--s', String(S), '--e', String(E)); }
