@@ -613,7 +613,7 @@ async function capFetch(platform, id, S, E, ms) {
     return hit.val;
   }
   if (CAP_CLI) {
-    if (WORKER_ON && !pxOverride) {
+    if (WORKER_ON) {   /* ★ v1.34.373: pxOverride এখানে নেই (সেটা capCliOnce-এর প্যারাম) — ReferenceError-এ পুরো পথ মরত */
       /* ★ v1.34.367: worker-ই যথেষ্ট (ভিতরে ৩ রিলোড-চেষ্টা); এক-শট CLI ফলব্যাক বাদ — নাহলে ১২s গেটওয়ে ভাঙে */
       const w = await capWorker(platform, id, S, E, Math.max(12000, ms || 16000));
       if (w && w.ok && Array.isArray(w.variants) && w.variants.length) {
@@ -703,7 +703,7 @@ function capCards(j, meta, origin, extraHdrs) {
   return out;
 }
 
-const NEX_VER = '1.34.371';
+const NEX_VER = '1.34.373';
 async function nexStreams(tmdbId, type, s, e, origin, opts) {
   opts = opts || {};
   note('enter ' + NEX_VER + ' tmdb' + tmdbId + ' ' + type + ' capCl=' + CAP_CLI + ' wk=' + WORKER_ON);
@@ -716,7 +716,7 @@ async function nexStreams(tmdbId, type, s, e, origin, opts) {
   const E = isSeries ? Math.max(1, Number(e) || 1) : 0;
   const key = 'tmdb:' + id + ':' + (isSeries ? 'S' + S + 'E' + E : 'm');
   const hit = CARD_CACHE.get(key);
-  if (hit && Date.now() - hit.at < CARD_TTL) return hit.cards;
+  if (hit && hit.cards && hit.cards.length && Date.now() - hit.at < CARD_TTL) return hit.cards;
 
   const meta0 = { title: opts.title || '', year: opts.year || '', type: isSeries ? 'series' : 'movie', s: S, e: E };
   /* ★ v1.34.366: ক্যাপচার ক্যাশে থাকলে কার্ড সাথে সাথে পুনর্নির্মাণ (CARD_CACHE হারালেও) —
@@ -859,8 +859,12 @@ async function nexStreams(tmdbId, type, s, e, origin, opts) {
   const cards = mkCards(kept, meta);
   if (kept.length) DIAG.cards += cards.length;
   note(((isSeries ? 'S' + S + 'E' + E : 'movie') + ' tmdb' + id + ': ' + plans.length + ' srv → ' + good.length + ' ok (' + (Date.now() - t0) + 'ms) ' + kept.map(k => k.codename + (k.quality ? '@' + k.quality : '')).join(',')).slice(0, 150));
-  if (CARD_CACHE.size > MAXC) CARD_CACHE.clear();
-  CARD_CACHE.set(key, { at: Date.now(), cards });
+  /* ★ v1.34.372: খালি ফলাফল ক্যাশে নয় — নাহলে একবার ক্যাপচার-মিস হলেই ৩০ মিনিট ওই
+     টাইটেল "মৃত" হয়ে থাকত এবং ক্যাপচার-পথ আর ডাকাই হতো না। */
+  if (cards.length) {
+    if (CARD_CACHE.size > MAXC) CARD_CACHE.clear();
+    CARD_CACHE.set(key, { at: Date.now(), cards });
+  }
   return cards;
 }
 
