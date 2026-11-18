@@ -11,6 +11,8 @@ const OUT = (o) => { process.stdout.write(JSON.stringify(o) + '\n'); };
   const out = { ok: false, variants: [], headers: { referer: 'https://nexa.mov/', origin: 'https://nexa.mov' }, err: '' };
   let chromium;
   try { ({ chromium } = require('playwright')); } catch (e) { out.err = 'no-playwright'; return OUT(out); }
+  /* ★ v1.34.333: BeamUp ইমেজে chromium বাইনারি থাকে না — দরকারে নামিয়ে নিই */
+  try { require('./nexa-browser').ensure(); } catch (e) { }
   const id = String(args.id || '');
   if (!/^\d+$/.test(id)) { out.err = 'bad-id'; return OUT(out); }
   const platform = args.platform || 'tmdb';
