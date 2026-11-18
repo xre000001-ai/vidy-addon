@@ -68,16 +68,27 @@ async function capture(args, shared) {
     page = await ctx.newPage();
     out.navMs = Date.now() - t0;
     watch(page);
-    try { await page.goto(url, { waitUntil: 'commit', timeout: 20000 }); } catch (e) { }
-    while (Date.now() - t0 < timeout && !got.master && !got.single) {
-      const clicked = !!(shared && shared.clicked);
-      if (!clicked) {
-        try {
-          const loc = page.locator('[aria-label*="lay" i]').first();
-          if (await loc.count()) { await loc.click({ timeout: 800, force: true }); if (shared) shared.clicked = 1; }
-        } catch (e) { }
+    /* ★ v1.34.367: nexa-র প্লেলিস্ট মাঝে মাঝে আসে না (সার্ভার-ফ্ল্যকি) ⇒ একই warm ব্রাউজারে
+       ২–৩ বার রিলোড করে চেষ্টা (প্রতিটা সস্তা; নতুন ব্রাউজার লঞ্চ নয়)। */
+    const attempts = Math.max(1, Math.min(3, Number(args.attempts || 3)));
+    out.tries = [];
+    for (let a = 0; a < attempts && !got.master && !got.single; a++) {
+      const tA = Date.now();
+      if (a === 0) { try { await page.goto(url, { waitUntil: 'commit', timeout: 15000 }); } catch (e) { } }
+      else { try { await page.reload({ waitUntil: 'commit', timeout: 12000 }); } catch (e) { } }
+      out.navMs = out.navMs || (Date.now() - t0);
+      let clicked = false;
+      while (Date.now() - t0 < timeout && !got.master && !got.single) {
+        if (!clicked) {
+          try {
+            const loc = page.locator('[aria-label*="lay" i]').first();
+            if (await loc.count()) { await loc.click({ timeout: 800, force: true }); clicked = true; }
+          } catch (e) { }
+        }
+        if (Date.now() - tA > Math.max(4500, Math.round(timeout / attempts))) break;   /* এই চেষ্টার বাজেট শেষ */
+        await page.waitForTimeout(350);
       }
-      await page.waitForTimeout(400);
+      out.tries.push(Date.now() - tA);
     }
   } catch (e) {
     out.err = ('launch:' + String(e && e.message || e)).replace(/\s+/g, ' ').slice(0, 140);

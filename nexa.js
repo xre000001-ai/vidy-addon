@@ -592,9 +592,27 @@ async function capFetch(platform, id, S, E, ms) {
   if (!CAP_URL) return null;
   const key = capKey(platform, id, S, E);
   const hit = CAP_CACHE.get(key);
-  if (hit && Date.now() - hit.at < CAP_TTL) return hit.val;
-  if (hit && hit.bad) return null;
+  /* ★ v1.34.368: নেগেটিভ-ক্যাশ আলাদা ও ছোট (৪৫s)। আগে bad-এন্ট্রিও ৩০ মিনিট বেঁচে থেকে
+     `return hit.val` (=null) করত ⇒ একবার ফেল করা টাইটেল আধা ঘণ্টা "মৃত" থাকত। */
+  if (hit && hit.bad) {
+    if (Date.now() - hit.at < Number(process.env.NEXA_NEG_TTL || 45000)) return null;
+    CAP_CACHE.delete(key);
+  } else if (hit && Date.now() - hit.at < CAP_TTL) {
+    return hit.val;
+  }
   if (CAP_CLI) {
+    if (WORKER_ON && !pxOverride) {
+      /* ★ v1.34.367: worker-ই যথেষ্ট (ভিতরে ৩ রিলোড-চেষ্টা); এক-শট CLI ফলব্যাক বাদ — নাহলে ১২s গেটওয়ে ভাঙে */
+      const w = await capWorker(platform, id, S, E, Math.max(12000, ms || 16000));
+      if (w && w.ok && Array.isArray(w.variants) && w.variants.length) {
+        if (CAP_CACHE.size > CAP_MAX) CAP_CACHE.clear();
+        CAP_CACHE.set(key, { at: Date.now(), val: w });
+        note('cap-cli ' + key + ': ' + w.variants.length + ' res (' + (w.total || w.ms || 0) + 'ms, warm)');
+        return w;
+      }
+      CAP_CACHE.set(key, { at: Date.now(), bad: 1, val: null });
+      return null;
+    }
     /* ★ v1.34.349: প্রোডে প্রমাণ — প্রোক্সি-পুলের নোডগুলো মরা (BAD_PROXY/ERR_TUNNEL) অথচ
        কনটেইনারের নিজের IP-তে nexa ঠিকই playlist দেয় (3840x1600, ৭.৯সে)। তাই ক্রম:
        ১) ডিরেক্ট (প্রোক্সি ছাড়া)  ২) ব্যর্থ হলে তবেই ২টি ভেরিফায়েড নোড। */
@@ -673,7 +691,7 @@ function capCards(j, meta, origin, extraHdrs) {
   return out;
 }
 
-const NEX_VER = '1.34.366';
+const NEX_VER = '1.34.368';
 async function nexStreams(tmdbId, type, s, e, origin, opts) {
   opts = opts || {};
   note('enter ' + NEX_VER + ' tmdb' + tmdbId + ' ' + type + ' capCl=' + CAP_CLI + ' wk=' + WORKER_ON);
