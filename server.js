@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.350';
+const VERSION = '1.34.351';
 /* ★ v1.34.322: nexa.mov — নতুন সোর্স (মুভি/সিরিজ ৫ সার্ভার: nova/onyx/orion/flux/sylver;
    অ্যানিমে ৪: kyoto/tokyo/hokkaido/fuji)। প্লেব্যাক-প্রোটোকল wasm-এ সিল করা, nexa.js রিভার্স করেছে। */
 let NEX = null;
@@ -20329,8 +20329,12 @@ try {
       const nl = require('./nexa-libs'); const st = nl.ensure();
       if (st && st.ld && !st.skip) process.env.LD_LIBRARY_PATH = st.ld + (process.env.LD_LIBRARY_PATH ? ':' + process.env.LD_LIBRARY_PATH : '');
       require('./nexa-browser').ensure();
+      /* ★ v1.34.351: ক্যাপচার-ওয়ার্কার আগেই গরম করি ⇒ ইউজারের প্রথম রিকোয়েস্টে ১–৩সে */
+      try { if (NEX && NEX.capWarm) NEX.capWarm(); } catch (e) {
+        try { const nx = require('./nexa.js'); if (nx.capWarm) nx.capWarm(); } catch (e2) { }
+      }
     } catch (e) { }
-  }, 8000);
+  }, 6000);
 } catch (e) { }
 let NXBENCH = -1, NXWAVES = -1, NXSIZE = -1; // v2.10.1: waves=চাইল্ডের-মোট-স্ক্যান-ঢেউ (কম্পাঙ্ক-যাচাইযোগ্য)
 function nxBenchHealth() {

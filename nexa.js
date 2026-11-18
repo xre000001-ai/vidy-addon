@@ -51,7 +51,14 @@ const CAP_PROXY = process.env.NEXA_CAP_PROXY === undefined ? NEXA_PX_FALLBACK : 
 const CAP_PROXY_LIST = String(process.env.NEXA_CAP_PROXIES || CAP_PROXY + ',102.244.78.61:8086,4.144.146.21:80').split(',').filter(Boolean);
 let CAP_PX_I = 0;
 const CAP_PYTHON = process.env.NEXA_CAP_PYTHON || 'python3';
-function capCliOnce(platform, id, S, E, ms, pxOverride) {
+async function capCliOnce(platform, id, S, E, ms, pxOverride) {
+  /* warm ওয়ার্কার আগে (প্রোক্সি-রিকোয়েস্ট ওয়ার্কারে নেই — ওগুলো এক-শটে) */
+  if (WORKER_ON && !pxOverride) {
+    const w = await capWorker(platform, id, S, E, ms);
+    if (w && w.ok && Array.isArray(w.variants) && w.variants.length) return w;
+    if (w && w.err && w.err !== 'no-playlist') note('cap-worker-err ' + String(w.err).slice(0, 80));
+    else if (w) note('cap-worker-miss (' + (w.total || w.ms || 0) + 'ms)');
+  }
   return new Promise(resolve => {
     let out = '', done = false;
     const px = pxOverride || '';
@@ -80,6 +87,53 @@ function capCliOnce(platform, id, S, E, ms, pxOverride) {
   });
 }
 const CAP_MAX = 300;
+
+/* ───────────── persistent ক্যাপচার-ওয়ার্কার (v1.34.351) ─────────────
+   কোল্ড chromium লঞ্চ ≈৯–১৪সে ⇒ BeamUp গেটওয়ে ৫০৪ দেয়। তাই একটাই ব্রাউজার জীবিত রেখে
+   প্রতি টাইটেলে নতুন ট্যাব খুলি ⇒ warm ক্যাপচার ১–৩সে। ওয়ার্কার মরে গেলে নিজে থেকে আবার। */
+const WORKER_ON = process.env.NEXA_CAP_WORKER === undefined ? 1 : String(process.env.NEXA_CAP_WORKER) !== '0';
+let WK = null, WK_BUF = '', WK_WAIT = [], WK_STARTED = 0, WK_OK = 0, WK_ERR = 0;
+
+function wkSpawn() {
+  if (WK) return WK;
+  try {
+    const ch = require('child_process').spawn(process.execPath, [CAP_PY, '--serve'], { stdio: ['pipe', 'pipe', 'ignore'] });
+    ch.on('close', () => { WK = null; WK_STARTED = 0; const w = WK_WAIT; WK_WAIT = []; for (const f of w) f(null); });
+    ch.on('error', () => { WK = null; });
+    ch.stdout.setEncoding('utf8');
+    ch.stdout.on('data', (d) => {
+      WK_BUF += d;
+      let i;
+      while ((i = WK_BUF.indexOf('\n')) >= 0) {
+        const line = WK_BUF.slice(0, i); WK_BUF = WK_BUF.slice(i + 1);
+        if (!line.trim()) continue;
+        let j = null;
+        try { j = JSON.parse(line); } catch (e) { j = null; }
+        const f = WK_WAIT.shift();
+        if (f) f(j);
+      }
+    });
+    WK = ch; WK_STARTED = Date.now();
+    return ch;
+  } catch (e) { WK = null; return null; }
+}
+
+function capWorker(platform, id, S, E, ms) {
+  return new Promise((resolve) => {
+    const ch = wkSpawn();
+    if (!ch) return resolve(null);
+    let done = false;
+    const payload = { args: { platform, id: String(id), timeout: String(Math.max(10, Math.round((ms || 20000) / 1000))) } };
+    if (E) { payload.args.s = String(S); payload.args.e = String(E); }
+    const entry = (j) => { if (done) return; done = true; clearTimeout(tm); if (j && j.ok) WK_OK++; else WK_ERR++; resolve(j); };
+    WK_WAIT.push(entry);
+    try { ch.stdin.write(JSON.stringify(payload) + '\n'); } catch (e) { entry(null); return; }
+    const tm = setTimeout(() => entry(null), Math.max(20000, (ms || 20000) + 12000));
+  });
+}
+
+function capWarm() { if (WORKER_ON) wkSpawn(); }
+
 
 let API = null, API_P = null, HS_P = null, SESS_AT = 0, BLOCK_UNTIL = 0;
 let MAP = null, MAP_AT = 0, MAP_P = null;          // tmdb ⇄ anilist (অ্যানিমে সার্ভারগুলো এর উপর চলে)
@@ -864,4 +918,5 @@ async function nexaServe(req, res, b64, originIn) {
   }
 }
 
-module.exports = { nexOn, nexStreams, nexDiag, nexSelftest, nexaServe, nexRelayUrl, nexIsPl, MOVIE_SRV, ANIME_SRV };
+module.exports = {
+  capWarm, capWorkerStats: () => ({ on: WORKER_ON ? 1 : 0, up: WK ? Math.round((Date.now() - WK_STARTED) / 1000) : 0, ok: WK_OK, err: WK_ERR, queued: WK_WAIT.length }), nexOn, nexStreams, nexDiag, nexSelftest, nexaServe, nexRelayUrl, nexIsPl, MOVIE_SRV, ANIME_SRV };

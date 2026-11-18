@@ -4,13 +4,17 @@
    আউটপুট: এক লাইন JSON {ok,variants:[{res,h,bw,url}],audio,headers,ms,err} */
 'use strict';
 const args = {};
-process.argv.slice(2).forEach((a, i, arr) => { if (a.startsWith('--')) args[a.slice(2)] = arr[i + 1]; });
+process.argv.slice(2).forEach((a, i, arr) => {
+  if (!a.startsWith('--')) return;
+  const k = a.slice(2), v = arr[i + 1];
+  args[k] = (v && !String(v).startsWith('--')) ? v : 1;   /* ★ ফ্ল্যাগ-ওয়ান-কী (--serve) */
+});
 const T0 = Date.now();
 const OUT = (o) => { process.stdout.write(JSON.stringify(o) + '\n'); };
-(async () => {
+async function capture(args, shared) {
   const out = { ok: false, variants: [], headers: { referer: 'https://nexa.mov/', origin: 'https://nexa.mov' }, err: '' };
-  let chromium;
-  try { ({ chromium } = require('playwright')); } catch (e) { out.err = 'no-playwright'; return OUT(out); }
+  let chromium = null;
+  try { ({ chromium } = require('playwright')); } catch (e) { out.err = 'no-playwright'; return out; }
   /* ★ v1.34.333: BeamUp ইমেজে chromium বাইনারি থাকে না — দরকারে নামিয়ে নিই */
   try { require('./nexa-browser').ensure(); } catch (e) { }
   /* ★ v1.34.338: কনটেইনারে chromium libs নেই — টার থেকে খুলে LD_LIBRARY_PATH সেট করি */
@@ -19,7 +23,7 @@ const OUT = (o) => { process.stdout.write(JSON.stringify(o) + '\n'); };
     if (st && st.ld && !st.skip) process.env.LD_LIBRARY_PATH = st.ld + (process.env.LD_LIBRARY_PATH ? ':' + process.env.LD_LIBRARY_PATH : '');
   } catch (e) { }
   const id = String(args.id || '');
-  if (!/^\d+$/.test(id)) { out.err = 'bad-id'; return OUT(out); }
+  if (!/^\d+$/.test(id)) { out.err = 'bad-id'; return out; }
   const platform = args.platform || 'tmdb';
   const timeout = Math.max(8000, Math.min(40000, Number(args.timeout || 20) * 1000));
   let path;
@@ -33,11 +37,13 @@ const OUT = (o) => { process.stdout.write(JSON.stringify(o) + '\n'); };
     const [h, p] = args.proxy.split(':');
     launch.proxy = { server: 'http://' + h + ':' + p };
   }
-  let browser = null;
+  let browser = (shared && shared.browser) || null;
+  const own = !browser;
   const got = {};
   try {
-    browser = await chromium.launch(launch);
-    const ctx = await browser.newContext({ userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', viewport: { width: 1000, height: 700 }, locale: 'en-US' });
+    if (own) browser = await chromium.launch(launch);
+    const ctx = own ? await browser.newContext({ userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', viewport: { width: 1000, height: 700 }, locale: 'en-US' })
+      : await browser.newContext({ viewport: { width: 1000, height: 700 } });
     await ctx.route('**/*', (route) => {
       const t = route.request().resourceType(); const u = route.request().url();
       if (t === 'image' || t === 'media' || u.includes('.ts') || u.includes('tmdb.org') || u.includes('anilist.co')) return route.abort();
@@ -73,13 +79,13 @@ const OUT = (o) => { process.stdout.write(JSON.stringify(o) + '\n'); };
   } catch (e) {
     out.err = ('launch:' + String(e && e.message || e)).slice(0, 120);
     out.ms = Date.now() - T0;
-    try { if (browser) await browser.close(); } catch (e2) { }
-    return OUT(out);
+    try { if (own && browser) await browser.close(); } catch (e2) { }
+    return out;
   }
-  try { await browser.close(); } catch (e) { }
+  try { if (own) await browser.close(); } catch (e) { }
   out.ms = Date.now() - T0;
   const src = got.master || got.single;
-  if (!src) { out.err = 'no-playlist'; return OUT(out); }
+  if (!src) { out.err = 'no-playlist'; return out; }
   const body = src.body;
   if (got.master) {
     const lines = body.split('\n'); const variants = []; let audio = null;
@@ -110,5 +116,52 @@ const OUT = (o) => { process.stdout.write(JSON.stringify(o) + '\n'); };
     Object.assign(out, { variants: [{ res: null, h: null, bw: 0, url: src.url }], segs });
     if (!out.ok) out.err = 'decoy-short';
   }
-  return OUT(out);
-})();
+  return out;
+}
+
+/* ───────── CLI / persistent worker ─────────
+   node nexa-cap.js --id 27205 [...]            → এক-শট, এক লাইন JSON
+   node nexa-cap.js --serve                     → stdin থেকে {"args":{...}} নিয়ে লাইভ ব্রাউজার পুনর্ব্যবহার
+   ★ v1.34.351: কোল্ড লঞ্চ ৯–১৪সে (গেটওয়ের ১২s সীমা ভাঙে); warm ব্রাউজারে ৩–৫সে। */
+if (require.main === module) {
+  if (args.serve) {
+    let browserP = null, chain = Promise.resolve();
+    const getBrowser = async () => {
+      const { chromium } = require('playwright');
+      const launch = { args: ['--no-sandbox', '--mute-audio', '--disable-dev-shm-usage', '--disable-gpu',
+        '--disable-software-rasterizer', '--renderer-process-limit=1', '--disable-blink-features=AutomationControlled'] };
+      const b = await chromium.launch(launch);
+      b.on('disconnected', () => { browserP = null; });
+      return b;
+    };
+    process.stdin.setEncoding('utf8');
+    let buf = '';
+    process.stdin.on('data', d => {
+      buf += d;
+      let i;
+      while ((i = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, i); buf = buf.slice(i + 1);
+        if (!line.trim()) continue;
+        chain = chain.then(async () => {
+          let req = {};
+          try { req = JSON.parse(line); } catch (e) { process.stdout.write(JSON.stringify({ ok: false, err: 'bad-json' }) + '\n'); return; }
+          const t0 = Date.now();
+          try {
+            if (!browserP) browserP = getBrowser();
+            const br = await browserP;
+            const out = await capture(req.args || {}, { browser: br });
+            out.warm = 1; out.total = Date.now() - t0;
+            process.stdout.write(JSON.stringify(out) + '\n');
+          } catch (e) {
+            browserP = null;
+            process.stdout.write(JSON.stringify({ ok: false, err: 'worker:' + String(e && e.message || e).slice(0, 100), total: Date.now() - t0 }) + '\n');
+          }
+        });
+      }
+    });
+    process.stdin.on('end', () => process.exit(0));
+    return;
+  }
+  capture(args, null).then(o => process.stdout.write(JSON.stringify(o) + '\n')).catch(e => process.stdout.write(JSON.stringify({ ok: false, err: String(e && e.message || e).slice(0, 120) }) + '\n'));
+}
+module.exports = { capture };
