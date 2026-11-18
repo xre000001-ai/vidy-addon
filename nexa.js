@@ -670,8 +670,10 @@ function capCards(j, meta, origin, extraHdrs) {
   return out;
 }
 
+const NEX_VER = '1.34.354';
 async function nexStreams(tmdbId, type, s, e, origin, opts) {
   opts = opts || {};
+  note('enter ' + NEX_VER + ' tmdb' + tmdbId + ' ' + type + ' capCl=' + CAP_CLI + ' wk=' + WORKER_ON);
   const t0 = Date.now();
   const ms = Math.max(4000, Number(opts.ms || 12000));
   const id = Number(tmdbId) || 0;
@@ -823,6 +825,7 @@ function nexDiag() {
   d.cardCache = CARD_CACHE.size; d.probeCache = PROBE_CACHE.size;
   d.mapping = MAP ? { tmdbIds: MAP.ids, at: new Date(MAP_AT).toISOString() } : null;
   try { d.worker = (typeof capWorkerStats === 'function') ? capWorkerStats() : null; } catch (e) { d.worker = 'err'; }
+  d.ver = NEX_VER;
   d.proxies = { pool: PX.length, resi: RESI.length, bestPool: (pxRank()[0] || {}).px || null };
   d.envCool = [...ENV_BAD_UNTIL.entries()].filter(([, v]) => v > Date.now()).map(([k, v]) => k + ':' + Math.round((v - Date.now()) / 1000) + 's');
   d.blocked = BLOCK_UNTIL > Date.now() ? Math.round((BLOCK_UNTIL - Date.now()) / 1000) + 's' : 0;
