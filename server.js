@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.377';
+const VERSION = '1.34.378';
 /* ★ v1.34.322: nexa.mov — নতুন সোর্স (মুভি/সিরিজ ৫ সার্ভার: nova/onyx/orion/flux/sylver;
    অ্যানিমে ৪: kyoto/tokyo/hokkaido/fuji)। প্লেব্যাক-প্রোটোকল wasm-এ সিল করা, nexa.js রিভার্স করেছে। */
 let NEX = null;

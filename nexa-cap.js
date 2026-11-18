@@ -70,25 +70,59 @@ async function capture(args, shared) {
     watch(page);
     /* ★ v1.34.367: nexa-র প্লেলিস্ট মাঝে মাঝে আসে না (সার্ভার-ফ্ল্যকি) ⇒ একই warm ব্রাউজারে
        ২–৩ বার রিলোড করে চেষ্টা (প্রতিটা সস্তা; নতুন ব্রাউজার লঞ্চ নয়)। */
-    const attempts = Math.max(1, Math.min(3, Number(args.attempts || 3)));
+    /* ★ v1.34.378: সাইটে ৫টি সোর্স (Nova/Onyx/Flux/Sylver/Orion) — সবগুলো সব টাইটেলে স্ট্রিম দেয় না।
+       więc: অপেক্ষা করি সোর্স-স্টেটাসের জন্য → Play চাপি → না এলে "Try another source" চেপে আবার Play।
+       মোট সময় `timeout`-এর ভিতরেই থাকি (গেটওয়ে/worker বাজেট)। */
+    const clickPlay = async () => {
+      for (const sel of ['[aria-label="Play"]', 'button[aria-label*="play" i]', '[aria-label*="lay" i]']) {
+        try { const l = page.locator(sel).first(); if (await l.count()) { await l.click({ timeout: 900, force: true }); return true; } } catch (e) { }
+      }
+      return false;
+    };
+    const clickNext = async () => {
+      for (const sel of ['button[aria-label^="Try another source" i]', 'button:has-text("Try another source")', 'button[aria-label*="another source" i]']) {
+        try { const l = page.locator(sel).first(); if (await l.count()) { await l.click({ timeout: 1200, force: true }); return true; } } catch (e) { }
+      }
+      return false;
+    };
+    const statusOf = async () => {
+      try {
+        const t = (await page.evaluate(() => document.body.innerText)).replace(/\s+/g, ' ');
+        const m = t.match(/(Nova|Onyx|Flux|Sylver|Orion)[^A-Za-z]{0,6}(No stream|Checking|Queued|Ready|Stream\w*)/gi);
+        return m ? m.slice(0, 8) : [];
+      } catch (e) { return []; }
+    };
     out.tries = [];
-    for (let a = 0; a < attempts && !got.master && !got.single; a++) {
+    try { await page.goto(url, { waitUntil: 'commit', timeout: 15000 }); } catch (e) { }
+    out.navMs = Date.now() - t0;
+    let hops = 0, stale = 0;
+    /* ধাপ ১: সোর্স-ফেচিং শেষ হওয়া পর্যন্ত অপেক্ষা (সর্বোচ্চ ~৭সে) */
+    const w1 = Date.now();
+    while (Date.now() - t0 < timeout && !got.master && !got.single && Date.now() - w1 < 7000) {
+      await page.waitForTimeout(400);
+      const st = await statusOf();
+      if (st.length) out.statuses = st;
+      if (st.some(x => /No stream/i.test(x)) || st.length >= 3) break;   /* উত্তর এসে গেছে */
+    }
+    /* ধাপ ২: Play + দরকারে "Try another source" (মোট ৪টি সোর্স-হপ) */
+    while (Date.now() - t0 < timeout && !got.master && !got.single) {
       const tA = Date.now();
-      if (a === 0) { try { await page.goto(url, { waitUntil: 'commit', timeout: 15000 }); } catch (e) { } }
-      else { try { await page.reload({ waitUntil: 'commit', timeout: 12000 }); } catch (e) { } }
-      out.navMs = out.navMs || (Date.now() - t0);
-      let clicked = false;
-      while (Date.now() - t0 < timeout && !got.master && !got.single) {
-        if (!clicked) {
-          try {
-            const loc = page.locator('[aria-label*="lay" i]').first();
-            if (await loc.count()) { await loc.click({ timeout: 800, force: true }); clicked = true; }
-          } catch (e) { }
-        }
-        if (Date.now() - tA > Math.max(4500, Math.round(timeout / attempts))) break;   /* এই চেষ্টার বাজেট শেষ */
-        await page.waitForTimeout(350);
+      await clickPlay();
+      let waited = 0;
+      while (Date.now() - t0 < timeout && !got.master && !got.single && waited < 4500) {
+        await page.waitForTimeout(300); waited += 300;
       }
       out.tries.push(Date.now() - tA);
+      out.hops = hops;
+      if (got.master || got.single) break;
+      const st = await statusOf();
+      if (st.length) out.statuses = st;
+      if (hops >= 4) { stale++; if (stale >= 2) break; }
+      if (!(await clickNext())) {
+        if (++stale >= 2) break;
+        try { await page.reload({ waitUntil: 'commit', timeout: 12000 }); } catch (e) { }
+      } else hops++;
+      await page.waitForTimeout(700);
     }
   } catch (e) {
     out.err = ('launch:' + String(e && e.message || e)).replace(/\s+/g, ' ').slice(0, 140);
@@ -124,7 +158,20 @@ async function capture(args, shared) {
     }
     variants.sort((a, b) => ((b.h || 0) - (a.h || 0)) || ((b.bw || 0) - (a.bw || 0)));
     out.ok = variants.length > 0;
+    /* master-এর কাঁচা লাইন রেখে দিই — CODECS/AUDIO/FRAME-RATE দেখানোর জন্য */
+    try {
+      out.masterTxt = body.split('\n').filter(l => l.startsWith('#EXT-X-STREAM-INF') || l.startsWith('#EXT-X-MEDIA')).slice(0, 8).map(l => l.slice(0, 300));
+      const cod = (body.match(/CODECS="([^"]+)"/) || [])[1] || '';
+      const fm = (body.match(/FRAME-RATE=([\d.]+)/) || [])[1] || '';
+      out.codecs = cod; out.fps = fm;
+    } catch (e) { }
     Object.assign(out, { variants, audio, master: src.url });
+    /* কোন সোর্স থেকে এল (DOM-এর সোর্স-তালিকা থেকে অনুমান; সাইট দেখায় Nova/Onyx/Flux/Sylver/Orion) */
+    try {
+      const nm = (body.match(/# Brand:\s*([^\n]+)/) || [])[1] || '';
+      out.brand = nm.trim().slice(0, 40);
+      out.server = ['nova', 'onyx', 'flux', 'sylver', 'orion'][Math.min(4, Math.max(0, (out.hops || 0)))] || 'nexa';
+    } catch (e) { }
     if (!out.ok) out.err = 'master-empty';
   } else {
     const segs = (body.match(/#EXTINF/g) || []).length;

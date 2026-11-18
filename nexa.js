@@ -711,9 +711,18 @@ function capCards(j, meta, origin, extraHdrs) {
     seen.add(v.url);
     const h = Number(v.h) || 0;
     const q = h >= 2160 ? 2160 : h >= 1440 ? 1440 : h >= 1080 ? 1080 : h >= 720 ? 720 : h >= 480 ? 480 : 0;
-    const srv = meta.label || 'nexa';
+    const srv = j.server || meta.label || 'nexa';
+    const cod = (() => {   /* কোডেক-মেটা master-এ থাকলে দেখাই; না থাকলে কিছু বলি না (বানানো নয়) */
+      const c = String(j && j.codecs || '').toLowerCase();
+      if (!c) return '';
+      if (c.indexOf('hvc1') >= 0 || c.indexOf('hev1') >= 0) return 'HEVC';
+      if (c.indexOf('avc1') >= 0) return 'H.264';
+      if (c.indexOf('av01') >= 0) return 'AV1';
+      if (c.indexOf('vp09') >= 0) return 'VP9';
+      return '';
+    })();
     const txt = '\u25a4 ' + (meta.title || '') + ' (' + (meta.year || '') + ')'
-      + '\n' + '\u25a6 ' + srv + ' \u00b7 ' + (v.res || 'auto') + capAudioTag(j)
+      + '\n' + '\u25a6 ' + srv + ' \u00b7 ' + (v.res || 'auto') + (cod ? ' \u00b7 ' + cod : '') + capAudioTag(j)
       + '\n' + '\u229e nexa \u25e7 ' + (q ? q + 'p' : 'Auto');
     const bh = { notWebReady: false, isBingeable: true, filename: 'nexa-' + mlsNorm(srv) + '-' + (q || 'auto') + '.m3u8' };
     const hdrs = Object.assign({}, j.headers || {}, extraHdrs || {});
@@ -730,7 +739,7 @@ function capCards(j, meta, origin, extraHdrs) {
   return out;
 }
 
-const NEX_VER = '1.34.377';
+const NEX_VER = '1.34.378';
 async function nexStreams(tmdbId, type, s, e, origin, opts) {
   opts = opts || {};
   note('enter ' + NEX_VER + ' tmdb' + tmdbId + ' ' + type + ' capCl=' + CAP_CLI + ' wk=' + WORKER_ON);
