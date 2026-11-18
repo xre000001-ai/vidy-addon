@@ -944,4 +944,4 @@ async function nexaServe(req, res, b64, originIn) {
 }
 
 module.exports = {
-  capWarm, capWorkerStats: () => ({ on: WORKER_ON ? 1 : 0, up: WK ? Math.round((Date.now() - WK_STARTED) / 1000) : 0, ok: WK_OK, err: WK_ERR, queued: WK_WAIT.length }), nexOn, nexStreams, nexDiag, nexSelftest, nexaServe, nexRelayUrl, nexIsPl, MOVIE_SRV, ANIME_SRV };
+  capWarm, capWorkerStats, capWorker, nexOn, nexStreams, nexDiag, nexSelftest, nexaServe, nexRelayUrl, nexIsPl, MOVIE_SRV, ANIME_SRV };
