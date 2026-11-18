@@ -16,10 +16,13 @@ setTimeout(()=>{try{
   let c,o;
   /* সোর্স */
   // v1.15.86+: Pengu-সোর্স সম্পূর্ণ সরানো, Sky Movies ও BollyFlix নিজস্ব সোর্স ⇒ মোট ১১ কার্ড
-  c=d.querySelectorAll('#srcGrid .card').length===15;A('সোর্স-কার্ড ১৫টি (v/nx/rt/tw/mm/m4u/sky/hm/hd/vsp/ott/az/mlb/mls/dt)',c);
+  c=d.querySelectorAll('#srcGrid .card').length===16;A('সোর্স-কার্ড ১৬টি (v/nx/rt/tw/mm/m4u/sky/hm/hd/vsp/ott/az/mlb/mls/dt/nex)',c);
   c=!!d.getElementById('card-sky')&&d.getElementById('card-sky').textContent.indexOf('Sky Movies')>=0;A('সোর্স-কার্ড: Sky Movies (নিজস্ব)',c);
   c=!!d.getElementById('card-dt')&&d.getElementById('card-dt').textContent.indexOf('Deadtoons')>=0;A('সোর্স-কার্ড: Deadtoons (নিজস্ব)',c);
   c=!!d.getElementById('card-mls')&&d.getElementById('card-mls').textContent.indexOf('MLSBD')>=0;A('সোর্স-কার্ড: MLSBD (নিজস্ব)',c);
+  /* ★ v1.34.322: nexa.mov (৫ মুভি/সিরিজ + ৪ অ্যানিমে সার্ভার) */
+  c=!!d.getElementById('card-nex')&&d.getElementById('card-nex').textContent.indexOf('nexa')>=0;A('সোর্স-কার্ড: nexa (নিজস্ব)',c);
+  c=!!d.getElementById('tune-nex')&&chips('tune-nex').length===1;A('nexa-টিউনে-১-চিপ-সারি (রেজো)',c);
   c=!d.getElementById('card-bf');A('সোর্স-কার্ড: BollyFlix আর নেই (BF_ENABLED=false)',c);
   c=!d.getElementById('card-peng');A('সোর্স-কার্ড: Pengu আর নেই',c);
   /* MovieBox: রেজো ৪+All, ভাষা ১৭+All (Multi+Tagalog সহ) */
@@ -80,12 +83,12 @@ setTimeout(()=>{try{
   c=C.st.v===1&&C.st.nx===1;A('দুটোই-আবার-চালু',c);
   /* সব-উৎস-বন্ধ → ব্লক-নয়, শুধু-সতর্কতা */
   var _sv=[];
-  ['v','nx','rt','tw','mm','m4u','sky','hm','hd','vsp','ott','az','mlb','mls','dt'].forEach(function(k){if(C.st[k]===1){var sw=d.getElementById('sw-'+k);if(sw)sw.click();_sv.push(k);}});
-  var allOff=['v','nx','rt','tw','mm','m4u','sky','hm','hd','vsp','ott','az','mlb','mls','dt'].every(function(k){return C.st[k]===0;});
+  ['v','nx','rt','tw','mm','m4u','sky','hm','hd','vsp','ott','az','mlb','mls','dt','nex'].forEach(function(k){if(C.st[k]===1){var sw=d.getElementById('sw-'+k);if(sw)sw.click();_sv.push(k);}});
+  var allOff=['v','nx','rt','tw','mm','m4u','sky','hm','hd','vsp','ott','az','mlb','mls','dt','nex'].every(function(k){return C.st[k]===0;});
   c=allOff;A('সব-উৎস-বন্ধ-করা-গেল (ব্লক-নেই)',c);
   c=d.getElementById('toast').textContent.indexOf('All sources off')>=0;A('সব-বন্ধে-সতর্কতা-টোস্ট',c);
   _sv.forEach(function(k){var sw=d.getElementById('sw-'+k);if(sw&&C.st[k]===0)sw.click();});
-  c=['v','nx','rt','tw','mm','m4u','sky','hm','hd','vsp','ott','az','mlb','mls','dt'].every(function(k){return C.st[k]===1;});A('সব-উৎস-আবার-চালু',c);
+  c=['v','nx','rt','tw','mm','m4u','sky','hm','hd','vsp','ott','az','mlb','mls','dt','nex'].every(function(k){return C.st[k]===1;});A('সব-উৎস-আবার-চালু',c);
   d.getElementById('srvPri').click();c=C.st.srv.length===3;A('srvPri → ৩',c);
   d.getElementById('srvAll').click();c=C.st.srv.length===18;A('srvAll → ১৮',c);
   /* v1.15.81: বুটে-সার্ভার-টাইল-রিড্র (আগে প্রথম-লোডে কোনো-টাইলেই .on থাকত-না) */
@@ -129,7 +132,7 @@ setTimeout(()=>{try{
   c=d.getElementById('pvPq').textContent==='All'&&d.getElementById('pvPh').textContent.indexOf('2160')>0;A('Sky-প্রিভিউ m4ur-মুক্ত (All/2160): '+d.getElementById('pvPq').textContent+' / '+d.getElementById('pvPh').textContent,c);
   C.st.m4ur=0;
   /* rebuild-চুক্তি */
-  const rst=()=>{C.st.q=[];C.st.sub=1;C.st.srv=[];C.st.az=1;C.st.azq=[];C.st.azl=[];C.st.nx=1;C.st.nxq=[];C.st.nxl=[];C.st.rt=1;C.st.rtl=[];C.st.rtq=[];C.st.tw=1;C.st.twq=[];C.st.twl=[];C.st.mm=1;C.st.mmr=0;C.st.mmq=[];C.st.mml=[];C.st.m4u=1;C.st.m4ur=0;C.st.m4uq=[];C.st.m4ul=[];C.st.sky=1;C.st.skyq=[];C.st.skyl=[];C.st.hm=1;C.st.hmr=0;C.st.hmq=[];C.st.hml=[];C.st.hd=1;C.st.hdr=0;C.st.hdq=[];C.st.hdl=[];C.st.mlb=1;C.st.mlbr=0;C.st.mls=1;C.st.mlsr=0;C.st.dt=1;C.st.vsp=1;C.st.vspq=[];C.st.vspl=[];C.st.ott=1;C.st.ottq=[];C.st.ottl=[];};
+  const rst=()=>{C.st.q=[];C.st.sub=1;C.st.srv=[];C.st.az=1;C.st.azq=[];C.st.azl=[];C.st.nx=1;C.st.nxq=[];C.st.nxl=[];C.st.rt=1;C.st.rtl=[];C.st.rtq=[];C.st.tw=1;C.st.twq=[];C.st.twl=[];C.st.mm=1;C.st.mmr=0;C.st.mmq=[];C.st.mml=[];C.st.m4u=1;C.st.m4ur=0;C.st.m4uq=[];C.st.m4ul=[];C.st.sky=1;C.st.skyq=[];C.st.skyl=[];C.st.hm=1;C.st.hmr=0;C.st.hmq=[];C.st.hml=[];C.st.hd=1;C.st.hdr=0;C.st.hdq=[];C.st.hdl=[];C.st.mlb=1;C.st.mlbr=0;C.st.mls=1;C.st.mlsr=0;C.st.dt=1;C.st.nex=1;C.st.nexq=[];C.st.vsp=1;C.st.vspq=[];C.st.vspl=[];C.st.ott=1;C.st.ottq=[];C.st.ottl=[];};
   rst();C.rebuild();
   c=!/\/cfg\//.test(out());A('সব-ডিফল্ট → ব্লব-বিহীন',c);
   C.st.az=0;C.rebuild();o=dec(out());

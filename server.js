@@ -11,7 +11,11 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.321';
+const VERSION = '1.34.322';
+/* ★ v1.34.322: nexa.mov — নতুন সোর্স (মুভি/সিরিজ ৫ সার্ভার: nova/onyx/orion/flux/sylver;
+   অ্যানিমে ৪: kyoto/tokyo/hokkaido/fuji)। প্লেব্যাক-প্রোটোকল wasm-এ সিল করা, nexa.js রিভার্স করেছে। */
+let NEX = null;
+try { NEX = require('./nexa.js'); } catch (e) { NEX = null; console.error('[nexa] module missing: ' + (e && e.message)); }
 /* ★ v1.34.321: asianc.id সম্পূর্ণ বাদ (ইউজার-নির্দেশ) — মাপা প্রমাণ: ২০২৬-এর নতুন কোরিয়ান
    শোফলে 1080p ০/১১ (সব 720p/640p/536p), vidbasic-এ master playlist/RESOLUTION-ই নেই।
    vidly-র মতোই কোড+টাইল+রুট+ডক — সব জায়গা থেকে মুছে ফেলা হয়েছে। */
@@ -17081,6 +17085,9 @@ function parseCfgFromObj(o) {
     if (o.mls === 0 || o.mls === '0') c.mls = 0; // v1.34.63: MLSBD master (UI emitted it, parser dropped it)
     if (o.mlsr !== undefined && o.mlsr !== null && o.mlsr !== '') { const msv = parseInt(o.mlsr, 10) || 0; if ([0, 480, 720, 1080, 2160].indexOf(msv) >= 0) c.mlsr = msv; }
     if (o.dt === 0 || o.dt === '0') c.dt = 0; // v1.34.63: Deadtoons master
+    /* ★ v1.34.322: nexa.mov — নিজস্ব সুইচ + রেজো-ছাঁকনি */
+    if (o.nex === 0 || o.nex === '0') c.nex = 0;
+    if (o.nexq !== undefined && o.nexq !== null && o.nexq !== '') c.nexq = qToList(o.nexq).filter(x => [480, 720, 1080, 2160].indexOf(x) >= 0).sort((a, b) => b - a).slice(0, 4);
     /* ★★★ v1.34.175 (মূল-বাগ, মাপা): এই ফাংশন শুধু নাম-ধরা ফিল্ড কপি করে — `__bg`/`__slow`
        কখনো কপি হতো না ⇒ `cfg.__bg` সবসময় undefined ⇒ **v1.34.151-এর "bg = ১১সে পূর্ণ-হারভেস্ট"
        এবং v1.34.171-এর "২৬সে ধীর-উইন্ডো" — দুটোই মৃত কোড ছিল**। ফলে bg-ফেচ হলেও সেটি ফোরগ্রাউন্ডের
@@ -17103,7 +17110,7 @@ function manifest(cfg, origin, cfgged) {
     version: VERSION,
     name: 'Phoenix',
     logo: (origin || '') + '/logo.png',
-    description: 'Stream-only, parallel sources: Vidy (16 servers, up to 4K, subtitles) + MovieBox (direct-MP4 dubs & multi-audio) + RareToons (Hindi/Tamil/Telugu anime & cartoons, auto-HLS) + ToonWorld4All (multi-audio movies & anime via encrypted-link resolver) — every card in one unified format; each source keeps its own filters (quality, audio language, servers).',
+    description: 'Stream-only, parallel sources: Vidy (16 servers, up to 4K, subtitles) + MovieBox (direct-MP4 dubs & multi-audio) + RareToons (Hindi/Tamil/Telugu anime & cartoons, auto-HLS) + ToonWorld4All (multi-audio movies & anime via encrypted-link resolver) + nexa (nexa.mov — 5 movie/series servers: Nova/Onyx/Orion/Flux/Sylver; 4 anime: Kyoto/Tokyo/Hokkaido/Fuji) — every card in one unified format; each source keeps its own filters (quality, audio language, servers).',
     author: 'xre000001-ai',
     types: ['movie', 'series'],
     idPrefixes: ['tt', 'tmdb'],
@@ -17222,7 +17229,7 @@ const FMT_SRC_CANON = [
   ['movielinkbd', 'MovieLinkBD'], ['mlsbd', 'MLSBD'], ['multimovies', 'Multimovies'], ['moviebox', 'MovieBox'],
   ['deadtoons', 'Deadtoons'], ['skymovies', 'Sky Movies'], ['vegamovies', 'VegaMovies'], ['toonworld', 'ToonWorld'],
   ['raretoons', 'RareToons'], ['asiantv', 'AsianTV'], ['vidsrc', 'Vidsrc'], ['anizone', 'AniZone'],
-  ['hindmovie', 'HindMovie'], ['hubmovie', 'HindMovie'], ['bollyflix', 'BollyFlix'], ['vidy', 'Vidy'],   // ★ v1.34.321: asianc/drama9 বাদ
+  ['hindmovie', 'HindMovie'], ['hubmovie', 'HindMovie'], ['bollyflix', 'BollyFlix'], ['vidy', 'Vidy'], ['nexa', 'nexa'], ['nexamov', 'nexa'],   // ★ v1.34.322: nexa.mov
   ['southfreak', 'SouthFreak'], ['netmirror', 'NetMirror'], ['airflix', 'AirFlix'], ['m4u', 'Movies4u'],
 ];
 const FMT_SRV_WORDS = /\b(?:g?drive|google\s*drive|hubcloud|pixeldrain|instantcloud|xcloud|fsl|mkv|mp4|hls|zip|direct|link|file|cloud|server)\b/gi;
@@ -17367,11 +17374,11 @@ function yearForTmdb(tmdbId, type) { // মুভি=release_date, সিরি�
     YEAR_CACHE.set(k, y); return y;
   }).catch(() => { YEAR_CACHE.set(k, 0); return 0; });
 }
-const UNIFY_SRV = { sky: 'Sky Movies', m4u: 'Movies4u', bf: 'BollyFlix', mm: 'Multimovies', tw: 'ToonWorld', rt: 'RareToons', vsp: 'Vidsrc', ott: 'AsianTV', az: 'AniZone', mlb: 'MovieLinkBD', mls: 'MLSBD' };
+const UNIFY_SRV = { sky: 'Sky Movies', m4u: 'Movies4u', bf: 'BollyFlix', mm: 'Multimovies', tw: 'ToonWorld', rt: 'RareToons', vsp: 'Vidsrc', ott: 'AsianTV', az: 'AniZone', mlb: 'MovieLinkBD', mls: 'MLSBD', nex: 'nexa' };
 async function unifyCards(cards, meta) { // শুধু-টেক্সট-বদলায়: name/quality/url/bingeGroup/_lang/_hq/সাব — সব-অস্পৃশ্য (ফিল্টার-নিরাপদ)
   try {
     if (!cards || !cards.length || !meta || (!meta.tmdbId && !meta.title)) return cards;
-    const tcards = cards.filter(c => /^(sky|m4u|bf|mm|tw|rt|mlb|mls|vsp|ott|az|dt|nx|hd|hm)\|/.test(String(c.bingeGroup || '')));
+    const tcards = cards.filter(c => /^(sky|m4u|bf|mm|tw|rt|mlb|mls|nex|vsp|ott|az|dt|nx|hd|hm)\|/.test(String(c.bingeGroup || '')));
     // ★ v1.27.10: tcards খালি হলেও থামি না — বছর-পূরণের ধাপটা সব-সোর্সে চালু থাকবে
     const _uT=Date.now();
     // ★ v1.27.11 (ইউজার: "Pilot eikhane ep title ja mone hoi IMDb theke newo"): সিরিজে এপিসোড-নাম
@@ -19277,6 +19284,23 @@ const server = http.createServer((req, res) => FG_CONTEXT.run({ active: true }, 
     if (p === '/_pool') return sendJson(res, 200, POOL.map(c => Object.assign({}, c, PX_RUN.get(c.px) || {}))); // v1.15.0: রানটাইম-স্বাস্থ্য-সহ
     if (p === '/_nxring') { if (!NEXBASE) return sendJson(res, 200, { off: 1 }); directGet(NEXBASE + '/debug/ring', 4000).then(b => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(b); }).catch(() => { res.writeHead(200, { 'content-type': 'application/json' }); res.end('{"err":1}'); }); return; } // v2.10.2 চাইল্ড-রিজলভ-ধাপ-প্রমাণ
     if (p === '/_log') return sendJson(res, 200, reqLog.slice(-40).reverse());
+    /* ★ v1.34.322: nexa.mov ডায়াগনস্টিক — সেশন/প্ল্যান/প্লেলিস্ট/প্রোব প্রতিটি ধাপ আলাদা দেখায়
+       /_nex                        → কাউন্টার + সার্ভার-ক্যাটালগ + সেশন-অবস্থা
+       /_nex?t=1&id=1368337&ty=movie&s=1&e=1 → ওই টাইটেলের পুরো চেইন লাইভ */
+    if (p === '/_nex') { if (!NEX) return sendJson(res, 200, { on: 0, why: 'module-missing' });
+      const base = Object.assign({ on: NEX.nexOn(cfg) ? 1 : 0 }, NEX.nexDiag());
+      let live = null;
+      try {
+        const u2 = new URL(req.url, 'http://x');
+        if (/[?&]t=1/.test(req.url)) {
+          const id = Number(u2.searchParams.get('id') || 1368337);
+          const ty = (u2.searchParams.get('ty') || 'movie') === 'series' ? 'series' : 'movie';
+          live = NEX.nexSelftest(id, ty, Number(u2.searchParams.get('s') || 1), Number(u2.searchParams.get('e') || 1));
+        }
+      } catch (e) { }
+      if (!live) return sendJson(res, 200, base);
+      return live.then(v => { base.selftest = v; return sendJson(res, 200, base); }).catch(e => { base.selftest = { err: String(e && e.message) }; return sendJson(res, 200, base); });
+    }
     if (p === '/_diag') { // v1.27.18: ?g=mlbd|hm|src|all&n=200
       let g = 'all', n = 200;
       try { const u2 = new URL(req.url, 'http://x'); g = u2.searchParams.get('g') || 'all'; n = Math.min(600, Number(u2.searchParams.get('n')) || 200); } catch (e) { }
@@ -19954,6 +19978,8 @@ const server = http.createServer((req, res) => FG_CONTEXT.run({ active: true }, 
       const vspP = !(cfg && cfg.vsp === 0) ? vspStreams(Number(m[1]), 'movie', 0, 0, cfg && cfg.vspq || []).catch(() => []) : null; // v1.15.71: Vidsrc
       const ottP = !(cfg && cfg.ott === 0) ? ottStreams(Number(m[1]), 'movie', 0, 0, cfg && cfg.ottq || []).catch(() => []) : null; // v1.15.72: AsianTV
       const azP = !(cfg && cfg.az === 0) ? azStreams(Number(m[1]), 'movie', 0, 0, cfg && cfg.azq || [], originOf(req)).catch(() => []) : null; // v1.15.76: AniZone
+      /* v1.34.322: nexa.mov — মুভি/সিরিজ ৫ সার্ভার (nova/onyx/orion/flux/sylver) */
+      const nexP = (NEX && NEX.nexOn(cfg)) ? raceObjP((typeof tp !== 'undefined' ? tp : null), 1500).then(t => NEX.nexStreams(Number(m[1]) || ((typeof infoP !== 'undefined' && infoP && infoP.id) || 0), 'movie', 0, 0, originOf(req), { title: (t || nm || ''), year: '', q: (cfg && cfg.nexq) || [], ms: 11000 })).catch(() => []) : null;
       /* v1.34.321: asianc.id বাদ (1080p নেই) — কার্ড-চেইন সরানো হয়েছে */
       kickSubs('tmdb' + m[1], 'movie', null, null, cfg);
       const lookP = Promise.all([typeof tp !== 'undefined' ? tp : null, typeof nmP !== 'undefined' ? nmP : null, typeof infoP !== 'undefined' ? infoP : null].filter(Boolean)).catch(() => []); // v1.26.2
@@ -19961,7 +19987,7 @@ const server = http.createServer((req, res) => FG_CONTEXT.run({ active: true }, 
       const mlbP = mlbdOn(cfg) ? mlbdTask(tp, mlbInfo, 'movie', 0, 0, (cfg && cfg.mlbr) || 0) : null;
       const mlsP = mlsOn(cfg) ? mlsTask(tp, infoP, 'movie', 0, 0, 'tmdb' + m[1]) : null;
       const dtP = dtOn(cfg) ? dtTask(tp, infoP, 'movie', 0, 0, originOf(req)) : null;   // v1.30.0: Deadtoons/AniDisk
-      return withDeadline(withSources(vOn ? getSources(Number(m[1]), 'movie', null, null, '', cfg, tp, t0) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: hmP, key: 'hm' }, { p: hdP, key: 'hd' }, { p: mlbP, key: 'mlb' }, { p: mlsP, key: 'mls' }, { p: dtP, key: 'dt' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0, p, lookP), (cfg && cfg.__slow) ? Number(process.env.SDLSLOW || 26000) : (cfg && cfg.__bg) ? Number(process.env.SDLBG || 11500) : SDL_MS, undefined, (cfg && (cfg.__bg || cfg.__slow)) ? 0 : Number(process.env.SDLGRACE || 800) /* v1.33.2: এজ-কাটের (১২সে) নিচে: 10.2s → 12s — MLSBD-র ঠান্ডা-পথ (সার্চ+sav+watch/gd) ১০সে ছাড়ায়; NXHARD ১২সের সমান, তবু উত্তর হারায় না (মাপা: battery-তে কোনো রিগ্রেশন নয়) */, p).then(
+      return withDeadline(withSources(vOn ? getSources(Number(m[1]), 'movie', null, null, '', cfg, tp, t0) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: hmP, key: 'hm' }, { p: hdP, key: 'hd' }, { p: mlbP, key: 'mlb' }, { p: mlsP, key: 'mls' }, { p: dtP, key: 'dt' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' }, { p: nexP, key: 'nex' },], cfg, t0, p, lookP), (cfg && cfg.__slow) ? Number(process.env.SDLSLOW || 26000) : (cfg && cfg.__bg) ? Number(process.env.SDLBG || 11500) : SDL_MS, undefined, (cfg && (cfg.__bg || cfg.__slow)) ? 0 : Number(process.env.SDLGRACE || 800) /* v1.33.2: এজ-কাটের (১২সে) নিচে: 10.2s → 12s — MLSBD-র ঠান্ডা-পথ (সার্চ+sav+watch/gd) ১০সে ছাড়ায়; NXHARD ১২সের সমান, তবু উত্তর হারায় না (মাপা: battery-তে কোনো রিগ্রেশন নয়) */, p).then(
 cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'movie', s: 0, e: 0 }).then(u => sendStreams(res, req.url, p, Date.now() - t0, u, RVA, cfg)); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }
@@ -19982,6 +20008,8 @@ cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'movie', s: 0, e: 0 }
       const vspP = !(cfg && cfg.vsp === 0) ? vspStreams(Number(m[1]), 'tv', Number(m[2] || 1), Number(m[3] || 1), cfg && cfg.vspq || []).catch(() => []) : null; // v1.15.71: Vidsrc
       const ottP = !(cfg && cfg.ott === 0) ? ottStreams(Number(m[1]), 'tv', Number(m[2] || 1), Number(m[3] || 1), cfg && cfg.ottq || []).catch(() => []) : null; // v1.15.72: AsianTV
       const azP = !(cfg && cfg.az === 0) ? azStreams(Number(m[1]), 'tv', Number(m[2] || 1), Number(m[3] || 1), cfg && cfg.azq || [], originOf(req)).catch(() => []) : null; // v1.15.76: AniZone
+      /* v1.34.322: nexa.mov — মুভি/সিরিজ ৫ সার্ভার (nova/onyx/orion/flux/sylver) */
+      const nexP = (NEX && NEX.nexOn(cfg)) ? raceObjP((typeof tp !== 'undefined' ? tp : null), 1500).then(t => NEX.nexStreams(Number(m[1]) || ((typeof infoP !== 'undefined' && infoP && infoP.id) || 0), 'series', Number(m[2] || 1), Number(m[3] || 1), originOf(req), { title: (t || nm || ''), year: '', q: (cfg && cfg.nexq) || [], ms: 11000 })).catch(() => []) : null;
       /* v1.34.321: asianc.id বাদ (1080p নেই) — কার্ড-চেইন সরানো হয়েছে */
       if (nxOn) nxPrewarm('series', String(m[1]), Number(m[2] || 1), Number(m[3] || 1));
       twRtPrewarm(tp, 'series', Number(m[2] || 1), Number(m[3] || 1), cfg);
@@ -19991,7 +20019,7 @@ cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'movie', s: 0, e: 0 }
       const mlbP = mlbdOn(cfg) ? mlbdTask(tp, infoP, 'series', Number(m[2] || 1), Number(m[3] || 1), (cfg && cfg.mlbr) || 0) : null;
       const mlsP = mlsOn(cfg) ? mlsTask(tp, infoP, 'series', Number(m[2] || 1), Number(m[3] || 1)) : null;
       const dtP = dtOn(cfg) ? dtTask(tp, infoP, 'series', Number(m[2] || 1), Number(m[3] || 1), originOf(req)) : null;   // v1.30.0
-      return withDeadline(withSources(vOn ? getSources(Number(m[1]), 'tv', Number(m[2] || 1), Number(m[3] || 1), '', cfg, tp, t0) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: hmP, key: 'hm' }, { p: hdP, key: 'hd' }, { p: mlbP, key: 'mlb' }, { p: mlsP, key: 'mls' }, { p: dtP, key: 'dt' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0, p, lookP), (cfg && cfg.__slow) ? Number(process.env.SDLSLOW || 26000) : (cfg && cfg.__bg) ? Number(process.env.SDLBG || 11500) : SDL_MS, undefined, (cfg && (cfg.__bg || cfg.__slow)) ? 0 : Number(process.env.SDLGRACE || 800) /* v1.33.2: এজ-কাটের (১২সে) নিচে (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
+      return withDeadline(withSources(vOn ? getSources(Number(m[1]), 'tv', Number(m[2] || 1), Number(m[3] || 1), '', cfg, tp, t0) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: hmP, key: 'hm' }, { p: hdP, key: 'hd' }, { p: mlbP, key: 'mlb' }, { p: mlsP, key: 'mls' }, { p: dtP, key: 'dt' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' }, { p: nexP, key: 'nex' },], cfg, t0, p, lookP), (cfg && cfg.__slow) ? Number(process.env.SDLSLOW || 26000) : (cfg && cfg.__bg) ? Number(process.env.SDLBG || 11500) : SDL_MS, undefined, (cfg && (cfg.__bg || cfg.__slow)) ? 0 : Number(process.env.SDLGRACE || 800) /* v1.33.2: এজ-কাটের (১২সে) নিচে (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
 cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'series', s: Number(m[2] || 1), e: Number(m[3] || 1) }).then(u => sendStreams(res, req.url, p, Date.now() - t0, u, RVA, cfg)); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }
@@ -20013,6 +20041,8 @@ cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'series', s: Number(m
       const vspP = !(cfg && cfg.vsp === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? vspStreams(info.id, 'movie', 0, 0, cfg && cfg.vspq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.71: Vidsrc
       const ottP = !(cfg && cfg.ott === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? ottStreams(info.id, 'movie', 0, 0, cfg && cfg.ottq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.72: AsianTV
       const azP = !(cfg && cfg.az === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? azStreams(info.id, 'movie', 0, 0, cfg && cfg.azq || [], originOf(req)).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.76: AniZone
+      /* v1.34.322: nexa.mov — মুভি/সিরিজ ৫ সার্ভার (nova/onyx/orion/flux/sylver) */
+      const nexP = (NEX && NEX.nexOn(cfg)) ? raceObjP((typeof tp !== 'undefined' ? tp : null), 1500).then(t => NEX.nexStreams(Number(m[1]) || ((typeof infoP !== 'undefined' && infoP && infoP.id) || 0), 'movie', 0, 0, originOf(req), { title: (t || nm || ''), year: '', q: (cfg && cfg.nexq) || [], ms: 11000 })).catch(() => []) : null;
       /* v1.34.321: asianc.id বাদ (1080p নেই) */
       kickSubs(m[1], 'movie', null, null, cfg);
       const lookP = Promise.all([typeof tp !== 'undefined' ? tp : null, typeof nmP !== 'undefined' ? nmP : null, typeof infoP !== 'undefined' ? infoP : null].filter(Boolean)).catch(() => []); // v1.26.2
@@ -20020,7 +20050,7 @@ cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'series', s: Number(m
       const mlbP = mlbdOn(cfg) ? mlbdTask(nmP, mlbMeta, 'movie', 0, 0, (cfg && cfg.mlbr) || 0) : null;
       const mlsP = mlsOn(cfg) ? mlsTask(nmP, infoP, 'movie', 0, 0, m[1]) : null;
       const dtP = dtOn(cfg) ? dtTask(nmP, infoP, 'movie', 0, 0, originOf(req)) : null;   // v1.30.0
-      return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'movie', null, null, info.name, cfg, undefined, t0) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: hmP, key: 'hm' }, { p: hdP, key: 'hd' }, { p: mlbP, key: 'mlb' }, { p: mlsP, key: 'mls' }, { p: dtP, key: 'dt' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0, p, lookP), (cfg && cfg.__slow) ? Number(process.env.SDLSLOW || 26000) : (cfg && cfg.__bg) ? Number(process.env.SDLBG || 11500) : SDL_MS, undefined, (cfg && (cfg.__bg || cfg.__slow)) ? 0 : Number(process.env.SDLGRACE || 800) /* v1.33.2: এজ-কাটের (১২সে) নিচে (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
+      return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'movie', null, null, info.name, cfg, undefined, t0) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: hmP, key: 'hm' }, { p: hdP, key: 'hd' }, { p: mlbP, key: 'mlb' }, { p: mlsP, key: 'mls' }, { p: dtP, key: 'dt' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' }, { p: nexP, key: 'nex' },], cfg, t0, p, lookP), (cfg && cfg.__slow) ? Number(process.env.SDLSLOW || 26000) : (cfg && cfg.__bg) ? Number(process.env.SDLBG || 11500) : SDL_MS, undefined, (cfg && (cfg.__bg || cfg.__slow)) ? 0 : Number(process.env.SDLGRACE || 800) /* v1.33.2: এজ-কাটের (১২সে) নিচে (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
 cards => { if (DBG) console.error('[rt] RID=' + t0 + ' cards-ready @' + (Date.now() - t0) + 'ms n=' + (cards || []).length); Promise.all([raceObjP(infoP, 1500), raceObjP(nmP, 1500)]).then(([info, nm]) => { if (DBG) console.error('[rt] info/nm ready @' + (Date.now() - t0) + 'ms'); return unifyCards(cards, { tmdbId: info && info.id, title: (info && info.name) || nm, type: 'movie', s: 0, e: 0, year: info && info.year }); }).then(u => { if (DBG) console.error('[rt] sending @' + (Date.now() - t0) + 'ms'); sendStreams(res, req.url, p, Date.now() - t0, u, RVA, cfg); }); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }
@@ -20041,6 +20071,8 @@ cards => { if (DBG) console.error('[rt] RID=' + t0 + ' cards-ready @' + (Date.no
       const vspP = !(cfg && cfg.vsp === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? vspStreams(info.id, 'tv', Number(m[2]), Number(m[3]), cfg && cfg.vspq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.71: Vidsrc
       const ottP = !(cfg && cfg.ott === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? ottStreams(info.id, 'tv', Number(m[2]), Number(m[3]), cfg && cfg.ottq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.72: AsianTV
       const azP = !(cfg && cfg.az === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? azStreams(info.id, 'tv', Number(m[2]), Number(m[3]), cfg && cfg.azq || [], originOf(req)).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.76: AniZone
+      /* v1.34.322: nexa.mov — মুভি/সিরিজ ৫ সার্ভার (nova/onyx/orion/flux/sylver) */
+      const nexP = (NEX && NEX.nexOn(cfg)) ? raceObjP((typeof tp !== 'undefined' ? tp : null), 1500).then(t => NEX.nexStreams(Number(m[1]) || ((typeof infoP !== 'undefined' && infoP && infoP.id) || 0), 'series', Number(m[2]), Number(m[3]), originOf(req), { title: (t || nm || ''), year: '', q: (cfg && cfg.nexq) || [], ms: 11000 })).catch(() => []) : null;
       /* v1.34.321: asianc.id বাদ (1080p নেই) */
       if (nxOn) nxPrewarm('series', m[1], Number(m[2]), Number(m[3]));
       twRtPrewarm(nmP, 'series', Number(m[2]), Number(m[3]), cfg);
@@ -20050,7 +20082,7 @@ cards => { if (DBG) console.error('[rt] RID=' + t0 + ' cards-ready @' + (Date.no
       const mlbP = mlbdOn(cfg) ? mlbdTask(nmP, infoP, 'series', Number(m[2]), Number(m[3]), (cfg && cfg.mlbr) || 0) : null;
       const mlsP = mlsOn(cfg) ? mlsTask(nmP, infoP, 'series', Number(m[2]), Number(m[3])) : null;
       const dtP = dtOn(cfg) ? dtTask(nmP, infoP, 'series', Number(m[2]), Number(m[3]), originOf(req)) : null;   // v1.30.0
-      return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'tv', Number(m[2]), Number(m[3]), info.name, cfg, undefined, t0) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: hmP, key: 'hm' }, { p: hdP, key: 'hd' }, { p: mlbP, key: 'mlb' }, { p: mlsP, key: 'mls' }, { p: dtP, key: 'dt' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0, p, lookP), (cfg && cfg.__slow) ? Number(process.env.SDLSLOW || 26000) : (cfg && cfg.__bg) ? Number(process.env.SDLBG || 11500) : SDL_MS, undefined, (cfg && (cfg.__bg || cfg.__slow)) ? 0 : Number(process.env.SDLGRACE || 800) /* v1.33.2: এজ-কাটের (১২সে) নিচে (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
+      return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'tv', Number(m[2]), Number(m[3]), info.name, cfg, undefined, t0) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: hmP, key: 'hm' }, { p: hdP, key: 'hd' }, { p: mlbP, key: 'mlb' }, { p: mlsP, key: 'mls' }, { p: dtP, key: 'dt' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' }, { p: nexP, key: 'nex' },], cfg, t0, p, lookP), (cfg && cfg.__slow) ? Number(process.env.SDLSLOW || 26000) : (cfg && cfg.__bg) ? Number(process.env.SDLBG || 11500) : SDL_MS, undefined, (cfg && (cfg.__bg || cfg.__slow)) ? 0 : Number(process.env.SDLGRACE || 800) /* v1.33.2: এজ-কাটের (১২সে) নিচে (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
 cards => { Promise.all([raceObjP(infoP, 1500), raceObjP(nmP, 1500)]).then(([info, nm]) => unifyCards(cards, { tmdbId: info && info.id, title: (info && info.name) || nm, type: 'series', s: Number(m[2]), e: Number(m[3]), year: info && info.year })).then(u => sendStreams(res, req.url, p, Date.now() - t0, u, RVA, cfg)); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }
@@ -20071,6 +20103,8 @@ cards => { Promise.all([raceObjP(infoP, 1500), raceObjP(nmP, 1500)]).then(([info
       const vspP = !(cfg && cfg.vsp === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? vspStreams(info.id, 'tv', 1, 1, cfg && cfg.vspq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.71: Vidsrc
       const ottP = !(cfg && cfg.ott === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? ottStreams(info.id, 'tv', 1, 1, cfg && cfg.ottq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.72: AsianTV
       const azP = !(cfg && cfg.az === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? azStreams(info.id, 'tv', 1, 1, cfg && cfg.azq || [], originOf(req)).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null;
+      /* v1.34.322: nexa.mov — মুভি/সিরিজ ৫ সার্ভার (nova/onyx/orion/flux/sylver) */
+      const nexP = (NEX && NEX.nexOn(cfg)) ? raceObjP((typeof tp !== 'undefined' ? tp : null), 1500).then(t => NEX.nexStreams(Number(m[1]) || ((typeof infoP !== 'undefined' && infoP && infoP.id) || 0), 'series', 1, 1, originOf(req), { title: (t || nm || ''), year: '', q: (cfg && cfg.nexq) || [], ms: 11000 })).catch(() => []) : null;
       /* v1.34.321: asianc.id বাদ (1080p নেই) */
       if (nxOn) nxPrewarm('series', m[1], 1, 1);
       twRtPrewarm(nmP, 'series', 1, 1, cfg);
@@ -20080,7 +20114,7 @@ cards => { Promise.all([raceObjP(infoP, 1500), raceObjP(nmP, 1500)]).then(([info
       const mlbP = mlbdOn(cfg) ? mlbdTask(nmP, infoP, 'series', 1, 1, (cfg && cfg.mlbr) || 0) : null;
       const mlsP = mlsOn(cfg) ? mlsTask(nmP, infoP, 'series', 1, 1) : null;
       const dtP = dtOn(cfg) ? dtTask(nmP, infoP, 'series', 1, 1, originOf(req)) : null;   // v1.30.0
-      return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'tv', 1, 1, info.name, cfg, undefined, t0) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: hmP, key: 'hm' }, { p: hdP, key: 'hd' }, { p: mlbP, key: 'mlb' }, { p: mlsP, key: 'mls' }, { p: dtP, key: 'dt' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0, p, lookP), (cfg && cfg.__slow) ? Number(process.env.SDLSLOW || 26000) : (cfg && cfg.__bg) ? Number(process.env.SDLBG || 11500) : SDL_MS, undefined, (cfg && (cfg.__bg || cfg.__slow)) ? 0 : Number(process.env.SDLGRACE || 800) /* v1.34.151: bg-পূর্ণ-হারভেস্ট */ /* v1.15.26 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
+      return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'tv', 1, 1, info.name, cfg, undefined, t0) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: hmP, key: 'hm' }, { p: hdP, key: 'hd' }, { p: mlbP, key: 'mlb' }, { p: mlsP, key: 'mls' }, { p: dtP, key: 'dt' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' }, { p: nexP, key: 'nex' },], cfg, t0, p, lookP), (cfg && cfg.__slow) ? Number(process.env.SDLSLOW || 26000) : (cfg && cfg.__bg) ? Number(process.env.SDLBG || 11500) : SDL_MS, undefined, (cfg && (cfg.__bg || cfg.__slow)) ? 0 : Number(process.env.SDLGRACE || 800) /* v1.34.151: bg-পূর্ণ-হারভেস্ট */ /* v1.15.26 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
 cards => { Promise.all([raceObjP(infoP, 1500), raceObjP(nmP, 1500)]).then(([info, nm]) => unifyCards(cards, { tmdbId: info && info.id, title: (info && info.name) || nm, type: 'series', s: 1, e: 1, year: info && info.year })).then(u => sendStreams(res, req.url, p + ' [no-s:e]', Date.now() - t0, u, RVA, cfg)); },
         e => { logReq(p + ' [no-s:e]', Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }

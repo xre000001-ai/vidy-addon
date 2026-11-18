@@ -483,7 +483,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
   var SUBS=[[1,'On'],[0,'No subs']];
 
   /* ─────────── state (server-contract keys) ─────────── */
-  var st={v:1,q:[],sub:1,srv:SRVS.map(function(x){return x[0];}),nx:1,nxq:[],nxl:[],rt:1,rtl:[],rtq:[],tw:1,twq:[],twl:[],mm:1,mmr:0,mmq:[],mml:[],m4u:1,m4ur:0,m4uq:[],m4ul:[],sky:1,skyr:0,hm:1,hmr:0,skyq:[],hmq:[],skyl:[],hml:[],hd:1,hdr:0,hdq:[],hdl:[],vsp:1,vspq:[],vspl:[],ott:1,ottq:[],ottl:[],az:1,azq:[],azl:[],mlb:1,mlbr:0,mls:1,mlsr:0,dt:1,rtsrv:[]}; /* rtsrv: খালি=MQ+Pixeldrain-দুটোই (সার্ভার-চুক্তি: খালি=সব) */
+  var st={v:1,q:[],sub:1,srv:SRVS.map(function(x){return x[0];}),nx:1,nxq:[],nxl:[],rt:1,rtl:[],rtq:[],tw:1,twq:[],twl:[],mm:1,mmr:0,mmq:[],mml:[],m4u:1,m4ur:0,m4uq:[],m4ul:[],sky:1,skyr:0,hm:1,hmr:0,skyq:[],hmq:[],skyl:[],hml:[],hd:1,hdr:0,hdq:[],hdl:[],vsp:1,vspq:[],vspl:[],ott:1,ottq:[],ottl:[],az:1,azq:[],azl:[],mlb:1,mlbr:0,mls:1,mlsr:0,dt:1,nex:1,nexq:[],rtsrv:[]}; /* rtsrv: খালি=MQ+Pixeldrain-দুটোই (সার্ভার-চুক্তি: খালি=সব) */
 
   /* source definitions: [key, tile, tileBg, tileFg, name, badge, badgeCls, blurb, hasTune] */
   var SRC=[
@@ -502,6 +502,8 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     ['mlb','MLB','linear-gradient(135deg,#0e1d2b,#0a1520)','#8fd6ff','MovieLinkBD','MKV · FSL/HubCloud','','Bilingual DDL · all Range-proven mirrors · every seekable server',1],
     ['mls','MLS','linear-gradient(135deg,#2b1220,#1a0b13)','#ff9fb8','MLSBD','MKV · gdflix/Watch','new','mlsbd.co → savelinks → gdflix + Watch-Online · Range-206 proof only',1],
     ['dt','DT','linear-gradient(135deg,#12202b,#0b131a)','#9fd0ff','Deadtoons','HLS · anime/cartoon','new','api.deadbase.host → watch server → EarnVids embed unpack → master.m3u8 (m3u8-200 proof)',0],
+    /* ★ v1.34.322: nexa.mov — মুভি/সিরিজ ৫ সার্ভার + অ্যানিমে ৪ সার্ভার (wasm-সিল প্রোটোকল) */
+    ['nex','NEX','linear-gradient(135deg,#2b1a33,#180f22)','#d8b8ff','nexa','HLS · 5+4 servers','new','nexa.mov · Nova/Onyx/Orion/Flux/Sylver + Kyoto/Tokyo/Hokkaido/Fuji · real-URL proof only',1],
   ];
 
   /* ─────────── utils ─────────── */
@@ -570,6 +572,8 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
       if([0,480,720,1080,2160].indexOf(o.mlbr)>=0)st.mlbr=o.mlbr;
       if(o.mls===1)st.mls=1; else if(o.mls===0)st.mls=0;
       if(o.dt===0)st.dt=0;
+      if(o.nex===0)st.nex=0;                                /* v1.34.322: nexa */
+      if(o.nexq)st.nexq=numL(o.nexq,[2160,1080,720,480,360]);
       if([0,480,720,1080,2160].indexOf(o.mlsr)>=0)st.mlsr=o.mlsr;
       if(o.az===0)st.az=0;
       if(o.azq)st.azq=numL(o.azq,[2160,1080,720,480,360]);
@@ -658,6 +662,9 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     if(st.mls===0)c.mls=0;
     else if(st.mlsr)c.mlsr=st.mlsr;
     if(st.dt===0)c.dt=0;   // v1.34.63: Deadtoons master (was never emitted)
+    /* ★ v1.34.322: nexa — নিজস্ব সুইচ + রেজো-ছাঁকনি */
+    if(st.nex===0)c.nex=0;
+    else if(st.nexq.length)c.nexq=st.nexq.slice();
     var u=base()+(Object.keys(c).length?'/cfg/'+b64u(c):'')+'/manifest.json';
     $('url').value=u;
     $('inst').href='stremio://'+u.replace(/^https?:\/\//,'');
@@ -929,6 +936,9 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     /* MLSBD — আলাদা সোর্স: gdflix + Watch-Online (Range-206 প্রমাণিত) */
     o=tuneCard('tune-mls','mls','MLSBD','mlsbd.co → savelinks → gdflix ▼ + Watch-Online · only Range-206-proven files');h.appendChild(o.card);
     singleInto(o.zone,'Resolution cap','mlsr',CAPS,rebuild);
+    /* ★ v1.34.322: nexa — wasm-সিল প্রোটোকল, ৫ মুভি/সিরিজ + ৪ অ্যানিমে সার্ভার */
+    o=tuneCard('tune-nex','nex','nexa','nexa.mov · 5 movie/series servers (Nova/Onyx/Orion/Flux/Sylver) + 4 anime (Kyoto/Tokyo/Hokkaido/Fuji)');h.appendChild(o.card);
+    chipsInto(o.zone,'Resolutions',st.nexq,RES,rebuild,'',1);
   })();
   /* ─────────── preview — আসল কার্ড-ছাঁচেই (v1.27.16) ─────────── */
   function pvCard(id, on, q, opts){ /* opts={title,ep,src,audio,srv,note} */
@@ -996,7 +1006,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
   }
   function summary(){
     var s=$('summ');s.innerHTML='';
-    var QK={v:'q',nx:'nxq',rt:'rtq',tw:'twq',mm:'mmq',m4u:'m4uq',sky:'skyq',hm:'hmq',hd:'hdq',mlb:'mlbr',mls:'mlsr',vsp:'vspq',ott:'ottq',az:'azq'};   // ★ v1.28.0: mlbq/mlbl অস্তিত্বহীন কী ছিল
+    var QK={v:'q',nx:'nxq',rt:'rtq',tw:'twq',mm:'mmq',m4u:'m4uq',sky:'skyq',hm:'hmq',hd:'hdq',mlb:'mlbr',mls:'mlsr',nex:'nexq',vsp:'vspq',ott:'ottq',az:'azq'};   // ★ v1.28.0: mlbq/mlbl অস্তিত্বহীন কী ছিল
     var LKK={nx:'nxl',rt:'rtl',tw:'twl',mm:'mml',m4u:'m4ul',sky:'skyl',hm:'hml',hd:'hdl',vsp:'vspl',ott:'ottl',az:'azl'};
     SRC.forEach(function(x){
       if(st[x[0]]!==1)return;
