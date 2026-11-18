@@ -25,7 +25,16 @@ function install() {
 }
 
 function ensure() {
-  try { return install(); } catch (e) { return { ok: false, why: String(e && e.message || e).slice(0, 120) }; }
+  /* ★ শুধু দরকার হলে: এই সিস্টেমে chromium-এর লাইব্রেরি মিসিং থাকলে তবেই .nexalibs ব্যবহার */
+  try {
+    let exe = null;
+    try { exe = require('./nexa-browser').exePath(); } catch (e) { }
+    if (!exe) return { ok: false, why: 'no-exe' };
+    const miss = missingLibs(exe);
+    if (!miss.length) return { ok: true, skip: true, why: 'libs-ok' };
+    const st = install();
+    return Object.assign({}, st, { missing: miss.slice(0, 6) });
+  } catch (e) { return { ok: false, why: String(e && e.message || e).slice(0, 120) }; }
 }
 
 function missingLibs(exe) {

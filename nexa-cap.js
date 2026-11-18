@@ -16,7 +16,7 @@ const OUT = (o) => { process.stdout.write(JSON.stringify(o) + '\n'); };
   /* ★ v1.34.338: কনটেইনারে chromium libs নেই — টার থেকে খুলে LD_LIBRARY_PATH সেট করি */
   try {
     const nl = require('./nexa-libs'); const st = nl.ensure();
-    if (st && st.ld) process.env.LD_LIBRARY_PATH = st.ld + (process.env.LD_LIBRARY_PATH ? ':' + process.env.LD_LIBRARY_PATH : '');
+    if (st && st.ld && !st.skip) process.env.LD_LIBRARY_PATH = st.ld + (process.env.LD_LIBRARY_PATH ? ':' + process.env.LD_LIBRARY_PATH : '');
   } catch (e) { }
   const id = String(args.id || '');
   if (!/^\d+$/.test(id)) { out.err = 'bad-id'; return OUT(out); }

@@ -2,6 +2,19 @@
 /* nexa-browser.js — chromium বাইনারি নিশ্চিত করে (BeamUp/Heroku-ish ইমেজে থাকে না)।
    ★ কখনো নন-জিরো এক্সিট নয়: postinstall ব্যর্থ হলেও অ্যাডঅনের build ভাঙবে না। */
 'use strict';
+/* ★ v1.34.339: দরকার হলে প্রথমে .nexalibs → LD_LIBRARY_PATH (chromium লঞ্চের আগেই) */
+try {
+  let exe0 = null; try { const b = require('./nexa-browser'); exe0 = b.exePath(); } catch (e) { }
+  const path = require('path');
+  const dirs = [path.join(__dirname, '.nexalibs/root/usr/lib/x86_64-linux-gnu'), path.join(__dirname, '.nexalibs/root/usr/lib')];
+  if (exe0) {
+    const cp0 = spawnSync('ldd', [exe0], { encoding: 'utf8', timeout: 30000 });
+    if (String(cp0.stdout || '').includes('not found')) {
+      const ok = dirs.filter(d => fs.existsSync(d));
+      if (ok.length) process.env.LD_LIBRARY_PATH = ok.join(':') + (process.env.LD_LIBRARY_PATH ? ':' + process.env.LD_LIBRARY_PATH : '');
+    }
+  }
+} catch (e) { }
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
