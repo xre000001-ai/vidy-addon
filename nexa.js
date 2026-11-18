@@ -98,7 +98,7 @@ function wkSpawn() {
   if (WK) return WK;
   try {
     const ch = require('child_process').spawn(process.execPath, [CAP_PY, '--serve'], { stdio: ['pipe', 'pipe', 'ignore'] });
-    ch.on('close', () => { WK = null; WK_STARTED = 0; const w = WK_WAIT; WK_WAIT = []; for (const f of w) f(null); });
+    ch.on('close', (code) => { note('worker-exit code=' + code); WK = null; WK_STARTED = 0; const w = WK_WAIT; WK_WAIT = []; for (const f of w) f(null); });
     ch.on('error', () => { WK = null; });
     ch.stdout.setEncoding('utf8');
     ch.stdout.on('data', (d) => {
@@ -114,6 +114,7 @@ function wkSpawn() {
       }
     });
     WK = ch; WK_STARTED = Date.now();
+    note('worker-spawn pid=' + (ch.pid || '?'));
     return ch;
   } catch (e) { WK = null; return null; }
 }
@@ -133,6 +134,7 @@ function capWorker(platform, id, S, E, ms) {
 }
 
 function capWarm() { if (WORKER_ON) wkSpawn(); }
+function capWorkerStats() { return { on: WORKER_ON ? 1 : 0, up: WK ? Math.round((Date.now() - WK_STARTED) / 1000) : 0, ok: WK_OK, err: WK_ERR, queued: WK_WAIT.length, started: WK_STARTED ? 1 : 0 }; }
 
 
 let API = null, API_P = null, HS_P = null, SESS_AT = 0, BLOCK_UNTIL = 0;
