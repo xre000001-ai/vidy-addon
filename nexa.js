@@ -14,6 +14,8 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const net = require('net');
+const tls = require('tls');
 
 const PROVIDERS = process.env.NEXA_PROVIDERS || 'https://providers.nexa.mov';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
@@ -34,6 +36,188 @@ const PROBE_CACHE = new Map();  // url → {at, ok, quality, ct}
 const CARD_TTL = Number(process.env.NEXA_CARD_TTL || 180000);
 const PROBE_TTL = Number(process.env.NEXA_PROBE_TTL || 600000);
 const MAXC = 400;
+
+/* ───────────── প্রোক্সি-পুল (vidy/moviebox-এর মতোই) ─────────────
+   nexa providers.nexa.mov ডেটাসেন্টার-IP-তে 429/403 দেয় ⇒ সব আপস্ট্রিম কল প্রথমে পুল-প্রোক্সি দিয়ে
+   (CONNECT টানেল + TLS), ব্যর্থ হলে ডিরেক্টে। সেগমেন্ট-রিলেও একই পুল ⇒ ইউজার সরাসরি প্লে করে। */
+let PX = [];
+try {
+  const pf = path.join(__dirname, 'vidy_proxy_pool.json');
+  if (fs.existsSync(pf)) PX = JSON.parse(fs.readFileSync(pf, 'utf8')) || [];
+} catch (e) { PX = []; }
+const PX_STAT = new Map();   // px → {ok,fail,ms}
+function pxRec(px, good, ms) {
+  const h = PX_STAT.get(px) || { ok: 0, fail: 0, ms: 0 };
+  if (good) { h.ok++; h.ms = h.ms ? Math.round(h.ms * 0.7 + ms * 0.3) : ms; } else h.fail++;
+  PX_STAT.set(px, h);
+}
+function pxRank() {
+  return PX.slice().sort((a, b) => {
+    const x = PX_STAT.get(a.px) || { ok: 0, fail: 0, ms: a.ms || 3000 };
+    const y = PX_STAT.get(b.px) || { ok: 0, fail: 0, ms: b.ms || 3000 };
+    const sx = (x.ms || 3000) + x.fail * 600 - Math.min(x.ok, 6) * 200;
+    const sy = (y.ms || 3000) + y.fail * 600 - Math.min(y.ok, 6) * 200;
+    return sx - sy;
+  });
+}
+/* CONNECT-টানেল + TLS + raw HTTP/1.1 (GET/POST + Range + হেডার) — বাফার ফেরত দেয় */
+function pxReq(px, method, url, body, hdrs, timeoutMs, maxBytes) {
+  return new Promise((resolve, reject) => {
+    let u; try { u = new URL(url); } catch (e) { return reject(new Error('bad-url')); }
+    const isHttps = u.protocol === 'https:';
+    const port = Number(u.port) || (isHttps ? 443 : 80);
+    const ci = String(px).indexOf(':');
+    const phost = String(px).slice(0, ci), pport = Number(String(px).slice(ci + 1)) || 8080;
+    const sock = net.connect({ host: phost, port: pport });
+    let done = false;
+    const to = setTimeout(() => { bail(new Error('px-timeout')); }, Math.max(3000, timeoutMs || 12000));
+    function bail(e) { if (done) return; done = true; clearTimeout(to); try { sock.destroy(); } catch (e2) { } reject(e); }
+    sock.once('error', bail);
+    sock.once('connect', () => sock.write('CONNECT ' + u.hostname + ':' + port + ' HTTP/1.1\r\nHost: ' + u.hostname + ':' + port + '\r\n\r\n'));
+    let buf = Buffer.alloc(0);
+    const onData = d => {
+      buf = Buffer.concat([buf, d]);
+      const i = buf.indexOf('\r\n\r\n');
+      if (i < 0) return;
+      sock.removeListener('data', onData);
+      if (!/^HTTP\/1\.[01] 200/.test(buf.slice(0, i).toString('latin1'))) return bail(new Error('px-refused'));
+      const stream = isHttps ? tls.connect({ socket: sock, servername: u.hostname, rejectUnauthorized: false }) : sock;
+      const go = () => {
+        let hx = method + ' ' + (u.pathname + u.search) + ' HTTP/1.1\r\nHost: ' + u.hostname + '\r\nConnection: close\r\n';
+        for (const k of Object.keys(hdrs || {})) { if (hdrs[k] !== undefined && hdrs[k] !== null) hx += k + ': ' + hdrs[k] + '\r\n'; }
+        if (body) hx += 'content-length: ' + body.length + '\r\n';
+        stream.write(Buffer.from(hx + '\r\n', 'latin1'));
+        if (body) stream.write(body);
+        const chunks = [isHttps ? Buffer.alloc(0) : buf.slice(i + 4)];
+        let head = '', hdrDone = false;
+        stream.on('data', d2 => {
+          if (!hdrDone) {
+            head += d2.toString('latin1');
+            const j = head.indexOf('\r\n\r\n');
+            if (j < 0) return;
+            hdrDone = true;
+            if (isHttps) chunks.push(Buffer.from(head.slice(j + 4), 'latin1'));
+            head = head.slice(0, j);
+            return;
+          }
+          chunks.push(d2);
+        });
+        stream.on('close', () => {
+          if (done) return;
+          done = true; clearTimeout(to);
+          let raw = Buffer.concat(chunks);
+          if (/transfer-encoding: *chunked/i.test(head)) {
+            const out = []; let p2 = 0;
+            while (p2 < raw.length) {
+              const e = raw.indexOf('\r\n', p2); if (e < 0) break;
+              const n = parseInt(raw.slice(p2, e).toString('latin1'), 16);
+              if (!n) break;
+              out.push(raw.slice(e + 2, e + 2 + n)); p2 = e + 2 + n + 2;
+            }
+            raw = Buffer.concat(out);
+          }
+          if (maxBytes && raw.length > maxBytes) raw = raw.slice(0, maxBytes);
+          const code = parseInt((head.split('\r\n')[0] || '').split(' ')[1] || '0', 10);
+          const hcopy = {};
+          for (const ln of head.split('\r\n').slice(1)) { const c = ln.indexOf(':'); if (c > 0) hcopy[ln.slice(0, c).toLowerCase()] = ln.slice(c + 1).trim(); }
+          resolve({ code, body: raw, headers: hcopy });
+        });
+        stream.once('error', bail);
+      };
+      if (isHttps) tls.connect({ socket: sock, servername: u.hostname, rejectUnauthorized: false }, () => { }).destroy(); // (no-op guard)
+      if (isHttps) {
+        const tl = tls.connect({ socket: sock, servername: u.hostname, rejectUnauthorized: false }, () => {
+          let hx = method + ' ' + (u.pathname + u.search) + ' HTTP/1.1\r\nHost: ' + u.hostname + '\r\nConnection: close\r\n';
+          for (const k of Object.keys(hdrs || {})) { if (hdrs[k] !== undefined && hdrs[k] !== null) hx += k + ': ' + hdrs[k] + '\r\n'; }
+          if (body) hx += 'content-length: ' + body.length + '\r\n';
+          tl.write(Buffer.from(hx + '\r\n', 'latin1'));
+          if (body) tl.write(body);
+          const chunks = [buf.slice(i + 4)];
+          let head = '', hdrDone = false;
+          tl.on('data', d2 => {
+            if (!hdrDone) {
+              head += d2.toString('latin1');
+              const j = head.indexOf('\r\n\r\n');
+              if (j < 0) return;
+              hdrDone = true;
+              chunks.push(Buffer.from(head.slice(j + 4), 'latin1'));
+              head = head.slice(0, j);
+              return;
+            }
+            chunks.push(d2);
+          });
+          tl.on('close', () => {
+            if (done) return;
+            done = true; clearTimeout(to);
+            let raw = Buffer.concat(chunks);
+            if (/transfer-encoding: *chunked/i.test(head)) {
+              const out = []; let p2 = 0;
+              while (p2 < raw.length) {
+                const e = raw.indexOf('\r\n', p2); if (e < 0) break;
+                const n = parseInt(raw.slice(p2, e).toString('latin1'), 16);
+                if (!n) break;
+                out.push(raw.slice(e + 2, e + 2 + n)); p2 = e + 2 + n + 2;
+              }
+              raw = Buffer.concat(out);
+            }
+            if (maxBytes && raw.length > maxBytes) raw = raw.slice(0, maxBytes);
+            const code = parseInt((head.split('\r\n')[0] || '').split(' ')[1] || '0', 10);
+            const hcopy = {};
+            for (const ln of head.split('\r\n').slice(1)) { const c = ln.indexOf(':'); if (c > 0) hcopy[ln.slice(0, c).toLowerCase()] = ln.slice(c + 1).trim(); }
+            resolve({ code, body: raw, headers: hcopy });
+          });
+          tl.once('error', bail);
+        });
+      } else { go(); }
+    };
+    sock.on('data', onData);
+  });
+}
+
+/* এক দরজা, দুই পথ: ডিরেক্টে আগে (দ্রুত), তারপর 429/403/নেট-ব্যর্থতায় প্রোক্সি-পুল (প্যারালাল)।
+   nexa providers.nexa.mov ডেটাসেন্টার-IP-তে মাঝে মাঝে 429 দেয় — vidy/moviebox-এর মতোই পুল সামলায়। */
+const PXTRIES = Math.max(1, Number(process.env.NEXA_PXTRIES || 2));
+const PX_PAR = String(process.env.NEXA_PXPAR || '1') !== '0';
+function directReq(url, method, body, hdrs, ms, maxBytes) {
+  const ctl = new AbortController();
+  const tm = setTimeout(() => { try { ctl.abort(); } catch (e) { } }, ms);
+  return fetch(url, { method, body: body || undefined, headers: hdrs, signal: ctl.signal, redirect: 'follow' })
+    .then(async r => {
+      const ab = await r.arrayBuffer();
+      let buf = Buffer.from(ab);
+      if (maxBytes && buf.length > maxBytes) buf = buf.slice(0, maxBytes);
+      const hcopy = {}; try { r.headers.forEach((v, k) => { hcopy[k.toLowerCase()] = v; }); } catch (e) { }
+      return { code: r.status, body: buf, headers: hcopy };
+    }).finally(() => clearTimeout(tm));
+}
+async function upFetch(url, opts) {
+  opts = opts || {};
+  const hdrs = Object.assign({ 'user-agent': UA, 'origin': 'https://nexa.mov', 'referer': 'https://nexa.mov/', 'accept': '*/*' }, opts.headers || {});
+  const body = opts.body || null;
+  const method = opts.method || 'GET';
+  const ms = opts.ms || 15000;
+  /* ১) ডিরেক্টে */
+  try {
+    const r = await directReq(url, method, body, hdrs, Math.min(ms, 9000), opts.maxBytes);
+    if (r.code !== 429 && r.code !== 403) return r;
+    if (String(process.env.NEXA_PROXY || '1') === '0' || !PX.length) return r;
+    note('direct ' + r.code + ' → proxy');
+  } catch (e) {
+    if (String(process.env.NEXA_PROXY || '1') === '0' || !PX.length) throw e;
+  }
+  /* ২) প্রোক্সি-পুল (প্যারালাল, ছোট বাজেট) */
+  const cands = pxRank().slice(0, PXTRIES);
+  const one = c => pxReq(c.px, method, url, body, hdrs, Math.min(ms, 7000), opts.maxBytes)
+    .then(r => { pxRec(c.px, r.code < 400, 1); if (r.code === 403 || r.code === 407) throw new Error('px-http-' + r.code); return r; })
+    .catch(e => { pxRec(c.px, false, 1); throw e; });
+  if (PX_PAR && cands.length > 1) {
+    try { return await Promise.any(cands.map(one)); } catch (e) { }
+  } else {
+    for (const c of cands) { try { return await one(c); } catch (e) { } }
+  }
+  /* ৩) শেষ চেষ্টা: ডিরেক্টে (লম্বা টাইমআউট) */
+  return directReq(url, method, body, hdrs, ms, opts.maxBytes);
+}
 
 function note(s) { try { DIAG.last.push(String(s).slice(0, 160)); if (DIAG.last.length > 25) DIAG.last.shift(); } catch (e) { } }
 function nexOn(cfg) { return !(cfg && cfg.nex === 0); }
@@ -72,18 +256,15 @@ async function getApi() {
 
 /* ───────────── HTTP ───────────── */
 async function postRaw(p, body, ms) {
-  const ctl = new AbortController();
-  const tm = setTimeout(() => { try { ctl.abort(); } catch (e) { } }, Math.max(3000, ms || 15000));
   try {
-    const r = await fetch(PROVIDERS + p, {
-      method: 'POST', body, signal: ctl.signal,
-      headers: { 'content-type': 'application/octet-stream', 'user-agent': UA, 'origin': 'https://nexa.mov', 'referer': 'https://nexa.mov/' },
+    const r = await upFetch(PROVIDERS + p, {
+      method: 'POST', body, ms: Math.max(3000, ms || 15000), maxBytes: 262144,
+      headers: { 'content-type': 'application/octet-stream' },
     });
-    const ab = await r.arrayBuffer();
-    return { status: r.status, body: Buffer.from(ab), retryAfter: Number(r.headers.get('retry-after') || 0) || 0 };
+    return { status: r.code, body: r.body, retryAfter: Number((r.headers && r.headers['retry-after']) || 0) || 0 };
   } catch (e) {
     return { status: 0, body: Buffer.alloc(0), err: String((e && e.message) || e).slice(0, 80) };
-  } finally { clearTimeout(tm); }
+  }
 }
 
 /* ───────────── সেশন ───────────── */
@@ -148,17 +329,15 @@ async function playlistFor(api, plan, ms) {
 async function probe(u, hdrs, ms) {
   const hit = PROBE_CACHE.get(u);
   if (hit && Date.now() - hit.at < PROBE_TTL) return hit;
-  const ctl = new AbortController();
-  const tm = setTimeout(() => { try { ctl.abort(); } catch (e) { } }, Math.max(4000, ms || 9000));
   let out = { at: Date.now(), ok: 0, quality: '', ct: '', why: '' };
   try {
-    const r = await fetch(u, {
-      signal: ctl.signal, redirect: 'follow',
-      headers: Object.assign({ 'user-agent': UA, 'referer': 'https://nexa.mov/', 'origin': 'https://nexa.mov', 'range': 'bytes=0-32767' }, hdrs || {}),
+    const r = await upFetch(u, {
+      ms: Math.max(4000, ms || 9000), maxBytes: 65536,
+      headers: Object.assign({ 'range': 'bytes=0-32767', 'referer': 'https://nexa.mov/' }, hdrs || {}),
     });
-    out.ct = String(r.headers.get('content-type') || '');
-    if (r.status === 200 || r.status === 206) {
-      const txt = (await r.text()).slice(0, 40000);
+    out.ct = String((r.headers && r.headers['content-type']) || '');
+    if (r.code === 200 || r.code === 206) {
+      const txt = r.body.toString('utf8').slice(0, 40000);
       if (txt) {
         out.ok = 1;
         const res = [...txt.matchAll(/RESOLUTION=(\d+)x(\d+)/g)].map(m => parseInt(m[2], 10));
@@ -171,9 +350,8 @@ async function probe(u, hdrs, ms) {
           out.quality = '';         // সরাসরি MP4 ⇒ রেজো অজানা
         } else { out.ok = 0; out.why = 'not-media'; }
       } else { out.ok = 0; out.why = 'empty'; }
-    } else { out.ok = 0; out.why = 'http-' + r.status; }
+    } else { out.ok = 0; out.why = 'http-' + r.code; }
   } catch (e) { out.ok = 0; out.why = String((e && e.name) || e).slice(0, 40); }
-  finally { clearTimeout(tm); }
   if (out.ok) DIAG.probeOk++; else DIAG.probeFail++;
   if (PROBE_CACHE.size > 600) PROBE_CACHE.clear();
   PROBE_CACHE.set(u, out);
@@ -188,12 +366,9 @@ async function getMapping(ms) {
   if (MAP_P) return MAP_P;
   MAP_P = (async () => {
     try {
-      const ctl = new AbortController();
-      const tm = setTimeout(() => { try { ctl.abort(); } catch (e) { } }, Math.max(4000, ms || 12000));
-      const r = await fetch(MAP_URL, { signal: ctl.signal, headers: { 'user-agent': UA, 'origin': 'https://nexa.mov', 'referer': 'https://nexa.mov/' } });
-      clearTimeout(tm);
-      if (r.status !== 200) { note('map http-' + r.status); return MAP; }
-      const j = await r.json();
+      const r = await upFetch(MAP_URL, { ms: Math.max(4000, ms || 12000), maxBytes: 4 * 1024 * 1024 });
+      if (r.code !== 200) { note('map http-' + r.code); return MAP; }
+      const j = JSON.parse(r.body.toString('utf8'));
       const t2a = new Map(), a2t = new Map();
       const rows = Array.isArray(j && j.a) ? j.a : [];
       for (const row of rows) {
@@ -297,7 +472,7 @@ async function nexStreams(tmdbId, type, s, e, origin, opts) {
     const pr = await probe(info.url, info.headers, Math.max(3000, deadline - Date.now()));
     if (!pr.ok) return null;
     const aud = info.audioOptions && info.audioOptions.length ? String(info.audioOptions[0].label || info.audioOptions[0].lang || '') : '';
-    return { codename: p.codename, label: nameOf.get(p.codename) || p.codename, url: info.url, kind: info.kind || '', headers: info.headers || null, quality: pr.quality, audio: aud };
+    return { codename: p.codename, label: nameOf.get(p.codename) || p.codename, url: nexRelayUrl(info.url, origin), _direct: info.url, kind: info.kind || '', headers: info.headers || null, quality: pr.quality, audio: aud };
   })().catch(() => null));
 
   const settled = await Promise.all(jobs);
@@ -354,4 +529,61 @@ async function nexSelftest(tmdbId, type, s, e) {
   return out;
 }
 
-module.exports = { nexOn, nexStreams, nexDiag, nexSelftest, MOVIE_SRV, ANIME_SRV };
+/* ───────────── রিলে (ইউজার সরাসরি প্লে করবে) ─────────────
+   nexaRelayUrl: কার্ডে বসানো URL (আমাদের সার্ভার) ; nexaServe: প্লেলিস্ট+সেগমেন্ট দুটোই
+   প্রোক্সি-পুল দিয়ে এনে Rewrite করে দেয় ⇒ ডিভাইসে কোনো স্পেশাল হেডার/আইপি লাগে না। */
+function nexB(u) { return Buffer.from(String(u), 'utf8').toString('base64url'); }
+function nexIsPl(u) { return /\.m3u8(\?|$)/i.test(String(u)) || /\/playlist(\?|$)/i.test(String(u)); }
+function nexRelayUrl(u, origin) {
+  if (!u) return '';
+  if (!origin) return u;                     // no origin ⇒ direct (আগের নিয়মই)
+  return origin.replace(/\/+$/, '') + '/nexp/' + nexB(u) + (nexIsPl(u) ? '/p.m3u8' : '/s');
+}
+async function nexaServe(req, res, b64) {
+  let tgt = '';
+  try { tgt = Buffer.from(b64, 'base64url').toString('utf8'); } catch (e) { }
+  if (!/^https?:\/\//i.test(tgt)) { try { res.writeHead(400, { 'content-type': 'text/plain' }); } catch (e) { } return res.end('bad'); }
+  const origin = (req.headers['x-fwd-host'] ? ('https://' + req.headers['x-fwd-host']) : '') || ('http://' + (req.headers.host || 'localhost'));
+  const pl = nexIsPl(tgt);
+  try {
+    const hdrs = {};
+    if (req.headers.range && !pl) hdrs['range'] = String(req.headers.range);
+    const r = await upFetch(tgt, { ms: pl ? 12000 : 25000, headers: hdrs, maxBytes: pl ? 262144 : 0 });
+    if (r.code !== 200 && r.code !== 206) { try { res.writeHead(502, { 'content-type': 'text/plain' }); } catch (e) { } return res.end('up ' + r.code); }
+    if (pl) {
+      const txt = String(r.body.toString('utf8')).split('\n').map(line => {
+        const raw = line.trim();
+        if (!raw) return line;
+        if (raw.charAt(0) === '#') return line.replace(/URI="([^"]+)"/g, (m0, u1) => { let a = u1; try { a = new URL(u1, tgt).toString(); } catch (e) { } return 'URI="' + nexRelayUrl(a, origin) + '"'; });
+        let a = raw; try { a = new URL(raw, tgt).toString(); } catch (e) { }
+        return nexRelayUrl(a, origin);
+      }).join('\n');
+      try { res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl', 'access-control-allow-origin': '*', 'cache-control': 'no-store', 'x-nex': 'pl' }); } catch (e) { }
+      return res.end(txt);
+    }
+    /* ★ কনটেন্ট স sniff করে ঠিক করি — nexa/সেগমেন্ট-হোস্টরা ভুল/misleading content-type দেয়
+       (vidbasic image/jpeg, mux octet-stream)। TS = 0x47 সিঙ্ক, MP4 = ftyp/moov, WebVTT = "WEBVTT". */
+    let ct = String((r.headers && r.headers['content-type']) || '').toLowerCase();
+    const b0 = r.body.length > 3 ? r.body : Buffer.alloc(0);
+    const isTs = b0.length > 376 && b0[0] === 0x47 && b0[188] === 0x47;
+    const isMp4 = b0.length > 12 && b0.slice(4, 8).toString('latin1') === 'ftyp';
+    const isVtt = b0.slice(0, 6).toString('latin1') === 'WEBVTT';
+    let outCt = 'application/octet-stream';
+    if (/mpegurl/.test(ct) || isVtt === false && /m3u8/.test(tgt)) outCt = 'application/vnd.apple.mpegurl';
+    if (isTs) outCt = 'video/mp2t';
+    else if (isMp4) outCt = 'video/mp4';
+    else if (isVtt) outCt = 'text/vtt';
+    else if (/mpegurl/.test(ct)) outCt = 'application/vnd.apple.mpegurl';
+    else if (/^video\//.test(ct) || /mpegts|mp2t/.test(ct)) outCt = ct;
+    const h = { 'content-type': outCt, 'access-control-allow-origin': '*', 'cache-control': 'no-store', 'x-nex': 'seg' };
+    if (r.headers && r.headers['content-range']) h['content-range'] = r.headers['content-range'];
+    if (r.headers && r.headers['accept-ranges']) h['accept-ranges'] = r.headers['accept-ranges'];
+    try { res.writeHead(r.code, h); } catch (e) { }
+    return res.end(r.body);
+  } catch (e) {
+    try { res.writeHead(502, { 'content-type': 'text/plain' }); } catch (e2) { }
+    return res.end('nex-relay-err');
+  }
+}
+
+module.exports = { nexOn, nexStreams, nexDiag, nexSelftest, nexaServe, nexRelayUrl, nexIsPl, MOVIE_SRV, ANIME_SRV };

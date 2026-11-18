@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.323';
+const VERSION = '1.34.324';
 /* ★ v1.34.322: nexa.mov — নতুন সোর্স (মুভি/সিরিজ ৫ সার্ভার: nova/onyx/orion/flux/sylver;
    অ্যানিমে ৪: kyoto/tokyo/hokkaido/fuji)। প্লেব্যাক-প্রোটোকল wasm-এ সিল করা, nexa.js রিভার্স করেছে। */
 let NEX = null;
@@ -19508,6 +19508,13 @@ const server = http.createServer((req, res) => FG_CONTEXT.run({ active: true }, 
     if (vhR) return vhServe(req, res, vhR[1]);
     const dhR = p.match(/^\/dh\/([A-Za-z0-9_=-]{8,3000})\/(?:p\.m3u8|s)$/);   // v1.30.0: Deadtoons রিলে
     if (dhR) return dhServe(req, res, dhR[1]);
+    /* ★ v1.34.324: nexa রিলে — প্লেলিস্ট+সেগমেন্ট দুটোই আমাদের সার্ভার দিয়ে (প্রোক্সি-পুল-ব্যাকড)
+       ⇒ ডিভাইসে কোনো স্পেশাল হেডার/আইপি লাগে না, ইউজার সরাসরি প্লে করে। */
+    const nexR = p.match(/^\/nexp\/([A-Za-z0-9_=-]{8,4000})\/(?:p\.m3u8|s)$/);
+    if (nexR) {
+      if (!NEX || typeof NEX.nexaServe !== 'function') { try { res.writeHead(404, { 'content-type': 'text/plain' }); } catch (e) { } return res.end('nexa off'); }
+      return NEX.nexaServe(req, res, nexR[1]).catch(() => { try { res.writeHead(502, { 'content-type': 'text/plain' }); res.end('nex-relay-err'); } catch (e) { } });
+    }
     // Native rousav single-file WebVTT rendition. Do not combine segmented
     // WebVTT blindly: timestamps can depend on X-TIMESTAMP-MAP.
     const mmSubR = p.match(/^\/mmsub\/([A-Za-z0-9_=-]{8,2400})\/subtitle\.vtt$/);
