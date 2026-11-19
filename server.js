@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.408';
+const VERSION = '1.34.409';
 /* ★ v1.34.322: nexa.mov — নতুন সোর্স (মুভি/সিরিজ ৫ সার্ভার: nova/onyx/orion/flux/sylver;
    অ্যানিমে ৪: kyoto/tokyo/hokkaido/fuji)। প্লেব্যাক-প্রোটোকল wasm-এ সিল করা, nexa.js রিভার্স করেছে। */
 /* ★★ v1.34.407 (ইউজার-নির্দেশ): **nexa আলাদা অ্যাডঅন** — মেইন অ্যাডঅন আর ওর ভারী মডিউল
@@ -18902,7 +18902,7 @@ function sendStreams(res, skey, plog, ms, cards, ua, cfg) {
         total: _cards.length,
         sr: (LR && LR.sr) || [],
         nexStreams: nexStreamsCount(),
-        nexRemote: (() => { try { const b = nexaAddonBase({ headers: req.headers }); return { base: b || '(empty→local path)', probe: (typeof NEXREMOTE !== 'undefined' ? NEXREMOTE : null) }; } catch (e) { return { err: String(e && e.message) }; } })(),
+        nexRemote: (() => { try { const _rq = (res && res.req) ? res.req : { headers: {} }; const b = nexaAddonBase(_rq); return { base: b || '(empty→local path)', probe: (typeof NEXREMOTE !== 'undefined' ? NEXREMOTE : null) }; } catch (e) { return { err: String(e && e.message) }; } })(),
         nexTag: (NEXS_LOG.slice(-1)[0] || {}).tag || null,
         nexOnFlag: (() => { try { return { on: !!(NEX && NEX.nexOn(cfg)), hasNex: !!(NEX && NEX.nexStreams) }; } catch (e) { return 'err'; } })(),
         nxdiag: nxdiag && { caps: nxdiag.cardCache, sess: nxdiag.sess, sessErr: nxdiag.sessErr, pl400: nxdiag.pl400, pl200: nxdiag.pl200, cards: nxdiag.cards, last: (nxdiag.last || []).slice(-6) },
