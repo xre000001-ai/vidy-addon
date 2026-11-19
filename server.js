@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.398';
+const VERSION = '1.34.399';
 /* ★ v1.34.322: nexa.mov — নতুন সোর্স (মুভি/সিরিজ ৫ সার্ভার: nova/onyx/orion/flux/sylver;
    অ্যানিমে ৪: kyoto/tokyo/hokkaido/fuji)। প্লেব্যাক-প্রোটোকল wasm-এ সিল করা, nexa.js রিভার্স করেছে। */
 let NEX = null;
@@ -3222,7 +3222,7 @@ const NXDEADLINE = Math.max(Number(process.env.NXDEADLINE || 0), 22000);   // �
 // ★★ v1.34.140 (প্রোড-মাপা ১২-১১-২০২৬): এজ-গেটওয়ে ~১২সে-তে **৫০৪** দেয় (`error code: 504`) ⇒ ওই
 //   ট্যাপে ইউজার **শূন্য কার্ড** পায় (মাপা: tmdb916224 ও tt0903747:1:1 ৫০৪; ১১.৩–১২.২সে-র উত্তর পাস করে)।
 //   তাই মোট বাজেট ১১.৫সে → **৯.৮সে** (unify+send সহ ~১০.৩সে) — নিরাপদ দূরত্ব। `SDL` env দিয়ে টিউনযোগ্য।
-const SDL_MS = Number(process.env.SDL || 13200)  /* ★ v1.34.159: ৮৬০০-এ grace যোগ হয়ে ১১.৩সে হয়ে যাচ্ছিল */;   // ★ v1.34.149: ৭৬০০ → ৬৭০০ (মাপা: ৬.৫সে-কাটে কার্ড ২৫→২৪, সময় ৭.৪→৬.৬সে)   // ★ v1.34.148: 8200 → 7600 — প্রোড-মাপা: লোডে `lastreq.el` ৯.৪সে-তে ঠেলছিল, দুটি ট্যাপ ১২.৬–১৩.২সে-এ ৫০৪ খেয়েছিল
+const SDL_MS = Number(process.env.SDL || 12000)  /* ★ v1.34.159: ৮৬০০-এ grace যোগ হয়ে ১১.৩সে হয়ে যাচ্ছিল */;   // ★ v1.34.149: ৭৬০০ → ৬৭০০ (মাপা: ৬.৫সে-কাটে কার্ড ২৫→২৪, সময় ৭.৪→৬.৬সে)   // ★ v1.34.148: 8200 → 7600 — প্রোড-মাপা: লোডে `lastreq.el` ৯.৪সে-তে ঠেলছিল, দুটি ট্যাপ ১২.৬–১৩.২সে-এ ৫০৪ খেয়েছিল
 const NXEXTRA = Math.max(Number(process.env.NXEXTRA || 0), 12000); // v1.15.25 (ইউজার: "আগে শেষ হলে আগেই রেজাল্ট, না হলে ১২সে পর্যন্ত"): NetHex-এর-জন্য-১২সে-পর্যন্ত-ধরে-রাখো — রেডি-হলে-রেস-আগেই-জেতে, instant-অক্ষত
 const NXCOLDX = Math.max(Number(process.env.NXCOLDX || 0), 9500); // ★ v1.17.52: ১২সে-এ NetHex প্রায়ই ক্যাপের পরে ফিরত ⇒ ফসল থেকে ঝরে যেত // v1.15.25: ১২সে-ইউজার-সীমা (কার্ড-থাকলেও-না-শেষ-হলে-১২সে-পর্যন্ত-ধরো; শেষ-হলে-আগেই)
 const NXHARD = Math.max(Number(process.env.NXHARD || 0), 7000);   // ★ v1.34.140: 12000 → 9000 (SDL-এর ভিতরে; নইলে ৫০৪) // v1.15.25 (ইউজার-নির্দেশ): ফাঁকা-কার্ডে-পূর্ণ-১২সে-বরাদ্দ — স্ট্রিম-উত্তর-সর্বোচ্চ-১২সে (আগে-শেষ=আগে-ফল)
@@ -16296,7 +16296,7 @@ async function withSources(cardsP, srcs, cfg, t0, mkey, lookupP) {
     // ★ v1.32.0: প্রোডে যেগুলো ৮–৯.৫সে নিয়ে ০ কার্ড দিত (tw/rt/vsp/nx) সেগুলোর ক্যাপ অনেক কম;
     //   nx (MovieBox) একটু বেশি পায় কারণ সেটা আসলে বড় সোর্স — কিন্তু ৬সে-র বেশি নয়।
     // ★★ v1.33.0: **সব সোর্স = একই ১২সে ঘর** (ইউজার-নির্দেশ)। এক সোর্সের ছোট ক্যাপ আর নেই।
-    const SRC_CAP_ALL = Number(process.env.SCAP || 12500);   // ★ v1.34.388: nexa-র ঠান্ডা ক্যাপচার ~৯সে ⇒ ১৩সে ঘর
+    const SRC_CAP_ALL = Number(process.env.SCAP || 12000);   // ★ v1.34.388: nexa-র ঠান্ডা ক্যাপচার ~৯সে ⇒ ১৩সে ঘর
     const SRC_CAP_MAP = Object.fromEntries(Object.keys(SRC_CAP_DEF).map(k => [k, SRC_CAP_ALL]));   // v1.27.19: hm 8200-race + mlb 8200-বাজেটের জন্য ক্যাপ বাড়ানো // v1.26.1: toonworld-এর রেজলভারই ৭.৫সে নেয় (মাপা) — ৮.৫সে-ক্যাপে ওটা সবসময় কাটা পড়ত // ★ v1.22.3: prod-মাপা — এই সোর্সগুলো prod-এ ৭-৮সে নেয়, আগের ক্যাপে তারা সবসময় 'cut' হতো
     const _capSlow = SLOWX ? Number(process.env.SCUTSLOW || 25000) : 0;   // ★ v1.34.175: slow-মোডে per-source ক্যাপও খুলে যায়
     const SRC_CAP_MS = Number(process.env.VSCAP || 9500)   /* ★ v1.34.157: ৭২০০ → SCUT-সমান (নাহলে প্রতি-সোর্স ৭.২সে-তেই কাটা পড়ত, mls-এর নিজস্ব বাজেট ১০.৮সে হওয়ায় সে কখনোই সুযোগ পেত না) */;   // ★ v1.34.140: 12000 → 9200 (SDL-এর ভিতরে)   // ★ v1.33.0: ৪৬০০ → ১২০০০ (ইউজার: হার্ড-ক্যাপ ১২সে) // ★ v1.32.0: 5200→4600 (লক্ষ্য ≈৫সে) // v1.17.58: 9.3s-cap-e prod-e 10.2-10.6s hoi (edge-er kache) // ★ v1.17.52: প্রতি-সোর্স-ক্যাপ — একটি ঝুলন্ত সোর্স (ott/tw/nx) পুরো তালিকাকে ক্যাপে টেনে নিত
@@ -16335,7 +16335,7 @@ async function withSources(cardsP, srcs, cfg, t0, mkey, lookupP) {
        সব সোর্সের উপরের সীমা এখানে **SCUT (৮.৪সে)** দিয়ে বাঁধা ছিল, bg/slow-মোডে (১১সে/২৫সে) যা
        কখনো বাড়ত না ⇒ `outsP` ৮.৪সে-তে সব সোর্সকে null করে দিত, আর mlb (১৮সে)/hm (১৩.৬সে)/
        mls (১৪সে)/rt (২০সে) কখনোই ক্যাশে পৌঁছাত না। এখন মোড-অনুযায়ী সীমা। */
-    const _cap0 = SLOWX ? Number(process.env.SCUTSLOW || 25000) : (BGX ? Number(process.env.SCUTBG || 11000) : Number(process.env.SCUT || 12500));   // ★ v1.34.388
+    const _cap0 = SLOWX ? Number(process.env.SCUTSLOW || 25000) : (BGX ? Number(process.env.SCUTBG || 11000) : Number(process.env.SCUT || 9500));   // ★ v1.34.388
     const uniLeft0 = Math.max(0, Math.min(Math.max(NXDEADLINE, _cap0), _cap0) + _LK.ms - (Date.now() - t0)); // ★ v1.34.175
     // ★ v1.17.29: **nx (MovieBox)-এর নিজস্ব কাট-ঘড়ি** — child-এর রিজলভ ৪–৮ সে নেয়, তাই সাধারণ
     //   হারভেস্ট-কাটে (৪.১ সে) কেটে যেত ⇒ "MovieBox নেই" দেখাত। এখন nx পায় `NX_FIRST_MS` পর্যন্ত
@@ -16343,7 +16343,7 @@ async function withSources(cardsP, srcs, cfg, t0, mkey, lookupP) {
     // ★ v1.17.34: **অভিযোজিত-উইন্ডো বাতিল** (মাপা: প্রোডে ৬.২সে-ও MB আনত না, শুধু উত্তর
     //   ৭–৮সে হয়ে যেত)। এখন সবসময় ৫.১সে — MB দেরিতে এলে ব্যাকগ্রাউন্ডে ক্যাশে জমে, আর
     //   ওই ফল `$partial` হয় ⇒ আমাদের /stream-ক্যাশ ১২সে-তেই মেয়াদোত্তীর্ণ ⇒ দ্বিতীয় ট্যাপে MB পুরো।
-    const nxFirstWait = Math.min(Number(process.env.NXW || 9000), Number(process.env.SCUT || 12500)); // v1.34.29: ঠান্ডা-bench-এ child-resolve 9-10.5s লাগে (মাপা) ⇒ 9s-কাটে প্রথম-খোলায় MB ঝরত; 10.2s (12s-ক্যাপের ভিতরে, streams>speed) // ★ v1.22.2: prod-এ MB ৯.২সে ধরে উত্তর টানত (মাপা ৯.৪সে) ⇒ ৭সে // v1.17.52: ৭.২সে-এ MB প্রায়ই কাটা পড়ত // v1.17.47: MB আর কাটা পড়বে না (আগে ৫.১সে)
+    const nxFirstWait = Math.min(Number(process.env.NXW || 9000), Number(process.env.SCUT || 9500)); // v1.34.29: ঠান্ডা-bench-এ child-resolve 9-10.5s লাগে (মাপা) ⇒ 9s-কাটে প্রথম-খোলায় MB ঝরত; 10.2s (12s-ক্যাপের ভিতরে, streams>speed) // ★ v1.22.2: prod-এ MB ৯.২সে ধরে উত্তর টানত (মাপা ৯.৪সে) ⇒ ৭সে // v1.17.52: ৭.২সে-এ MB প্রায়ই কাটা পড়ত // v1.17.47: MB আর কাটা পড়বে না (আগে ৫.১সে)
     const nxCutP = new Promise(r => setTimeout(() => r(true), Math.max(0, Math.min(uniLeft0, nxFirstWait - (Date.now() - t0)))));
     // ★ v1.26.1: প্রতিটা সোর্স-প্রমিসের ফল **যে-সময়েই আসুক** স্ট্যাশে জমা (কাটা পড়লেও)
     if (SKEY) live.forEach(x => { try { x.p.then(v => stashPut(SKEY, x.key, v)).catch(() => { }); } catch (e) { } });
@@ -16355,7 +16355,7 @@ async function withSources(cardsP, srcs, cfg, t0, mkey, lookupP) {
   }
   // ★ v1.32.0: vidy-কার্ডের অপেক্ষাও ছোট (আগে ১০.৬সে ⇒ Mirzapur-এ ৮সে উত্তর)। মাপা: vidy কার্ড
   //   ২–৪সে-তেই আসে; দেরিতে-আসা সার্ভার ব্যাকগ্রাউন্ডে ক্যাশে জমে, পরের খোলে পুরো।
-  const cLeft = Math.max(500, Math.min(Number(process.env.SCUT || 12500), Number(process.env.VPICK || 6200) + 1200) + Math.min(_LK.ms, 800) - (Date.now() - t0)); // ★ v1.34.27: রুট-অপেক্ষা getSources-এর আসল বাজেটের (9s) সঙ্গে মিলল — আগে 4200 ধরে vidy 5.4s-এ কাটা পড়ত
+  const cLeft = Math.max(500, Math.min(Number(process.env.SCUT || 9500), Number(process.env.VPICK || 9000) + 1200) + Math.min(_LK.ms, 800) - (Date.now() - t0)); // ★ v1.34.27: রুট-অপেক্ষা getSources-এর আসল বাজেটের (9s) সঙ্গে মিলল — আগে 4200 ধরে vidy 5.4s-এ কাটা পড়ত
   const cards = await Promise.race([
     cardsP.catch(e => { if (DBG) console.error('[srcdbg] cardsP died: ' + String(e && e.message || e).slice(0, 90)); return []; }),
     new Promise(r => setTimeout(() => r([]), cLeft))
@@ -16368,7 +16368,7 @@ async function withSources(cardsP, srcs, cfg, t0, mkey, lookupP) {
     // v1.14.6 ঐক্যবদ্ধ-১ম-ক্লিক-সময়সীমা (ইউজার-টপ-অগ্রাধিকার: প্রতি-নির্বাচিত-সোর্স-১ম-ক্লিকেই):
     // সব-লাইভ-সোর্স-একই-পরম-সীমা ~৯.৬সে (রুট-সেফটি ১১.৯সে/এজ-কাট ১২সে-র-ভেতরে) — যে-সোর্স-আগে-সেটল
     // উত্তর-তার-পরেই (দ্রুত-ক্ষেত্রে ২-৫সে), ধীর-সোর্স-কাটা-পড়ার-আগে-সর্বোচ্চ-সময়-পায়।
-    const uniLeft = Math.max(0, Math.min(NXDEADLINE, Number(process.env.SCUT || 12500)) - el);   // ★ v1.34.388: ৯.৫→১৩সে (workers/loading-এ ধীর) // v1.17.52 // v1.15.99: ৯.৬সে যাতে Beamup প্রক্সির ১২সে কাটঅফের আগে সবসময় ২+ সেকেন্ড হাতে থাকে
+    const uniLeft = Math.max(0, Math.min(NXDEADLINE, Number(process.env.SCUT || 9500)) - el);   // ★ v1.34.388: ৯.৫→১৩সে (workers/loading-এ ধীর) // v1.17.52 // v1.15.99: ৯.৬সে যাতে Beamup প্রক্সির ১২সে কাটঅফের আগে সবসময় ২+ সেকেন্ড হাতে থাকে
     // v1.15.3: সোর্স-ত্রুটি (রিবিল্ড/নেটওয়ার্ক) ≠ সত্যিকারের-খালি — আংশিক-গণ্য হোক (errFlag উপরে ঘোষিত)
     if (DBG) console.error('[ws] RID=' + t0 + ' outs-await-start @' + (Date.now() - t0));
     const outs = await outsP;
@@ -19459,6 +19459,49 @@ const server = http.createServer((req, res) => FG_CONTEXT.run({ active: true }, 
       try { parsed = JSON.parse(String(cp.stdout || '').trim().split('\n').pop()); } catch (e) { parsed = { raw: String(cp.stdout || '').slice(-300) }; }
       parsed.stderrTail = String(cp.stderr || '').split('\n').filter(l => l && !l.includes('Failed to connect to the bus')).slice(-8).join(' | ').slice(0, 900);
       return sendJson(res, 200, parsed);
+    }
+    if (p === '/_nexall') {   /* ★ v1.34.399: **এক রিকোয়েস্টেই পুরো চেইন** — সেশন → ম্যাপিং → ক্যাপচার →
+                                 কার্ড → রিলে; প্রতিটি ধাপের সত্য ফল একই রেসপন্সে (কোন ধাপে matching ভাঙছে দেখা যায়) */
+      if (!NEX) return sendJson(res, 200, { ok: 0, why: 'module-missing' });
+      let u4 = null; try { u4 = new URL(req.url, 'http://x'); } catch (e) { }
+      const id4 = String((u4 && u4.searchParams.get('id')) || '27205');
+      const ty4 = ((u4 && u4.searchParams.get('ty')) || 'movie') === 'series' ? 'series' : 'movie';
+      const s4 = Number((u4 && u4.searchParams.get('s')) || 1), e4 = Number((u4 && u4.searchParams.get('e')) || 1);
+      const T0 = Date.now(); const stage = [];
+      const outN = { ok: 0, ver: VERSION, nxver: (() => { try { return NEX.nexDiag().ver; } catch (e) { return null; } })(), id: id4, ty: ty4, stages: stage };
+      return Promise.resolve().then(async () => {
+        /* ধাপ ১ — tmdb আইডি (Stremio tt দেয়, nexa tmdb চায়) */
+        let tm = 0;
+        if (/^tt\d+$/i.test(id4)) {
+          try { const inf = await findTmdbInfo(id4, ty4); tm = (inf && Number(inf.id)) || 0; } catch (e) { }
+          stage.push({ s: 'imdb→tmdb', imdb: id4, tmdb: tm, ms: Date.now() - T0 });
+        } else { tm = Number(String(id4).replace(/^tmdb/i, '')) || 0; stage.push({ s: 'tmdb-id', tmdb: tm }); }
+        /* ধাপ ২ — ক্যাপচার (ক্যাশ থাকলে সাথে সাথে) */
+        let cap = null;
+        try { cap = await NEX.capFetch ? await NEX.capFetch(ty4 === 'series' ? 'tmdb' : 'tmdb', tm, s4, e4, 22000) : null; } catch (e) { }
+        stage.push({ s: 'capture', tmdb: tm, got: !!(cap && cap.ok),
+          res: (cap && (cap.variants || []).length) || 0,
+          srcs: (cap && (cap.sources2 || []).map(x => x.server + ':' + ((x.variants || []).length))) || [],
+          err: (cap && cap.err) || null, ms: Date.now() - T0 });
+        /* ধাপ ৩ — কার্ড (আসল nexStreams) */
+        let cards = [];
+        try { cards = await nexPFor(ty4, String(tm || id4), s4, e4, req, cfg) || []; } catch (e) { }
+        stage.push({ s: 'cards', n: (cards || []).length, ms: Date.now() - T0 });
+        /* ধাপ ৪ — রিলে (কার্ডের URL সত্যিই প্লেলিস্ট দেয় কি?) */
+        for (const c of (cards || []).slice(0, 2)) {
+          const u5 = originOf(req) + (() => { try { const m5 = String(c.url).match(/\/nexp\/[^?#]+/); return m5 ? m5[0] : '/'; } catch (e) { return '/'; } })();
+          let st = null, bytes = 0, head = '';
+          try {
+            const r5 = await fetch(u5, { headers: { 'user-agent': 'okhttp/4' } });
+            st = r5.status; const b5 = await r5.text(); bytes = b5.length; head = b5.slice(0, 60);
+          } catch (e) { st = 'ERR'; }
+          stage.push({ s: 'relay', url: u5.slice(0, 80), status: st, bytes, head });
+        }
+        outN.ok = 1; outN.cards = (cards || []).map(c => ({ name: c.name, title: c.title }));
+        outN.diag = (() => { try { const d = NEX.nexDiag(); return { last: (d.last || []).slice(-8), worker: d.worker, sess: d.sess, sessErr: d.sessErr, pl200: d.pl200, pl400: d.pl400, caps: d.caps, envCool: d.envCool, blocked: d.blocked }; } catch (e) { return null; } })();
+        outN.ms = Date.now() - T0;
+        return sendJson(res, 200, outN);
+      }).catch(e4b => sendJson(res, 200, { ok: 0, err: String((e4b && e4b.message) || e4b) }));
     }
     if (p === '/_nextry') {   /* ★ v1.34.396: nexa-কে পুরো পাইপলাইনের বাইরে আলাদা মেপে দেখি (একই রেপ্লিকা) */
       if (!NEX) return sendJson(res, 200, { on: 0, why: 'module-missing' });
