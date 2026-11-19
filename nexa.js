@@ -818,6 +818,7 @@ async function nexStreams(tmdbId, type, s, e, origin, opts) {
     const _ch0 = CAP_CACHE.get(_ck0);
     if (_ch0 && _ch0.val && Date.now() - _ch0.at < CAP_TTL) {
       const _c0 = capCards(_ch0.val, Object.assign({ label: 'nova' }, meta0), origin);
+      note('cap-cache-hit tmdb' + id + ': rec=' + _c0.length + ' srcs=' + ((_ch0.val.sources2 || []).length) + ' vars=' + ((_ch0.val.variants || []).length));
       if (_c0.length) {
         if (CARD_CACHE.size > MAXC) CARD_CACHE.clear();
         CARD_CACHE.set(key, { at: Date.now(), cards: _c0 });
@@ -831,7 +832,7 @@ async function nexStreams(tmdbId, type, s, e, origin, opts) {
   const _ck = capKey('tmdb', id, S, E);
   const _ch = CAP_CACHE.get(_ck);
   const _hasCap = _ch && Date.now() - _ch.at < CAP_TTL && _ch.val;
-  note('cap-state hasCap=' + (_hasCap ? 1 : 0) + ' capUrl=' + (CAP_URL ? 1 : 0) + ' capCli=' + (CAP_CLI ? 1 : 0) + ' worker=' + (WORKER_ON ? 1 : 0));
+  note('cap-state hasCap=' + (_hasCap ? 1 : 0) + ' raw=' + (!!_ch) + ' age=' + (_ch ? Math.round((Date.now() - _ch.at) / 1000) + 's' : '-') + ' bad=' + ((_ch && _ch.bad) ? 1 : 0) + ' capUrl=' + (CAP_URL ? 1 : 0) + ' worker=' + (WORKER_ON ? 1 : 0));
   /* ★ v1.34.329: 1.34.327-এর বাগ — ক্যাশ না থাকলে এখানেই `return []` করতাম, ফলে Stremio-র
      *প্রথম* রিকোয়েস্টে nexa কার্ডই আসত না (Stremio দ্বিতীয়বার চায় না!) ⇒ "nexa থেকে কিছু
      পাচ্ছি না"। এখন প্রথমবারও ক্যাপচার-চেষ্টা করি (অ্যাডঅন-বাজেটের ভিতরে), ক্যাশ থাকলে তো কথাই নেই। */
@@ -849,7 +850,14 @@ async function nexStreams(tmdbId, type, s, e, origin, opts) {
     /* ★ v1.34.352: nexa-র কোল্ড ক্যাপচার ৫–১৪সে ⇒ BeamUp গেটওয়ে ১২s-এ ৫০৪ দেয়।
        তাই শুধু ~৬সে অপেক্ষা করি; দেরি হলে ক্যাপচার ব্যাকগ্রাউন্ডে চলতে থাকে আর
        ক্যাশ ভরে যায় ⇒ ইউজার পরেরবার ওই টাইটেল খুললেই কার্ড সাথে সাথে আসে। */
-    const _aw = Math.max(4000, Math.min(Number(process.env.NEXA_CAP_AWAIT || 6000), ms - 1000));
+    /* ★ v1.34.388 (মূল-কারণ, প্রোডে মাপা): worker-এর ঠান্ডা ক্যাপচার **৮–৯সে** নেয়,
+       কিন্তু এখানে মাত্র ৬সে অপেক্ষা করতাম ⇒ প্রথম অনুরোধে nexa-কার্ড কখনোই পৌঁছাত না,
+       আর BeamUp-এ প্রতি রেপ্লিকা আলাদা (`/_nex`-এ worker up=205s, ক্যাপ-ক্যাশ ১) — তাই
+       পরের ট্যাপেও প্রায়ই ঠান্ডা। এখন ডিফল্ট ৯.২সে (রুট-কাট SCAP=১২সে-র ভিতরে),
+       আর worker ঠান্ডা হলে হালকা বাড়তি (NEXA_CAP_AWAIT_COLD=১০সে)। */
+    const _awWarm = Math.max(4000, Math.min(Number(process.env.NEXA_CAP_AWAIT || 8800), ms - 1000));
+    const _awCold = Math.max(_awWarm, Math.min(Number(process.env.NEXA_CAP_AWAIT_COLD || 9800), ms - 800));
+    const _aw = _hasCap ? _awWarm : _awCold;
     const _capP = capFetch('tmdb', id, S, E, Math.max(ms, 20000));
     let j = await Promise.race([_capP, new Promise(r => { const t = setTimeout(() => r(null), _aw); if (t.unref) t.unref(); })]);
     if (!j) {
