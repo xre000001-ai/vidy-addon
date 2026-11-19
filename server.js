@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.391';
+const VERSION = '1.34.392';
 /* ★ v1.34.322: nexa.mov — নতুন সোর্স (মুভি/সিরিজ ৫ সার্ভার: nova/onyx/orion/flux/sylver;
    অ্যানিমে ৪: kyoto/tokyo/hokkaido/fuji)। প্লেব্যাক-প্রোটোকল wasm-এ সিল করা, nexa.js রিভার্স করেছে। */
 let NEX = null;
@@ -17262,11 +17262,37 @@ function fmtCardText(c, hint) {
     /* ★ v1.34.382: nexa-র নিজের ছাঁচ (⧉ শিরোনাম / ⚲ সোর্স·রেজ·অডিও / ⊞ nexa ◇ কোয়ালিটি)
        আগে চেনা হতো না ⇒ `if (!t || !s) return c`-এ পড়ে কার্ড-লেখা অপরিবর্তিত থাকত, পরে
        fmt-ধাপে বাদ পড়ার পথ খুলত। এখন সরাসরি "হাত দেব না"। */
-    if (ch === '\u25a4' || ch === '\u25a6' || ch === '\u229e') return c;
+    if (ch === '\u25a4' || ch === '\u25a6' || ch === '\u229e') {
+      /* ★★ v1.34.392 (ইউজার: "stream card format toh ulot palot hoia gese") — nexa-র কার্ডকে
+         vidy-র **একই ছাঁচে** অনুবাদ করি (আগে ওর লেখা হুবহু রাখা হতো ⇒ পাশাপাশি এলোমেলো দেখাত):
+           ▤ Title (2010)            → ⧉ Title | 2010 |
+           ▦ nova · 3840x1600 ♫ X    → ⌘ Nova ⌗ X        (সোর্স-লাইন)
+           ⊞ nexa ◇ 1440p            → বাদ (কোয়ালিটি `▥ 1440 ▥` নাম-ব্যাজেই আছে) */
+      if (ch === '\u25a4') {
+        const body = ln.replace(/^\u25a4\s*/, '');
+        const py = /\s*\(\s*((?:19|20)\d{2})\s*\)\s*$/.exec(body);
+        const ty = py ? py[1] : '';
+        const hd = (py ? body.slice(0, py.index) : body).trim();
+        if (!t && hd) t = '\u29c9 ' + hd + (ty ? ' | ' + ty + ' |' : ' |');
+        continue;
+      }
+      if (ch === '\u25a6' && !s) {
+        const body = ln.replace(/^\u25a6\s*/, '').replace(/\u266b/g, '\u2317').replace(/\s*\u00b7\s*/g, ' \u00b7 ');
+        s = '\u2318 ' + body.trim();
+        seenSlot = true;
+        continue;
+      }
+      continue;   // ⊞ = কোয়ালিটি-লাইন — নাম-ব্যাজেই আছে
+    }
     if (!t && ch === '\u29c9') { t = ln; continue; }                       // ⧉
     if (!e && (ch === '\u23e3' || ch === '\u29e0')) { e = ln; continue; }  // ⏣ / ⧠
     if (!s && (ch === '\u2318' || ch === '\u229e')) { s = ln; seenSlot = true; continue; } // ⌘ / ⊞
     if (seenSlot) tail.push(ln);                                          // ⓘ/প্যাক-নোট — কখনো বাদ যায় না
+  }
+  if (!t && (/^nex\|/.test(String((c && c.bingeGroup) || '')) || (c && c._src === 'nex'))) {
+    const _nm0 = String((c && c.description) || '').split('\n').map(x => x.trim()).filter(Boolean)[0] || '';
+    const _b0 = _nm0.replace(/^[\u25a4\u25a6\u229e\u29c9\u2318]+\s*/, '');
+    if (_b0) t = '\u29c9 ' + _b0 + ' |';
   }
   if (!t || !s) return c;                                                  // চেনা-ছাঁচ নয় ⇒ হাত নয়
   // ---- শিরোনাম-লাইন ----
@@ -17319,7 +17345,7 @@ function fmtCardText(c, hint) {
   // ★ v1.27.15: কিছু সোর্স কোড-নাম দেয় ("esla", "ptbr") — কার্ডে আসল ভাষার নাম দেখাই
   const LANG_FIX = { esla: 'Spanish', eslatino: 'Spanish', ptbr: 'Portuguese', ptpt: 'Portuguese', latino: 'Spanish', tamilrockers: 'Tamil' };
   const qDrop = x => {
-    let y = x.replace(/\b(?:2160|1440|1080|720|480|360)\s?[pP]\b/g, ' ').replace(/\b(?:4K|UHD)\b/gi, ' ')
+    let y = x.replace(/\b(?:2160|1440|1080|720|480|360)\s?[pP]\b/g, ' ').replace(/\b\d{3,4}\s*[x\u00d7]\s*\d{3,4}\b/gi, ' ').replace(/\b(?:4K|UHD)\b/gi, ' ')
       .replace(/\s{2,}/g, ' ').trim();
     const lf = LANG_FIX[y.toLowerCase().replace(/[^a-z]/g, '')];
     return lf && y.length <= 12 ? lf : y;
@@ -17351,7 +17377,7 @@ function fmtCardText(c, hint) {
   const _extras2 = _au ? _extras.filter(x => !/^(?:dual|multi|original|single)\s*audio$/i.test(String(x).trim())) : _extras;
   const _bits = [_au].concat(_extras2).filter(Boolean);
   rest = (srcName || '') + (_bits.length ? ' \u2317 ' + _bits.join(' \u00b7 ') : '');
-  rest = rest.replace(/[\s\u00b7]+$/, '').trim();
+  rest = rest.replace(/(?:\s*\u00b7\s*){2,}/g, ' \u00b7 ').replace(/[\s\u00b7]+$/, '').trim();
   if (!rest) return c;                                                   // সব বাদ পড়ে খালি ⇒ পুরোনো-লেখাই-থাক
   const sLine = ' \u2318 ' + rest + (srv ? ' \u2022 ' + srv : '');
   const out = [headLine, epLine, sLine].concat(tail).filter(Boolean).join('\n');
