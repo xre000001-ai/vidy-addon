@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.407';
+const VERSION = '1.34.408';
 /* ★ v1.34.322: nexa.mov — নতুন সোর্স (মুভি/সিরিজ ৫ সার্ভার: nova/onyx/orion/flux/sylver;
    অ্যানিমে ৪: kyoto/tokyo/hokkaido/fuji)। প্লেব্যাক-প্রোটোকল wasm-এ সিল করা, nexa.js রিভার্স করেছে। */
 /* ★★ v1.34.407 (ইউজার-নির্দেশ): **nexa আলাদা অ্যাডঅন** — মেইন অ্যাডঅন আর ওর ভারী মডিউল
@@ -17463,6 +17463,7 @@ function nexaAddonStreams(req, type, id, s2, e2) {
     ? '/stream/series/' + encodeURIComponent(String(id)) + ':' + (Number(s2) || 1) + ':' + (Number(e2) || 1) + '.json'
     : '/stream/movie/' + encodeURIComponent(String(id)) + '.json';
   const t0 = Date.now();
+  NEXREMOTE = { url: base + seg, at: Date.now(), state: 'start' };
   return directGet(base + seg, Number(process.env.NEXA_ADDON_TMO || 7000))
     .then(b => {
       const j = JSON.parse(String(b || '{}'));
@@ -17481,11 +17482,13 @@ function nexaAddonStreams(req, type, id, s2, e2) {
           bingeGroup: String(c.bingeGroup || '').startsWith('nex|') ? c.bingeGroup : ('nex|' + String(c.bingeGroup || 'addon')),
         });
       }
+      NEXREMOTE = { url: base + seg, ms: Date.now() - t0, got: arr.length, out: out.length, at: Date.now() };
       try { note0('nexa-addon ok ' + type + ' ' + id + ': ' + out.length + ' (' + (Date.now() - t0) + 'ms)'); } catch (e2b) { }
       return out;
     })
-    .catch(e => { try { note0('nexa-addon fail ' + type + ' ' + id + ': ' + String((e && e.message) || e).slice(0, 60)); } catch (e3) { } return []; });
+    .catch(e => { NEXREMOTE = { url: base + seg, ms: Date.now() - t0, err: String((e && e.message) || e).slice(0, 80), at: Date.now() }; try { note0('nexa-addon fail ' + type + ' ' + id + ': ' + String((e && e.message) || e).slice(0, 60)); } catch (e3) { } return []; });
 }
+let NEXREMOTE = null;
 function note0(x) { try { if (typeof NEXDBG_LOG !== 'undefined') { NEXDBG_LOG.push({ s: String(x), n: 0, at: Date.now() }); if (NEXDBG_LOG.length > 40) NEXDBG_LOG.shift(); } } catch (e) { } }
 
 function nexPFor(type, id, s2, e2, req, cfgIn) {
@@ -18899,6 +18902,7 @@ function sendStreams(res, skey, plog, ms, cards, ua, cfg) {
         total: _cards.length,
         sr: (LR && LR.sr) || [],
         nexStreams: nexStreamsCount(),
+        nexRemote: (() => { try { const b = nexaAddonBase({ headers: req.headers }); return { base: b || '(empty→local path)', probe: (typeof NEXREMOTE !== 'undefined' ? NEXREMOTE : null) }; } catch (e) { return { err: String(e && e.message) }; } })(),
         nexTag: (NEXS_LOG.slice(-1)[0] || {}).tag || null,
         nexOnFlag: (() => { try { return { on: !!(NEX && NEX.nexOn(cfg)), hasNex: !!(NEX && NEX.nexStreams) }; } catch (e) { return 'err'; } })(),
         nxdiag: nxdiag && { caps: nxdiag.cardCache, sess: nxdiag.sess, sessErr: nxdiag.sessErr, pl400: nxdiag.pl400, pl200: nxdiag.pl200, cards: nxdiag.cards, last: (nxdiag.last || []).slice(-6) },
