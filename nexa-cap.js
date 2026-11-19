@@ -11,6 +11,21 @@ process.argv.slice(2).forEach((a, i, arr) => {
 });
 const T0 = Date.now();
 const OUT = (o) => { process.stdout.write(JSON.stringify(o) + '\n'); };
+
+/* ★★ v1.34.404 (আমারই ভাঙা প্যাচ: `worker:launchArgs is not defined` ⇒ ক্যাপচার-ওয়ার্কার মরত,
+   তাই প্রোডে nexa ০): দুই পথের (one-shot + worker) জন্য **একটাই** ফ্ল্যাগ-সেট, আর সেটা এখানেই
+   সংজ্ঞায়িত — যাতে কখনো "ফাংশন নেই" অবস্থা না হয়। প্রোড কনটেইনার: cgroup 1GB, /dev/shm 64MB। */
+function launchArgs() {
+  const a = ['--no-sandbox', '--mute-audio', '--disable-dev-shm-usage', '--disable-gpu',
+    '--disable-software-rasterizer', '--renderer-process-limit=1', '--js-flags=--max-old-space-size=112',
+    '--disable-blink-features=AutomationControlled',
+    '--autoplay-policy=no-user-gesture-required',
+    '--disable-background-timer-throttling', '--disable-backgrounding-occluded-windows',
+    '--disable-renderer-backgrounding', '--no-first-run', '--no-default-browser-check'];
+  if (process.env.NEXA_SINGLE === '1') a.push('--single-process');   // সবচেয়ে কম মেমরি
+  return a;
+}
+
 async function capture(args, shared) {
   const t0 = Date.now();
   const out = { ok: false, variants: [], headers: { referer: 'https://nexa.mov/', origin: 'https://nexa.mov' }, err: '' };
@@ -29,9 +44,7 @@ async function capture(args, shared) {
   if (platform === 'anilist') url = 'https://nexa.mov/watch/anilist/' + id + '/e' + (args.e || 1);
   else if (args.e) url = 'https://nexa.mov/watch/tmdb-tv/' + id + '/s' + (args.s || 1) + '-e' + args.e;
   else url = 'https://nexa.mov/watch/tmdb-movie/' + id;
-  const launch = { args: ['--no-sandbox', '--mute-audio', '--disable-dev-shm-usage', '--disable-gpu',
-    '--disable-software-rasterizer', '--renderer-process-limit=1', '--js-flags=--max-old-space-size=96',
-    '--disable-blink-features=AutomationControlled'] };
+  const launch = { args: launchArgs() };   /* ★ v1.34.404: একই ফ্ল্যাগ-সেট */
   if (args.proxy && String(args.proxy).includes(':')) {
     const [h, p] = String(args.proxy).split(':');
     launch.proxy = { server: 'http://' + h + ':' + p };
