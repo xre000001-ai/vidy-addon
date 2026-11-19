@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.393';
+const VERSION = '1.34.394';
 /* ★ v1.34.322: nexa.mov — নতুন সোর্স (মুভি/সিরিজ ৫ সার্ভার: nova/onyx/orion/flux/sylver;
    অ্যানিমে ৪: kyoto/tokyo/hokkaido/fuji)। প্লেব্যাক-প্রোটোকল wasm-এ সিল করা, nexa.js রিভার্স করেছে। */
 let NEX = null;
@@ -17418,13 +17418,26 @@ function nexPFor(type, id, s2, e2, req, cfgIn) {
   try { if (!NEX || !NEX.nexOn(cfg0)) return null; } catch (e) { return null; }
   const idS = String(id == null ? '' : id);
   const isTv = (type === 'series' || type === 'tv');
+  const ty2 = isTv ? 'series' : 'movie';
   const tag = 'q' + (Date.now() % 1000000);
-  const nameP = /^(\d+|tmdb\d+)$/i.test(idS)
-    ? nameForTmdb(Number(idS.replace(/^tmdb/i, '')), isTv ? 'series' : 'movie').catch(() => '')
-    : Promise.resolve('');
-  return nexTrace2(raceObjP(nameP, 1500).then(t => NEX.nexStreams(idS, isTv ? 'series' : 'movie',
-    isTv ? Number(s2 || 1) : 0, isTv ? Number(e2 || 1) : 0, originOf(req),
-    { tag, title: (t || ''), year: '', q: (cfg0 && cfg0.nexq) || [], ms: 13000 })), 'nexPFor ' + type + ' ' + idS, tag);
+  /* ★★ v1.34.394 (ইউজারের মূল-প্রশ্ন: "Stremio IMDb-ই ডাকে, nexa tmdb-এ আটকে — কেন?") —
+     nexa.mov-এর নিজের ম্যাপিং-ফাইলে **IMDb→TMDB টেবিলই নেই** (শুধু anibridge/anilist) ⇒
+     'tt…' সরাসরি পাঠালে ক্যাপচার-path পায় না। তাই এখানেই সেতু: tt → (Cinemeta/IMDb) → tmdb
+     → তারপর nexStreams-এ **সাংখ্যিক tmdb-আইডি**। সেতু না পেলে নাম দিয়ে সিরিজ-পথ চলবে। */
+  const tmdbP = /^(\d+|tmdb\d+)$/i.test(idS)
+    ? Promise.resolve(Number(idS.replace(/^tmdb/i, '')) || 0)
+    : (/^tt\d+$/i.test(idS)
+      ? findTmdbInfo(idS, ty2).then(info => (info && Number(info.id) > 0 ? Number(info.id) : 0)).catch(() => 0)
+      : Promise.resolve(0));
+  const nameP = tmdbP.then(n0 => (n0 > 0 ? nameForTmdb(n0, ty2).catch(() => '') : Promise.resolve('')));
+  /* nexStreams-এ পাঠানোর আইডি: tmdb-সংখ্যা পেলে সেটাই, নইলে মূল idS (tt-পথে নাম-ভিত্তিক চেষ্টা) */
+  const callP = Promise.all([tmdbP, raceObjP(nameP, 1400)]).then(([n0, t]) => {
+    const idOut = n0 > 0 ? String(n0) : idS;
+    return NEX.nexStreams(idOut, ty2,
+      isTv ? Number(s2 || 1) : 0, isTv ? Number(e2 || 1) : 0, originOf(req),
+      { tag, title: (t || ''), year: '', q: (cfg0 && cfg0.nexq) || [], ms: 13000 });
+  });
+  return nexTrace2(callP, 'nexPFor ' + type + ' ' + idS, tag);
 }
 
 function nexTrace2(p, what, tag) { return Promise.resolve(p).then(cs => { try { NEXS_LOG.push({ what, tag, n: (cs || []).length, at: Date.now() }); if (NEXS_LOG.length > 30) NEXS_LOG.shift(); } catch (e) { } return cs; }, e => { try { NEXS_LOG.push({ what, tag, err: String((e && e.message) || e).slice(0, 60), at: Date.now() }); } catch (e2) { } return []; }); }
