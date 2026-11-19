@@ -660,7 +660,8 @@ async function capFetch1(platform, id, S, E, ms) {
   if (CAP_CLI) {
     if (WORKER_ON) {   /* ★ v1.34.373: pxOverride এখানে নেই (সেটা capCliOnce-এর প্যারাম) — ReferenceError-এ পুরো পথ মরত */
       /* ★ v1.34.367: worker-ই যথেষ্ট (ভিতরে ৩ রিলোড-চেষ্টা); এক-শট CLI ফলব্যাক বাদ — নাহলে ১২s গেটওয়ে ভাঙে */
-      const w = await capWorker(platform, id, S, E, Math.max(12000, ms || 16000));
+      const w = await capWorker(platform, id, S, E, Math.max(26000, ms || 16000));   /* ★ v1.34.400: লোকালে মাপা ১৫সে ⇒ ২৬সে বাজেট */
+      try { if (w && !w.ok) note('cap-worker-dbg ' + JSON.stringify(w.dbg || { statuses: (w.statuses || []).slice(-3), err: w.err, tries: w.tries }).slice(0, 300)); } catch (eD) { }
       if (w && w.ok && Array.isArray(w.variants) && w.variants.length) {
         if (CAP_CACHE.size > CAP_MAX) CAP_CACHE.clear();
         CAP_CACHE.set(key, { at: Date.now(), val: w });
@@ -830,7 +831,7 @@ function __legacyCapCards(j, meta, origin, extraHdrs) {
   return out;
 }
 
-const NEX_VER = '1.34.399';
+const NEX_VER = '1.34.400';
 async function nexStreams(tmdbId, type, s, e, origin, opts) {
   opts = opts || {};
   const TAG = String(opts.tag || '-');

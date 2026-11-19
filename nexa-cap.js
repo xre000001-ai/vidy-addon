@@ -144,7 +144,16 @@ async function capture(args, shared) {
   try { if (own && browser) await browser.close(); } catch (e) { }
   out.ms = Date.now() - t0;
   const col = (out.sources && out.sources.length) ? out.sources : ((got.master || got.single) ? [{ idx: out.hops || 0, src: (got.master || got.single).body, url: (got.master || got.single).url }] : []);
-  if (!col.length) { out.err = 'no-playlist'; return out; }
+  if (!col.length) {
+    out.err = 'no-playlist';
+    /* ★ v1.34.400: সাইট আসলে কী দেখাচ্ছিল — প্রোডে (১GB কনটেইনার) ক্যাপচার কেন ব্যর্থ, তার প্রমাণ */
+    try {
+      out.statuses = out.statuses || [];
+      out.dbg = { url: out.url || url, navMs: out.navMs, hops: out.hops, tries: out.tries,
+        lastStatuses: (out.statuses || []).slice(-4), timeout };
+    } catch (e) { }
+    return out;
+  }
   const NAMES = ['nova', 'onyx', 'flux', 'sylver', 'orion'];
   const parseOne = (bodyObj) => {
     const body = bodyObj.src, u0 = bodyObj.url;
