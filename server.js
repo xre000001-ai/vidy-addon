@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.389';
+const VERSION = '1.34.390';
 /* ★ v1.34.322: nexa.mov — নতুন সোর্স (মুভি/সিরিজ ৫ সার্ভার: nova/onyx/orion/flux/sylver;
    অ্যানিমে ৪: kyoto/tokyo/hokkaido/fuji)। প্লেব্যাক-প্রোটোকল wasm-এ সিল করা, nexa.js রিভার্স করেছে। */
 let NEX = null;
@@ -17381,6 +17381,7 @@ function yearForTmdb(tmdbId, type) { // মুভি=release_date, সিরি�
 const NEXDBG_LOG = [];   /* ★ v1.34.384: nexa-কার্ডের যাত্রাপথ (route → unify → fmt → strip → final) */
 const NEXS_LOG = [];   /* ★ v1.34.386: nexStreams-এর প্রতিটি ফলের সত্য-গণনা */
 function nexStreamsCount() { return NEXS_LOG.slice(-6); }
+function nexTrace2(p, what, tag) { return Promise.resolve(p).then(cs => { try { NEXS_LOG.push({ what, tag, n: (cs || []).length, at: Date.now() }); if (NEXS_LOG.length > 30) NEXS_LOG.shift(); } catch (e) { } return cs; }, e => { try { NEXS_LOG.push({ what, tag, err: String((e && e.message) || e).slice(0, 60), at: Date.now() }); } catch (e2) { } return []; }); }
 function nexTrace(p, what) { return Promise.resolve(p).then(cs => { try { NEXS_LOG.push({ what, n: (cs || []).length, at: Date.now() }); if (NEXS_LOG.length > 30) NEXS_LOG.shift(); } catch (e) { } return cs; }, e => { try { NEXS_LOG.push({ what, err: String((e && e.message) || e).slice(0, 60), at: Date.now() }); } catch (e2) { } return []; }); }
 function nexdbg(stage, cards) { try { const arr = Array.isArray(cards) ? cards : []; const nx = arr.filter(c => /^nex\|/.test(String((c && c.bingeGroup) || '')) || (c && c._src === 'nex')); NEXDBG_LOG.push({ s: stage, n: arr.length, nex: nx.length, at: Date.now() }); if (NEXDBG_LOG.length > 40) NEXDBG_LOG.shift(); if (!arr.some(c => c && String(c.url || '').indexOf('/nexp/') >= 0) && stage === 'final') NEXDBG_LOG.push({ s: 'final-no-nexp', n: arr.length, at: Date.now() }); } catch (e) { } }
 const UNIFY_SRV = { sky: 'Sky Movies', m4u: 'Movies4u', bf: 'BollyFlix', mm: 'Multimovies', tw: 'ToonWorld', rt: 'RareToons', vsp: 'Vidsrc', ott: 'AsianTV', az: 'AniZone', mlb: 'MovieLinkBD', mls: 'MLSBD', nex: 'nexa' };
@@ -18757,6 +18758,7 @@ function sendStreams(res, skey, plog, ms, cards, ua, cfg) {
         total: _cards.length,
         sr: (LR && LR.sr) || [],
         nexStreams: nexStreamsCount(),
+        nexTag: (typeof NXTAG !== 'undefined' ? NXTAG : null),
         nexOnFlag: (() => { try { return { on: !!(NEX && NEX.nexOn(cfg)), hasNex: !!(NEX && NEX.nexStreams) }; } catch (e) { return 'err'; } })(),
         nxdiag: nxdiag && { caps: nxdiag.cardCache, sess: nxdiag.sess, sessErr: nxdiag.sessErr, pl400: nxdiag.pl400, pl200: nxdiag.pl200, cards: nxdiag.cards, last: (nxdiag.last || []).slice(-6) },
         groups: _cards.map(c => String((c && c.bingeGroup) || '')).slice(0, 40),
@@ -20169,7 +20171,8 @@ cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'series', s: Number(m
       const ottP = !(cfg && cfg.ott === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? ottStreams(info.id, 'movie', 0, 0, cfg && cfg.ottq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.72: AsianTV
       const azP = !(cfg && cfg.az === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? azStreams(info.id, 'movie', 0, 0, cfg && cfg.azq || [], originOf(req)).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.76: AniZone
       /* v1.34.322: nexa.mov — মুভি/সিরিজ ৫ সার্ভার (nova/onyx/orion/flux/sylver) */
-      const nexP = (NEX && NEX.nexOn(cfg)) ? raceObjP((typeof tp !== 'undefined' ? tp : null), 1500).then(t => NEX.nexStreams(String(m[1]), 'movie', 0, 0, originOf(req), { title: (t || nm || ''), year: '', q: (cfg && cfg.nexq) || [], ms: 13000 })).then(cs => { nexdbg('route-tmdb', cs); return cs; }).then(cs => nexTrace(cs, 'tmdb-movie ' + m[1])).catch(() => []) : null;
+      const NXTAG = 'q' + (Date.now() % 1000000);
+      const nexP = (NEX && NEX.nexOn(cfg)) ? raceObjP((typeof tp !== 'undefined' ? tp : null), 1500).then(t => NEX.nexStreams(String(m[1]), 'movie', 0, 0, originOf(req), { tag: NXTAG, title: (t || nm || ''), year: '', q: (cfg && cfg.nexq) || [], ms: 13000 })).then(cs => { nexdbg('route-tmdb', cs); return cs; }).catch(() => []) : null;
       /* v1.34.321: asianc.id বাদ (1080p নেই) */
       kickSubs(m[1], 'movie', null, null, cfg);
       const lookP = Promise.all([typeof tp !== 'undefined' ? tp : null, typeof nmP !== 'undefined' ? nmP : null, typeof infoP !== 'undefined' ? infoP : null].filter(Boolean)).catch(() => []); // v1.26.2

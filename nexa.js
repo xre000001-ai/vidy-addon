@@ -788,7 +788,9 @@ function __legacyCapCards(j, meta, origin, extraHdrs) {
 const NEX_VER = '1.34.383';
 async function nexStreams(tmdbId, type, s, e, origin, opts) {
   opts = opts || {};
-  note('enter ' + NEX_VER + ' tmdb' + tmdbId + ' ' + type + ' capCl=' + CAP_CLI + ' wk=' + WORKER_ON);
+  const TAG = String(opts.tag || '-');
+  note(TAG + ' enter ' + NEX_VER + ' tmdb' + tmdbId + ' ' + type + ' capCl=' + CAP_CLI + ' wk=' + WORKER_ON);
+  const RET = (n, why) => { note(TAG + ' ret:' + why + ' n=' + n); return n; };
   const t0 = Date.now();
   const ms = Math.max(4000, Number(opts.ms || 12000));
   /* ★ v1.34.381: 'tt1375666'-এর মতো IMDb-আইডিও চলবে — tmdb-ম্যাপিং থেকে সংখ্যায় নিই।
@@ -812,7 +814,7 @@ async function nexStreams(tmdbId, type, s, e, origin, opts) {
   const E = isSeries ? Math.max(1, Number(e) || 1) : 0;
   const key = 'tmdb:' + id + ':' + (isSeries ? 'S' + S + 'E' + E : 'm');
   const hit = CARD_CACHE.get(key);
-  if (hit && hit.cards && hit.cards.length && Date.now() - hit.at < CARD_TTL) return hit.cards;
+  if (hit && hit.cards && hit.cards.length && Date.now() - hit.at < CARD_TTL) return RET(hit.cards, 'card-cache');
 
   const meta0 = { title: opts.title || '', year: opts.year || '', type: isSeries ? 'series' : 'movie', s: S, e: E };
   /* ★ v1.34.366: ক্যাপচার ক্যাশে থাকলে কার্ড সাথে সাথে পুনর্নির্মাণ (CARD_CACHE হারালেও) —
@@ -827,7 +829,7 @@ async function nexStreams(tmdbId, type, s, e, origin, opts) {
         if (CARD_CACHE.size > MAXC) CARD_CACHE.clear();
         CARD_CACHE.set(key, { at: Date.now(), cards: _c0 });
         note('cards-from-cap-cache tmdb' + id + ': ' + _c0.length + ' (cap ' + Math.round((Date.now() - _ch0.at) / 1000) + 's old)');
-        return _c0;
+        return RET(_c0, 'cap-cache');
       }
     }
   } catch (e) { }
@@ -859,7 +861,7 @@ async function nexStreams(tmdbId, type, s, e, origin, opts) {
        আর BeamUp-এ প্রতি রেপ্লিকা আলাদা (`/_nex`-এ worker up=205s, ক্যাপ-ক্যাশ ১) — তাই
        পরের ট্যাপেও প্রায়ই ঠান্ডা। এখন ডিফল্ট ৯.২সে (রুট-কাট SCAP=১২সে-র ভিতরে),
        আর worker ঠান্ডা হলে হালকা বাড়তি (NEXA_CAP_AWAIT_COLD=১০সে)। */
-    const _awWarm = Math.max(4000, Math.min(Number(process.env.NEXA_CAP_AWAIT || 8000), ms - 1000));
+    const _awWarm = Math.max(4000, Math.min(Number(process.env.NEXA_CAP_AWAIT || 7600), ms - 1000));
     const _awCold = Math.max(_awWarm, Math.min(Number(process.env.NEXA_CAP_AWAIT_COLD || 10000), ms - 800));
     const _aw = _hasCap ? _awWarm : _awCold;
     const _capP = capFetch('tmdb', id, S, E, Math.max(ms, 20000));
@@ -883,11 +885,11 @@ async function nexStreams(tmdbId, type, s, e, origin, opts) {
       const cards = capCards(j, Object.assign({ label: 'nova' }, meta0), origin);
       if (cards.length) {
         DIAG.cards += cards.length;
-        note('cap tmdb' + id + ' (' + (isSeries ? 'S' + S + 'E' + E : 'movie') + '): '
-          + (j.variants || []).length + ' res → ' + cards.length + ' cards'); 
+        note(TAG + ' cap tmdb' + id + ' (' + (isSeries ? 'S' + S + 'E' + E : 'movie') + '): '
+          + (j.variants || []).length + ' res → ' + cards.length + ' cards');
         if (CARD_CACHE.size > MAXC) CARD_CACHE.clear();
         CARD_CACHE.set(key, { at: Date.now(), cards });
-        return cards;
+        return RET(cards, 'cap');
       }
       /* অ্যানিমে: anilist আইডি দিয়ে ক্যাপচার (৪টি অ্যানিমে সার্ভার) */
       try {
@@ -910,13 +912,13 @@ async function nexStreams(tmdbId, type, s, e, origin, opts) {
   } catch (e) { note('cap-path-err ' + String((e && e.message) || e).slice(0, 120)); }
 
   const api = await ensureSession(ms);
-  if (!api) { note('ret:no-session ' + id); return []; }
+  if (!api) return RET([], 'no-session');
   let plans = [];
   try {
     const q = isSeries ? { platform: 'tmdb', id: id, season: S, episode: E } : { platform: 'tmdb', id: id };
     plans = api.plan(q) || [];
   } catch (err) { note('plan-fail: ' + String((err && err.message) || err)); return []; }
-  if (!plans.length) { note('plan-empty tmdb' + id); return []; }
+  if (!plans.length) return RET([], 'plan-empty');
 
   /* ★ v1.34.323: টাইটেলটা অ্যানিমে হলে anilist-আইডি দিয়ে বাড়তি প্ল্যান — তাতেই ৪টি অ্যানিমে সার্ভার
      (kyoto/tokyo/hokkaido/fuji) ওই টাইটেলে হাজির হয়। tmdb-প্ল্যানের সাথে codename-এ ডিডুপ। */
@@ -972,6 +974,7 @@ async function nexStreams(tmdbId, type, s, e, origin, opts) {
   }
   /* ★ v1.34.383: ডায়াগনস্টিক — কোন ধাপে কতটা টিকল (গLOBAL-ফিল্টার কোথায় খাচ্ছে বোঝা যায়) */
   try { DIAG.out = (DIAG.out || 0) + 1; DIAG.lastN = (cards || []).length; } catch (e) { }
+  RET(cards, 'plan');
   return cards;
 }
 
