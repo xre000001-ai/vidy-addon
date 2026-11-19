@@ -629,7 +629,23 @@ function warmNexa(platform, id, S, E, ms) {
 
 function capKey(platform, id, S, E) { return platform + ':' + id + ':' + (E ? 'S' + S + 'E' + E : 'm'); }
 
+/* ★★ v1.34.398 (মাপা: worker `err:15`, `queued:3`, `tries:null` ⇒ ক্যাপচার শুরুতেই মরে) —
+   একই টাইটেলে একসাথে কয়েকটা ক্যাপচার (বুট-প্রিওয়ার্ম + ইউজার-রিকোয়েস্ট + পটভূমি) গিয়ে
+   **একাধিক chromium** খুলছিল; ১GB cgroup + ৬৪MB /dev/shm-এ সেটা সঙ্গে সঙ্গে মরে।
+   এখন per-key single-flight: একই কী-তে একটাই ক্যাপচার চলবে, বাকিরা তার ফল ভাগ করবে। */
+const CAP_INFLIGHT = new Map();
 async function capFetch(platform, id, S, E, ms) {
+  if (!CAP_URL) return null;
+  const key = capKey(platform, id, S, E);
+  const _hit0 = CAP_CACHE.get(key);
+  if (_hit0 && !_hit0.bad && _hit0.val && Date.now() - _hit0.at < CAP_TTL) return _hit0.val;
+  const _inf = CAP_INFLIGHT.get(key);
+  if (_inf) { try { note('cap-inflight-join ' + key); } catch (e) { } return _inf; }
+  const _pr = capFetch1(platform, id, S, E, ms).finally(() => { try { CAP_INFLIGHT.delete(key); } catch (e) { } });
+  CAP_INFLIGHT.set(key, _pr);
+  return _pr;
+}
+async function capFetch1(platform, id, S, E, ms) {
   if (!CAP_URL) return null;
   const key = capKey(platform, id, S, E);
   const hit = CAP_CACHE.get(key);
@@ -814,7 +830,7 @@ function __legacyCapCards(j, meta, origin, extraHdrs) {
   return out;
 }
 
-const NEX_VER = '1.34.397';
+const NEX_VER = '1.34.398';
 async function nexStreams(tmdbId, type, s, e, origin, opts) {
   opts = opts || {};
   const TAG = String(opts.tag || '-');

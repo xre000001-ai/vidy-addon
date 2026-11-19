@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.397';
+const VERSION = '1.34.398';
 /* ★ v1.34.322: nexa.mov — নতুন সোর্স (মুভি/সিরিজ ৫ সার্ভার: nova/onyx/orion/flux/sylver;
    অ্যানিমে ৪: kyoto/tokyo/hokkaido/fuji)। প্লেব্যাক-প্রোটোকল wasm-এ সিল করা, nexa.js রিভার্স করেছে। */
 let NEX = null;
@@ -20484,7 +20484,9 @@ try {
         try { const nx = require('./nexa.js'); if (nx.capWarm) nx.capWarm(); } catch (e2) { }
       }
       /* ★ v1.34.369: ওয়ার্কার গরম হলে জনপ্রিয় টাইটেলের ক্যাপচার আগেই করে রাখি (ক্যাশ-ফিল) */
-      setTimeout(() => {
+      /* ★ v1.34.398: বুট-প্রিওয়ার্ম বন্ধ (env দিয়ে চাইলে চালু) — বুটেই chromium খুলে
+         ইউজারের প্রথম-ক্যাপচারের সঙ্গে ধাক্কা খেত (মাপা: worker err/queued)। */
+      if (process.env.NEXA_PRE_ON === '1') setTimeout(() => {
         try {
           const nx = require('./nexa.js');
           const pres = String(process.env.NEXA_PRE || '27205').split(',').filter(Boolean).slice(0, 2);
