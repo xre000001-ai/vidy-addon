@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.392';
+const VERSION = '1.34.393';
 /* ★ v1.34.322: nexa.mov — নতুন সোর্স (মুভি/সিরিজ ৫ সার্ভার: nova/onyx/orion/flux/sylver;
    অ্যানিমে ৪: kyoto/tokyo/hokkaido/fuji)। প্লেব্যাক-প্রোটোকল wasm-এ সিল করা, nexa.js রিভার্স করেছে। */
 let NEX = null;
@@ -17407,6 +17407,26 @@ function yearForTmdb(tmdbId, type) { // মুভি=release_date, সিরি�
 const NEXDBG_LOG = [];   /* ★ v1.34.384: nexa-কার্ডের যাত্রাপথ (route → unify → fmt → strip → final) */
 const NEXS_LOG = [];   /* ★ v1.34.386: nexStreams-এর প্রতিটি ফলের সত্য-গণনা */
 function nexStreamsCount() { return NEXS_LOG.slice(-6); }
+
+/* ★★ v1.34.393 (ইউজার: "Stremio IMDb-ই ডাকে, nexa tmdb-এ আটকে — এত সমস্যা কেন?") —
+   প্রতিটি রুটে nexa-প্রমিস হাতে-লেখা ছিল, আর প্রতিটাতে **ভিন্ন ভেরিয়েবল** ধরে নেওয়া হতো
+   (`nm`, `tp`, `m`...) ⇒ যেটা রুটে নেই সেটা `ReferenceError` → `.catch(() => [])` চুপচাপ গিলে নিত
+   ⇒ nexa কার্ড শূন্য অথচ লগে "2 cards"। এখন **একটাই** নিরাপদ বিল্ডার: নিজে নাম/আইডি ঠিক করে,
+   কোনো রুট-লোকাল ভেরিয়েবলের উপর নির্ভর করে না। */
+function nexPFor(type, id, s2, e2, req, cfgIn) {
+  const cfg0 = cfgIn || null;
+  try { if (!NEX || !NEX.nexOn(cfg0)) return null; } catch (e) { return null; }
+  const idS = String(id == null ? '' : id);
+  const isTv = (type === 'series' || type === 'tv');
+  const tag = 'q' + (Date.now() % 1000000);
+  const nameP = /^(\d+|tmdb\d+)$/i.test(idS)
+    ? nameForTmdb(Number(idS.replace(/^tmdb/i, '')), isTv ? 'series' : 'movie').catch(() => '')
+    : Promise.resolve('');
+  return nexTrace2(raceObjP(nameP, 1500).then(t => NEX.nexStreams(idS, isTv ? 'series' : 'movie',
+    isTv ? Number(s2 || 1) : 0, isTv ? Number(e2 || 1) : 0, originOf(req),
+    { tag, title: (t || ''), year: '', q: (cfg0 && cfg0.nexq) || [], ms: 13000 })), 'nexPFor ' + type + ' ' + idS, tag);
+}
+
 function nexTrace2(p, what, tag) { return Promise.resolve(p).then(cs => { try { NEXS_LOG.push({ what, tag, n: (cs || []).length, at: Date.now() }); if (NEXS_LOG.length > 30) NEXS_LOG.shift(); } catch (e) { } return cs; }, e => { try { NEXS_LOG.push({ what, tag, err: String((e && e.message) || e).slice(0, 60), at: Date.now() }); } catch (e2) { } return []; }); }
 function nexTrace(p, what) { return Promise.resolve(p).then(cs => { try { NEXS_LOG.push({ what, n: (cs || []).length, at: Date.now() }); if (NEXS_LOG.length > 30) NEXS_LOG.shift(); } catch (e) { } return cs; }, e => { try { NEXS_LOG.push({ what, err: String((e && e.message) || e).slice(0, 60), at: Date.now() }); } catch (e2) { } return []; }); }
 function nexdbg(stage, cards) { try { const arr = Array.isArray(cards) ? cards : []; const nx = arr.filter(c => /^nex\|/.test(String((c && c.bingeGroup) || '')) || (c && c._src === 'nex')); NEXDBG_LOG.push({ s: stage, n: arr.length, nex: nx.length, at: Date.now() }); if (NEXDBG_LOG.length > 40) NEXDBG_LOG.shift(); if (!arr.some(c => c && String(c.url || '').indexOf('/nexp/') >= 0) && stage === 'final') NEXDBG_LOG.push({ s: 'final-no-nexp', n: arr.length, at: Date.now() }); } catch (e) { } }
@@ -20129,9 +20149,7 @@ const server = http.createServer((req, res) => FG_CONTEXT.run({ active: true }, 
       /* v1.34.322: nexa.mov — মুভি/সিরিজ ৫ সার্ভার (nova/onyx/orion/flux/sylver) */
       /* ★ v1.34.380: IMDb-আইডি-রুটে `Number('tt1375666')` = NaN হয়ে যেত ⇒ nexa কখনোই কার্ড দিত না।
          এখন tt→tmdb ম্যাপিং (infoP) থেকে নিই; না পেলে নাম-দিয়ে দেরিতে হলেও। */
-      const nexP = (NEX && NEX.nexOn(cfg)) ? (infoP ? infoP.then(info => (info && info.id > 0)
-        ? nexTrace(NEX.nexStreams(Number(info.id), 'movie', 0, 0, originOf(req), { title: (info.name || ''), year: '', q: (cfg && cfg.nexq) || [], ms: 13000 }), 'tt-movie tt' + m[1] + '→' + info.id)
-        : []).catch(() => []) : Promise.resolve([])) : null;
+      const nexP = nexPFor('movie', m[1], 0, 0, req, cfg);
       /* v1.34.321: asianc.id বাদ (1080p নেই) — কার্ড-চেইন সরানো হয়েছে */
       kickSubs('tmdb' + m[1], 'movie', null, null, cfg);
       const lookP = Promise.all([typeof tp !== 'undefined' ? tp : null, typeof nmP !== 'undefined' ? nmP : null, typeof infoP !== 'undefined' ? infoP : null].filter(Boolean)).catch(() => []); // v1.26.2
@@ -20162,9 +20180,7 @@ cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'movie', s: 0, e: 0 }
       const azP = !(cfg && cfg.az === 0) ? azStreams(Number(m[1]), 'tv', Number(m[2] || 1), Number(m[3] || 1), cfg && cfg.azq || [], originOf(req)).catch(() => []) : null; // v1.15.76: AniZone
       /* v1.34.322: nexa.mov — মুভি/সিরিজ ৫ সার্ভার (nova/onyx/orion/flux/sylver) */
       /* ★ v1.34.380: IMDb-সিরিজ-রুটেও একই NaN-বাগ ছিল — tt→tmdb ম্যাপিং থেকে আইডি */
-      const nexP = (NEX && NEX.nexOn(cfg)) ? (infoP ? infoP.then(info => (info && info.id > 0)
-        ? nexTrace(NEX.nexStreams(Number(info.id), 'series', Number(m[2] || 1), Number(m[3] || 1), originOf(req), { title: (info.name || ''), q: (cfg && cfg.nexq) || [], ms: 13000 }), 'tt-series tt' + m[1] + '→' + info.id)
-        : []).catch(() => []) : Promise.resolve([])) : null;
+      const nexP = nexPFor('series', m[1], m[2], m[3], req, cfg);
       /* v1.34.321: asianc.id বাদ (1080p নেই) — কার্ড-চেইন সরানো হয়েছে */
       if (nxOn) nxPrewarm('series', String(m[1]), Number(m[2] || 1), Number(m[3] || 1));
       twRtPrewarm(tp, 'series', Number(m[2] || 1), Number(m[3] || 1), cfg);
@@ -20197,8 +20213,7 @@ cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'series', s: Number(m
       const ottP = !(cfg && cfg.ott === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? ottStreams(info.id, 'movie', 0, 0, cfg && cfg.ottq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.72: AsianTV
       const azP = !(cfg && cfg.az === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? azStreams(info.id, 'movie', 0, 0, cfg && cfg.azq || [], originOf(req)).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.76: AniZone
       /* v1.34.322: nexa.mov — মুভি/সিরিজ ৫ সার্ভার (nova/onyx/orion/flux/sylver) */
-      const NXTAG = 'q' + (Date.now() % 1000000);
-      const nexP = (NEX && NEX.nexOn(cfg)) ? raceObjP((typeof tp !== 'undefined' ? tp : null), 1500).then(t => NEX.nexStreams(String(m[1]), 'movie', 0, 0, originOf(req), { tag: NXTAG, title: (t || nm || ''), year: '', q: (cfg && cfg.nexq) || [], ms: 13000 })).then(cs => { nexdbg('route-tmdb', cs); return cs; }).catch(() => []) : null;
+      const nexP = nexPFor('movie', m[1], 0, 0, req, cfg);
       /* v1.34.321: asianc.id বাদ (1080p নেই) */
       kickSubs(m[1], 'movie', null, null, cfg);
       const lookP = Promise.all([typeof tp !== 'undefined' ? tp : null, typeof nmP !== 'undefined' ? nmP : null, typeof infoP !== 'undefined' ? infoP : null].filter(Boolean)).catch(() => []); // v1.26.2
@@ -20228,7 +20243,7 @@ cards => { if (DBG) console.error('[rt] RID=' + t0 + ' cards-ready @' + (Date.no
       const ottP = !(cfg && cfg.ott === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? ottStreams(info.id, 'tv', Number(m[2]), Number(m[3]), cfg && cfg.ottq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.72: AsianTV
       const azP = !(cfg && cfg.az === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? azStreams(info.id, 'tv', Number(m[2]), Number(m[3]), cfg && cfg.azq || [], originOf(req)).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.76: AniZone
       /* v1.34.322: nexa.mov — মুভি/সিরিজ ৫ সার্ভার (nova/onyx/orion/flux/sylver) */
-      const nexP = (NEX && NEX.nexOn(cfg)) ? raceObjP((typeof tp !== 'undefined' ? tp : null), 1500).then(t => NEX.nexStreams(String(m[1]), 'series', Number(m[2]), Number(m[3]), originOf(req), { title: (t || nm || ''), year: '', q: (cfg && cfg.nexq) || [], ms: 13000 })).catch(() => []) : null;
+      const nexP = nexPFor('series', m[1], m[2], m[3], req, cfg);
       /* v1.34.321: asianc.id বাদ (1080p নেই) */
       if (nxOn) nxPrewarm('series', m[1], Number(m[2]), Number(m[3]));
       twRtPrewarm(nmP, 'series', Number(m[2]), Number(m[3]), cfg);
@@ -20260,7 +20275,7 @@ cards => { Promise.all([raceObjP(infoP, 1500), raceObjP(nmP, 1500)]).then(([info
       const ottP = !(cfg && cfg.ott === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? ottStreams(info.id, 'tv', 1, 1, cfg && cfg.ottq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.72: AsianTV
       const azP = !(cfg && cfg.az === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? azStreams(info.id, 'tv', 1, 1, cfg && cfg.azq || [], originOf(req)).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null;
       /* v1.34.322: nexa.mov — মুভি/সিরিজ ৫ সার্ভার (nova/onyx/orion/flux/sylver) */
-      const nexP = (NEX && NEX.nexOn(cfg)) ? raceObjP((typeof tp !== 'undefined' ? tp : null), 1500).then(t => NEX.nexStreams(String(m[1]), 'series', 1, 1, originOf(req), { title: (t || nm || ''), year: '', q: (cfg && cfg.nexq) || [], ms: 13000 })).catch(() => []) : null;
+      const nexP = nexPFor('series', m[1], m[2], m[3], req, cfg);
       /* v1.34.321: asianc.id বাদ (1080p নেই) */
       if (nxOn) nxPrewarm('series', m[1], 1, 1);
       twRtPrewarm(nmP, 'series', 1, 1, cfg);
