@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.384';
+const VERSION = '1.34.385';
 /* ★ v1.34.322: nexa.mov — নতুন সোর্স (মুভি/সিরিজ ৫ সার্ভার: nova/onyx/orion/flux/sylver;
    অ্যানিমে ৪: kyoto/tokyo/hokkaido/fuji)। প্লেব্যাক-প্রোটোকল wasm-এ সিল করা, nexa.js রিভার্স করেছে। */
 let NEX = null;
@@ -18740,6 +18740,25 @@ function sendStreams(res, skey, plog, ms, cards, ua, cfg) {
   try { if (process.env.NEXDBG) console.error('[nexdbg] final=' + _cards.length + ' nex=' + _cards.filter(c => /^nex\|/.test(String(c.bingeGroup || ''))).length); } catch (e) { }
   nexdbg('final', _cards);
   if (DBG) console.error('[ss] final=' + _cards.length + ' srcs=' + _cards.slice(0,12).map(c => String(c.bingeGroup||'').split('|')[0] || 'vidy').join(','));
+  /* ★ v1.34.385: ?nexdbg=1 ⇒ ওই **একই রেপ্লিকার** ভেতরের সত্য (BeamUp-এ একাধিক ইনস্ট্যান্স,
+     তাই /_nexcap-এর ট্রেস অন্য ইনস্ট্যান্সের হতে পারে — এখানে রেসপন্স-ভেতরেই মাপা হয়)। */
+  try {
+    let _nd = false;
+    try { _nd = /(?:^|[?&])nexdbg=1/.test(String((res.req && res.req.url) || '')); } catch (e) { }
+    if (_nd) {
+      const nx = k => _cards.filter(c => /^nex\|/.test(String((c && c.bingeGroup) || '')));
+      let nxdiag = null; try { nxdiag = require('./nexa.js').nexDiag(); } catch (e) { }
+      const meta = {
+        stages: NEXDBG_LOG.slice(-6),
+        nexCards: nx('nex').length,
+        total: _cards.length,
+        sr: (LR && LR.sr) || [],
+        nxdiag: nxdiag && { caps: nxdiag.cardCache, sess: nxdiag.sess, sessErr: nxdiag.sessErr, pl400: nxdiag.pl400, pl200: nxdiag.pl200, cards: nxdiag.cards, last: (nxdiag.last || []).slice(-6) },
+        groups: _cards.map(c => String((c && c.bingeGroup) || '')).slice(0, 40),
+      };
+      _cards.unshift({ name: '\u26a0 NEXDBG', title: JSON.stringify(meta), url: 'https://example.invalid/dbg', behaviorHints: { notWebReady: true } });
+    }
+  } catch (e) { }
   let body = JSON.stringify({ streams: _cards });
   // ★★ v1.21.8: মার্জ **উত্তর দেওয়ার আগেই** (v1.21.7-এ শুধু ক্যাশে মার্জ হচ্ছিল, তাই ওই ট্যাপেই কম-তালিকা দেখা যেত)
   try { body = sresMerge(_sk, body); } catch (e) { }
