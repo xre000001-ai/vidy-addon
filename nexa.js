@@ -793,7 +793,11 @@ async function nexStreams(tmdbId, type, s, e, origin, opts) {
   const ms = Math.max(4000, Number(opts.ms || 12000));
   /* ★ v1.34.381: 'tt1375666'-এর মতো IMDb-আইডিও চলবে — tmdb-ম্যাপিং থেকে সংখ্যায় নিই।
      (আগে Number('tt…')=NaN ⇒ সব IMDb-রুটে nexa নীরবে [] দিত।) */
-  let id = Number(tmdbId) || 0;
+  /* ★ v1.34.389 (মূল-কারণ): tmdb-রুট আইডি পাঠায় **'tmdb27205'** আকারে ⇒ `Number('tmdb27205')`
+     = NaN ⇒ এই ফাংশন ৩ms-এ [] ফিরিয়ে দিত (প্রোড-লগ: `sr=['nex',0,3ms]`)। তাই 'tmdb' প্রিফিক্স
+     ছাড়ানোর পর সংখ্যা ধরি; IMDb-রুটের 'tt…' আলাদা পথে। */
+  const _rawId = String(tmdbId == null ? '' : tmdbId).trim().replace(/^tmdb/i, '');
+  let id = Number(_rawId) || 0;
   if (!id && /^tt\d+$/i.test(String(tmdbId || ''))) {
     try {
       const mp0 = await getMapping(4000);
@@ -855,8 +859,8 @@ async function nexStreams(tmdbId, type, s, e, origin, opts) {
        আর BeamUp-এ প্রতি রেপ্লিকা আলাদা (`/_nex`-এ worker up=205s, ক্যাপ-ক্যাশ ১) — তাই
        পরের ট্যাপেও প্রায়ই ঠান্ডা। এখন ডিফল্ট ৯.২সে (রুট-কাট SCAP=১২সে-র ভিতরে),
        আর worker ঠান্ডা হলে হালকা বাড়তি (NEXA_CAP_AWAIT_COLD=১০সে)। */
-    const _awWarm = Math.max(4000, Math.min(Number(process.env.NEXA_CAP_AWAIT || 8800), ms - 1000));
-    const _awCold = Math.max(_awWarm, Math.min(Number(process.env.NEXA_CAP_AWAIT_COLD || 9800), ms - 800));
+    const _awWarm = Math.max(4000, Math.min(Number(process.env.NEXA_CAP_AWAIT || 8000), ms - 1000));
+    const _awCold = Math.max(_awWarm, Math.min(Number(process.env.NEXA_CAP_AWAIT_COLD || 10000), ms - 800));
     const _aw = _hasCap ? _awWarm : _awCold;
     const _capP = capFetch('tmdb', id, S, E, Math.max(ms, 20000));
     let j = await Promise.race([_capP, new Promise(r => { const t = setTimeout(() => r(null), _aw); if (t.unref) t.unref(); })]);
