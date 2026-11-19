@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.395';
+const VERSION = '1.34.396';
 /* ★ v1.34.322: nexa.mov — নতুন সোর্স (মুভি/সিরিজ ৫ সার্ভার: nova/onyx/orion/flux/sylver;
    অ্যানিমে ৪: kyoto/tokyo/hokkaido/fuji)। প্লেব্যাক-প্রোটোকল wasm-এ সিল করা, nexa.js রিভার্স করেছে। */
 let NEX = null;
@@ -16355,7 +16355,7 @@ async function withSources(cardsP, srcs, cfg, t0, mkey, lookupP) {
   }
   // ★ v1.32.0: vidy-কার্ডের অপেক্ষাও ছোট (আগে ১০.৬সে ⇒ Mirzapur-এ ৮সে উত্তর)। মাপা: vidy কার্ড
   //   ২–৪সে-তেই আসে; দেরিতে-আসা সার্ভার ব্যাকগ্রাউন্ডে ক্যাশে জমে, পরের খোলে পুরো।
-  const cLeft = Math.max(500, Math.min(Number(process.env.SCUT || 12500), Number(process.env.VPICK || 9000) + 1200) + Math.min(_LK.ms, 800) - (Date.now() - t0)); // ★ v1.34.27: রুট-অপেক্ষা getSources-এর আসল বাজেটের (9s) সঙ্গে মিলল — আগে 4200 ধরে vidy 5.4s-এ কাটা পড়ত
+  const cLeft = Math.max(500, Math.min(Number(process.env.SCUT || 12500), Number(process.env.VPICK || 6200) + 1200) + Math.min(_LK.ms, 800) - (Date.now() - t0)); // ★ v1.34.27: রুট-অপেক্ষা getSources-এর আসল বাজেটের (9s) সঙ্গে মিলল — আগে 4200 ধরে vidy 5.4s-এ কাটা পড়ত
   const cards = await Promise.race([
     cardsP.catch(e => { if (DBG) console.error('[srcdbg] cardsP died: ' + String(e && e.message || e).slice(0, 90)); return []; }),
     new Promise(r => setTimeout(() => r([]), cLeft))
@@ -18817,7 +18817,7 @@ function sendStreams(res, skey, plog, ms, cards, ua, cfg) {
         total: _cards.length,
         sr: (LR && LR.sr) || [],
         nexStreams: nexStreamsCount(),
-        nexTag: (typeof NXTAG !== 'undefined' ? NXTAG : null),
+        nexTag: (NEXS_LOG.slice(-1)[0] || {}).tag || null,
         nexOnFlag: (() => { try { return { on: !!(NEX && NEX.nexOn(cfg)), hasNex: !!(NEX && NEX.nexStreams) }; } catch (e) { return 'err'; } })(),
         nxdiag: nxdiag && { caps: nxdiag.cardCache, sess: nxdiag.sess, sessErr: nxdiag.sessErr, pl400: nxdiag.pl400, pl200: nxdiag.pl200, cards: nxdiag.cards, last: (nxdiag.last || []).slice(-6) },
         groups: _cards.map(c => String((c && c.bingeGroup) || '')).slice(0, 40),
@@ -19459,6 +19459,19 @@ const server = http.createServer((req, res) => FG_CONTEXT.run({ active: true }, 
       try { parsed = JSON.parse(String(cp.stdout || '').trim().split('\n').pop()); } catch (e) { parsed = { raw: String(cp.stdout || '').slice(-300) }; }
       parsed.stderrTail = String(cp.stderr || '').split('\n').filter(l => l && !l.includes('Failed to connect to the bus')).slice(-8).join(' | ').slice(0, 900);
       return sendJson(res, 200, parsed);
+    }
+    if (p === '/_nextry') {   /* ★ v1.34.396: nexa-কে পুরো পাইপলাইনের বাইরে আলাদা মেপে দেখি (একই রেপ্লিকা) */
+      if (!NEX) return sendJson(res, 200, { on: 0, why: 'module-missing' });
+      let u3 = null; try { u3 = new URL(req.url, 'http://x'); } catch (e) { }
+      const id3 = (u3 && u3.searchParams.get('id')) || '27205';
+      const ty3 = ((u3 && u3.searchParams.get('ty')) || 'movie') === 'series' ? 'series' : 'movie';
+      const s3 = Number((u3 && u3.searchParams.get('s')) || 0), e3 = Number((u3 && u3.searchParams.get('e')) || 0);
+      const t3 = Date.now();
+      const pr = nexPFor(ty3, id3, s3, e3, req, cfg);
+      if (!pr) return sendJson(res, 200, { on: 0, why: 'nexOn-false' });
+      return Promise.resolve(pr).then(cards3 => sendJson(res, 200, { on: 1, ms: Date.now() - t3, n: (cards3 || []).length,
+        cards: (cards3 || []).slice(0, 4).map(c => ({ name: c.name, title: c.title, url: String(c.url).slice(0, 90) })),
+        diag: (() => { try { const d = NEX.nexDiag(); return { last: (d.last || []).slice(-8), worker: d.worker, caps: d.caps, pl400: d.pl400, pl200: d.pl200 }; } catch (e) { return null; } })() })).catch(e3 => sendJson(res, 200, { on: 1, err: String((e3 && e3.message) || e3) }));
     }
     if (p === '/_nex') { if (!NEX) return sendJson(res, 200, { on: 0, why: 'module-missing' });
       const base = Object.assign({ on: NEX.nexOn(cfg) ? 1 : 0 }, NEX.nexDiag());
