@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.412';
+const VERSION = '1.34.413';
 /* ★ v1.34.322: nexa.mov — নতুন সোর্স (মুভি/সিরিজ ৫ সার্ভার: nova/onyx/orion/flux/sylver;
    অ্যানিমে ৪: kyoto/tokyo/hokkaido/fuji)। প্লেব্যাক-প্রোটোকল wasm-এ সিল করা, nexa.js রিভার্স করেছে। */
 /* ★★ v1.34.407 (ইউজার-নির্দেশ): **nexa আলাদা অ্যাডঅন** — মেইন অ্যাডঅন আর ওর ভারী মডিউল
@@ -17448,8 +17448,11 @@ function nexStreamsCount() { return NEXS_LOG.slice(-6); }
    ══════════════════════════════════════════════════════════════════════════════ */
 const NEXA_ADDON_DEFAULT = 'https://3404d3c5dc63-nexa.baby-beamup.club';   /* ★ v1.34.412: ডিফল্ট ঠিকানা */
 function nexaAddonBase(req) {
-  const env = String(process.env.NEXA_ADDON || '').trim();
-  if (env === '0') return '';
+  /* ★★ v1.34.413 (প্রমাণ: `nexdbg`-এ base = "(empty→local path)" ⇒ রিমোট-কল কখনো হয়নি,
+     তাই nexa-কার্ড ০)। কারণ: `NEXA_ADDON` এনভায়রনমেন্টটা BeamUp-এ সেট করা নেই, আর খালি
+     স্ট্রিং-কেই "বন্ধ" ধরা হচ্ছিল। এখন: না-থাকলেই ডিফল্ট nexa-হোস্ট ব্যবহার হবে। */
+  const env = String(process.env.NEXA_ADDON == null ? '' : process.env.NEXA_ADDON).trim();
+  if (env === '0' || env.toLowerCase() === 'off') return '';
   if (env) return env.replace(/\/+$/, '');
   try {   /* হোস্ট-অনুযায়ী চেষ্টা (কাস্টম ডিপ্লয়), নইলে ডিফল্ট */
     const h = String((req && req.headers && (req.headers['x-forwarded-host'] || req.headers.host)) || '').split(',')[0].trim();
