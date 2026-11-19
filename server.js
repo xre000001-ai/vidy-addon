@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.381';
+const VERSION = '1.34.382';
 /* ★ v1.34.322: nexa.mov — নতুন সোর্স (মুভি/সিরিজ ৫ সার্ভার: nova/onyx/orion/flux/sylver;
    অ্যানিমে ৪: kyoto/tokyo/hokkaido/fuji)। প্লেব্যাক-প্রোটোকল wasm-এ সিল করা, nexa.js রিভার্স করেছে। */
 let NEX = null;
@@ -17259,6 +17259,10 @@ function fmtCardText(c, hint) {
     const ln = String(raw).replace(/\s+$/, '').trim();
     if (!ln) continue;
     const ch = ln.charAt(0);
+    /* ★ v1.34.382: nexa-র নিজের ছাঁচ (⧉ শিরোনাম / ⚲ সোর্স·রেজ·অডিও / ⊞ nexa ◇ কোয়ালিটি)
+       আগে চেনা হতো না ⇒ `if (!t || !s) return c`-এ পড়ে কার্ড-লেখা অপরিবর্তিত থাকত, পরে
+       fmt-ধাপে বাদ পড়ার পথ খুলত। এখন সরাসরি "হাত দেব না"। */
+    if (ch === '\u25a4' || ch === '\u25a6' || ch === '\u229e') return c;
     if (!t && ch === '\u29c9') { t = ln; continue; }                       // ⧉
     if (!e && (ch === '\u23e3' || ch === '\u29e0')) { e = ln; continue; }  // ⏣ / ⧠
     if (!s && (ch === '\u2318' || ch === '\u229e')) { s = ln; seenSlot = true; continue; } // ⌘ / ⊞
@@ -17379,6 +17383,7 @@ async function unifyCards(cards, meta) { // শুধু-টেক্সট-ব�
   try {
     if (!cards || !cards.length || !meta || (!meta.tmdbId && !meta.title)) return cards;
     const tcards = cards.filter(c => /^(sky|m4u|bf|mm|tw|rt|mlb|mls|nex|vsp|ott|az|dt|nx|hd|hm)\|/.test(String(c.bingeGroup || '')));
+    if (DBG) console.error('[unify] in=' + cards.length + ' tcards=' + tcards.length + ' nex=' + cards.filter(c => /^nex\|/.test(String(c.bingeGroup || ''))).length);
     // ★ v1.27.10: tcards খালি হলেও থামি না — বছর-পূরণের ধাপটা সব-সোর্সে চালু থাকবে
     const _uT=Date.now();
     // ★ v1.27.11 (ইউজার: "Pilot eikhane ep title ja mone hoi IMDb theke newo"): সিরিজে এপিসোড-নাম
