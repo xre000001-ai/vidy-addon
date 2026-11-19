@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.411';
+const VERSION = '1.34.412';
 /* ★ v1.34.322: nexa.mov — নতুন সোর্স (মুভি/সিরিজ ৫ সার্ভার: nova/onyx/orion/flux/sylver;
    অ্যানিমে ৪: kyoto/tokyo/hokkaido/fuji)। প্লেব্যাক-প্রোটোকল wasm-এ সিল করা, nexa.js রিভার্স করেছে। */
 /* ★★ v1.34.407 (ইউজার-নির্দেশ): **nexa আলাদা অ্যাডঅন** — মেইন অ্যাডঅন আর ওর ভারী মডিউল
@@ -17446,15 +17446,16 @@ function nexStreamsCount() { return NEXS_LOG.slice(-6); }
        (vidy হোস্ট `3404d3c5dc63-vidy` → `3404d3c5dc63-nexa`)।
      • টাইমআউট ছোট (৭সে) — nexa দেরি করলে বাকি সোর্সের উত্তর আটকাবে না।
    ══════════════════════════════════════════════════════════════════════════════ */
+const NEXA_ADDON_DEFAULT = 'https://3404d3c5dc63-nexa.baby-beamup.club';   /* ★ v1.34.412: ডিফল্ট ঠিকানা */
 function nexaAddonBase(req) {
   const env = String(process.env.NEXA_ADDON || '').trim();
+  if (env === '0') return '';
   if (env) return env.replace(/\/+$/, '');
-  if (process.env.NEXA_ADDON === '0') return '';
-  try {
+  try {   /* হোস্ট-অনুযায়ী চেষ্টা (কাস্টম ডিপ্লয়), নইলে ডিফল্ট */
     const h = String((req && req.headers && (req.headers['x-forwarded-host'] || req.headers.host)) || '').split(',')[0].trim();
     if (h && /-vidy\./.test(h)) return 'https://' + h.replace(/-vidy\./, '-nexa.');
   } catch (e) { }
-  return '';
+  return NEXA_ADDON_DEFAULT;
 }
 function nexaAddonStreams(req, type, id, s2, e2) {
   const base = nexaAddonBase(req);
@@ -17464,7 +17465,7 @@ function nexaAddonStreams(req, type, id, s2, e2) {
     : '/stream/movie/' + encodeURIComponent(String(id)) + '.json';
   const t0 = Date.now();
   NEXREMOTE = { url: base + seg, at: Date.now(), state: 'start' };
-  return directGet(base + seg, Number(process.env.NEXA_ADDON_TMO || 7000))
+  return directGet(base + seg, Number(process.env.NEXA_ADDON_TMO || 9000))
     .then(b => {
       const j = JSON.parse(String(b || '{}'));
       const arr = (j && Array.isArray(j.streams)) ? j.streams : [];
