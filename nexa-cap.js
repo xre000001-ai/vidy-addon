@@ -93,6 +93,11 @@ async function capture(args, shared) {
       } catch (e) { return []; }
     };
     out.tries = [];
+    /* ★ v1.34.403: প্রমাণ — প্লেয়ার সত্যিই প্লেলিস্ট চায় কি না, JS মরে কি না */
+    try {
+      page.on('pageerror', e2 => { out._pageErr = out._pageErr || []; if (out._pageErr.length < 5) out._pageErr.push(String((e2 && e2.message) || e2).slice(0, 100)); });
+      page.on('request', r2 => { try { if (/\.m3u8|cdn-m3u8|playlist/i.test(r2.url())) out._plReq = (out._plReq || 0) + 1; } catch (e3) { } });
+    } catch (e4) { }
     try { await page.goto(url, { waitUntil: 'commit', timeout: 15000 }); } catch (e) { }
     out.navMs = Date.now() - t0;
     let hops = 0, stale = 0;
@@ -150,6 +155,8 @@ async function capture(args, shared) {
     try {
       out.statuses = out.statuses || [];
       out.dbg = { url: out.url || url, navMs: out.navMs, hops: out.hops, tries: out.tries,
+        m3u8Req: (typeof out._plReq === 'number' ? out._plReq : -1),
+        pageErr: (out._pageErr || []).slice(0, 3),
         lastStatuses: (out.statuses || []).slice(-4), timeout };
     } catch (e) { }
     return out;
@@ -302,8 +309,7 @@ if (require.main === module) {
         if (st && st.ld && !st.skip) process.env.LD_LIBRARY_PATH = st.ld + (process.env.LD_LIBRARY_PATH ? ':' + process.env.LD_LIBRARY_PATH : '');
       } catch (e) { }
       const { chromium } = require('playwright');
-      const launch = { args: ['--no-sandbox', '--mute-audio', '--disable-dev-shm-usage', '--disable-gpu',
-        '--disable-software-rasterizer', '--renderer-process-limit=1', '--disable-blink-features=AutomationControlled'] };
+      const launch = { args: launchArgs() };   /* ★ v1.34.403: worker-ও একই ফ্ল্যাগ পায় */
       const b = await chromium.launch(launch);
       b.on('disconnected', () => { browserP = null; });
       return b;

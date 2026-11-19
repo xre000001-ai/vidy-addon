@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.400';
+const VERSION = '1.34.403';
 /* ★ v1.34.322: nexa.mov — নতুন সোর্স (মুভি/সিরিজ ৫ সার্ভার: nova/onyx/orion/flux/sylver;
    অ্যানিমে ৪: kyoto/tokyo/hokkaido/fuji)। প্লেব্যাক-প্রোটোকল wasm-এ সিল করা, nexa.js রিভার্স করেছে। */
 let NEX = null;
@@ -17282,7 +17282,16 @@ function fmtCardText(c, hint) {
         seenSlot = true;
         continue;
       }
-      continue;   // ⊞ = কোয়ালিটি-লাইন — নাম-ব্যাজেই আছে
+      /* ★★ v1.34.402 (আমারই বাগ): `⊞`-দিয়ে-শুরু সোর্স-লাইনকেও nexa-র কোয়ালিটি-লাইন ভেবে বাদ
+         দিচ্ছিলাম ⇒ MovieBox/Multimovies/Movies4u/Sky/MovieLinkBD/AsianTV-এর কার্ড **একেবারে
+         ফরম্যাটই হতো না** (তাই "format thik nai")। এখন শুধু সত্যিকারের `⊞ nexa ◇ …` বাদ যায়,
+         বাকি `⊞`-লাইনই সোর্স-লাইন। */
+      if (ch === '\u229e') {
+        if (/^\u229e\s*nexa\b/i.test(ln)) continue;      // কোয়ালিটি-লাইন — নাম-ব্যাজেই আছে
+        if (!s) { s = '\u2318 ' + ln.replace(/^\u229e\s*/, '').trim(); seenSlot = true; }
+        continue;
+      }
+      continue;
     }
     if (!t && ch === '\u29c9') { t = ln; continue; }                       // ⧉
     if (!e && (ch === '\u23e3' || ch === '\u29e0')) { e = ln; continue; }  // ⏣ / ⧠
@@ -17367,8 +17376,12 @@ function fmtCardText(c, hint) {
   const tparts = _attrRaw.split('\u00b7').map(qDrop).filter(Boolean);
   const _langs = [], _extras = [];
   for (const _p of tparts) {
-    const _L = fmtLangOf(_p);
-    if (_L) { if (_langs.indexOf(_L) < 0) _langs.push(_L); } else _extras.push(_p);
+    /* ★ v1.34.401: কাঁচা কোড (ptbr/esla/…) আর emoji-আবর্জনা সরাসরি বাদ/অনুবাদ */
+    const _clean = String(_p || '').replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}]/gu, ' ').replace(/\s{2,}/g, ' ').trim();
+    if (!_clean) continue;
+    const _L0 = LANG_FIX[String(_clean).toLowerCase().replace(/[^a-z]/g, '')];
+    const _L = fmtLangOf(_L0 || _clean);
+    if (_L) { if (_langs.indexOf(_L) < 0) _langs.push(_L); } else _extras.push(_clean);
   }
   // ★ v1.33.0: ভাষা গণনা না হলে কার্ডের নিজের `_lang` থেকে; আর "Dual Audio"-জাতীয় নকল এক্সট্রা বাদ
   if (!_langs.length && c && c._lang) { const _L = fmtLangOf(String(c._lang)); if (_L) _langs.push(_L); }
@@ -17378,6 +17391,8 @@ function fmtCardText(c, hint) {
   const _bits = [_au].concat(_extras2).filter(Boolean);
   rest = (srcName || '') + (_bits.length ? ' \u2317 ' + _bits.join(' \u00b7 ') : '');
   rest = rest.replace(/(?:\s*\u00b7\s*){2,}/g, ' \u00b7 ').replace(/[\s\u00b7]+$/, '').trim();
+  /* ★ v1.34.402: লেজে ঝুলে থাকা বিভাজক (`English •`) পরিষ্কার */
+  rest = rest.replace(/\s*\u2022\s*$/, '').trim();
   if (!rest) return c;                                                   // সব বাদ পড়ে খালি ⇒ পুরোনো-লেখাই-থাক
   const sLine = ' \u2318 ' + rest + (srv ? ' \u2022 ' + srv : '');
   const out = [headLine, epLine, sLine].concat(tail).filter(Boolean).join('\n');
@@ -17386,8 +17401,12 @@ function fmtCardText(c, hint) {
     const q = String((c && c.quality) || '').replace(/[^0-9]/g, '');
     if (/^\d{3,4}$/.test(q)) c.name = '\u25a5 ' + q + ' \u25a5';
   } catch (eN) { }
-  if (out === desc) return c;
+  /* ★★ v1.34.401 (ইউজার: "card format sob source er dekho, ekhon format thik nai") — আসল-বাগ:
+     fmtCardText শুধু `description` লিখত, কিন্তু Stremio কার্ডে দেখায় **`title`** ⇒ পুরোনো লেখাই
+     থেকে যেত (তাই এক-এক সোর্সে এক-এক ছাঁচ)। এখন দুটোই একসাথে। */
+  if (out === desc && String(c.title || '') === out) return c;
   c.description = out;
+  c.title = out;
   c.title = out;                                                // Miami-তে title == description
   return c;
 }
