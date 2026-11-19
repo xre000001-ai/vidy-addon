@@ -634,33 +634,14 @@ function capKey(platform, id, S, E) { return platform + ':' + id + ':' + (E ? 'S
    **একাধিক chromium** খুলছিল; ১GB cgroup + ৬৪MB /dev/shm-এ সেটা সঙ্গে সঙ্গে মরে।
    এখন per-key single-flight: একই কী-তে একটাই ক্যাপচার চলবে, বাকিরা তার ফল ভাগ করবে। */
 const CAP_INFLIGHT = new Map();
-/* ★★ v1.34.406 (প্রোড-প্রমাণ: worker `queued:9, err:16` — অনুরোধের ঢল + আমার ফলব্যাক মিলে
-   ক্যাপচার-স্টর্ম, ফলে একটাও সফল হয় না) — **কঠোর সমান্তরাল-সীমা**: একসাথে সর্বোচ্চ ১টি
-   ক্যাপচার; ব্যস্ত থাকলে এই অনুরোধে nexa বাদ (addon কখনো ঝুলবে না)। টানা ৩ ব্যর্থতায় ৬০সে
-   বিরতি (সাইট/ওয়ার্কার শ্বাস নিতে পারে), আর সফল হলে কাউন্টার রিসেট। */
-let CAP_BUSY = 0, CAP_FAILS = 0, CAP_OFF_UNTIL = 0;
-const CAP_MAX_CONC = Number(process.env.NEXA_CONC || 1);
-function capGateBusy() { return CAP_BUSY >= CAP_MAX_CONC; }
-function capGateOff() { return CAP_OFF_UNTIL > Date.now(); }
 async function capFetch(platform, id, S, E, ms) {
   if (!CAP_URL) return null;
   const key = capKey(platform, id, S, E);
-  const _hit_g = CAP_CACHE.get(key);
-  if (_hit_g && !_hit_g.bad && _hit_g.val && Date.now() - _hit_g.at < CAP_TTL) return _hit_g.val;
-  if (capGateOff()) { try { note('cap-gate-off ' + Math.round((CAP_OFF_UNTIL - Date.now()) / 1000) + 's'); } catch (e) { } return null; }
-  if (capGateBusy() && !CAP_INFLIGHT.get(key)) { try { note('cap-gate-busy skip'); } catch (e) { } return null; }
   const _hit0 = CAP_CACHE.get(key);
   if (_hit0 && !_hit0.bad && _hit0.val && Date.now() - _hit0.at < CAP_TTL) return _hit0.val;
   const _inf = CAP_INFLIGHT.get(key);
   if (_inf) { try { note('cap-inflight-join ' + key); } catch (e) { } return _inf; }
-  CAP_BUSY++;
-  const _pr = capFetch1(platform, id, S, E, ms).then(j => {
-    if (j) { CAP_FAILS = 0; } else {
-      CAP_FAILS++;
-      if (CAP_FAILS >= Number(process.env.NEXA_FAIL_OFF || 3)) { CAP_OFF_UNTIL = Date.now() + Number(process.env.NEXA_OFF_MS || 60000); try { note('cap-gate-tripped ' + CAP_FAILS + ' fails → 60s off'); } catch (e) { } CAP_FAILS = 0; }
-    }
-    return j;
-  }).catch(e => { CAP_FAILS++; return null; }).finally(() => { CAP_BUSY = Math.max(0, CAP_BUSY - 1); try { CAP_INFLIGHT.delete(key); } catch (e) { } });
+  const _pr = capFetch1(platform, id, S, E, ms).finally(() => { try { CAP_INFLIGHT.delete(key); } catch (e) { } });
   CAP_INFLIGHT.set(key, _pr);
   return _pr;
 }
@@ -681,23 +662,6 @@ async function capFetch1(platform, id, S, E, ms) {
       /* ★ v1.34.367: worker-ই যথেষ্ট (ভিতরে ৩ রিলোড-চেষ্টা); এক-শট CLI ফলব্যাক বাদ — নাহলে ১২s গেটওয়ে ভাঙে */
       const w = await capWorker(platform, id, S, E, Math.max(26000, ms || 16000));   /* ★ v1.34.400: লোকালে মাপা ১৫সে ⇒ ২৬সে বাজেট */
       try { if (w && !w.ok) note('cap-worker-dbg ' + JSON.stringify(w.dbg || { statuses: (w.statuses || []).slice(-3), err: w.err, tries: w.tries }).slice(0, 300)); } catch (eD) { }
-      /* ★ v1.34.405: মাপা — লোকালে এক-শট পথ ১৩.৯সে-তে প্লেলিস্ট আনে, প্রোড-ওয়ার্কার ১৩.১সে-তে
-         `no-playlist` দেয় (tries 2, nav 242ms)। তাই worker ব্যর্থ হলে **এক-শট CLI** দিয়ে
-         সরাসরি চেষ্টা (অন্য প্রসেস, নিজের chromium) — লোকালে এটাই প্রমাণিত পথ। */
-      if ((!w || !w.ok) && process.env.NEXA_CLI_FALLBACK !== '0') {
-        try {
-          note('cap-cli-fallback ' + key);
-          const j2 = await capCliOnce(platform, id, S, E, Math.max(26000, ms || 16000));
-          if (j2 && j2.ok && Array.isArray(j2.variants) && j2.variants.length) {
-            if (CAP_CACHE.size > CAP_MAX) CAP_CACHE.clear();
-            CAP_CACHE.set(key, { at: Date.now(), val: j2 });
-            try { capDiskSave(); } catch (eDs2) { }
-            note('cap-cli-fallback-ok ' + key + ': ' + j2.variants.length + ' res (' + (j2.ms || 0) + 'ms)');
-            return j2;
-          }
-          note('cap-cli-fallback-miss ' + key + ': ' + ((j2 && (j2.err || j2.error)) || 'no-out'));
-        } catch (eF) { note('cap-cli-fallback-err ' + String((eF && eF.message) || eF).slice(0, 80)); }
-      }
       if (w && w.ok && Array.isArray(w.variants) && w.variants.length) {
         if (CAP_CACHE.size > CAP_MAX) CAP_CACHE.clear();
         CAP_CACHE.set(key, { at: Date.now(), val: w });
@@ -867,7 +831,7 @@ function __legacyCapCards(j, meta, origin, extraHdrs) {
   return out;
 }
 
-const NEX_VER = '1.34.406';
+const NEX_VER = '1.34.404';
 async function nexStreams(tmdbId, type, s, e, origin, opts) {
   opts = opts || {};
   const TAG = String(opts.tag || '-');

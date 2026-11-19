@@ -11,11 +11,16 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.406';
+const VERSION = '1.34.407';
 /* ★ v1.34.322: nexa.mov — নতুন সোর্স (মুভি/সিরিজ ৫ সার্ভার: nova/onyx/orion/flux/sylver;
    অ্যানিমে ৪: kyoto/tokyo/hokkaido/fuji)। প্লেব্যাক-প্রোটোকল wasm-এ সিল করা, nexa.js রিভার্স করেছে। */
+/* ★★ v1.34.407 (ইউজার-নির্দেশ): **nexa আলাদা অ্যাডঅন** — মেইন অ্যাডঅন আর ওর ভারী মডিউল
+   (chromium/ক্যাপচার) লোড করে না; কার্ড আসে রিমোট `/stream/…` থেকে (toonworld/raretoons-এর মতো)।
+   পুরোনো আচরণ দরকার হলে: NEXA_LOCAL=1 */
 let NEX = null;
-try { NEX = require('./nexa.js'); } catch (e) { NEX = null; console.error('[nexa] module missing: ' + (e && e.message)); }
+if (process.env.NEXA_LOCAL === '1') {
+  try { NEX = require('./nexa.js'); } catch (e) { NEX = null; console.error('[nexa] module missing: ' + (e && e.message)); }
+}
 /* ★ v1.34.321: asianc.id সম্পূর্ণ বাদ (ইউজার-নির্দেশ) — মাপা প্রমাণ: ২০২৬-এর নতুন কোরিয়ান
    শোফলে 1080p ০/১১ (সব 720p/640p/536p), vidbasic-এ master playlist/RESOLUTION-ই নেই।
    vidly-র মতোই কোড+টাইল+রুট+ডক — সব জায়গা থেকে মুছে ফেলা হয়েছে। */
@@ -17432,8 +17437,66 @@ function nexStreamsCount() { return NEXS_LOG.slice(-6); }
    (`nm`, `tp`, `m`...) ⇒ যেটা রুটে নেই সেটা `ReferenceError` → `.catch(() => [])` চুপচাপ গিলে নিত
    ⇒ nexa কার্ড শূন্য অথচ লগে "2 cards"। এখন **একটাই** নিরাপদ বিল্ডার: নিজে নাম/আইডি ঠিক করে,
    কোনো রুট-লোকাল ভেরিয়েবলের উপর নির্ভর করে না। */
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   ★★ v1.34.407 (ইউজার-নির্দেশ): **nexa এখন আলাদা অ্যাডঅন** — মেইন অ্যাডঅনে ওর ভারী
+   ক্যাপচার (chromium, ৮–১৩সে, ১GB কনটেইনার) রাখা হবে না। toonworld4all/raretoons যেভাবে
+   রিমোট `/find` থেকে আসে, nexa-ও তেমনি রিমোট `/stream/…` থেকে আসবে।
+     • NEXA_ADDON না দিলে ডিফল্টে একই BeamUp-অ্যাকাউন্টের `…-nexa` হোস্ট ধরা হয়
+       (vidy হোস্ট `3404d3c5dc63-vidy` → `3404d3c5dc63-nexa`)।
+     • টাইমআউট ছোট (৭সে) — nexa দেরি করলে বাকি সোর্সের উত্তর আটকাবে না।
+   ══════════════════════════════════════════════════════════════════════════════ */
+function nexaAddonBase(req) {
+  const env = String(process.env.NEXA_ADDON || '').trim();
+  if (env) return env.replace(/\/+$/, '');
+  if (process.env.NEXA_ADDON === '0') return '';
+  try {
+    const h = String((req && req.headers && (req.headers['x-forwarded-host'] || req.headers.host)) || '').split(',')[0].trim();
+    if (h && /-vidy\./.test(h)) return 'https://' + h.replace(/-vidy\./, '-nexa.');
+  } catch (e) { }
+  return '';
+}
+function nexaAddonStreams(req, type, id, s2, e2) {
+  const base = nexaAddonBase(req);
+  if (!base) return Promise.resolve([]);
+  const seg = (type === 'series' || type === 'tv')
+    ? '/stream/series/' + encodeURIComponent(String(id)) + ':' + (Number(s2) || 1) + ':' + (Number(e2) || 1) + '.json'
+    : '/stream/movie/' + encodeURIComponent(String(id)) + '.json';
+  const t0 = Date.now();
+  return directGet(base + seg, Number(process.env.NEXA_ADDON_TMO || 7000))
+    .then(b => {
+      const j = JSON.parse(String(b || '{}'));
+      const arr = (j && Array.isArray(j.streams)) ? j.streams : [];
+      const out = [];
+      for (const c of arr) {
+        if (!c || !c.url) continue;
+        out.push({
+          _src: 'nex',
+          name: c.name || '\u25a5 Auto \u25a5',
+          title: c.title || c.description || '',
+          description: c.title || c.description || '',
+          quality: String((String(c.name || '').match(/(\d{3,4})/) || [])[1] || ''),
+          url: c.url,
+          behaviorHints: c.behaviorHints || { notWebReady: false },
+          bingeGroup: String(c.bingeGroup || '').startsWith('nex|') ? c.bingeGroup : ('nex|' + String(c.bingeGroup || 'addon')),
+        });
+      }
+      try { note0('nexa-addon ok ' + type + ' ' + id + ': ' + out.length + ' (' + (Date.now() - t0) + 'ms)'); } catch (e2b) { }
+      return out;
+    })
+    .catch(e => { try { note0('nexa-addon fail ' + type + ' ' + id + ': ' + String((e && e.message) || e).slice(0, 60)); } catch (e3) { } return []; });
+}
+function note0(x) { try { if (typeof NEXDBG_LOG !== 'undefined') { NEXDBG_LOG.push({ s: String(x), n: 0, at: Date.now() }); if (NEXDBG_LOG.length > 40) NEXDBG_LOG.shift(); } } catch (e) { } }
+
 function nexPFor(type, id, s2, e2, req, cfgIn) {
   const cfg0 = cfgIn || null;
+  /* ★ v1.34.407: nexa এখন **আলাদা অ্যাডঅন** — মেইন অ্যাডঅন শুধু রিমোট কল করে।
+     স্থানীয় ক্যাপচার (chromium) আর এই পথে চলে না ⇒ লেটেন্সি ও মেমরি-চাপ দুটোই কমে। */
+  const remote = nexaAddonBase(req);
+  if (remote) {
+    if (cfg0 && cfg0.nex === 0) return null;
+    return nexTrace2(nexaAddonStreams(req, type, id, s2, e2), 'nexa-remote ' + type + ' ' + id, 'r' + (Date.now() % 1000000));
+  }
   try { if (!NEX || !NEX.nexOn(cfg0)) return null; } catch (e) { return null; }
   const idS = String(id == null ? '' : id);
   const isTv = (type === 'series' || type === 'tv');
@@ -20535,7 +20598,7 @@ function startEmbeddedNx() {
 }
 const PORT = Number(process.env.PORT || 7000);
 /* ★ v1.34.333: nexa ক্যাপচারের জন্য chromium দরকার — বুটে (ব্যাকগ্রাউন্ডে) নিশ্চিত করি */
-try {
+if (process.env.NEXA_LOCAL === '1') try {   /* ★ v1.34.407: nexa আলাদা অ্যাডঅন ⇒ মেইন আর chromium তোলে না */
   setTimeout(() => {
     try {
       const nl = require('./nexa-libs'); const st = nl.ensure();
