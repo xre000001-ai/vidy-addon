@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.379';
+const VERSION = '1.34.380';
 /* ★ v1.34.322: nexa.mov — নতুন সোর্স (মুভি/সিরিজ ৫ সার্ভার: nova/onyx/orion/flux/sylver;
    অ্যানিমে ৪: kyoto/tokyo/hokkaido/fuji)। প্লেব্যাক-প্রোটোকল wasm-এ সিল করা, nexa.js রিভার্স করেছে। */
 let NEX = null;
@@ -20060,7 +20060,11 @@ const server = http.createServer((req, res) => FG_CONTEXT.run({ active: true }, 
       const ottP = !(cfg && cfg.ott === 0) ? ottStreams(Number(m[1]), 'movie', 0, 0, cfg && cfg.ottq || []).catch(() => []) : null; // v1.15.72: AsianTV
       const azP = !(cfg && cfg.az === 0) ? azStreams(Number(m[1]), 'movie', 0, 0, cfg && cfg.azq || [], originOf(req)).catch(() => []) : null; // v1.15.76: AniZone
       /* v1.34.322: nexa.mov — মুভি/সিরিজ ৫ সার্ভার (nova/onyx/orion/flux/sylver) */
-      const nexP = (NEX && NEX.nexOn(cfg)) ? raceObjP((typeof tp !== 'undefined' ? tp : null), 1500).then(t => NEX.nexStreams(Number(m[1]) || ((typeof infoP !== 'undefined' && infoP && infoP.id) || 0), 'movie', 0, 0, originOf(req), { title: (t || nm || ''), year: '', q: (cfg && cfg.nexq) || [], ms: 13000 })).catch(() => []) : null;
+      /* ★ v1.34.380: IMDb-আইডি-রুটে `Number('tt1375666')` = NaN হয়ে যেত ⇒ nexa কখনোই কার্ড দিত না।
+         এখন tt→tmdb ম্যাপিং (infoP) থেকে নিই; না পেলে নাম-দিয়ে দেরিতে হলেও। */
+      const nexP = (NEX && NEX.nexOn(cfg)) ? (infoP ? infoP.then(info => (info && info.id > 0)
+        ? NEX.nexStreams(Number(info.id), 'movie', 0, 0, originOf(req), { title: (info.name || ''), year: '', q: (cfg && cfg.nexq) || [], ms: 13000 })
+        : []).catch(() => []) : Promise.resolve([])) : null;
       /* v1.34.321: asianc.id বাদ (1080p নেই) — কার্ড-চেইন সরানো হয়েছে */
       kickSubs('tmdb' + m[1], 'movie', null, null, cfg);
       const lookP = Promise.all([typeof tp !== 'undefined' ? tp : null, typeof nmP !== 'undefined' ? nmP : null, typeof infoP !== 'undefined' ? infoP : null].filter(Boolean)).catch(() => []); // v1.26.2
@@ -20090,7 +20094,10 @@ cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'movie', s: 0, e: 0 }
       const ottP = !(cfg && cfg.ott === 0) ? ottStreams(Number(m[1]), 'tv', Number(m[2] || 1), Number(m[3] || 1), cfg && cfg.ottq || []).catch(() => []) : null; // v1.15.72: AsianTV
       const azP = !(cfg && cfg.az === 0) ? azStreams(Number(m[1]), 'tv', Number(m[2] || 1), Number(m[3] || 1), cfg && cfg.azq || [], originOf(req)).catch(() => []) : null; // v1.15.76: AniZone
       /* v1.34.322: nexa.mov — মুভি/সিরিজ ৫ সার্ভার (nova/onyx/orion/flux/sylver) */
-      const nexP = (NEX && NEX.nexOn(cfg)) ? raceObjP((typeof tp !== 'undefined' ? tp : null), 1500).then(t => NEX.nexStreams(Number(m[1]) || ((typeof infoP !== 'undefined' && infoP && infoP.id) || 0), 'series', Number(m[2] || 1), Number(m[3] || 1), originOf(req), { title: (t || nm || ''), year: '', q: (cfg && cfg.nexq) || [], ms: 13000 })).catch(() => []) : null;
+      /* ★ v1.34.380: IMDb-সিরিজ-রুটেও একই NaN-বাগ ছিল — tt→tmdb ম্যাপিং থেকে আইডি */
+      const nexP = (NEX && NEX.nexOn(cfg)) ? (infoP ? infoP.then(info => (info && info.id > 0)
+        ? NEX.nexStreams(Number(info.id), 'series', Number(m[2] || 1), Number(m[3] || 1), originOf(req), { title: (info.name || ''), q: (cfg && cfg.nexq) || [], ms: 13000 })
+        : []).catch(() => []) : Promise.resolve([])) : null;
       /* v1.34.321: asianc.id বাদ (1080p নেই) — কার্ড-চেইন সরানো হয়েছে */
       if (nxOn) nxPrewarm('series', String(m[1]), Number(m[2] || 1), Number(m[3] || 1));
       twRtPrewarm(tp, 'series', Number(m[2] || 1), Number(m[3] || 1), cfg);
