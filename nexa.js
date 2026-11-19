@@ -31,7 +31,34 @@ const ANIME_SRV = ['kyoto', 'tokyo', 'hokkaido', 'fuji'];             // অ্�
    তাই NEXA_CAP_URL (ডিফল্ট http://127.0.0.1:8899) সার্ভিসকে টাইটেল-আইডি দেওয়া হয়,
    সে headless chromium-এ সাইটের প্লেয়ার চালিয়ে রিয়েল HLS URL + রেজলিউশন-লিস্ট ফেরত দেয়। */
 const CAP_URL = process.env.NEXA_CAP_URL === undefined ? 'http://127.0.0.1:8899' : process.env.NEXA_CAP_URL;
-const CAP_TTL = Number(process.env.NEXA_CAP_TTL || 1800000);       // ৩০ মিনিট (সফল ক্যাপচার দীর্ঘ সময় ব্যবহার) (URL-এ এক্সপায়ারি-টোকেন থাকে ⇒ ডিস্কে লেখা হয় না)
+const CAP_TTL = Number(process.env.NEXA_CAP_TTL || 1800000);
+/* ★★ v1.34.395 (ইউজার: "Stremio IMDb-ই ডাকে — এত সমস্যা কেন?") — BeamUp-এ **একাধিক রেপ্লিকা**,
+   প্রতিটির নিজের মেমরি ⇒ একবার ক্যাপচার হলেও পরের কল অন্য রেপ্লিকায় গিয়ে আবার ঠান্ডা (৮সে) হয়,
+   আর উত্তর তার আগেই কেটে যায়। তাই সফল-ক্যাপচার ডিস্কে রাখি (URL-এ টোকেন থাকে — তাই কেবল
+   CAP_TTL-এর ভিতরে, আর ফাইল /tmp-এ); বুটে ফিরিয়ে আনি ⇒ কার্ড প্রায় সাথে সাথে। */
+const CAP_DISK = process.env.NEXA_CAP_DISK || '/tmp/nexa-cap-cache.json';
+function capDiskSave() {
+  try {
+    const now = Date.now(); const o = {};
+    for (const [k, v] of CAP_CACHE) {
+      if (!v || v.bad || !v.val || now - v.at >= CAP_TTL) continue;
+      o[k] = { at: v.at, val: v.val };
+    }
+    require('fs').writeFileSync(CAP_DISK, JSON.stringify(o).slice(0, 4 * 1024 * 1024));
+  } catch (e) { }
+}
+function capDiskLoad() {
+  try {
+    const j = JSON.parse(require('fs').readFileSync(CAP_DISK, 'utf8')); const now = Date.now(); let n = 0;
+    for (const k of Object.keys(j || {})) {
+      const e = j[k];
+      if (!e || !e.val || !(now - e.at < CAP_TTL)) continue;
+      if (CAP_CACHE.size > CAP_MAX) break;
+      CAP_CACHE.set(k, { at: e.at, val: e.val }); n++;
+    }
+    if (n) note('cap-disk-load ' + n + ' entries');
+  } catch (e) { }
+}
 const CAP_CACHE = new Map();     // key → {at, val}
 /* ★ v1.34.328: সার্ভিস-লুপ (nexa-cap.py) এই বক্সে মাঝে মাঝে আটকে যায় (র‍্যাম ২GB),
    তাই ডিফল্ট পথ = এক-শট CLI প্রসেস (nexa-cap1.py): প্রতিবার নতুন chromium, শেষে পুরো
@@ -87,6 +114,7 @@ async function capCliOnce(platform, id, S, E, ms, pxOverride) {
   });
 }
 const CAP_MAX = 300;
+try { capDiskLoad(); } catch (eDL) { }   /* ★ v1.34.395: বুটে ডিস্ক-ক্যাশ ফিরিয়ে আনি */
 
 /* ───────────── persistent ক্যাপচার-ওয়ার্কার (v1.34.351) ─────────────
    কোল্ড chromium লঞ্চ ≈৯–১৪সে ⇒ BeamUp গেটওয়ে ৫০৪ দেয়। তাই একটাই ব্রাউজার জীবিত রেখে
@@ -135,6 +163,7 @@ function capWorker(platform, id, S, E, ms) {
           const k2 = capKey(platform, id, S, E);
           if (CAP_CACHE.size > CAP_MAX) CAP_CACHE.clear();
           CAP_CACHE.set(k2, { at: Date.now(), val: j });
+          try { capDiskSave(); } catch (eDs) { }
           note('cap-worker-cached ' + k2);
         } catch (e) { }
       } WK_LAST = { ok: !!(j && j.ok), ms: (j && (j.total || j.ms)) || 0, tries: j && j.tries, err: j && j.err, nav: j && j.navMs, at: Date.now() };
@@ -785,7 +814,7 @@ function __legacyCapCards(j, meta, origin, extraHdrs) {
   return out;
 }
 
-const NEX_VER = '1.34.394';
+const NEX_VER = '1.34.395';
 async function nexStreams(tmdbId, type, s, e, origin, opts) {
   opts = opts || {};
   const TAG = String(opts.tag || '-');
@@ -861,8 +890,8 @@ async function nexStreams(tmdbId, type, s, e, origin, opts) {
        আর BeamUp-এ প্রতি রেপ্লিকা আলাদা (`/_nex`-এ worker up=205s, ক্যাপ-ক্যাশ ১) — তাই
        পরের ট্যাপেও প্রায়ই ঠান্ডা। এখন ডিফল্ট ৯.২সে (রুট-কাট SCAP=১২সে-র ভিতরে),
        আর worker ঠান্ডা হলে হালকা বাড়তি (NEXA_CAP_AWAIT_COLD=১০সে)। */
-    const _awWarm = Math.max(4000, Math.min(Number(process.env.NEXA_CAP_AWAIT || 7600), ms - 1000));
-    const _awCold = Math.max(_awWarm, Math.min(Number(process.env.NEXA_CAP_AWAIT_COLD || 10000), ms - 800));
+    const _awWarm = Math.max(4000, Math.min(Number(process.env.NEXA_CAP_AWAIT || 7200), ms - 1000));
+    const _awCold = Math.max(_awWarm, Math.min(Number(process.env.NEXA_CAP_AWAIT_COLD || 8200), ms - 800));
     const _aw = _hasCap ? _awWarm : _awCold;
     const _capP = capFetch('tmdb', id, S, E, Math.max(ms, 20000));
     let j = await Promise.race([_capP, new Promise(r => { const t = setTimeout(() => r(null), _aw); if (t.unref) t.unref(); })]);
