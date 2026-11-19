@@ -732,7 +732,10 @@ function capCards(j, meta, origin, extraHdrs) {
       const bh = { notWebReady: false, isBingeable: true, filename: 'nexa-' + mlsNorm(srv) + '-' + (q || 'auto') + '.m3u8' };
       const hdrs = Object.assign({}, j.headers || {}, extraHdrs || {});
       if (Object.keys(hdrs).length) bh.proxyHeaders = { request: hdrs };
+      /* ★ v1.34.383: `bingeGroup`-এ 'nex|' প্রিফিক্স — vidy-র unify/fmt পথ এটাই চেনে
+         (আগে 'nex|srv|title' ছিল না ⇒ nexa কার্ড ফরম্যাট-ধাপে বাদ পড়ত) */
       out.push({
+        _src: 'nex',
         name: '\u25a5 ' + (q || 'Auto') + ' \u25a5',
         title: txt, description: txt,
         quality: q ? String(q) : '',
@@ -782,7 +785,7 @@ function __legacyCapCards(j, meta, origin, extraHdrs) {
   return out;
 }
 
-const NEX_VER = '1.34.382';
+const NEX_VER = '1.34.383';
 async function nexStreams(tmdbId, type, s, e, origin, opts) {
   opts = opts || {};
   note('enter ' + NEX_VER + ' tmdb' + tmdbId + ' ' + type + ' capCl=' + CAP_CLI + ' wk=' + WORKER_ON);
@@ -952,8 +955,10 @@ async function nexStreams(tmdbId, type, s, e, origin, opts) {
      টাইটেল "মৃত" হয়ে থাকত এবং ক্যাপচার-পথ আর ডাকাই হতো না। */
   if (cards.length) {
     if (CARD_CACHE.size > MAXC) CARD_CACHE.clear();
-    CARD_CACHE.set(key, { at: Date.now(), cards });
+    CARD_CACHE.set(key, { at: Date.now(), cards, mark: NEX_MARK++ });
   }
+  /* ★ v1.34.383: ডায়াগনস্টিক — কোন ধাপে কতটা টিকল (গLOBAL-ফিল্টার কোথায় খাচ্ছে বোঝা যায়) */
+  try { DIAG.out = (DIAG.out || 0) + 1; DIAG.lastN = (cards || []).length; } catch (e) { }
   return cards;
 }
 

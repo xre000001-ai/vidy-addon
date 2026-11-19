@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.382';
+const VERSION = '1.34.383';
 /* ★ v1.34.322: nexa.mov — নতুন সোর্স (মুভি/সিরিজ ৫ সার্ভার: nova/onyx/orion/flux/sylver;
    অ্যানিমে ৪: kyoto/tokyo/hokkaido/fuji)। প্লেব্যাক-প্রোটোকল wasm-এ সিল করা, nexa.js রিভার্স করেছে। */
 let NEX = null;
@@ -18670,9 +18670,11 @@ function sendStreams(res, skey, plog, ms, cards, ua, cfg) {
   const n = (cards || []).length; // v1.15.8: কোনো-stash-নেই — প্রতি-উত্তর-তাজা
   logReq(plog, ms, n, null, ua);
   const _sk = sresKey(plog, cfg);
+  try { if (process.env.NEXDBG) console.error('[nexdbg] in=' + n + ' nex=' + (cards || []).filter(c => /^nex\|/.test(String(c.bingeGroup || ''))).length); } catch (e) { }
   fmtCards(cards);                                          // ★ v1.27.10: সব-সোর্স-সব-কার্ড এক-ছাঁচে (শুধু লেখা)
   // ★ v1.28.0: প্রতিটি কার্ডে `headers` অবশ্য — মাপা: UA ছাড়া pixeldrain ২০০ দেয় না (ব্যাটারিতে 404), আর অনেক ক্লায়েন্ট `behaviorHints.proxyHeaders` পড়ে না।
   let _cards = stripCards(cards);
+  try { if (process.env.NEXDBG) console.error('[nexdbg] after-strip=' + _cards.length + ' nex=' + _cards.filter(c => /^nex\|/.test(String(c.bingeGroup || ''))).length); } catch (e) { }
   /* ★★★ v1.34.135: মৃত-কার্ড বাদ (সিঙ্ক) + পটভূমি-প্রোব/ওয়ার্ম (উত্তর পাঠানোর পরে, শূন্য-দেরি) */
   // Do not probe playback or filter streams based on the server's IP.
 
@@ -18730,6 +18732,7 @@ function sendStreams(res, skey, plog, ms, cards, ua, cfg) {
       }
     }
   } catch (eV) { }
+  try { if (process.env.NEXDBG) console.error('[nexdbg] final=' + _cards.length + ' nex=' + _cards.filter(c => /^nex\|/.test(String(c.bingeGroup || ''))).length); } catch (e) { }
   if (DBG) console.error('[ss] final=' + _cards.length + ' srcs=' + _cards.slice(0,12).map(c => String(c.bingeGroup||'').split('|')[0] || 'vidy').join(','));
   let body = JSON.stringify({ streams: _cards });
   // ★★ v1.21.8: মার্জ **উত্তর দেওয়ার আগেই** (v1.21.7-এ শুধু ক্যাশে মার্জ হচ্ছিল, তাই ওই ট্যাপেই কম-তালিকা দেখা যেত)
