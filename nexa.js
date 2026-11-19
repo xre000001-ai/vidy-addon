@@ -782,13 +782,23 @@ function __legacyCapCards(j, meta, origin, extraHdrs) {
   return out;
 }
 
-const NEX_VER = '1.34.379';
+const NEX_VER = '1.34.381';
 async function nexStreams(tmdbId, type, s, e, origin, opts) {
   opts = opts || {};
   note('enter ' + NEX_VER + ' tmdb' + tmdbId + ' ' + type + ' capCl=' + CAP_CLI + ' wk=' + WORKER_ON);
   const t0 = Date.now();
   const ms = Math.max(4000, Number(opts.ms || 12000));
-  const id = Number(tmdbId) || 0;
+  /* ★ v1.34.381: 'tt1375666'-এর মতো IMDb-আইডিও চলবে — tmdb-ম্যাপিং থেকে সংখ্যায় নিই।
+     (আগে Number('tt…')=NaN ⇒ সব IMDb-রুটে nexa নীরবে [] দিত।) */
+  let id = Number(tmdbId) || 0;
+  if (!id && /^tt\d+$/i.test(String(tmdbId || ''))) {
+    try {
+      const mp0 = await getMapping(4000);
+      const t0m = mp0 && mp0.i2t ? mp0.i2t.get(String(tmdbId)) : 0;
+      if (t0m) { id = Number(t0m) || 0; note('imdb→tmdb ' + tmdbId + ' = ' + id); }
+    } catch (e) { }
+    if (!id) { note('imdb-map-miss ' + tmdbId); return []; }
+  }
   if (!id) return [];
   const isSeries = type === 'series';
   const S = isSeries ? Math.max(1, Number(s) || 1) : 0;
