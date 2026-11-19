@@ -662,6 +662,23 @@ async function capFetch1(platform, id, S, E, ms) {
       /* ★ v1.34.367: worker-ই যথেষ্ট (ভিতরে ৩ রিলোড-চেষ্টা); এক-শট CLI ফলব্যাক বাদ — নাহলে ১২s গেটওয়ে ভাঙে */
       const w = await capWorker(platform, id, S, E, Math.max(26000, ms || 16000));   /* ★ v1.34.400: লোকালে মাপা ১৫সে ⇒ ২৬সে বাজেট */
       try { if (w && !w.ok) note('cap-worker-dbg ' + JSON.stringify(w.dbg || { statuses: (w.statuses || []).slice(-3), err: w.err, tries: w.tries }).slice(0, 300)); } catch (eD) { }
+      /* ★ v1.34.405: মাপা — লোকালে এক-শট পথ ১৩.৯সে-তে প্লেলিস্ট আনে, প্রোড-ওয়ার্কার ১৩.১সে-তে
+         `no-playlist` দেয় (tries 2, nav 242ms)। তাই worker ব্যর্থ হলে **এক-শট CLI** দিয়ে
+         সরাসরি চেষ্টা (অন্য প্রসেস, নিজের chromium) — লোকালে এটাই প্রমাণিত পথ। */
+      if ((!w || !w.ok) && process.env.NEXA_CLI_FALLBACK !== '0') {
+        try {
+          note('cap-cli-fallback ' + key);
+          const j2 = await capCliOnce(platform, id, S, E, Math.max(26000, ms || 16000));
+          if (j2 && j2.ok && Array.isArray(j2.variants) && j2.variants.length) {
+            if (CAP_CACHE.size > CAP_MAX) CAP_CACHE.clear();
+            CAP_CACHE.set(key, { at: Date.now(), val: j2 });
+            try { capDiskSave(); } catch (eDs2) { }
+            note('cap-cli-fallback-ok ' + key + ': ' + j2.variants.length + ' res (' + (j2.ms || 0) + 'ms)');
+            return j2;
+          }
+          note('cap-cli-fallback-miss ' + key + ': ' + ((j2 && (j2.err || j2.error)) || 'no-out'));
+        } catch (eF) { note('cap-cli-fallback-err ' + String((eF && eF.message) || eF).slice(0, 80)); }
+      }
       if (w && w.ok && Array.isArray(w.variants) && w.variants.length) {
         if (CAP_CACHE.size > CAP_MAX) CAP_CACHE.clear();
         CAP_CACHE.set(key, { at: Date.now(), val: w });
@@ -831,7 +848,7 @@ function __legacyCapCards(j, meta, origin, extraHdrs) {
   return out;
 }
 
-const NEX_VER = '1.34.404';
+const NEX_VER = '1.34.405';
 async function nexStreams(tmdbId, type, s, e, origin, opts) {
   opts = opts || {};
   const TAG = String(opts.tag || '-');
