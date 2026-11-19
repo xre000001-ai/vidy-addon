@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.413';
+const VERSION = '1.34.414';
 /* ★ v1.34.322: nexa.mov — নতুন সোর্স (মুভি/সিরিজ ৫ সার্ভার: nova/onyx/orion/flux/sylver;
    অ্যানিমে ৪: kyoto/tokyo/hokkaido/fuji)। প্লেব্যাক-প্রোটোকল wasm-এ সিল করা, nexa.js রিভার্স করেছে। */
 /* ★★ v1.34.407 (ইউজার-নির্দেশ): **nexa আলাদা অ্যাডঅন** — মেইন অ্যাডঅন আর ওর ভারী মডিউল
@@ -17460,9 +17460,15 @@ function nexaAddonBase(req) {
   } catch (e) { }
   return NEXA_ADDON_DEFAULT;
 }
-function nexaAddonStreams(req, type, id, s2, e2) {
+function nexaAddonStreams(req, type, id, s2, e2, ttlIn) {
   const base = nexaAddonBase(req);
   if (!base) return Promise.resolve([]);
+  /* ★★ v1.34.414 (প্রমাণ: nexa-কার্ডের নাম আসত `⧉ nexa |` — কারণ Cinemeta-র
+     `meta/movie/tmdb<id>.json` এখন **404** দেয়, তাই nexa-অ্যাডঅনের নিজের নাম-লুকআপ ব্যর্থ)।
+     মেইন অ্যাডঅনের কাছে নামটা (nameForTmdb) আগেই থাকে ⇒ ওখানেই কার্ডের নাম বসিয়ে দিই। */
+  const ttlP = (ttlIn && typeof ttlIn.then === 'function')
+    ? Promise.race([ttlIn.catch(() => ''), new Promise(r => setTimeout(() => r(''), 2500))])
+    : Promise.resolve(String(ttlIn || ''));
   const seg = (type === 'series' || type === 'tv')
     ? '/stream/series/' + encodeURIComponent(String(id)) + ':' + (Number(s2) || 1) + ':' + (Number(e2) || 1) + '.json'
     : '/stream/movie/' + encodeURIComponent(String(id)) + '.json';
@@ -17486,23 +17492,33 @@ function nexaAddonStreams(req, type, id, s2, e2) {
           bingeGroup: String(c.bingeGroup || '').startsWith('nex|') ? c.bingeGroup : ('nex|' + String(c.bingeGroup || 'addon')),
         });
       }
+      return ttlP.then(nm => {
+        const T = String(nm || '').trim();
+        if (T) for (const c of out) {
+          c.title = String(c.title || '').replace(/\u29c9\s*nexa/i, '\u29c9 ' + T);
+          if (!/^\u29c9/.test(c.title)) c.title = '\u29c9 ' + T + ' |\n' + String(c.title || '');
+          c.description = c.title;
+        }
+        return out;
+      }).then(fin => {
       NEXREMOTE = { url: base + seg, ms: Date.now() - t0, got: arr.length, out: out.length, at: Date.now() };
       try { note0('nexa-addon ok ' + type + ' ' + id + ': ' + out.length + ' (' + (Date.now() - t0) + 'ms)'); } catch (e2b) { }
-      return out;
+      return fin;
+      });
     })
     .catch(e => { NEXREMOTE = { url: base + seg, ms: Date.now() - t0, err: String((e && e.message) || e).slice(0, 80), at: Date.now() }; try { note0('nexa-addon fail ' + type + ' ' + id + ': ' + String((e && e.message) || e).slice(0, 60)); } catch (e3) { } return []; });
 }
 let NEXREMOTE = null;
 function note0(x) { try { if (typeof NEXDBG_LOG !== 'undefined') { NEXDBG_LOG.push({ s: String(x), n: 0, at: Date.now() }); if (NEXDBG_LOG.length > 40) NEXDBG_LOG.shift(); } } catch (e) { } }
 
-function nexPFor(type, id, s2, e2, req, cfgIn) {
+function nexPFor(type, id, s2, e2, req, cfgIn, ttlIn) {
   const cfg0 = cfgIn || null;
   /* ★ v1.34.407: nexa এখন **আলাদা অ্যাডঅন** — মেইন অ্যাডঅন শুধু রিমোট কল করে।
      স্থানীয় ক্যাপচার (chromium) আর এই পথে চলে না ⇒ লেটেন্সি ও মেমরি-চাপ দুটোই কমে। */
   const remote = nexaAddonBase(req);
   if (remote) {
     if (cfg0 && cfg0.nex === 0) return null;
-    return nexTrace2(nexaAddonStreams(req, type, id, s2, e2), 'nexa-remote ' + type + ' ' + id, 'r' + (Date.now() % 1000000));
+    return nexTrace2(nexaAddonStreams(req, type, id, s2, e2, ttlIn), 'nexa-remote ' + type + ' ' + id, 'r' + (Date.now() % 1000000));
   }
   try { if (!NEX || !NEX.nexOn(cfg0)) return null; } catch (e) { return null; }
   const idS = String(id == null ? '' : id);
@@ -20308,7 +20324,7 @@ const server = http.createServer((req, res) => FG_CONTEXT.run({ active: true }, 
       /* v1.34.322: nexa.mov — মুভি/সিরিজ ৫ সার্ভার (nova/onyx/orion/flux/sylver) */
       /* ★ v1.34.380: IMDb-আইডি-রুটে `Number('tt1375666')` = NaN হয়ে যেত ⇒ nexa কখনোই কার্ড দিত না।
          এখন tt→tmdb ম্যাপিং (infoP) থেকে নিই; না পেলে নাম-দিয়ে দেরিতে হলেও। */
-      const nexP = nexPFor('movie', m[1], 0, 0, req, cfg);
+      const nexP = nexPFor('movie', m[1], 0, 0, req, cfg, tp);
       /* v1.34.321: asianc.id বাদ (1080p নেই) — কার্ড-চেইন সরানো হয়েছে */
       kickSubs('tmdb' + m[1], 'movie', null, null, cfg);
       const lookP = Promise.all([typeof tp !== 'undefined' ? tp : null, typeof nmP !== 'undefined' ? nmP : null, typeof infoP !== 'undefined' ? infoP : null].filter(Boolean)).catch(() => []); // v1.26.2
@@ -20339,7 +20355,7 @@ cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'movie', s: 0, e: 0 }
       const azP = !(cfg && cfg.az === 0) ? azStreams(Number(m[1]), 'tv', Number(m[2] || 1), Number(m[3] || 1), cfg && cfg.azq || [], originOf(req)).catch(() => []) : null; // v1.15.76: AniZone
       /* v1.34.322: nexa.mov — মুভি/সিরিজ ৫ সার্ভার (nova/onyx/orion/flux/sylver) */
       /* ★ v1.34.380: IMDb-সিরিজ-রুটেও একই NaN-বাগ ছিল — tt→tmdb ম্যাপিং থেকে আইডি */
-      const nexP = nexPFor('series', m[1], m[2], m[3], req, cfg);
+      const nexP = nexPFor('series', m[1], m[2], m[3], req, cfg, tp);
       /* v1.34.321: asianc.id বাদ (1080p নেই) — কার্ড-চেইন সরানো হয়েছে */
       if (nxOn) nxPrewarm('series', String(m[1]), Number(m[2] || 1), Number(m[3] || 1));
       twRtPrewarm(tp, 'series', Number(m[2] || 1), Number(m[3] || 1), cfg);
