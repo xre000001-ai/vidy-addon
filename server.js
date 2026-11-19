@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.383';
+const VERSION = '1.34.384';
 /* ★ v1.34.322: nexa.mov — নতুন সোর্স (মুভি/সিরিজ ৫ সার্ভার: nova/onyx/orion/flux/sylver;
    অ্যানিমে ৪: kyoto/tokyo/hokkaido/fuji)। প্লেব্যাক-প্রোটোকল wasm-এ সিল করা, nexa.js রিভার্স করেছে। */
 let NEX = null;
@@ -17378,10 +17378,13 @@ function yearForTmdb(tmdbId, type) { // মুভি=release_date, সিরি�
     YEAR_CACHE.set(k, y); return y;
   }).catch(() => { YEAR_CACHE.set(k, 0); return 0; });
 }
+const NEXDBG_LOG = [];   /* ★ v1.34.384: nexa-কার্ডের যাত্রাপথ (route → unify → fmt → strip → final) */
+function nexdbg(stage, cards) { try { const arr = Array.isArray(cards) ? cards : []; const nx = arr.filter(c => /^nex\|/.test(String((c && c.bingeGroup) || '')) || (c && c._src === 'nex')); NEXDBG_LOG.push({ s: stage, n: arr.length, nex: nx.length, at: Date.now() }); if (NEXDBG_LOG.length > 40) NEXDBG_LOG.shift(); if (!arr.some(c => c && String(c.url || '').indexOf('/nexp/') >= 0) && stage === 'final') NEXDBG_LOG.push({ s: 'final-no-nexp', n: arr.length, at: Date.now() }); } catch (e) { } }
 const UNIFY_SRV = { sky: 'Sky Movies', m4u: 'Movies4u', bf: 'BollyFlix', mm: 'Multimovies', tw: 'ToonWorld', rt: 'RareToons', vsp: 'Vidsrc', ott: 'AsianTV', az: 'AniZone', mlb: 'MovieLinkBD', mls: 'MLSBD', nex: 'nexa' };
 async function unifyCards(cards, meta) { // শুধু-টেক্সট-বদলায়: name/quality/url/bingeGroup/_lang/_hq/সাব — সব-অস্পৃশ্য (ফিল্টার-নিরাপদ)
   try {
     if (!cards || !cards.length || !meta || (!meta.tmdbId && !meta.title)) return cards;
+    nexdbg('unify-in', cards);
     const tcards = cards.filter(c => /^(sky|m4u|bf|mm|tw|rt|mlb|mls|nex|vsp|ott|az|dt|nx|hd|hm)\|/.test(String(c.bingeGroup || '')));
     if (DBG) console.error('[unify] in=' + cards.length + ' tcards=' + tcards.length + ' nex=' + cards.filter(c => /^nex\|/.test(String(c.bingeGroup || ''))).length);
     // ★ v1.27.10: tcards খালি হলেও থামি না — বছর-পূরণের ধাপটা সব-সোর্সে চালু থাকবে
@@ -18671,9 +18674,11 @@ function sendStreams(res, skey, plog, ms, cards, ua, cfg) {
   logReq(plog, ms, n, null, ua);
   const _sk = sresKey(plog, cfg);
   try { if (process.env.NEXDBG) console.error('[nexdbg] in=' + n + ' nex=' + (cards || []).filter(c => /^nex\|/.test(String(c.bingeGroup || ''))).length); } catch (e) { }
+  nexdbg('pre-fmt', cards);
   fmtCards(cards);                                          // ★ v1.27.10: সব-সোর্স-সব-কার্ড এক-ছাঁচে (শুধু লেখা)
   // ★ v1.28.0: প্রতিটি কার্ডে `headers` অবশ্য — মাপা: UA ছাড়া pixeldrain ২০০ দেয় না (ব্যাটারিতে 404), আর অনেক ক্লায়েন্ট `behaviorHints.proxyHeaders` পড়ে না।
   let _cards = stripCards(cards);
+  nexdbg('after-strip', _cards);
   try { if (process.env.NEXDBG) console.error('[nexdbg] after-strip=' + _cards.length + ' nex=' + _cards.filter(c => /^nex\|/.test(String(c.bingeGroup || ''))).length); } catch (e) { }
   /* ★★★ v1.34.135: মৃত-কার্ড বাদ (সিঙ্ক) + পটভূমি-প্রোব/ওয়ার্ম (উত্তর পাঠানোর পরে, শূন্য-দেরি) */
   // Do not probe playback or filter streams based on the server's IP.
@@ -18733,6 +18738,7 @@ function sendStreams(res, skey, plog, ms, cards, ua, cfg) {
     }
   } catch (eV) { }
   try { if (process.env.NEXDBG) console.error('[nexdbg] final=' + _cards.length + ' nex=' + _cards.filter(c => /^nex\|/.test(String(c.bingeGroup || ''))).length); } catch (e) { }
+  nexdbg('final', _cards);
   if (DBG) console.error('[ss] final=' + _cards.length + ' srcs=' + _cards.slice(0,12).map(c => String(c.bingeGroup||'').split('|')[0] || 'vidy').join(','));
   let body = JSON.stringify({ streams: _cards });
   // ★★ v1.21.8: মার্জ **উত্তর দেওয়ার আগেই** (v1.21.7-এ শুধু ক্যাশে মার্জ হচ্ছিল, তাই ওই ট্যাপেই কম-তালিকা দেখা যেত)
@@ -19298,6 +19304,7 @@ const server = http.createServer((req, res) => FG_CONTEXT.run({ active: true }, 
     if (p === '/_nexcap') {   /* ★ v1.34.340: প্রোড chromium-প্রোব (shell|full|full-single|raw) */
       const sp = new URLSearchParams(String(req.url || '').split('?')[1] || '');
       const mode = sp.get('m') || 'status';
+      if (sp.get('nexlog')) { return sendJson(res, 200, { log: NEXDBG_LOG.slice(-25), nxdiag: (() => { try { return require('./nexa.js').nexDiag(); } catch (e) { return null; } })() }); }
       if (sp.get('dom')) {   /* ★ v1.34.376: watch-পেজের DOM জরিপ (সার্ভার-বাটন/সোর্স) */
         const dargs = [require('path').join(__dirname, 'nexa-cap.js'), '--dom', '--id', String(sp.get('dom')), '--wait', String(sp.get('wait') || 14000)];
         if (sp.get('e')) dargs.push('--s', String(sp.get('s') || 1), '--e', String(sp.get('e')));
@@ -20138,7 +20145,7 @@ cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'series', s: Number(m
       const ottP = !(cfg && cfg.ott === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? ottStreams(info.id, 'movie', 0, 0, cfg && cfg.ottq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.72: AsianTV
       const azP = !(cfg && cfg.az === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? azStreams(info.id, 'movie', 0, 0, cfg && cfg.azq || [], originOf(req)).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.76: AniZone
       /* v1.34.322: nexa.mov — মুভি/সিরিজ ৫ সার্ভার (nova/onyx/orion/flux/sylver) */
-      const nexP = (NEX && NEX.nexOn(cfg)) ? raceObjP((typeof tp !== 'undefined' ? tp : null), 1500).then(t => NEX.nexStreams(String(m[1]), 'movie', 0, 0, originOf(req), { title: (t || nm || ''), year: '', q: (cfg && cfg.nexq) || [], ms: 13000 })).catch(() => []) : null;
+      const nexP = (NEX && NEX.nexOn(cfg)) ? raceObjP((typeof tp !== 'undefined' ? tp : null), 1500).then(t => NEX.nexStreams(String(m[1]), 'movie', 0, 0, originOf(req), { title: (t || nm || ''), year: '', q: (cfg && cfg.nexq) || [], ms: 13000 }).then(cs => { nexdbg('route-tmdb', cs); return cs; })).catch(() => []) : null;
       /* v1.34.321: asianc.id বাদ (1080p নেই) */
       kickSubs(m[1], 'movie', null, null, cfg);
       const lookP = Promise.all([typeof tp !== 'undefined' ? tp : null, typeof nmP !== 'undefined' ? nmP : null, typeof infoP !== 'undefined' ? infoP : null].filter(Boolean)).catch(() => []); // v1.26.2
