@@ -802,7 +802,7 @@ async function nexStreams(tmdbId, type, s, e, origin, opts) {
     } catch (e) { }
     if (!id) { note('imdb-map-miss ' + tmdbId); return []; }
   }
-  if (!id) return [];
+  if (!id) { note('ret:no-id ' + tmdbId); return []; }
   const isSeries = type === 'series';
   const S = isSeries ? Math.max(1, Number(s) || 1) : 0;
   const E = isSeries ? Math.max(1, Number(e) || 1) : 0;
@@ -831,6 +831,7 @@ async function nexStreams(tmdbId, type, s, e, origin, opts) {
   const _ck = capKey('tmdb', id, S, E);
   const _ch = CAP_CACHE.get(_ck);
   const _hasCap = _ch && Date.now() - _ch.at < CAP_TTL && _ch.val;
+  note('cap-state hasCap=' + (_hasCap ? 1 : 0) + ' capUrl=' + (CAP_URL ? 1 : 0) + ' capCli=' + (CAP_CLI ? 1 : 0) + ' worker=' + (WORKER_ON ? 1 : 0));
   /* ★ v1.34.329: 1.34.327-এর বাগ — ক্যাশ না থাকলে এখানেই `return []` করতাম, ফলে Stremio-র
      *প্রথম* রিকোয়েস্টে nexa কার্ডই আসত না (Stremio দ্বিতীয়বার চায় না!) ⇒ "nexa থেকে কিছু
      পাচ্ছি না"। এখন প্রথমবারও ক্যাপচার-চেষ্টা করি (অ্যাডঅন-বাজেটের ভিতরে), ক্যাশ থাকলে তো কথাই নেই। */
@@ -897,7 +898,7 @@ async function nexStreams(tmdbId, type, s, e, origin, opts) {
   } catch (e) { note('cap-path-err ' + String((e && e.message) || e).slice(0, 120)); }
 
   const api = await ensureSession(ms);
-  if (!api) return [];
+  if (!api) { note('ret:no-session ' + id); return []; }
   let plans = [];
   try {
     const q = isSeries ? { platform: 'tmdb', id: id, season: S, episode: E } : { platform: 'tmdb', id: id };

@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.386';
+const VERSION = '1.34.387';
 /* ★ v1.34.322: nexa.mov — নতুন সোর্স (মুভি/সিরিজ ৫ সার্ভার: nova/onyx/orion/flux/sylver;
    অ্যানিমে ৪: kyoto/tokyo/hokkaido/fuji)। প্লেব্যাক-প্রোটোকল wasm-এ সিল করা, nexa.js রিভার্স করেছে। */
 let NEX = null;
@@ -18757,6 +18757,7 @@ function sendStreams(res, skey, plog, ms, cards, ua, cfg) {
         total: _cards.length,
         sr: (LR && LR.sr) || [],
         nexStreams: nexStreamsCount(),
+        nexOnFlag: (() => { try { return { on: !!(NEX && NEX.nexOn(cfg)), hasNex: !!(NEX && NEX.nexStreams) }; } catch (e) { return 'err'; } })(),
         nxdiag: nxdiag && { caps: nxdiag.cardCache, sess: nxdiag.sess, sessErr: nxdiag.sessErr, pl400: nxdiag.pl400, pl200: nxdiag.pl200, cards: nxdiag.cards, last: (nxdiag.last || []).slice(-6) },
         groups: _cards.map(c => String((c && c.bingeGroup) || '')).slice(0, 40),
       };
