@@ -814,7 +814,7 @@ function __legacyCapCards(j, meta, origin, extraHdrs) {
   return out;
 }
 
-const NEX_VER = '1.34.396';
+const NEX_VER = '1.34.397';
 async function nexStreams(tmdbId, type, s, e, origin, opts) {
   opts = opts || {};
   const TAG = String(opts.tag || '-');
@@ -874,11 +874,9 @@ async function nexStreams(tmdbId, type, s, e, origin, opts) {
   if (!_hasCap) {
     /* ★ v1.34.329b: এখানে warmNexa ডাকতাম — তাতে একই সময়ে দুটো chromium চালু হয়ে
        দুটোই ফেল করত (মেমরি+প্রক্সি দ্বন্দ্ব)। এখন শুধু একটা blocking ক্যাপচার। */
-    try {
-      const mp0 = await getMapping(1500);
-      const aids0 = mp0 && mp0.t2a ? (mp0.t2a.get(id) || []) : [];
-      if (aids0.length) warmNexa('anilist', aids0[0], S, E, ms);
-    } catch (e) { }
+    /* ★★ v1.34.397 (মাপা: /_nextry ১৩সে-তে ৫০৪ ⇒ ক্যাপচার ১৩সে পেরোচ্ছে): এখানে `warmNexa` আর
+       ডাকি না — নিচের `capFetch` নিজেই ক্যাপচার করে; দুটো একসাথে ডাকলে **দুটো chromium**
+       চলত ⇒ দুটোই ধীর/ফেল। এখন একটাই blocking ক্যাপচার, বাজেটের ভিতরে। */
     note('cap-first-attempt tmdb' + id);
   }
   try {
@@ -890,8 +888,8 @@ async function nexStreams(tmdbId, type, s, e, origin, opts) {
        আর BeamUp-এ প্রতি রেপ্লিকা আলাদা (`/_nex`-এ worker up=205s, ক্যাপ-ক্যাশ ১) — তাই
        পরের ট্যাপেও প্রায়ই ঠান্ডা। এখন ডিফল্ট ৯.২সে (রুট-কাট SCAP=১২সে-র ভিতরে),
        আর worker ঠান্ডা হলে হালকা বাড়তি (NEXA_CAP_AWAIT_COLD=১০সে)। */
-    const _awWarm = Math.max(4000, Math.min(Number(process.env.NEXA_CAP_AWAIT || 7200), ms - 1000));
-    const _awCold = Math.max(_awWarm, Math.min(Number(process.env.NEXA_CAP_AWAIT_COLD || 8200), ms - 800));
+    const _awWarm = Math.max(4000, Math.min(Number(process.env.NEXA_CAP_AWAIT || 9200), ms - 1000));
+    const _awCold = Math.max(_awWarm, Math.min(Number(process.env.NEXA_CAP_AWAIT_COLD || 9800), ms - 800));
     const _aw = _hasCap ? _awWarm : _awCold;
     const _capP = capFetch('tmdb', id, S, E, Math.max(ms, 20000));
     let j = await Promise.race([_capP, new Promise(r => { const t = setTimeout(() => r(null), _aw); if (t.unref) t.unref(); })]);
