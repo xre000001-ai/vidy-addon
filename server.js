@@ -201,7 +201,8 @@ const PX_PROBE_URL = 'https://www.google.com/generate_204';
 // v1.15.0 উষ্ণ-সংযোগ: রেজলভার(TW/RT)+MovieBox-চাইল্ড-সকেট-জীবন্ত-রাখা — প্রতি-ট্যাপে-DNS+TLS (~০.৩-০.৬সে) বাদ;
 // 'রেজলভারে-পৌঁছাতে-দেরি'-র-ভিডি-পার্শ্ব-অংশ-এটাই-ছিল। keepAlive-এজেন্ট-পুনঃব্যবহার-করে।
 function warmBases() {
-  for (const b of [TWBASE, RTBASE, NEXBASE]) {
+  let _nexa = ''; try { _nexa = nexaAddonBase(null) || ''; } catch (e) { _nexa = ''; }
+  for (const b of [TWBASE, RTBASE, NEXBASE, _nexa]) {
     if (!b) continue;
     directGet(b + '/_health', 8000).catch(() => {});
   }
@@ -15531,6 +15532,7 @@ const FMT_SRC_CANON = [
 /* ফাইল-নাম-জাতীয় বাড়তি লেখা: `File 1`, `v1`, `HEVC`, `x265`, `1080p`, `(1)` — কার্ডে যাবে না */
 const FMT_JUNKBITS = '(?:\\bfile\\s*\\d+\\b|\\bv\\d{1,2}\\b|\\b(?:hevc|avc|x26[45]|h26[45]|av1|10bit|8bit)\\b|\\b\\d{3,4}p\\b|\\b(?:internal|proper|repack|web-?dl|webrip|bluray|brrip|hdtv|dvdrip)\\b|\\(\\s*\\d\\s*\\))';
 /* ফাইল-আকার: `· 6.5 GB`, `2.62GB`, `700 MB` */
+const FMT_JUNK_RE = new RegExp(FMT_JUNKBITS, 'gi');   /* একবার-বানানো (প্রতি-কার্ডে নয়) */
 const FMT_SIZE_RE = /\s*[\u00b7\u2022]?\s*\d+(?:\.\d+)?\s*(?:GB|MB|KB|TB)\b/gi;
 const FMT_SRV_WORDS = /\b(?:g?drive|google\s*drive|hubcloud|pixeldrain|instantcloud|xcloud|fsl|mkv|mp4|hls|zip|direct|link|file|cloud|server)\b/gi;
 function fmtSrcName(txt, hint) {
@@ -15647,12 +15649,12 @@ function fmtCardText(c, hint) {
   const _au = _langs.length === 1 ? _langs[0] : _langs.length === 2 ? 'Dual Audio' : _langs.length >= 3 ? 'Multi Audio' : '';
   // ★ v1.33.0: ভাষা-গণনা হয়েছে তখনই "Dual/Multi Audio"-জাতীয় নকল টোকেন বাদ; নাহলে টোকেনটাই একমাত্র তথ্য
   const _extras2 = (_au ? _extras.filter(x => !/^(?:dual|multi|original|single)\s*audio$/i.test(String(x).trim())) : _extras)
-    .map(x => String(x).replace(FMT_SIZE_RE, ' ').replace(new RegExp(FMT_JUNKBITS, 'gi'), ' ').replace(/\s{2,}/g, ' ').trim())
+    .map(x => String(x).replace(FMT_SIZE_RE, ' ').replace(FMT_JUNK_RE, ' ').replace(/\s{2,}/g, ' ').trim())
     .filter(x => x && !/^(?:\d{3,4}p?|hevc|x265|h265|av1|10bit|8bit)$/i.test(x));
   const _bits = [_au].concat(_extras2).filter(Boolean);
   rest = (srcName || '') + (_bits.length ? ' \u2317 ' + _bits.join(' \u00b7 ') : '');
   /* ★ ইউজার: "card e File 1, v1, eirom kisu extra lekha thakbe na" + ফাইল-সাইজও বাদ */
-  rest = rest.replace(FMT_SIZE_RE, ' ').replace(new RegExp(FMT_JUNKBITS, 'gi'), ' ')
+  rest = rest.replace(FMT_SIZE_RE, ' ').replace(FMT_JUNK_RE, ' ')
     .replace(/\s*\u00b7\s*(?=\u00b7)/g, ' ').replace(/[\s\u00b7\u2022]+$/, '').trim();
   if (!rest) return c;                                                   // সব বাদ পড়ে খালি ⇒ পুরোনো-লেখাই-থাক
   /* ★ `⌘ Deadtoons • deadtoons·pixeldrain` ⇒ সোর্স-নামের পুনরাবৃত্তি বাদ */
