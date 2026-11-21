@@ -15553,6 +15553,9 @@ function srvLabel(url) {
 }
 function fmtCardText(c, hint) {
   if (!c || typeof c !== 'object') return c;
+  /* ★ nexa (Play4u) কার্ডের টেক্সট **চাইল্ড-অ্যাডঅনেই** Play4u-ফরম্যাটে নিখুঁত
+     (`⌘ Play4u ⌗ English/Hindi • Uprising`) ⇒ Vidy-র ফরম্যাটার একে ছুঁবে না। */
+  if (/^nex\|/.test(String(c.bingeGroup || '')) || c._src === 'nex') return c;
   const desc = String(c.description || c.title || '');
   if (!desc) return c;
   let t = '', e = '', s = '';
@@ -15565,6 +15568,12 @@ function fmtCardText(c, hint) {
     if (!e && (ch === '\u23e3' || ch === '\u29e0')) { e = ln; continue; }  // ⏣ / ⧠
     if (!s && (ch === '\u2318' || ch === '\u229e')) { s = ln; seenSlot = true; continue; } // ⌘ / ⊞
     if (seenSlot) tail.push(ln);                                          // ⓘ/প্যাক-নোট — কখনো বাদ যায় না
+  }
+  /* ★ 1.34.415-এর nexa: রিমোট-অ্যাডঅনের কার্ডে ⧉ শিরোনাম না-থাকলে নাম থেকে বানাই */
+  if (!t && (/^nex\|/.test(String((c && c.bingeGroup) || '')) || (c && c._src === 'nex'))) {
+    const _nm0 = String((c && c.description) || '').split('\n').map(x => x.trim()).filter(Boolean)[0] || '';
+    const _b0 = _nm0.replace(/^[\u25a4\u25a6\u229e\u29c9\u2318]+\s*/, '');
+    if (_b0) t = '\u29c9 ' + _b0 + ' |';
   }
   if (!t || !s) return c;                                                  // চেনা-ছাঁচ নয় ⇒ হাত নয়
   // ---- শিরোনাম-লাইন ----
@@ -15700,10 +15709,135 @@ function yearForTmdb(tmdbId, type) { // মুভি=release_date, সিরি�
   }).catch(() => { YEAR_CACHE.set(k, 0); return 0; });
 }
 const UNIFY_SRV = { sky: 'Sky Movies', m4u: 'Movies4u', bf: 'BollyFlix', mm: 'Multimovies', tw: 'ToonWorld', rt: 'RareToons', vsp: 'Vidsrc', ott: 'AsianTV', az: 'AniZone', mlb: 'MovieLinkBD', mls: 'MLSBD' };
+const NEXDBG_LOG = [];   /* ★ v1.34.384: nexa-কার্ডের যাত্রাপথ (route → unify → fmt → strip → final) */
+const NEXS_LOG = [];   /* ★ v1.34.386: nexStreams-এর প্রতিটি ফলের সত্য-গণনা */
+function nexStreamsCount() { return NEXS_LOG.slice(-6); }
+
+/* ★★ v1.34.393 (ইউজার: "Stremio IMDb-ই ডাকে, nexa tmdb-এ আটকে — এত সমস্যা কেন?") —
+   প্রতিটি রুটে nexa-প্রমিস হাতে-লেখা ছিল, আর প্রতিটাতে **ভিন্ন ভেরিয়েবল** ধরে নেওয়া হতো
+   (`nm`, `tp`, `m`...) ⇒ যেটা রুটে নেই সেটা `ReferenceError` → `.catch(() => [])` চুপচাপ গিলে নিত
+   ⇒ nexa কার্ড শূন্য অথচ লগে "2 cards"। এখন **একটাই** নিরাপদ বিল্ডার: নিজে নাম/আইডি ঠিক করে,
+   কোনো রুট-লোকাল ভেরিয়েবলের উপর নির্ভর করে না। */
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   ★★ v1.34.407 (ইউজার-নির্দেশ): **nexa এখন আলাদা অ্যাডঅন** — মেইন অ্যাডঅনে ওর ভারী
+   ক্যাপচার (chromium, ৮–১৩সে, ১GB কনটেইনার) রাখা হবে না। toonworld4all/raretoons যেভাবে
+   রিমোট `/find` থেকে আসে, nexa-ও তেমনি রিমোট `/stream/…` থেকে আসবে।
+     • NEXA_ADDON না দিলে ডিফল্টে একই BeamUp-অ্যাকাউন্টের `…-nexa` হোস্ট ধরা হয়
+       (vidy হোস্ট `3404d3c5dc63-vidy` → `3404d3c5dc63-nexa`)।
+     • টাইমআউট ছোট (৭সে) — nexa দেরি করলে বাকি সোর্সের উত্তর আটকাবে না।
+   ══════════════════════════════════════════════════════════════════════════════ */
+const NEXA_ADDON_DEFAULT = 'https://3404d3c5dc63-nexa.baby-beamup.club';   /* ★ v1.34.412: ডিফল্ট ঠিকানা */
+function nexaAddonBase(req) {
+  /* ★★ v1.34.413 (প্রমাণ: `nexdbg`-এ base = "(empty→local path)" ⇒ রিমোট-কল কখনো হয়নি,
+     তাই nexa-কার্ড ০)। কারণ: `NEXA_ADDON` এনভায়রনমেন্টটা BeamUp-এ সেট করা নেই, আর খালি
+     স্ট্রিং-কেই "বন্ধ" ধরা হচ্ছিল। এখন: না-থাকলেই ডিফল্ট nexa-হোস্ট ব্যবহার হবে। */
+  const env = String(process.env.NEXA_ADDON == null ? '' : process.env.NEXA_ADDON).trim();
+  if (env === '0' || env.toLowerCase() === 'off') return '';
+  if (env) return env.replace(/\/+$/, '');
+  try {   /* হোস্ট-অনুযায়ী চেষ্টা (কাস্টম ডিপ্লয়), নইলে ডিফল্ট */
+    const h = String((req && req.headers && (req.headers['x-forwarded-host'] || req.headers.host)) || '').split(',')[0].trim();
+    if (h && /-vidy\./.test(h)) return 'https://' + h.replace(/-vidy\./, '-nexa.');
+  } catch (e) { }
+  return NEXA_ADDON_DEFAULT;
+}
+function nexaAddonStreams(req, type, id, s2, e2, ttlIn) {
+  const base = nexaAddonBase(req);
+  if (!base) return Promise.resolve([]);
+  /* ★★ v1.34.414 (প্রমাণ: nexa-কার্ডের নাম আসত `⧉ nexa |` — কারণ Cinemeta-র
+     `meta/movie/tmdb<id>.json` এখন **404** দেয়, তাই nexa-অ্যাডঅনের নিজের নাম-লুকআপ ব্যর্থ)।
+     মেইন অ্যাডঅনের কাছে নামটা (nameForTmdb) আগেই থাকে ⇒ ওখানেই কার্ডের নাম বসিয়ে দিই। */
+  const ttlP = (ttlIn && typeof ttlIn.then === 'function')
+    ? Promise.race([ttlIn.catch(() => ''), new Promise(r => setTimeout(() => r(''), 2500))])
+    : Promise.resolve(String(ttlIn || ''));
+  const seg = (type === 'series' || type === 'tv')
+    ? '/stream/series/' + encodeURIComponent(String(id)) + ':' + (Number(s2) || 1) + ':' + (Number(e2) || 1) + '.json'
+    : '/stream/movie/' + encodeURIComponent(String(id)) + '.json';
+  const t0 = Date.now();
+  NEXREMOTE = { url: base + seg, at: Date.now(), state: 'start' };
+  return directGet(base + seg, Number(process.env.NEXA_ADDON_TMO || 9000))
+    .then(b => {
+      const j = JSON.parse(String(b || '{}'));
+      const arr = (j && Array.isArray(j.streams)) ? j.streams : [];
+      const out = [];
+      for (const c of arr) {
+        if (!c || !c.url) continue;
+        out.push({
+          _src: 'nex',
+          name: c.name || '\u25a5 Auto \u25a5',
+          title: c.title || c.description || '',
+          description: c.title || c.description || '',
+          quality: String((String(c.name || '').match(/(\d{3,4})/) || [])[1] || ''),
+          url: c.url,
+          behaviorHints: c.behaviorHints || { notWebReady: false },
+          bingeGroup: String(c.bingeGroup || '').startsWith('nex|') ? c.bingeGroup : ('nex|' + String(c.bingeGroup || 'addon')),
+        });
+      }
+      return ttlP.then(nm => {
+        const T = String(nm || '').trim();
+        if (T) for (const c of out) {
+          c.title = String(c.title || '').replace(/\u29c9\s*nexa/i, '\u29c9 ' + T);
+          if (!/^\u29c9/.test(c.title)) c.title = '\u29c9 ' + T + ' |\n' + String(c.title || '');
+          c.description = c.title;
+        }
+        return out;
+      }).then(fin => {
+      NEXREMOTE = { url: base + seg, ms: Date.now() - t0, got: arr.length, out: out.length, at: Date.now() };
+      try { note0('nexa-addon ok ' + type + ' ' + id + ': ' + out.length + ' (' + (Date.now() - t0) + 'ms)'); } catch (e2b) { }
+      return fin;
+      });
+    })
+    .catch(e => { NEXREMOTE = { url: base + seg, ms: Date.now() - t0, err: String((e && e.message) || e).slice(0, 80), at: Date.now() }; try { note0('nexa-addon fail ' + type + ' ' + id + ': ' + String((e && e.message) || e).slice(0, 60)); } catch (e3) { } return []; });
+}
+let NEXREMOTE = null;
+function note0(x) { try { if (typeof NEXDBG_LOG !== 'undefined') { NEXDBG_LOG.push({ s: String(x), n: 0, at: Date.now() }); if (NEXDBG_LOG.length > 40) NEXDBG_LOG.shift(); } } catch (e) { } }
+
+function nexPFor(type, id, s2, e2, req, cfgIn, ttlIn) {
+  const cfg0 = cfgIn || null;
+  /* ★ v1.34.407: nexa এখন **আলাদা অ্যাডঅন** — মেইন অ্যাডঅন শুধু রিমোট কল করে।
+     স্থানীয় ক্যাপচার (chromium) আর এই পথে চলে না ⇒ লেটেন্সি ও মেমরি-চাপ দুটোই কমে। */
+  const remote = nexaAddonBase(req);
+  if (remote) {
+    if (cfg0 && cfg0.nex === 0) return null;
+    return nexTrace2(nexaAddonStreams(req, type, id, s2, e2, ttlIn), 'nexa-remote ' + type + ' ' + id, 'r' + (Date.now() % 1000000));
+  }
+  try { if (!NEX || !NEX.nexOn(cfg0)) return null; } catch (e) { return null; }
+  const idS = String(id == null ? '' : id);
+  const isTv = (type === 'series' || type === 'tv');
+  const ty2 = isTv ? 'series' : 'movie';
+  const tag = 'q' + (Date.now() % 1000000);
+  /* ★★ v1.34.394 (ইউজারের মূল-প্রশ্ন: "Stremio IMDb-ই ডাকে, nexa tmdb-এ আটকে — কেন?") —
+     nexa.mov-এর নিজের ম্যাপিং-ফাইলে **IMDb→TMDB টেবিলই নেই** (শুধু anibridge/anilist) ⇒
+     'tt…' সরাসরি পাঠালে ক্যাপচার-path পায় না। তাই এখানেই সেতু: tt → (Cinemeta/IMDb) → tmdb
+     → তারপর nexStreams-এ **সাংখ্যিক tmdb-আইডি**। সেতু না পেলে নাম দিয়ে সিরিজ-পথ চলবে। */
+  const tmdbP = /^(\d+|tmdb\d+)$/i.test(idS)
+    ? Promise.resolve(Number(idS.replace(/^tmdb/i, '')) || 0)
+    : (/^tt\d+$/i.test(idS)
+      ? findTmdbInfo(idS, ty2).then(info => (info && Number(info.id) > 0 ? Number(info.id) : 0)).catch(() => 0)
+      : Promise.resolve(0));
+  const nameP = tmdbP.then(n0 => (n0 > 0 ? nameForTmdb(n0, ty2).catch(() => '') : Promise.resolve('')));
+  /* nexStreams-এ পাঠানোর আইডি: tmdb-সংখ্যা পেলে সেটাই, নইলে মূল idS (tt-পথে নাম-ভিত্তিক চেষ্টা) */
+  const callP = Promise.all([tmdbP, raceObjP(nameP, 1400)]).then(([n0, t]) => {
+    const idOut = n0 > 0 ? String(n0) : idS;
+    return NEX.nexStreams(idOut, ty2,
+      isTv ? Number(s2 || 1) : 0, isTv ? Number(e2 || 1) : 0, originOf(req),
+      { tag, title: (t || ''), year: '', q: (cfg0 && cfg0.nexq) || [], ms: 13000 });
+  });
+  return nexTrace2(callP, 'nexPFor ' + type + ' ' + idS, tag);
+}
+
+function nexTrace2(p, what, tag) { return Promise.resolve(p).then(cs => { try { NEXS_LOG.push({ what, tag, n: (cs || []).length, at: Date.now() }); if (NEXS_LOG.length > 30) NEXS_LOG.shift(); } catch (e) { } return cs; }, e => { try { NEXS_LOG.push({ what, tag, err: String((e && e.message) || e).slice(0, 60), at: Date.now() }); } catch (e2) { } return []; }); }
+function nexTrace(p, what) { return Promise.resolve(p).then(cs => { try { NEXS_LOG.push({ what, n: (cs || []).length, at: Date.now() }); if (NEXS_LOG.length > 30) NEXS_LOG.shift(); } catch (e) { } return cs; }, e => { try { NEXS_LOG.push({ what, err: String((e && e.message) || e).slice(0, 60), at: Date.now() }); } catch (e2) { } return []; }); }
+function nexdbg(stage, cards) { try { const arr = Array.isArray(cards) ? cards : []; const nx = arr.filter(c => /^nex\|/.test(String((c && c.bingeGroup) || '')) || (c && c._src === 'nex')); NEXDBG_LOG.push({ s: stage, n: arr.length, nex: nx.length, at: Date.now() }); if (NEXDBG_LOG.length > 40) NEXDBG_LOG.shift(); if (!arr.some(c => c && String(c.url || '').indexOf('/nexp/') >= 0) && stage === 'final') NEXDBG_LOG.push({ s: 'final-no-nexp', n: arr.length, at: Date.now() }); } catch (e) { } }
+function nexdbg(stage, cards) { try { const arr = Array.isArray(cards) ? cards : []; const nx = arr.filter(c => /^nex\|/.test(String((c && c.bingeGroup) || '')) || (c && c._src === 'nex')); NEXDBG_LOG.push({ s: stage, n: arr.length, nex: nx.length, at: Date.now() }); if (NEXDBG_LOG.length > 40) NEXDBG_LOG.shift(); if (!arr.some(c => c && String(c.url || '').indexOf('/nexp/') >= 0) && stage === 'final') NEXDBG_LOG.push({ s: 'final-no-nexp', n: arr.length, at: Date.now() }); } catch (e) { } }
+
 async function unifyCards(cards, meta) { // শুধু-টেক্সট-বদলায়: name/quality/url/bingeGroup/_lang/_hq/সাব — সব-অস্পৃশ্য (ফিল্টার-নিরাপদ)
   try {
     if (!cards || !cards.length || !meta || (!meta.tmdbId && !meta.title)) return cards;
-    const tcards = cards.filter(c => /^(sky|m4u|bf|mm|tw|rt|mlb|mls)\|/.test(String(c.bingeGroup || '')));
+    /* ★ nexa (Play4u) কার্ড ইতিমধ্যেই **চাইল্ড-অ্যাডঅনে Play4u ফরম্যাটে** তৈরি
+     (`⌘ Play4u ⌗ English/Hindi • Uprising`) — Vidy এগুলো পুনর্লিখন করলে লেবেল
+     `Nex ⌗ Dual Audio` হয়ে বিকৃত হতো। তাই `nex|` এখানে বাদ। */
+    const tcards = cards.filter(c => /^(sky|m4u|bf|mm|tw|rt|mlb|mls|vsp|ott|az|dt|nx|hd|hm)\|/.test(String(c.bingeGroup || '')));
     // ★ v1.27.10: tcards খালি হলেও থামি না — বছর-পূরণের ধাপটা সব-সোর্সে চালু থাকবে
     const _uT=Date.now();
     // ★ v1.27.11 (ইউজার: "Pilot eikhane ep title ja mone hoi IMDb theke newo"): সিরিজে এপিসোড-নাম
@@ -18108,7 +18242,9 @@ const server = http.createServer((req, res) => {
       const mlbP = mlbdOn(cfg) ? mlbdTask(tp, infoP, 'movie', 0, 0, (cfg && cfg.mlbr) || 0) : null;
       const mlsP = mlsOn(cfg) ? mlsTask(tp, infoP, 'movie', 0, 0) : null;
       const dtP = dtOn(cfg) ? dtTask(tp, infoP, 'movie', 0, 0, originOf(req)) : null;   // v1.30.0: Deadtoons/AniDisk
-      return withDeadline(withSources(vOn ? getSources(Number(m[1]), 'movie', null, null, '', cfg, tp) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: hmP, key: 'hm' }, { p: hdP, key: 'hd' }, { p: mlbP, key: 'mlb' }, { p: mlsP, key: 'mls' }, { p: dtP, key: 'dt' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0, p, lookP), (cfg && cfg.__slow) ? Number(process.env.SDLSLOW || 26000) : (cfg && cfg.__bg) ? Number(process.env.SDLBG || 11500) : SDL_MS, undefined, (cfg && (cfg.__bg || cfg.__slow)) ? 0 : Number(process.env.SDLGRACE || 800) /* v1.33.2: এজ-কাটের (১২সে) নিচে: 10.2s → 12s — MLSBD-র ঠান্ডা-পথ (সার্চ+sav+watch/gd) ১০সে ছাড়ায়; NXHARD ১২সের সমান, তবু উত্তর হারায় না (মাপা: battery-তে কোনো রিগ্রেশন নয়) */, p).then(
+        /* ★ v1.34.415-এর nexa (Play4u) স্লট — রিমোট-অ্যাডঅন কল */
+        const nexP = nexPFor('movie', m[1], 0, 0, req, cfg, tp);
+      return withDeadline(withSources(vOn ? getSources(Number(m[1]), 'movie', null, null, '', cfg, tp) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: hmP, key: 'hm' }, { p: hdP, key: 'hd' }, { p: mlbP, key: 'mlb' }, { p: mlsP, key: 'mls' }, { p: dtP, key: 'dt' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' }, { p: nexP, key: 'nex' },], cfg, t0, p, lookP), (cfg && cfg.__slow) ? Number(process.env.SDLSLOW || 26000) : (cfg && cfg.__bg) ? Number(process.env.SDLBG || 11500) : SDL_MS, undefined, (cfg && (cfg.__bg || cfg.__slow)) ? 0 : Number(process.env.SDLGRACE || 800) /* v1.33.2: এজ-কাটের (১২সে) নিচে: 10.2s → 12s — MLSBD-র ঠান্ডা-পথ (সার্চ+sav+watch/gd) ১০সে ছাড়ায়; NXHARD ১২সের সমান, তবু উত্তর হারায় না (মাপা: battery-তে কোনো রিগ্রেশন নয়) */, p).then(
 cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'movie', s: 0, e: 0 }).then(u => sendStreams(res, req.url, p, Date.now() - t0, u, RVA, cfg)); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }
@@ -18137,7 +18273,9 @@ cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'movie', s: 0, e: 0 }
       const mlbP = mlbdOn(cfg) ? mlbdTask(tp, infoP, 'series', Number(m[2] || 1), Number(m[3] || 1), (cfg && cfg.mlbr) || 0) : null;
       const mlsP = mlsOn(cfg) ? mlsTask(tp, infoP, 'series', Number(m[2] || 1), Number(m[3] || 1)) : null;
       const dtP = dtOn(cfg) ? dtTask(tp, infoP, 'series', Number(m[2] || 1), Number(m[3] || 1), originOf(req)) : null;   // v1.30.0
-      return withDeadline(withSources(vOn ? getSources(Number(m[1]), 'tv', Number(m[2] || 1), Number(m[3] || 1), '', cfg, tp) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: hmP, key: 'hm' }, { p: hdP, key: 'hd' }, { p: mlbP, key: 'mlb' }, { p: mlsP, key: 'mls' }, { p: dtP, key: 'dt' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0, p, lookP), (cfg && cfg.__slow) ? Number(process.env.SDLSLOW || 26000) : (cfg && cfg.__bg) ? Number(process.env.SDLBG || 11500) : SDL_MS, undefined, (cfg && (cfg.__bg || cfg.__slow)) ? 0 : Number(process.env.SDLGRACE || 800) /* v1.33.2: এজ-কাটের (১২সে) নিচে (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
+        /* ★ v1.34.415-এর nexa (Play4u) স্লট — রিমোট-অ্যাডঅন কল */
+        const nexP = nexPFor('series', m[1], Number(m[2] || 1), Number(m[3] || 1), req, cfg, tp);
+      return withDeadline(withSources(vOn ? getSources(Number(m[1]), 'tv', Number(m[2] || 1), Number(m[3] || 1), '', cfg, tp) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: hmP, key: 'hm' }, { p: hdP, key: 'hd' }, { p: mlbP, key: 'mlb' }, { p: mlsP, key: 'mls' }, { p: dtP, key: 'dt' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' }, { p: nexP, key: 'nex' },], cfg, t0, p, lookP), (cfg && cfg.__slow) ? Number(process.env.SDLSLOW || 26000) : (cfg && cfg.__bg) ? Number(process.env.SDLBG || 11500) : SDL_MS, undefined, (cfg && (cfg.__bg || cfg.__slow)) ? 0 : Number(process.env.SDLGRACE || 800) /* v1.33.2: এজ-কাটের (১২সে) নিচে (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
 cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'series', s: Number(m[2] || 1), e: Number(m[3] || 1) }).then(u => sendStreams(res, req.url, p, Date.now() - t0, u, RVA, cfg)); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }
@@ -18164,7 +18302,9 @@ cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'series', s: Number(m
       const mlbP = mlbdOn(cfg) ? mlbdTask(nmP, infoP, 'movie', 0, 0, (cfg && cfg.mlbr) || 0) : null;
       const mlsP = mlsOn(cfg) ? mlsTask(nmP, infoP, 'movie', 0, 0) : null;
       const dtP = dtOn(cfg) ? dtTask(nmP, infoP, 'movie', 0, 0, originOf(req)) : null;   // v1.30.0
-      return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'movie', null, null, info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: hmP, key: 'hm' }, { p: hdP, key: 'hd' }, { p: mlbP, key: 'mlb' }, { p: mlsP, key: 'mls' }, { p: dtP, key: 'dt' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0, p, lookP), (cfg && cfg.__slow) ? Number(process.env.SDLSLOW || 26000) : (cfg && cfg.__bg) ? Number(process.env.SDLBG || 11500) : SDL_MS, undefined, (cfg && (cfg.__bg || cfg.__slow)) ? 0 : Number(process.env.SDLGRACE || 800) /* v1.33.2: এজ-কাটের (১২সে) নিচে (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
+        /* ★ v1.34.415-এর nexa (Play4u) স্লট — রিমোট-অ্যাডঅন কল */
+        const nexP = nexPFor('movie', m[1], 0, 0, req, cfg, nmP);
+      return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'movie', null, null, info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: hmP, key: 'hm' }, { p: hdP, key: 'hd' }, { p: mlbP, key: 'mlb' }, { p: mlsP, key: 'mls' }, { p: dtP, key: 'dt' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' }, { p: nexP, key: 'nex' },], cfg, t0, p, lookP), (cfg && cfg.__slow) ? Number(process.env.SDLSLOW || 26000) : (cfg && cfg.__bg) ? Number(process.env.SDLBG || 11500) : SDL_MS, undefined, (cfg && (cfg.__bg || cfg.__slow)) ? 0 : Number(process.env.SDLGRACE || 800) /* v1.33.2: এজ-কাটের (১২সে) নিচে (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
 cards => { if (DBG) console.error('[rt] RID=' + t0 + ' cards-ready @' + (Date.now() - t0) + 'ms n=' + (cards || []).length); Promise.all([raceObjP(infoP, 1500), raceObjP(nmP, 1500)]).then(([info, nm]) => { if (DBG) console.error('[rt] info/nm ready @' + (Date.now() - t0) + 'ms'); return unifyCards(cards, { tmdbId: info && info.id, title: (info && info.name) || nm, type: 'movie', s: 0, e: 0, year: info && info.year }); }).then(u => { if (DBG) console.error('[rt] sending @' + (Date.now() - t0) + 'ms'); sendStreams(res, req.url, p, Date.now() - t0, u, RVA, cfg); }); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }
@@ -18193,7 +18333,9 @@ cards => { if (DBG) console.error('[rt] RID=' + t0 + ' cards-ready @' + (Date.no
       const mlbP = mlbdOn(cfg) ? mlbdTask(nmP, infoP, 'series', Number(m[2]), Number(m[3]), (cfg && cfg.mlbr) || 0) : null;
       const mlsP = mlsOn(cfg) ? mlsTask(nmP, infoP, 'series', Number(m[2]), Number(m[3])) : null;
       const dtP = dtOn(cfg) ? dtTask(nmP, infoP, 'series', Number(m[2]), Number(m[3]), originOf(req)) : null;   // v1.30.0
-      return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'tv', Number(m[2]), Number(m[3]), info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: hmP, key: 'hm' }, { p: hdP, key: 'hd' }, { p: mlbP, key: 'mlb' }, { p: mlsP, key: 'mls' }, { p: dtP, key: 'dt' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0, p, lookP), (cfg && cfg.__slow) ? Number(process.env.SDLSLOW || 26000) : (cfg && cfg.__bg) ? Number(process.env.SDLBG || 11500) : SDL_MS, undefined, (cfg && (cfg.__bg || cfg.__slow)) ? 0 : Number(process.env.SDLGRACE || 800) /* v1.33.2: এজ-কাটের (১২সে) নিচে (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
+        /* ★ v1.34.415-এর nexa (Play4u) স্লট — রিমোট-অ্যাডঅন কল */
+        const nexP = nexPFor('series', m[1], Number(m[2]), Number(m[3]), req, cfg, nmP);
+      return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'tv', Number(m[2]), Number(m[3]), info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: hmP, key: 'hm' }, { p: hdP, key: 'hd' }, { p: mlbP, key: 'mlb' }, { p: mlsP, key: 'mls' }, { p: dtP, key: 'dt' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' }, { p: nexP, key: 'nex' },], cfg, t0, p, lookP), (cfg && cfg.__slow) ? Number(process.env.SDLSLOW || 26000) : (cfg && cfg.__bg) ? Number(process.env.SDLBG || 11500) : SDL_MS, undefined, (cfg && (cfg.__bg || cfg.__slow)) ? 0 : Number(process.env.SDLGRACE || 800) /* v1.33.2: এজ-কাটের (১২সে) নিচে (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
 cards => { Promise.all([raceObjP(infoP, 1500), raceObjP(nmP, 1500)]).then(([info, nm]) => unifyCards(cards, { tmdbId: info && info.id, title: (info && info.name) || nm, type: 'series', s: Number(m[2]), e: Number(m[3]), year: info && info.year })).then(u => sendStreams(res, req.url, p, Date.now() - t0, u, RVA, cfg)); },
         e => { logReq(p, Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }
@@ -18222,7 +18364,9 @@ cards => { Promise.all([raceObjP(infoP, 1500), raceObjP(nmP, 1500)]).then(([info
       const mlbP = mlbdOn(cfg) ? mlbdTask(nmP, infoP, 'series', 1, 1, (cfg && cfg.mlbr) || 0) : null;
       const mlsP = mlsOn(cfg) ? mlsTask(nmP, infoP, 'series', 1, 1) : null;
       const dtP = dtOn(cfg) ? dtTask(nmP, infoP, 'series', 1, 1, originOf(req)) : null;   // v1.30.0
-      return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'tv', 1, 1, info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: hmP, key: 'hm' }, { p: hdP, key: 'hd' }, { p: mlbP, key: 'mlb' }, { p: mlsP, key: 'mls' }, { p: dtP, key: 'dt' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' },], cfg, t0, p, lookP), (cfg && cfg.__slow) ? Number(process.env.SDLSLOW || 26000) : (cfg && cfg.__bg) ? Number(process.env.SDLBG || 11500) : SDL_MS, undefined, (cfg && (cfg.__bg || cfg.__slow)) ? 0 : Number(process.env.SDLGRACE || 800) /* v1.34.151: bg-পূর্ণ-হারভেস্ট */ /* v1.15.26 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
+        /* ★ v1.34.415-এর nexa (Play4u) স্লট — রিমোট-অ্যাডঅন কল */
+        const nexP = nexPFor('series', m[1], 1, 1, req, cfg, nmP);
+      return withDeadline(withSources(vOn ? (infoP ? infoP.then(info => (info && info.id > 0) ? getSources(info.id, 'tv', 1, 1, info.name, cfg) : Promise.resolve([])) : Promise.resolve([])) : Promise.resolve([]), [{ p: nxP, key: 'nx' }, { p: twP, key: 'tw' }, { p: rtP, key: 'rt' }, { p: mmP, key: 'mm' }, { p: m4uP, key: 'm4u' }, { p: skyP, key: 'sky' }, { p: hmP, key: 'hm' }, { p: hdP, key: 'hd' }, { p: mlbP, key: 'mlb' }, { p: mlsP, key: 'mls' }, { p: dtP, key: 'dt' }, { p: vspP, key: 'vsp' }, { p: ottP, key: 'ott' }, { p: azP, key: 'az' }, { p: nexP, key: 'nex' },], cfg, t0, p, lookP), (cfg && cfg.__slow) ? Number(process.env.SDLSLOW || 26000) : (cfg && cfg.__bg) ? Number(process.env.SDLBG || 11500) : SDL_MS, undefined, (cfg && (cfg.__bg || cfg.__slow)) ? 0 : Number(process.env.SDLGRACE || 800) /* v1.34.151: bg-পূর্ণ-হারভেস্ট */ /* v1.15.26 (ইউজার: কার্ড-দেখানোর-টাইমআউট ১২সে): NXHARD(১২সে)-সমান-কার্যত-১২সে; এজ-কাট(~১২সে)-এর-১০০ms-নিচে — উত্তর-হারানো-রক্ষা */, p).then(
 cards => { Promise.all([raceObjP(infoP, 1500), raceObjP(nmP, 1500)]).then(([info, nm]) => unifyCards(cards, { tmdbId: info && info.id, title: (info && info.name) || nm, type: 'series', s: 1, e: 1, year: info && info.year })).then(u => sendStreams(res, req.url, p + ' [no-s:e]', Date.now() - t0, u, RVA, cfg)); },
         e => { logReq(p + ' [no-s:e]', Date.now() - t0, 0, e && e.message, RVA); sendJson(res, 200, { streams: [] }); });
     }
