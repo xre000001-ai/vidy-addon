@@ -82,7 +82,7 @@ test('a G-Direct-only VCloud cache is refreshed rather than suppressing newly av
 });
 
 test('only the declared G-Direct functions changed after the previously reviewed stable local source',()=>{
- const crypto=require('node:crypto'),edits=require('./fixtures/authorized-edits.json');let prior=source();const undo=edits.filter(e=>e.file==='server.js'&&e.reason.startsWith('User G-Direct removal:')).reverse();assert(undo.length>0);
+ const crypto=require('node:crypto'),edits=require('./fixtures/authorized-edits.json');let prior=require('./rereview-preservation.cjs').beforeRereview('server.js').toString('utf8');const undo=edits.filter(e=>e.file==='server.js'&&e.reason.startsWith('User G-Direct removal:')).reverse();assert(undo.length>0);
  for(const e of undo){assert.equal(prior.split(e.new).length-1,e.count,e.reason);prior=prior.split(e.new).join(e.old);}
  assert.equal(crypto.createHash('sha256').update(prior).digest('hex'),'588192cb70d7bbbbec74611315f50bcb676e09b75e59bc8f22c13d32fbd79639');
  for(const name of ['bfServeGeneric','bfGuStart','bfGuServe','bfGuAdopt','bfGuAdoptStream','bfGuSlotWait','bfGuSlotFree','bfGuReserved','bfUpSize','bfSniffCt','gdWarmQueue','gdWarmDrain','m4uPostCards','m4uHFast'])assert.equal(namedFunction(source(),name),namedFunction(prior,name),name+' must retain its previously reviewed behavior');

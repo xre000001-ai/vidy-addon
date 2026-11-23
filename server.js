@@ -10290,12 +10290,21 @@ const hdLabH = (s) => { // "720p 10Bit HEVC" → 720
 // Explicit episode information must not contradict the requested episode; unknown
 // labels remain discoverable because many mirrors use opaque IDs.
 function hdEpisodeConsistent(name, season, episode) {
-  let text = String(name || ''); try { text = decodeURIComponent(text); } catch (_) {}
-  const matches = [...text.matchAll(/\bS0*(\d{1,2})[. _-]*E0*(\d{1,3})(?!\d)/gi)];
-  if (!matches.length) return true;
-  // Multi-episode ranges are not a verified single-episode video.
+  let text = String(name || '');
+  // Called with signed URLs as well as names: host/storage prefixes/query
+  // signatures are not episode evidence. Inspect the selected file component.
+  try { if (/^https?:\/\//i.test(text)) text = new URL(text).pathname.split('/').pop() || ''; } catch (_) {}
+  try { text = decodeURIComponent(text); } catch (_) {}
+  text = text.replace(/_/g, ' ');
+  const seasons = [...text.matchAll(/\b(?:season|s)[. _:-]*0*(\d{1,2})(?![a-z0-9])(?:\s*[-–]\s*0*(\d{1,2})(?![a-z0-9]))?/gi)];
+  if (seasons.some(m => Number(season) < Number(m[1]) || Number(season) > Number(m[2] || m[1]))) return false;
+  // Neither standalone Episode 2-3 nor S01E02-E03 proves a single episode.
+  if (/\b(?:episodes?|ep|e)[. _:-]*0*\d{1,3}[. _]*[-–][. _]*(?:e[. _]*)?0*\d{1,3}\b/i.test(text)) return false;
   if (/\bS0*\d{1,2}[. _-]*E0*\d{1,3}[. _]*[-–][. _]*E?0*\d{1,3}\b/i.test(text)) return false;
-  return matches.every(m => Number(m[1]) === Number(season) && Number(m[2]) === Number(episode));
+  const matches = [...text.matchAll(/\bS0*(\d{1,2})[. _-]*E0*(\d{1,3})(?!\d)/gi)];
+  if (matches.length && !matches.every(m => Number(m[1]) === Number(season) && Number(m[2]) === Number(episode))) return false;
+  const episodes = [...text.matchAll(/\b(?:episodes?|ep|e)[. _:-]*0*(\d{1,3})(?![a-z0-9])/gi)];
+  return episodes.every(m => Number(m[1]) === Number(episode));
 }
 // Round-robin quality and host type so a large group of FSL/worker links
 // cannot crowd Pixeldrain (or a lower-quality rung) out of the response.
@@ -11556,18 +11565,24 @@ async function m4uHIndexPick(T, Y, season) {
   return m4uHPickAll(posts, T, Y, season).slice(0, 3);
 }
 function m4uHToks(s) { return String(s || '').toLowerCase().replace(/[’']/g, '').replace(/[^a-z0-9]+/g, ' ').trim().split(' ').filter(Boolean); }
-function m4uFileOk(name, isSeries, season, episode) {
+function m4uFileOk(name, isSeries, season, episode, quality) {
   let text = String(name || ''); try { text = decodeURIComponent(text); } catch (_) {}
+  // Underscores are filename separators, not evidence-hiding word characters.
+  text = text.replace(/_/g, ' ');
   if (/\.(?:zip|rar)\b/i.test(text)) return false;
+  // Applied only where a selected file quality is known; opaque names remain
+  // allowed for the existing response/container proof, never relabelled here.
+  const actual = (text.match(/\b(2160|1440|1080|720|576|480|360)\s*p\b/i) || [])[1] || (/\b4k\b/i.test(text) ? '2160' : '');
+  if (Number(quality) > 0 && actual && Number(actual) !== Number(quality)) return false;
   if (!isSeries) return true;
-  const seasons = [...text.matchAll(/\b(?:season|s)[. _:-]*0*(\d{1,2})(?!\d)(?:\s*[-–]\s*0*(\d{1,2})(?!\d))?/gi)];
+  const seasons = [...text.matchAll(/\b(?:season|s)[. _:-]*0*(\d{1,2})(?![a-z0-9])(?:\s*[-–]\s*0*(\d{1,2})(?![a-z0-9]))?/gi)];
   if (seasons.some(m => Number(season || 1) < Number(m[1]) || Number(season || 1) > Number(m[2] || m[1]))) return false;
   if (/\b(?:episodes?|ep|e)[. _:-]*0*\d{1,3}[. _]*[-–][. _]*(?:e[. _]*)?0*\d{1,3}\b/i.test(text)) return false;
   if (/\bS0*\d{1,2}[. _-]*E0*\d{1,3}[. _]*[-–][. _]*E?0*\d{1,3}\b/i.test(text)) return false;
   const full = [...text.matchAll(/\bS0*(\d{1,2})[. _-]*E0*(\d{1,3})(?!\d)/gi)];
-  if (full.length) return full.every(m => Number(m[1]) === Number(season || 1) && Number(m[2]) === Number(episode || 1));
-  const ep = /\b(?:episodes?|ep|e)[. _:-]*0*(\d{1,3})(?!\d)/i.exec(text);
-  return !ep || Number(ep[1]) === Number(episode || 1);
+  if (full.length && !full.every(m => Number(m[1]) === Number(season || 1) && Number(m[2]) === Number(episode || 1))) return false;
+  const episodes = [...text.matchAll(/\b(?:episodes?|ep|e)[. _:-]*0*(\d{1,3})(?![a-z0-9])/gi)];
+  return episodes.every(m => Number(m[1]) === Number(episode || 1));
 }
 function m4uHPickAll(posts, T, Y, season) {
   const tn = m4uHToks(T), scored = [];
@@ -11756,9 +11771,9 @@ function m4uTdBlocked(target, srv) {
     || m4uTdLinkKind(target) === 'G-Direct'
     || /#vcG-Direct$/i.test(String(target || ''));
 }
-async function m4uAwaitMedia(url, deadline, isSeries, season, episode) {
-  if (Date.now() >= deadline || !m4uIsMediaUrl(url) || !m4uFileOk(_fnOf(url), isSeries, season, episode)) return false;
-  const ok = await ddlWait(m4uProof(url, true, { isSeries, season, episode }).catch(() => false), deadline, false);
+async function m4uAwaitMedia(url, deadline, isSeries, season, episode, quality) {
+  if (Date.now() >= deadline || !m4uIsMediaUrl(url) || !m4uFileOk(_fnOf(url), isSeries, season, episode, quality)) return false;
+  const ok = await ddlWait(m4uProof(url, true, { isSeries, season, episode, quality }).catch(() => false), deadline, false);
   return !!ok && Date.now() < deadline;
 }
 function m4uTdGroups(entry, links, isSeries, season, episode, maxh) {
@@ -12151,7 +12166,7 @@ async function m4uProof(u, strict, context) {
     const disposition = String(r.headers.get('content-disposition') || '');
     const statusOk = r.status === 200 || r.status === 206;
     const typeOk = !/text\/|html|xml|json|zip|rar/i.test(ct) && !/\.(?:zip|rar)(?:["';\s]|$)/i.test(disposition)
-      && (!context || m4uFileOk(disposition, context.isSeries, context.season, context.episode));
+      && (!context || m4uFileOk(disposition, context.isSeries, context.season, context.episode, context.quality));
     let magicOk = !strict;
     if (strict && statusOk && typeOk && r.body && r.body.getReader) {
       const rd = r.body.getReader();
@@ -12699,7 +12714,7 @@ async function m4uMhStreams(tmdbId, title, type, s, e, origin, maxh, opts) {
             const _sz0 = (_inf && _inf.size) || hintSize;
             if ((_qq0 || _sz0) && !(maxh && _qq0 > maxh) && m4uFileOk(_inf && _inf.name, isS, s, e)) {
               await Promise.all(_multi.map(async l => {
-                if (!await m4uAwaitMedia(l.url, deadline, isS, s, e)) return;
+                if (!await m4uAwaitMedia(l.url, deadline, isS, s, e, _qq0)) return;
                 const k = _qq0 + '|' + l.srv + '|' + l.url;
                 if (emitted.has(k)) { _mDone = true; return; }
                 emitted.add(k); _mDone = true;
@@ -12734,7 +12749,7 @@ async function m4uMhStreams(tmdbId, title, type, s, e, origin, maxh, opts) {
           const inf = await _mhRace(m4uGfInfo(row.gf).catch(() => null), 1200, null);
           if (!m4uFileOk(inf && inf.name, isS, s, e)) return;
           const final = await ddlWait(finalP, deadline, null);
-          if (!final || !await m4uAwaitMedia(final.url, deadline, isS, s, e)) return;
+          if (!final || !await m4uAwaitMedia(final.url, deadline, isS, s, e, Number(inf && inf.q) || hintQ)) return;
           M4U_TD_USED.set('gf:' + row.gf, { ts: Date.now(), final: final.url });
           const qq = Number(inf && inf.q) || hintQ;
           const sz = (inf && inf.size) || hintSize;
@@ -12864,7 +12879,7 @@ async function m4uTdStreams(tmdbId, title, type, s, e, origin, maxh, opts) {
         const inf = await m4uGfInfo(gf.href).catch(() => null);
         if (!m4uFileOk(inf && inf.name, isS, s, e)) return;
         const final = await ddlWait(finalP, deadline, null);
-        if (!final || !await m4uAwaitMedia(final.url, deadline, isS, s, e)) return;
+        if (!final || !await m4uAwaitMedia(final.url, deadline, isS, s, e, Number(inf && inf.q) || 0)) return;
         M4U_TD_USED.set('gf:' + gf.href, { ts: Date.now(), final: final.url });
         const qq = Number(inf && inf.q) || 0;
         const sz = (inf && inf.size) || '';
@@ -12918,7 +12933,7 @@ async function m4uTdStreams(tmdbId, title, type, s, e, origin, maxh, opts) {
               continue;
             }
             const rr = await m4uTdResolve(l, i === 0).catch(() => null);
-            if (rr && rr.url && (rr.lazy ? hubLazyOk(rr.url) : await m4uAwaitMedia(rr.url, deadline, isS, s, e))) {
+            if (rr && rr.url && (rr.lazy ? hubLazyOk(rr.url) : await m4uAwaitMedia(rr.url, deadline, isS, s, e, x.q))) {
               r = rr; selected = l;
               if (!rr.lazy && m4uTdLinkKind(l.href)) M4U_TD_USED.set('td-source:' + l.href, { ts: Date.now(), final: rr.url });
               else if (!rr.lazy && l.srv === 'GDFlix') M4U_TD_USED.set('gf:' + l.href, { ts: Date.now(), final: rr.url });
@@ -12930,7 +12945,7 @@ async function m4uTdStreams(tmdbId, title, type, s, e, origin, maxh, opts) {
         if (multi) {
           const audioM = dtAudio(String(hit.slug).replace(/-/g, ' ') + ' ' + String(x.title || '') + ' ' + String(hit.title || '') + ' ' + multi.map(v => _fnOf(v.url)).join(' ')) || '';   // v1.34.52 + v1.34.131
           await Promise.all(multi.map(async v => {
-            if (!await m4uAwaitMedia(v.url, deadline, isS, s, e)) return;
+            if (!await m4uAwaitMedia(v.url, deadline, isS, s, e, x.q)) return;
             const sizeM = x.size || (v.cl ? mlsMB(v.cl) : '');
             const txtM = '\u29c9 ' + T + (Y ? ' | ' + Y + ' |' : ' |') + '\n'
               + (isS ? ('\u29e0 S' + (s || 1) + 'E' + (e || 1)) : '\u29e0 Movie') + '\n'

@@ -9,7 +9,7 @@ node --test tools/stream-tests/test-first-tap-scheduler.cjs tools/stream-tests/t
 for f in tools/hdhub/test-*.cjs; do node "$f" || exit 1; done
 ```
 
-The combined suite has **278 tests**: 74 source-review, 27 shared-card and 177 CineJoy tests. The dedicated historical HM/scheduler command has 29. These are deterministic code/harness checks, not provider uptime or native-player certification.
+The released 1.34.416 combined suite had **278 tests**: 74 source-review, 27 shared-card and 177 CineJoy tests. The dedicated historical HM/scheduler command has 29. These are deterministic code/harness checks, not provider uptime or native-player certification.
 
 `extract.cjs` extracts named production functions rather than copying their implementation into tests. `helpers.cjs` supplies isolated contexts and a virtual clock; unexpected fetches throw. Cases cover response metadata/container bytes, contradictory filenames, deadline/pending semantics, stalled-sibling independence, source switches, transport identity and full names through the actual formatter/sender.
 
@@ -37,3 +37,9 @@ The post-exclusion isolated live cohort returned **23/23 HTTP 200 nonempty listi
 Sequential real decoder sampling of eight actual returned cards passed **14/16** start/90-second checks: M4U Pixeldrain **8/8**, HD **6/8**. The selected HD Batman HEVC worker returned 403 and zero decoded frames at both offsets; these failures are retained, not replaced with retries. Other returned mirrors are not silently substituted or removed. This is not native-app, full-length, all-track, all-mirror or sustained-load certification. The old G-Direct failure is historical evidence for its requested exclusion, not an outstanding promise to repair its shared relay.
 
 The expanded 98-entrypoint sweep remains **95/98**. Three failures also reproduce on untouched c593 and are unmodified: `tools/mlbd-index/test_direct.cjs`, `tools/mlbd-index/test_preserve_base.cjs`, and `tools/mls-index-lab/test-proxy-trainer.cjs`. The originally scoped 46 legacy entrypoints and all eight HD entrypoints pass. No unrelated MLBD/proxy runtime fix, test exemption or baseline hash reset was applied.
+
+## Unreleased repeated-review candidate
+
+These unreleased changes are based on commit `31028c6`; it is **not deployed** and does not bump the released version. It adds adversarial filename-separator/standalone-episode/quality checks and narrowly hardens those gates. No GU/relay/proxy/container/audio/subtitle/timeout behavior is rewritten. `rereview-preservation.cjs` reverses each declared local change before checking the exact329-file deployed baseline, then the unchanged original122 inverses and older preservation chains still run. The workflow now triggers for these suites and runs their job independently of the three known legacy failures. Review evidence/report: `/home/user/vidy-triple-review/`.
+
+Commit preparation additionally checks the configure page offline: its existing server grid contains **19** servers. Four obsolete 18-server expectations in `config.test.js` were corrected to that fixed existing contract, without changing `config.html` or server configuration. The scoped CI job runs this DOM check as well; config-page/test changes trigger it. The repeated-review combined suite has **333 tests** (55 new), and the separate DOM harness has **84 assertions**. New live-provider/playback/seek probes are deferred at the user’s request; that does not reclassify earlier observed failures as passes. Dependency manifests and the lockfile remain unchanged; the known transitive body-parser audit advisory is a separate dependency-review item.

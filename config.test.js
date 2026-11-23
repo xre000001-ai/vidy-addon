@@ -71,7 +71,7 @@ setTimeout(()=>{try{
   /* Servers: গ্রুপ-কার্ডে-লুকানো */
   c=d.getElementById('srvCard')&&d.getElementById('srvGrid')&&d.getElementById('srvCard').classList.contains('open')===false;A('Servers-গ্রিড-ডিফল্টে-লুকানো (open-শ্রেণি-নেই)',c);
   d.getElementById('srvTgl').click();
-  c=d.getElementById('srvCard').classList.contains('open')&&d.getElementById('srvCard').querySelector('.finner .srvgrid').children.length===18;A('Show-বাটনে-সার্ভার-দৃশ্যমান (১৮-টাইল)',c);
+  c=d.getElementById('srvCard').classList.contains('open')&&d.getElementById('srvCard').querySelector('.finner .srvgrid').children.length===19;A('Show-বাটনে-সার্ভার-দৃশ্যমান (১৯-টাইল)',c);
   /* v1.15.81: "None" আর st.srv=[] নয় (সার্ভার-চুক্তিতে খালি=সব-১৬) — এখন সত্যিই ফ্লিট-বন্ধ */
   d.getElementById('srvNone').click();c=C.st.v===0&&d.getElementById('card-v').classList.contains('off');A('srvNone → Vidy-ফ্লিট-বন্ধ (v=0)',c);
   d.getElementById('sw-v').click();c=C.st.v===1;A('পুনঃ-চালু → v=1',c);
@@ -90,12 +90,12 @@ setTimeout(()=>{try{
   _sv.forEach(function(k){var sw=d.getElementById('sw-'+k);if(sw&&C.st[k]===0)sw.click();});
   c=['v','nx','rt','tw','mm','m4u','sky','hm','hd','vsp','ott','az','mlb','mls','dt','nex','cj'].every(function(k){return C.st[k]===1;});A('সব-উৎস-আবার-চালু',c);
   d.getElementById('srvPri').click();c=C.st.srv.length===3;A('srvPri → ৩',c);
-  d.getElementById('srvAll').click();c=C.st.srv.length===18;A('srvAll → ১৮',c);
+  d.getElementById('srvAll').click();c=C.st.srv.length===19;A('srvAll → ১৯',c);
   /* v1.15.81: বুটে-সার্ভার-টাইল-রিড্র (আগে প্রথম-লোডে কোনো-টাইলেই .on থাকত-না) */
-  c=d.querySelectorAll('#srvGrid .srv.on').length===18;A('বুটে ১৮-সার্ভার-টাইল .on',c);
+  c=d.querySelectorAll('#srvGrid .srv.on').length===19;A('বুটে ১৯-সার্ভার-টাইল .on',c);
   c=d.querySelectorAll('#rtGrid .srv.on').length===2;A('বুটে RT-দুই-টাইল .on',c);
   c=d.getElementById('rtSum2').textContent.indexOf('2 of 2')===0;A('rtSum2 "2 of 2 servers on — MQ + Pixeldrain": '+d.getElementById('rtSum2').textContent,c);
-  c=d.getElementById('bdSrv').textContent==='18/18';A('bdSrv 18/18: '+d.getElementById('bdSrv').textContent,c);
+  c=d.getElementById('bdSrv').textContent==='19/19';A('bdSrv 19/19: '+d.getElementById('bdSrv').textContent,c);
   /* v1.15.81: flab-লেবেলে আক্ষরিক <em> নেই */
   c=d.querySelector('#tune-v .flab').innerHTML.indexOf('<em>')>0&&d.querySelector('#tune-v .flab').textContent.indexOf('<em>')<0;
   A('flab-<em>-সঠিক-রেন্ডার (আক্ষরিক-ট্যাগ-নেই): '+d.querySelector('#tune-v .flab').textContent,c);
