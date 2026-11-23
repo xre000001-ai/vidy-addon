@@ -46,6 +46,12 @@ function cookieSet(host, setCookie) {
 }
 const POOL = new Map();     // "ip:port" → { ok, att, ms, ts, cap:{site,hs,gd,bb,pl} }
 const DIR = { ok: 0, fail: 0 };
+/* ★ v1.34.428: **হোস্ট-প্রতি ট্রান্সপোর্ট-মেমোরি** — কোন হোস্টে ডিরেক্ট কাজ করে, কোনটায় প্রক্সি
+   লাগে। মাপা: hshare/gdshine-এ ডিরেক্ট-ই দ্রুত (প্রক্সি ৪০০ দিয়ে সময় নষ্ট করত); mvlink-এ
+   ডিরেক্ট ব্লকড (প্রোডে files=0)। এখন সফল-পথটাই আগে যায় ⇒ প্রতি-হোস্ট ২–৩সে সাশ্রয়। */
+const HPREF = new Map();   // host → { d: n, px: n }
+function hpOf(host) { let h = HPREF.get(host); if (!h) { h = { d: 0, px: 0 }; HPREF.set(host, h); } return h; }
+function hpBest(host) { const h = HPREF.get(host); if (!h) return 'both'; return (h.d >= 2) ? 'd' : ((h.px >= 2 && h.d === 0) ? 'px' : 'both'); }
 const CAPS = ['site', 'hs', 'gd', 'bb', 'pl'];
 
 function poolLoad() {
@@ -80,7 +86,9 @@ function poolPick(n, cap) {
     if (!(v.ok > 0)) continue;
     if (Date.now() - (v.ts || 0) > AGE) continue;
     const c = v.cap || {};
-    const sc = (c[cap] ? 100 : 0) + (cap === 'site' && c.site ? 10 : 0);
+    const bad = (v.bad || {})[cap] || 0;
+    if (bad >= 2) continue;   /* একই ক্যাপে ২ বার ব্যর্থ ⇒ বাদ */
+    const sc = (c[cap] ? 100 : 0) - bad * 30 + (cap === 'site' && c.site ? 10 : 0);
     arr.push([k, v, sc]);
   }
   arr.sort((a, b) => (b[2] - a[2]) || (((b[1].ok || 0) / Math.max(1, b[1].att || 1)) - ((a[1].ok || 0) / Math.max(1, a[1].att || 1))) || ((a[1].ms || 9e9) - (b[1].ms || 9e9)));
@@ -89,6 +97,7 @@ function poolPick(n, cap) {
 function poolNote(node, ok, ms, cap) {
   const v = POOL.get(node);
   if (!v) return;
+  if (!ok && cap) { v.bad = v.bad || {}; v.bad[cap] = (v.bad[cap] || 0) + 1; }
   v.att = (v.att || 0) + 1;
   if (ok) { v.ok++; v.ms = ms ? Math.round(ms) : v.ms; if (cap) { v.cap = v.cap || {}; v.cap[cap] = 1; v.ts = Date.now(); } }
 }
@@ -220,21 +229,25 @@ function get(url, ms, ref, post) {
     const t0 = Date.now();
     const fin = r => { if (!done) { done = true; resolve(r || { st: 0, t: '', via: '', ms: Date.now() - t0 }); } };
     const cap = capOf(url);
-    const nodes = poolPick(Number(process.env.HMPXN || 1), cap);
+    const host = (() => { try { return new URL(url).hostname; } catch (e) { return ''; } })();
+    const pref = hpBest(host);
+    const nodes = (pref === 'd') ? [] : poolPick(Number(process.env.HMPXN || 1), cap);
     let pendingProxy = nodes.length;
     let directStarted = false;
     const startDirect = () => {
       if (directStarted) return; directStarted = true;
-      once(url, ms, ref, null, 0, post).then(r => { if (r) { DIR.ok++; fin(r); } else { DIR.fail++; } }, () => { DIR.fail++; });
+      once(url, ms, ref, null, 0, post).then(r => {
+        if (r) { DIR.ok++; hpOf(host).d++; fin(r); } else { DIR.fail++; }
+      }, () => { DIR.fail++; });
     };
     for (const p of nodes) {
       once(url, Math.max(2400, ms), ref, p, 0, post).then(r => {
-        if (r && r.st > 0) { poolNote(p, true, r.ms, cap); fin(r); }
+        if (r && r.st > 0) { hpOf(host).px++; poolNote(p, true, r.ms, cap); fin(r); }
         else { poolNote(p, false, 0, cap); }
       }, () => { poolNote(p, false, 0, cap); });
     }
     /* ডিরেক্ট-IP ব্যাকআপ: নোড না থাকলে সাথে সাথে, থাকলে HMDIRBACK পরে (সমান্তরাল) */
-    setTimeout(startDirect, nodes.length ? Number(process.env.HMDIRBACK || 450) : 0);
+    setTimeout(startDirect, nodes.length ? Number(process.env.HMDIRBACK || (pref === 'px' ? 900 : 300)) : 0);
     setTimeout(() => fin(null), Math.max(2600, ms) + 800);
   });
 }
@@ -283,20 +296,27 @@ async function search(title, ms) {
 /* ── পোস্ট-পেজ → ফাইল-নাম (hshare) ─────────────────────────────────── */
 const FILE_OK = /\.(mkv|mp4|avi|webm)$/i;
 function parseFiles(html) {
-  const names = new Set();
-  // hshare লিংকের id= প্যারামিটারেই ফাইলনাম থাকে
-  for (const m of (html || '').matchAll(/hshare\.lol\/?\?id=([^"'&<>]+)/gi)) {
-    let n = m[1];
-    try { n = decodeURIComponent(n); } catch (e) { }
-    n = n.replace(/[#?].*$/, '');
-    if (FILE_OK.test(n)) names.add(n);
+  /* ★ v1.34.428: hshare-এর `?id=` **ফাইলনাম নয়** — md5-টোকেন (মাপা: ফাইলনাম দিলে `302 /404`)।
+     তাই `{ name, id }` দুটোই রাখি; id থাকলে সেটাই ব্যবহার করি, নাহলে ফাইলনাম দিয়ে চেষ্টা। */
+  const byId = new Map();
+  for (const m of (html || '').matchAll(/hshare\.lol\/?\?id=([^"'&<>\s]+)/gi)) {
+    let id = m[1];
+    try { id = decodeURIComponent(id); } catch (e) { }
+    if (!id) continue;
+    const looksName = FILE_OK.test(id) && /\s|\(|\)/i.test(id) === false && id.length > 24 && /[A-Z]/i.test(id) && /\d{3,4}p/i.test(id);
+    if (looksName) byId.set(id, { name: id.replace(/[#?].*$/, ''), id: '' });
+    else byId.set(id, { name: '', id });
   }
-  // সরাসরি ফাইলনাম-প্যাটার্নও
+  /* পোস্ট-পেজে থাকা ফাইলনাম-প্যাটার্ন (id না পেলে ফলব্যাক) */
+  const names = [];
   for (const m of (html || '').matchAll(/([A-Za-z0-9][A-Za-z0-9._()\-\[\] ]{6,120}\.(?:mkv|mp4))/gi)) {
     const n = m[1].trim();
-    if (n.length > 8) names.add(n);
+    if (n.length > 8 && FILE_OK.test(n)) names.push(n);
   }
-  return [...names];
+  const out = [];
+  for (const v of byId.values()) out.push(v);
+  for (const n of names) if (!out.some(x => x.name === n)) out.push({ name: n, id: '' });
+  return out;
 }
 function embedsOf(html) {
   const out = [];
@@ -307,18 +327,40 @@ function embedsOf(html) {
 async function post(url, ms) {
   const r = await get(url, ms || 4000);
   const html = r.t || '';
-  if (!html || html.length < 800) return { url, title: '', mv: [], files: [] };
   const title = (html.match(/<title[^>]*>([^<]{3,160})<\/title>/i) || [])[1] || '';
-  const mv = embedsOf(html);
-  let files = parseFiles(html);
-  // mvlink পোস্ট-পেজে ফাইলনাম/এম্বেড থাকতে পারে — সমান্তরালে দেখি
-  if (!files.length && mv.length) {
-    const rs = await Promise.all(mv.slice(0, 3).map(u => get(u, Math.min(3500, ms || 4000), url)));
-    for (const rr of rs) files = files.concat(parseFiles(rr.t || ''));
+  /* ★ v1.34.428: পোস্ট-পেজের লিংকগুলো `links.joshapp.blog/<id>` / `mvlink.blog/<id>` — ওগুলো
+     খুললে ফাইল-নাম পাওয়া যায়, আর joshapp-এর wp-json-এ আসল গন্তব্য `boldb.site/?id=<file>`। */
+  const mv = [];
+  for (const m of (html || '').matchAll(/https?:\/\/(?:mvlink\.blog|links\.joshapp\.blog)\/[a-z0-9]+/gi)) mv.push(m[0]);
+  const uniqMv = [...new Set(mv)];
+  const boldb = new Set();
+  const names = new Set();
+  const addName = n => { const s = String(n || '').trim(); if (s.length > 8 && FILE_OK.test(s)) names.add(s); };
+  const addBold = u => { for (const m of String(u).matchAll(/boldb\.site\/\?id=([^"'&<>\s]+)/gi)) { let v = m[1]; try { v = decodeURIComponent(v); } catch (e) { } addName(v); boldb.add(v); } };
+
+  const parseAll = h => {
+    for (const f of parseFiles(h)) { if (f.name) addName(f.name); if (f.id) boldb.add(f.id); }
+    addBold(h);
+  };
+  parseAll(html);
+
+  if (!names.size && uniqMv.length) {
+    /* joshapp/mvlink পোস্ট: wp-json থেকে দ্রুত, না পেলে HTML */
+    const jobs = [];
+    for (const u of uniqMv.slice(0, 4)) {
+      const mwp = u.match(/joshapp\.blog\/(\d+)/);
+      if (mwp) jobs.push(get('https://links.joshapp.blog/wp-json/wp/v2/posts/' + mwp[1], Math.min(4000, ms || 4000), u));
+      jobs.push(get(u, Math.min(4000, ms || 4000), url));
+    }
+    const rs = await Promise.all(jobs);
+    for (const rr of rs) parseAll(rr.t || '');
   }
-  const uniq = [...new Set(files)];
-  if (TRACE) console.error('[hm.post] mv=' + mv.length + ' files=' + uniq.length + ' ' + url.slice(-40));
-  return { url, title, mv, files: uniq };
+
+  const files = [];
+  for (const n of names) files.push({ name: n, id: '' });
+  for (const b of boldb) if (!files.some(f => f.name === b)) files.push({ name: b, id: '' });
+  if (TRACE) console.error('[hm.post] mv=' + uniqMv.length + ' files=' + files.length + ' ' + url.slice(-40));
+  return { url, title, mv: uniqMv, files };
 }
 
 /* ── ফাইলনাম → {Fast, Hub} চূড়ান্ত লিংক ───────────────────────────── */
@@ -342,66 +384,84 @@ function audioOf(name) {
   return (dual ? 'Multi ' : '') + langs.join('-');
 }
 
-async function finalUrls(name, ms, kind) {
-  const out = [];
-  const B = Number(ms || 6000);
-  const t0 = Date.now();
-  const left = () => Math.max(1200, B - (Date.now() - t0));
-  const hs = 'https://hshare.lol/?id=' + encodeURIComponent(name);
-  /* ১) ফাইল-পেজ (২ রিডাইরেক্ট + কুকি) → gdshine short + hcloud লিংক */
-  const r = await get(hs, Math.min(7000, left()), 'https://hshare.lol/');
-  const h = r.t || '';
-  if (!h) return out;
-  const shorts = [...new Set([...h.matchAll(/gdshine\.org\/(?:s|api\/share)\/([A-Za-z0-9_\-]{6,})/g)].map(m => m[1]))];
-  const hcs = [...new Set([...h.matchAll(/hcloud\.ink\/redirect\.php\?url=([^"'<>&\s]+)/g)].map(m => m[1]))];
-  if (TRACE) console.error('[hm.file] ' + name.slice(-30) + ' shorts=' + shorts.length + ' hc=' + hcs.length);
+function cleanUrl(u) {
+  const s = String(u || '').replace(/\\\//g, '/').replace(/&amp;/g, '&').trim();
+  const m = s.match(/^https?:\/\/[^"'<>\n]*(?:\.mkv|\.mp4|\.avi|\.webm)/i);
+  return (m ? m[0] : (/\.mkv|\.mp4/i.test(s) ? s : '')).replace(/ /g, '%20');
+}
+/* hcloud: redirect.php?url=<b64> → (ভেতরে আরেক b64) → workers.dev/0:/… */
+function hcloudDecode(first) {
+  const dec = s => { try { return Buffer.from(String(s).replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((String(s).length + 3) % 4), 'base64').toString('utf8'); } catch (e) { return ''; } };
+  let cur = dec(first);
+  for (let i = 0; i < 4 && cur; i++) {
+    const m = cur.match(/https?:\/\/[^"'<>\n]*?workers\.dev\/0:\/[^"'<>\n]*?\.(?:mkv|mp4|avi|webm)/i);
+    if (m) return m[0].trim().replace(/ /g, '%20');
+    const n = cur.match(/[?&]url=([^\s"'<>&]+)/);
+    if (!n) break;
+    const nx = dec(n[1]);
+    if (!nx || nx === cur) break;
+    cur = nx;
+  }
+  return '';
+}
 
-  const jobs = [];
-  /* ২) Fast পথ: /api/share/<short> → file.id → POST /api/downloads/<id>/via-worker → copyUrl */
-  for (const short of shorts.slice(0, 2)) {
-    jobs.push((async () => {
-      const a = await get('https://gdshine.org/api/share/' + short, Math.min(6000, left()), 'https://gdshine.org/');
-      let fid = '';
-      try { const j = JSON.parse(a.t || '{}'); fid = j && j.data && j.data.file && j.data.file.id || ''; } catch (e) { }
-      if (!fid) return;
-      const p2 = await get('https://gdshine.org/api/downloads/' + fid + '/via-worker', Math.min(6000, left()), 'https://gdshine.org/', '{}');
-      try {
-        const j2 = JSON.parse(p2.t || '{}');
-        const d = j2 && j2.data || {};
-        for (const k of ['copyUrl', 'downloadUrl', 'url', 'directUrl']) if (d[k] && /^https?:/.test(d[k])) out.push(d[k]);
-      } catch (e) { }
-      for (const m of (p2.t || '').matchAll(/https?:\/\/[^"'\\ ]*workers\.dev\/d\/[^"'\\ ]+/g)) out.push(m[0]);
-    })());
-  }
-  /* ৩) Hub পথ: hcloud → **ডাবল-base64** → সরাসরি workers.dev/0:/… (মাপা: বাইরের decode-ই
-     `https://hcloud.ink/direct/index.php?url=<b64(workers.dev/0:/…)>` দেয়, তাই HTTP কল লাগেই না) */
-  for (const enc of hcs.slice(0, 2)) {
-    const dec = s => { try { return Buffer.from(String(s).replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((String(s).length + 3) % 4), 'base64').toString('utf8'); } catch (e) { return ''; } };
-    let cur = dec(enc);
-    for (let i = 0; i < 4 && cur; i++) {
-      /* ডিকোডে প্যাডিং-আবর্জনা লেগে থাকে ⇒ ফাইল-এক্সটেনশনে কেটে নিই (মাপা) */
-      const cut = s => { const m = String(s).match(/https?:\/\/[^\s"'<>]*?\.(?:mkv|mp4|avi|webm)/i); return m ? m[0] : ''; };
-      const direct = (cur.match(/https?:\/\/[^\s"'<>]*workers\.dev\/0:\/[^\s"'<>]+/g) || []).map(cut).filter(Boolean);
-      if (direct.length) { direct.forEach(u => out.push(u)); break; }
-      const m2 = cur.match(/[?&]url=([^\s"'<>&]+)/);
-      if (!m2) break;
-      const nxt = dec(m2[1]);
-      if (!nxt || nxt === cur) break;
-      cur = nxt;
-    }
-    /* না পেলে HTTP পথেও চেষ্টা */
-    if (!out.some(u => /workers\.dev\/0:\//.test(u))) {
-      const a2 = await get('https://hcloud.ink/redirect.php?url=' + enc, Math.min(5000, left()), 'https://hcloud.ink/');
-      for (const m3 of (a2.t || '').matchAll(/https?:\/\/[^"'\\ ]*workers\.dev\/0:\/[^"'\\ ]+/g)) out.push(m3[0]);
+async function finalUrls(entry, ms, kind) {
+  const name = (entry && entry.name) || String(entry || '');
+  const hid = (entry && entry.id) || '';
+  const B = Number(ms || 8000);
+  const t0 = Date.now();
+  const left = () => Math.max(1800, B - (Date.now() - t0));
+  const out = [];
+  const push = u => { const c = cleanUrl(u); if (c && !out.includes(c)) out.push(c); };
+  const grab = (html) => {
+    for (const m of String(html || '').matchAll(/https?:\/\/[^"'\\ <>]*(?:workers\.dev|gdshine\.org|gdtot)[^"'\\ <>]*/g)) push(m[0].replace(/\\\//g, '/'));
+  };
+
+  /* ১) **boldb.site/?id=<ফাইলনাম>** — সবচেয়ে সস্তা: এক কলেই workers.dev স্ট্রিম + gdshine short */
+  if (name) {
+    const rb = await get('https://boldb.site/?id=' + encodeURIComponent(name), Math.min(6000, left()), 'https://boldb.site/');
+    if (rb.t) {
+      grab(rb.t);
+      /* hcloud (hcloud.shop / hcloud.ink) → base64 → workers.dev/0:/… */
+      for (const m of (rb.t || '').matchAll(/hcloud\.(?:shop|ink)\/redirect\.php\?url=([^"'<>\s&]+)/g)) {
+        const dir = hcloudDecode(m[1]);
+        if (dir) push(dir);
+      }
     }
   }
-  /* ৪) পেজে সরাসরি লিংক থাকলে */
-  for (const m of h.matchAll(/https?:\/\/[^"'\\ ]*workers\.dev\/(?:0:\/|d\/)[^"'\\ ]+/g)) out.push(m[0]);
-  await Promise.all(jobs);
-  const clean1 = u => { const s = String(u).replace(/\\\//g, '/').replace(/&amp;/g, '&').trim(); const m = s.match(/^https?:\/\/[^\s"'<>]*?\.(?:mkv|mp4|avi|webm)/i); return m ? m[0] : s; };
-  const uniq = [...new Set(out.map(clean1))]
-    .filter(u => /^https?:\/\//.test(u) && !/\/d\/$/.test(u));
-  return uniq;
+
+  /* ★ v1.34.428: boldb এক কলেই **সরাসরি workers.dev স্ট্রিম** দেয় ⇒ পেলেই hshare/gdshine-চেইন
+     বাদ (মাপা: প্রতি ফাইলে ৪–৬সে সাশ্রয়)।-chain তখনই চালাই যখন boldb কিছু দেয়নি। */
+  const gotDirect = out.length > 0;
+  /* ২) hshare.lol (?id= টোকেন থাকলে সেটাই, নাহলে ফাইলনাম) — gdshine + hcloud বাটন */
+  if (!gotDirect && left() > 2500) {
+    const hs = 'https://hshare.lol/?id=' + encodeURIComponent(hid || name);
+    const r = await get(hs, Math.min(5000, left()), 'https://hshare.lol/');
+    const h = r.t || '';
+    if (h) {
+      grab(h);
+      const shorts = [...new Set([...h.matchAll(/gdshine\.org\/(?:s|api\/share)\/([A-Za-z0-9_\-]{6,})/g)].map(m => m[1]))];
+      for (const m of (h || '').matchAll(/hcloud\.(?:shop|ink)\/redirect\.php\?url=([^"'<>\s&]+)/g)) {
+        const dir = hcloudDecode(m[1]);
+        if (dir) push(dir);
+      }
+      /* Fast পথ: short → file.id → POST via-worker (কপি-ড্রাইভ না থাকলে ৪০০) */
+      await Promise.all(shorts.slice(0, 2).map(async short => {
+        const a = await get('https://gdshine.org/api/share/' + short, Math.min(4000, left()), 'https://gdshine.org/');
+        let fid = '';
+        try { const j = JSON.parse(a.t || '{}'); fid = j && j.data && j.data.file && j.data.file.id || ''; } catch (e) { }
+        if (!fid) return;
+        const p2 = await get('https://gdshine.org/api/downloads/' + fid + '/via-worker', Math.min(2500, left()), 'https://gdshine.org/', '{}');
+        try {
+          const j2 = JSON.parse(p2.t || '{}');
+          const d = (j2 && j2.data) || {};
+          for (const k of ['copyUrl', 'downloadUrl', 'url']) if (d[k]) push(d[k]);
+        } catch (e) { }
+      }));
+    }
+  }
+  if (TRACE) console.error('[hm.file] ' + name.slice(-30) + ' → ' + out.length + ' @' + (Date.now() - t0));
+  return out;
 }
 
 /* ── প্ল্যান-ক্যাশ + কার্ড-মেমো ─────────────────────────────────────── */
@@ -426,35 +486,48 @@ async function cardsInner(title, type, s, e, mk, budget, sink, onFirst) {
 
   let files = [];
   let posts = [];
+  const T1 = Date.now();
   if (planOk) { files = plan.files.slice(); LAST.stage = 'plan'; if (TRACE) console.error('[hm.plan] ' + files.length); }
   else {
     posts = await search(title, Math.min(4000, left()));
     LAST.posts = posts.length; LAST.stage = posts.length ? 'posts' : 'no-posts';
     if (!posts.length) { LAST.ms = Date.now() - T0; return sink; }
-    const want = posts.slice(0, type === 'series' ? 3 : 2);
+    /* ★ v1.34.428: মুভিতে **১টি পোস্টই** যথেষ্ট (ফাইল-তালিকা একই) ⇒ পোস্ট-পর্যায় অর্ধেক */
+    const want = posts.slice(0, type === 'series' ? 2 : 1);
     const got = new Set();
     const collect = [];
     await Promise.all(want.map(async u => {
       const p = await post(u, Math.min(4200, left()));
-      for (const f of (p.files || [])) if (!got.has(f)) { got.add(f); collect.push(f); }
+      for (const f of (p.files || [])) { const kk = (f && (f.id || f.name)) || String(f); if (!got.has(kk)) { got.add(kk); collect.push(f); } }
     }));
     files = collect;
     if (files.length) { if (PLAN.size > 120) PLAN.clear(); PLAN.set(pk, { ts: Date.now(), posts: posts.length, files: files.slice(0, 24) }); }
   }
+  LAST.tPost = Date.now() - T1; LAST.tSearch = T1 - T0;
   LAST.files = files.length;
   if (!files.length) { LAST.stage = 'no-files'; LAST.ms = Date.now() - T0; return sink; }
 
   /* ★ সাইট-স্ট্রাকচার: প্রতিটি ফাইলের **দুটি পথই** (Hub+Fast) — ৬ ফাইল ⇒ ১২ কার্ড */
   const expire = () => { const p = PLAN.get(pk); if (p) p.ts = 0; };
-  const perQ = Number(process.env.HMQCAP || 6);
+  /* ★★ v1.34.428 (ইউজার: "hindmovie only 1080p and 4k stream e pick koro, time kom lagbe") —
+     **শুধু 1080p ও 4K/2160p** রিজলভ করি ⇒ ৬-এর বদলে ২–৩ ফাইল × ২ পথ = ৪–৬ কার্ড, সময় প্রায়
+     অর্ধেক। 1080/4K না থাকলে (HM-এ বিরল) তবেই 720→480 ফলব্যাক, যাতে কার্ড শূন্য না হয়
+     (`HMQUAL` দিয়ে বদলানো যায়; `HMFALLBACK=0` দিলে ফলব্যাক বন্ধ)। */
+  const WANT = String(process.env.HMQUAL || '1080,2160').split(',').map(s => s.trim()).filter(Boolean);
+  const nmOf = f => (f && (f.name || f.id)) || String(f || '');
+  const wanted = files.filter(f => WANT.includes(qualityOf(nmOf(f))));
+  const useList = wanted.length ? wanted
+    : (process.env.HMFALLBACK === '0' ? [] : files.slice().sort((a, b) => (Number(qualityOf(nmOf(b))) || 0) - (Number(qualityOf(nmOf(a))) || 0)).slice(0, 2));
+  const perQ = Number(process.env.HMQCAP || 3);
   const qSeen = {};
-  const queue = files.filter(f => {
-    const q = qualityOf(f);
+  const queue = useList.filter(f => {
+    const q = qualityOf(nmOf(f));
     qSeen[q] = (qSeen[q] || 0) + 1;
     return qSeen[q] <= perQ;
   });
+  LAST.want = WANT.join('+'); LAST.picked = queue.length; LAST.pickNames = queue.slice(0, 4).map(nmOf);
   // ভালো কোয়ালিটি আগে, তারপর বাকি — কিন্তু সবগুলোই যাবে
-  queue.sort((a, b) => (Number(qualityOf(b)) || 0) - (Number(qualityOf(a)) || 0));
+  queue.sort((a, b) => (Number(qualityOf(nmOf(b))) || 0) - (Number(qualityOf(nmOf(a))) || 0));
 
   let idx = 0, announced = false;
   const workers = [];
@@ -463,22 +536,23 @@ async function cardsInner(title, type, s, e, mk, budget, sink, onFirst) {
       if (left() < 700) break;
       const f = queue[idx++];
       let us = [];
-      try { us = await finalUrls(f, Math.min(6000, Math.max(2200, left())), 'movie'); } catch (e) { us = []; }
+      try { us = await finalUrls(f, Math.min(9000, Math.max(5000, left())), 'movie'); } catch (e) { us = []; }
       if (!us.length) continue;
       LAST.urls += us.length;
       for (const u of us) {
         if (!/^https?:\/\//.test(u)) continue;
         const kindTag = /workers\.dev\/d\//.test(u) ? 'Fast' : (/workers\.dev\/0:\//.test(u) ? 'Hub' : 'Mirror');
-        const q = qualityOf(f);
-        const card = mk ? mk(u, f, q, kindTag, { name: f, kind: 'movie' }) : { url: u, filename: f, quality: q, tag: kindTag };
+        const nm = nmOf(f);
+        const q = qualityOf(nm);
+        const card = mk ? mk(u, nm, q, kindTag, { name: nm, kind: 'movie' }) : { url: u, filename: nm, quality: q, tag: kindTag };
         if (!card) continue;
         if (!sink.some(x => x && x.url === u)) sink.push(card);
       }
       if (sink.length && !announced) { announced = true; if (onFirst) onFirst(); }
-      if (TRACE) console.error('[hm.file] ' + f.slice(-34) + ' → ' + us.length + ' @' + (Date.now() - T0));
+      if (TRACE) console.error('[hm.file] ' + nmOf(f).slice(-34) + ' → ' + us.length + ' @' + (Date.now() - T0));
     }
   };
-  for (let k = 0; k < Number(process.env.HMWRK || 6); k++) workers.push(run());
+  for (let k = 0; k < Number(process.env.HMWRK || 3); k++) workers.push(run());
   await Promise.all(workers);
 
   LAST.cards = sink.length; LAST.ms = Date.now() - T0;
