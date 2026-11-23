@@ -10,7 +10,7 @@ const { safeURL } = require('./cinejoy-pk/src/policy.cjs');
 const { Metadata, requestIdentity, bounded } = require('./cinejoy-pk/src/metadata.cjs');
 const { PKError, classify, publicError } = require('./cinejoy-pk/src/errors.cjs');
 const manifests = require('./cinejoy-pk/src/manifests.cjs');
-const REVISION = 'cinejoy-pk-integration-1';
+const REVISION = 'cinejoy-pk-integration-2';
 const LANGUAGE = {
   en: ['English', 'eng'], eng: ['English', 'eng'], hi: ['Hindi', 'hin'], hin: ['Hindi', 'hin'],
   bn: ['Bengali', 'ben'], ben: ['Bengali', 'ben'], ta: ['Tamil', 'tam'], tam: ['Tamil', 'tam'],
@@ -196,9 +196,11 @@ class CineJoy {
     const configured = Number(this.env.CINEJOY_BUDGET_MS), budget = Number.isFinite(configured) && configured >= 100 && configured <= 8000 ? configured : 7800;
     const began = Date.now(), deadline = began + budget, ctrl = new AbortController(); this.controllers.add(ctrl); this.requests++;
     const timer = setTimeout(() => ctrl.abort(new PKError('LOCAL_DEADLINE')), budget); timer.unref?.();
-    // A background refresh must not occupy the scarce verified endpoints while
-    // a first-tap request is waiting. Cancellation is local, never a proxy ban.
-    if (this.refiller?.controller && !this.refiller.controller.signal.aborted) {
+    // Yield a refresh only after every requested server can actually extract.
+    // Never cancel the cold/partial-pool verification that must create its first
+    // usable proofs; repeated app requests would otherwise prevent warming.
+    const canYieldRefill = c.servers.every(server => this.engine.pool.ready(server).length > 0);
+    if (canYieldRefill && this.refiller?.controller && !this.refiller.controller.signal.aborted) {
       this.refiller.controller.abort(new PKError('LOCAL_FOREGROUND', 'Yield CineJoy refill to foreground'));
       this.event({ type: 'refill-yield' });
     }
