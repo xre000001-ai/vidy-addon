@@ -17352,7 +17352,7 @@ function fmtCardText(c, hint) {
          ফরম্যাটই হতো না** (তাই "format thik nai")। এখন শুধু সত্যিকারের `⊞ nexa ◇ …` বাদ যায়,
          বাকি `⊞`-লাইনই সোর্স-লাইন। */
       if (ch === '\u229e') {
-        if (/^\u229e\s*nexa\b/i.test(ln)) continue;      // কোয়ালিটি-লাইন — নাম-ব্যাজেই আছে
+        if (/^\u229e\s*nexa\b\s*\u25c7/i.test(ln)) continue; // only the legacy quality line, not a real Nexa source line
         if (!s) { s = '\u2318 ' + ln.replace(/^\u229e\s*/, '').trim(); seenSlot = true; }
         continue;
       }
@@ -17411,6 +17411,12 @@ function fmtCardText(c, hint) {
   }
   const SRV_CANON = { gdflix: 'Google Drive', gdrive: 'Google Drive', 'google drive': 'Google Drive', drive: 'Google Drive', pixeldrain: 'Pixeldrain', pd: 'Pixeldrain', hubcloud: 'HubCloud', hubdrive: 'HubCloud', fsl: 'FSL', instantcloud: 'InstantCloud', xcloud: 'XCloud' };
   let _sv0 = String((c && c._srv) || '').trim();
+  // Remote Nexa cards may carry their server only in the native source line.
+  // Recover that display label before the idempotent trailing-server cleanup.
+  if (!_sv0 && c && (c._src === 'nex' || /^nex\|/.test(String(c.bingeGroup || '')))) {
+    const ns = /\s*\u2022\s*([A-Za-z0-9 ._\u00b7-]{1,26})\s*$/.exec(s);
+    if (ns) _sv0 = ns[1].trim();
+  }
   if (_sv0 && !/[A-Za-z]/.test(_sv0)) _sv0 = '';        // ★ v1.33.0: `• 🎬` জাতীয় অর্থহীন লেবেল নয়
   let srv = SRV_CANON[_sv0.toLowerCase()] || _sv0 || srvLabel(c.url);   // v1.27.16 + v1.33.0 canonical
   // ★ v1.27.12 (ইউজার: "description quality keno diso, oita toh title ei ase"): **কোয়ালিটি (1080p/720p/4K)**
@@ -17425,7 +17431,8 @@ function fmtCardText(c, hint) {
     return lf && y.length <= 12 ? lf : y;
   };
   const ci = rest.indexOf('\u2317');
-  const srcName = fmtSrcName(qDrop(ci >= 0 ? rest.slice(0, ci) : rest), { src: c && c._src });
+  // `nex` is the transport key, not the remote addon's actual source name.
+  const srcName = fmtSrcName(qDrop(ci >= 0 ? rest.slice(0, ci) : rest), { src: c && (c._src === 'nex' ? '' : c._src) });
   // ★ v1.33.0: সার্ভার-লেবেল == সোর্স-নাম (যেমন movies4u) ⇒ ডাবল `• x • x` নয়
   {
     const _nz = x => String(x || '').toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -17543,6 +17550,7 @@ function nexaAddonStreams(req, type, id, s2, e2, ttlIn) {
         if (!c || !c.url) continue;
         out.push({
           _src: 'nex',
+          _srv: String(c._srv || '').trim(), // display-only; stripCards already removes it
           name: c.name || '\u25a5 Auto \u25a5',
           title: c.title || c.description || '',
           description: c.title || c.description || '',
@@ -17555,7 +17563,7 @@ function nexaAddonStreams(req, type, id, s2, e2, ttlIn) {
       return ttlP.then(nm => {
         const T = String(nm || '').trim();
         if (T) for (const c of out) {
-          c.title = String(c.title || '').replace(/\u29c9\s*nexa/i, '\u29c9 ' + T);
+          c.title = String(c.title || '').replace(/^\u29c9[ \t]*nexa(?=[ \t]*(?:\||\r?\n|$))/i, () => '\u29c9 ' + T);
           if (!/^\u29c9/.test(c.title)) c.title = '\u29c9 ' + T + ' |\n' + String(c.title || '');
           c.description = c.title;
         }
@@ -17613,7 +17621,18 @@ async function unifyCards(cards, meta) { // শুধু-টেক্সট-ব�
   try {
     if (!cards || !cards.length || !meta || (!meta.tmdbId && !meta.title)) return cards;
     nexdbg('unify-in', cards);
-    const tcards = cards.filter(c => /^(sky|m4u|bf|mm|tw|rt|mlb|mls|nex|vsp|ott|az|dt|nx|hd|hm)\|/.test(String(c.bingeGroup || '')));
+    const tcards = cards.filter(c => {
+      const group = String(c.bingeGroup || '');
+      if (!/^(sky|m4u|bf|mm|tw|rt|mlb|mls|nex|vsp|ott|az|dt|nx|hd|hm)\|/.test(group)) return false;
+      if (!/^nex\|/.test(group)) return true;
+      // The separate addon already supplies Vidy-shaped title/year/source text.
+      // Keep that evidence (including episode names); do not relabel Play4u as Nexa.
+      const d = String(c.description || c.title || '');
+      const native = /^\u29c9[ \t]+\S/.test(d) && /^\s*\u2318[ \t]+\S/m.test(d);
+      const ep = /^\s*[\u23e3\u29e0]\s*S(\d{1,3})\s*E(\d{1,4})\b/im.exec(d);
+      const sameEpisode = meta.type !== 'series' || (ep && Number(ep[1]) === (Number(meta.s) || 1) && Number(ep[2]) === (Number(meta.e) || 1));
+      return !(native && sameEpisode); // incomplete cards retain the existing metadata fallback
+    });
     if (DBG) console.error('[unify] in=' + cards.length + ' tcards=' + tcards.length + ' nex=' + cards.filter(c => /^nex\|/.test(String(c.bingeGroup || ''))).length);
     // ★ v1.27.10: tcards খালি হলেও থামি না — বছর-পূরণের ধাপটা সব-সোর্সে চালু থাকবে
     const _uT=Date.now();
@@ -18939,33 +18958,8 @@ function sendStreams(res, skey, plog, ms, cards, ua, cfg) {
     if (!c0.headers) c0.headers = Object.assign({ 'User-Agent': UA }, ph || {});
     else if (ph) c0.headers = Object.assign({ 'User-Agent': UA }, ph, c0.headers);
   }
-  // ★★ v1.34.149 (মাপা: Suzume-এ `▥ 1080 ▥` ×৩ — x265/HEVC/x264 তিনটি আলাদা ফাইল, অথচ চেনার উপায় নেই):
-  //   একই (সোর্স + কোয়ালিটি + অডিও)-তে একাধিক ফাইল থাকলে description-এ সংক্ষিপ্ত ভ্যারিয়েন্ট-লাইন যোগ করি।
-  //   `name`/signature অপরিবর্তিত রাখি (মার্জ-পরিচয় স্থির থাকুক)।
-  try {
-    const grp = new Map();
-    const audOf = c => (String(c.description || '').match(/⌗[^\n]*/) || [''])[0].trim();
-    for (const c of _cards) {
-      const k2 = String(c.bingeGroup || '').split('|')[0] + '|' + String(c.name || '') + '|' + audOf(c);
-      if (!grp.has(k2)) grp.set(k2, []);
-      grp.get(k2).push(c);
-    }
-    for (const arr of grp.values()) {
-      if (arr.length < 2) continue;
-      let i2 = 0;
-      for (const c of arr) {
-        i2++;
-        const fn = String((c.behaviorHints && c.behaviorHints.filename) || '');
-        let tag = (fn.match(/\b(x265|hevc|h\.?265|x264|h\.?264|av1|10bit|8bit|hq|remux|web-?dl|bluray|blu-?ray|esub)\b/i) || [])[1] || '';
-        tag = tag ? tag.toLowerCase() : ('v' + i2);
-        const short = fn.replace(/\[[^\]]*\]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 46);
-        // ★ টেস্ট-কনট্রাক্ট: description-এর **শেষ লাইন** ⌘/⏣/ⓘ থাকতেই হবে ⇒ ভ্যারিয়েন্ট-লাইন তার **আগে** বসাই
-        const _lines = String(c.description || '').split('\n');
-        _lines.splice(Math.max(0, _lines.length - 1), 0, '\u25E6 ' + (short || ('file ' + i2)) + ' \u00b7 ' + tag);
-        c.description = _lines.join('\n');
-      }
-    }
-  } catch (eV) { }
+  // Same-quality/audio alternatives remain separate playable cards.
+  // Do not append filenames or generated v1/v2 labels to their display text.
   try { if (process.env.NEXDBG) console.error('[nexdbg] final=' + _cards.length + ' nex=' + _cards.filter(c => /^nex\|/.test(String(c.bingeGroup || ''))).length); } catch (e) { }
   nexdbg('final', _cards);
   if (DBG) console.error('[ss] final=' + _cards.length + ' srcs=' + _cards.slice(0,12).map(c => String(c.bingeGroup||'').split('|')[0] || 'vidy').join(','));

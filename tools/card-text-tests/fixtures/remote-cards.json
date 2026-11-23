@@ -1,0 +1,170 @@
+{
+  "provenance": {
+    "addonHost": "3404d3c5dc63-nexa.baby-beamup.club",
+    "addonName": "Play4u",
+    "version": "3.5.6",
+    "note": "Positive live movie/series card metadata; relay URLs replaced with inert distinct test URLs."
+  },
+  "movie": [
+    {
+      "name": "▥ 1080 ▥",
+      "title": "⧉ Man of Steel | 2013 |\n ⌘ Play4u ⌗ Multi • Furiosa",
+      "description": "⧉ Man of Steel | 2013 |\n ⌘ Play4u ⌗ Multi • Furiosa",
+      "_addon": "Play4u",
+      "_srv": "Furiosa",
+      "_lang": "Multi",
+      "_alist": [
+        "Hindi",
+        "English",
+        "Tamil",
+        "Telugu"
+      ],
+      "_q": "1080",
+      "url": "https://remote.example/t/movie-0?sig=a%2Fb%2BC&pick=0",
+      "behaviorHints": {
+        "notWebReady": true,
+        "proxyHeaders": {
+          "request": {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+            "Referer": "https://play4u.org/",
+            "Origin": "https://play4u.org"
+          }
+        }
+      }
+    },
+    {
+      "name": "▥ 1080 ▥",
+      "title": "⧉ Man of Steel | 2013 |\n ⌘ Play4u ⌗ Multi • Furiosa",
+      "description": "⧉ Man of Steel | 2013 |\n ⌘ Play4u ⌗ Multi • Furiosa",
+      "_addon": "Play4u",
+      "_srv": "Furiosa",
+      "_lang": "Multi",
+      "_alist": [
+        "Hindi",
+        "English",
+        "Tamil",
+        "Telugu"
+      ],
+      "_q": "1080",
+      "url": "https://remote.example/t/movie-1?sig=a%2Fb%2BC&pick=1",
+      "behaviorHints": {
+        "notWebReady": true,
+        "proxyHeaders": {
+          "request": {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+            "Referer": "https://play4u.org/",
+            "Origin": "https://play4u.org"
+          }
+        }
+      }
+    },
+    {
+      "name": "▥ 720 ▥",
+      "title": "⧉ Man of Steel | 2013 |\n ⌘ Play4u ⌗ Multi • Furiosa",
+      "description": "⧉ Man of Steel | 2013 |\n ⌘ Play4u ⌗ Multi • Furiosa",
+      "_addon": "Play4u",
+      "_srv": "Furiosa",
+      "_lang": "Multi",
+      "_alist": [
+        "Hindi",
+        "English",
+        "Tamil",
+        "Telugu"
+      ],
+      "_q": "720",
+      "url": "https://remote.example/t/movie-2?sig=a%2Fb%2BC&pick=2",
+      "behaviorHints": {
+        "notWebReady": true,
+        "proxyHeaders": {
+          "request": {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+            "Referer": "https://play4u.org/",
+            "Origin": "https://play4u.org"
+          }
+        }
+      }
+    },
+    {
+      "name": "▥ 360 ▥",
+      "title": "⧉ Man of Steel | 2013 |\n ⌘ Play4u ⌗ Multi • Furiosa",
+      "description": "⧉ Man of Steel | 2013 |\n ⌘ Play4u ⌗ Multi • Furiosa",
+      "_addon": "Play4u",
+      "_srv": "Furiosa",
+      "_lang": "Multi",
+      "_alist": [
+        "Hindi",
+        "English",
+        "Tamil",
+        "Telugu"
+      ],
+      "_q": "360",
+      "url": "https://remote.example/t/movie-3?sig=a%2Fb%2BC&pick=3",
+      "behaviorHints": {
+        "notWebReady": true,
+        "proxyHeaders": {
+          "request": {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+            "Referer": "https://play4u.org/",
+            "Origin": "https://play4u.org"
+          }
+        }
+      }
+    }
+  ],
+  "series": [
+    {
+      "name": "▥ 1080 ▥",
+      "title": "⧉ Game of Thrones | 2011 |\n ⏣ S5E10 • Mother's Mercy\n ⌘ Play4u ⌗ Multi • Furiosa",
+      "description": "⧉ Game of Thrones | 2011 |\n ⏣ S5E10 • Mother's Mercy\n ⌘ Play4u ⌗ Multi • Furiosa",
+      "_addon": "Play4u",
+      "_srv": "Furiosa",
+      "_lang": "Multi",
+      "_alist": [
+        "Hindi",
+        "English",
+        "Tamil",
+        "Telugu",
+        "Kannada"
+      ],
+      "_q": "1080",
+      "url": "https://remote.example/t/series-0?sig=a%2Fb%2BC&pick=0",
+      "behaviorHints": {
+        "notWebReady": true,
+        "proxyHeaders": {
+          "request": {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+            "Referer": "https://play4u.org/",
+            "Origin": "https://play4u.org"
+          }
+        }
+      }
+    },
+    {
+      "name": "▥ 720 ▥",
+      "title": "⧉ Game of Thrones | 2011 |\n ⏣ S5E10 • Mother's Mercy\n ⌘ Play4u ⌗ Multi • Furiosa",
+      "description": "⧉ Game of Thrones | 2011 |\n ⏣ S5E10 • Mother's Mercy\n ⌘ Play4u ⌗ Multi • Furiosa",
+      "_addon": "Play4u",
+      "_srv": "Furiosa",
+      "_lang": "Multi",
+      "_alist": [
+        "Hindi",
+        "English",
+        "Tamil",
+        "Telugu",
+        "Kannada"
+      ],
+      "_q": "720",
+      "url": "https://remote.example/t/series-1?sig=a%2Fb%2BC&pick=1",
+      "behaviorHints": {
+        "notWebReady": true,
+        "proxyHeaders": {
+          "request": {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+            "Referer": "https://play4u.org/",
+            "Origin": "https://play4u.org"
+          }
+        }
+      }
+    }
+  ]
+}

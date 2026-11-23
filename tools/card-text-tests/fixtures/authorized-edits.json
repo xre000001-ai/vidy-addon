@@ -1,0 +1,72 @@
+[
+  {
+    "file": "server.js",
+    "reason": "Recognize only the legacy Nexa diamond-quality line; retain real source lines.",
+    "count": 1,
+    "old": "        if (/^\\u229e\\s*nexa\\b/i.test(ln)) continue;      // কোয়ালিটি-লাইন — নাম-ব্যাজেই আছে",
+    "new": "        if (/^\\u229e\\s*nexa\\b\\s*\\u25c7/i.test(ln)) continue; // only the legacy quality line, not a real Nexa source line"
+  },
+  {
+    "file": "server.js",
+    "reason": "Preserve remote server text when a child omits its private server hint.",
+    "count": 1,
+    "old": "  let _sv0 = String((c && c._srv) || '').trim();\n  if (_sv0 && !/[A-Za-z]/.test(_sv0)) _sv0 = '';",
+    "new": "  let _sv0 = String((c && c._srv) || '').trim();\n  // Remote Nexa cards may carry their server only in the native source line.\n  // Recover that display label before the idempotent trailing-server cleanup.\n  if (!_sv0 && c && (c._src === 'nex' || /^nex\\|/.test(String(c.bingeGroup || '')))) {\n    const ns = /\\s*\\u2022\\s*([A-Za-z0-9 ._\\u00b7-]{1,26})\\s*$/.exec(s);\n    if (ns) _sv0 = ns[1].trim();\n  }\n  if (_sv0 && !/[A-Za-z]/.test(_sv0)) _sv0 = '';"
+  },
+  {
+    "file": "server.js",
+    "reason": "Use the real parsed remote source label, not the internal Nexa transport key.",
+    "count": 1,
+    "old": "  const srcName = fmtSrcName(qDrop(ci >= 0 ? rest.slice(0, ci) : rest), { src: c && c._src });",
+    "new": "  // `nex` is the transport key, not the remote addon's actual source name.\n  const srcName = fmtSrcName(qDrop(ci >= 0 ? rest.slice(0, ci) : rest), { src: c && (c._src === 'nex' ? '' : c._src) });"
+  },
+  {
+    "file": "server.js",
+    "reason": "Carry the child server label through formatting without changing playable fields.",
+    "count": 1,
+    "old": "          _src: 'nex',\n          name: c.name || '\\u25a5 Auto \\u25a5',",
+    "new": "          _src: 'nex',\n          _srv: String(c._srv || '').trim(), // display-only; stripCards already removes it\n          name: c.name || '\\u25a5 Auto \\u25a5',"
+  },
+  {
+    "file": "server.js",
+    "reason": "Fill only an actual placeholder title, preserving real Nexa-prefixed titles and literal replacement text.",
+    "count": 1,
+    "old": "          c.title = String(c.title || '').replace(/\\u29c9\\s*nexa/i, '\\u29c9 ' + T);",
+    "new": "          c.title = String(c.title || '').replace(/^\\u29c9[ \\t]*nexa(?=[ \\t]*(?:\\||\\r?\\n|$))/i, () => '\\u29c9 ' + T);"
+  },
+  {
+    "file": "server.js",
+    "reason": "Preserve complete remote card text, including child year and correct episode title; retain old fallback for incomplete cards.",
+    "count": 1,
+    "old": "    const tcards = cards.filter(c => /^(sky|m4u|bf|mm|tw|rt|mlb|mls|nex|vsp|ott|az|dt|nx|hd|hm)\\|/.test(String(c.bingeGroup || '')));",
+    "new": "    const tcards = cards.filter(c => {\n      const group = String(c.bingeGroup || '');\n      if (!/^(sky|m4u|bf|mm|tw|rt|mlb|mls|nex|vsp|ott|az|dt|nx|hd|hm)\\|/.test(group)) return false;\n      if (!/^nex\\|/.test(group)) return true;\n      // The separate addon already supplies Vidy-shaped title/year/source text.\n      // Keep that evidence (including episode names); do not relabel Play4u as Nexa.\n      const d = String(c.description || c.title || '');\n      const native = /^\\u29c9[ \\t]+\\S/.test(d) && /^\\s*\\u2318[ \\t]+\\S/m.test(d);\n      const ep = /^\\s*[\\u23e3\\u29e0]\\s*S(\\d{1,3})\\s*E(\\d{1,4})\\b/im.exec(d);\n      const sameEpisode = meta.type !== 'series' || (ep && Number(ep[1]) === (Number(meta.s) || 1) && Number(ep[2]) === (Number(meta.e) || 1));\n      return !(native && sameEpisode); // incomplete cards retain the existing metadata fallback\n    });"
+  },
+  {
+    "file": "server.js",
+    "reason": "Remove only the shared generated filename/version display block; retain all mirrors and behaviorHints filenames.",
+    "count": 1,
+    "old": "  // ★★ v1.34.149 (মাপা: Suzume-এ `▥ 1080 ▥` ×৩ — x265/HEVC/x264 তিনটি আলাদা ফাইল, অথচ চেনার উপায় নেই):\n  //   একই (সোর্স + কোয়ালিটি + অডিও)-তে একাধিক ফাইল থাকলে description-এ সংক্ষিপ্ত ভ্যারিয়েন্ট-লাইন যোগ করি।\n  //   `name`/signature অপরিবর্তিত রাখি (মার্জ-পরিচয় স্থির থাকুক)।\n  try {\n    const grp = new Map();\n    const audOf = c => (String(c.description || '').match(/⌗[^\\n]*/) || [''])[0].trim();\n    for (const c of _cards) {\n      const k2 = String(c.bingeGroup || '').split('|')[0] + '|' + String(c.name || '') + '|' + audOf(c);\n      if (!grp.has(k2)) grp.set(k2, []);\n      grp.get(k2).push(c);\n    }\n    for (const arr of grp.values()) {\n      if (arr.length < 2) continue;\n      let i2 = 0;\n      for (const c of arr) {\n        i2++;\n        const fn = String((c.behaviorHints && c.behaviorHints.filename) || '');\n        let tag = (fn.match(/\\b(x265|hevc|h\\.?265|x264|h\\.?264|av1|10bit|8bit|hq|remux|web-?dl|bluray|blu-?ray|esub)\\b/i) || [])[1] || '';\n        tag = tag ? tag.toLowerCase() : ('v' + i2);\n        const short = fn.replace(/\\[[^\\]]*\\]/g, ' ').replace(/\\s+/g, ' ').trim().slice(0, 46);\n        // ★ টেস্ট-কনট্রাক্ট: description-এর **শেষ লাইন** ⌘/⏣/ⓘ থাকতেই হবে ⇒ ভ্যারিয়েন্ট-লাইন তার **আগে** বসাই\n        const _lines = String(c.description || '').split('\\n');\n        _lines.splice(Math.max(0, _lines.length - 1), 0, '\\u25E6 ' + (short || ('file ' + i2)) + ' \\u00b7 ' + tag);\n        c.description = _lines.join('\\n');\n      }\n    }\n  } catch (eV) { }\n",
+    "new": "  // Same-quality/audio alternatives remain separate playable cards.\n  // Do not append filenames or generated v1/v2 labels to their display text.\n"
+  },
+  {
+    "file": "tools/cinejoy-tests/stability-preservation.cjs",
+    "reason": "Chain the exact separately pinned display inverse before the existing stability inverse; do not exempt any baseline file.",
+    "count": 1,
+    "old": "const root=path.resolve(__dirname,'../..'),edits=require('./fixtures/stability-authorized-edits.json');\nfunction beforeStability(file){\n let value=fs.readFileSync(path.join(root,file));const undo=edits.filter(e=>e.file===file).reverse();",
+    "new": "const root=path.resolve(__dirname,'../..'),edits=require('./fixtures/stability-authorized-edits.json');\nconst {beforeCardText}=require('../card-text-tests/preservation.cjs');\nfunction beforeStability(file){\n let value=beforeCardText(file);const undo=edits.filter(e=>e.file===file).reverse();"
+  },
+  {
+    "file": "tools/cinejoy-tests/stability-preservation.test.cjs",
+    "reason": "Use the same exact new inverse for the old literal-byte preservation assertions.",
+    "count": 1,
+    "old": "const {beforeStability}=require('./stability-preservation.cjs'),baseline=require('./fixtures/stability-baseline-sha256.json'),edits=require('./fixtures/stability-authorized-edits.json');",
+    "new": "const {beforeStability}=require('./stability-preservation.cjs'),baseline=require('./fixtures/stability-baseline-sha256.json'),edits=require('./fixtures/stability-authorized-edits.json');\nconst {beforeCardText}=require('../card-text-tests/preservation.cjs');"
+  },
+  {
+    "file": "tools/cinejoy-tests/stability-preservation.test.cjs",
+    "reason": "Keep the original 306-file hashes intact while accounting for this separately approved presentation layer.",
+    "count": 1,
+    "old": "test('stability preservation: server, HM, all unrelated providers, settings, media delivery and dependencies remain literally byte-identical',()=>{\n for(const [file,expected] of Object.entries(baseline.sha256)){if(scope.has(file))continue;assert.equal(hash(fs.readFileSync(path.join(root,file))),expected,file);}",
+    "new": "test('stability preservation: after the exact later card-text inverse, server/HM/settings/media/dependencies still match the original bytes',()=>{\n for(const [file,expected] of Object.entries(baseline.sha256)){if(scope.has(file))continue;assert.equal(hash(beforeCardText(file)),expected,file);}"
+  }
+]
