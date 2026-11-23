@@ -1,0 +1,6 @@
+'use strict';
+const test=require('node:test'),assert=require('node:assert/strict');
+const {fixture,proof,P1}=require('./helpers.cjs'),{proxyId}=require('../vidy-runtime/cinejoy-pk/src/policy.cjs');
+const meter=()=>({played:true,timeDelta:2.1,decodedFrameDelta:40,end:{width:1920,height:1080}});
+test('browser proof requires finite decoded-frame/time progression both before and after seek',()=>{const f=fixture();try{f.pool.add([P1]);f.pool.prove(P1,'Light',proof(P1));const report={proxyId:proxyId(P1),server:'Light',sample:'movie:27205::',playback:meter(),seek:meter()};for(const change of [p=>delete p.timeDelta,p=>p.decodedFrameDelta=NaN,p=>p.end.width=0]){const p=structuredClone(report);change(p.seek);assert.throws(()=>f.pool.recordBrowser(P1,'Light',p),{code:'LOCAL_PROOF'});}f.pool.recordBrowser(P1,'Light',report);assert.match(f.pool.node(P1).servers.Light.browser.mode,/media direct/);}finally{f.close();}});
+test('API+HLS prefix proof cannot by itself create browser-playback proof',()=>{const f=fixture();try{f.pool.add([P1]);f.pool.prove(P1,'Light',proof(P1));assert.equal(f.pool.summary().byServer.Light.browserProofs,0);assert.throws(()=>f.pool.recordBrowser(P1,'Light',{proxyId:proxyId(P1),server:'Light'}),{code:'LOCAL_PROOF'});}finally{f.close();}});

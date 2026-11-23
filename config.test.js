@@ -16,7 +16,7 @@ setTimeout(()=>{try{
   let c,o;
   /* সোর্স */
   // v1.15.86+: Pengu-সোর্স সম্পূর্ণ সরানো, Sky Movies ও BollyFlix নিজস্ব সোর্স ⇒ মোট ১১ কার্ড
-  c=d.querySelectorAll('#srcGrid .card').length===16;A('সোর্স-কার্ড ১৬টি (v/nx/rt/tw/mm/m4u/sky/hm/hd/vsp/ott/az/mlb/mls/dt/nex)',c);
+  c=d.querySelectorAll('#srcGrid .card').length===17;A('সোর্স-কার্ড ১৭টি (v/nx/rt/tw/mm/m4u/sky/hm/hd/vsp/ott/az/mlb/mls/dt/nex/cj)',c);
   c=!!d.getElementById('card-sky')&&d.getElementById('card-sky').textContent.indexOf('Sky Movies')>=0;A('সোর্স-কার্ড: Sky Movies (নিজস্ব)',c);
   c=!!d.getElementById('card-dt')&&d.getElementById('card-dt').textContent.indexOf('Deadtoons')>=0;A('সোর্স-কার্ড: Deadtoons (নিজস্ব)',c);
   c=!!d.getElementById('card-mls')&&d.getElementById('card-mls').textContent.indexOf('MLSBD')>=0;A('সোর্স-কার্ড: MLSBD (নিজস্ব)',c);
@@ -83,12 +83,12 @@ setTimeout(()=>{try{
   c=C.st.v===1&&C.st.nx===1;A('দুটোই-আবার-চালু',c);
   /* সব-উৎস-বন্ধ → ব্লক-নয়, শুধু-সতর্কতা */
   var _sv=[];
-  ['v','nx','rt','tw','mm','m4u','sky','hm','hd','vsp','ott','az','mlb','mls','dt','nex'].forEach(function(k){if(C.st[k]===1){var sw=d.getElementById('sw-'+k);if(sw)sw.click();_sv.push(k);}});
-  var allOff=['v','nx','rt','tw','mm','m4u','sky','hm','hd','vsp','ott','az','mlb','mls','dt','nex'].every(function(k){return C.st[k]===0;});
+  ['v','nx','rt','tw','mm','m4u','sky','hm','hd','vsp','ott','az','mlb','mls','dt','nex','cj'].forEach(function(k){if(C.st[k]===1){var sw=d.getElementById('sw-'+k);if(sw)sw.click();_sv.push(k);}});
+  var allOff=['v','nx','rt','tw','mm','m4u','sky','hm','hd','vsp','ott','az','mlb','mls','dt','nex','cj'].every(function(k){return C.st[k]===0;});
   c=allOff;A('সব-উৎস-বন্ধ-করা-গেল (ব্লক-নেই)',c);
   c=d.getElementById('toast').textContent.indexOf('All sources off')>=0;A('সব-বন্ধে-সতর্কতা-টোস্ট',c);
   _sv.forEach(function(k){var sw=d.getElementById('sw-'+k);if(sw&&C.st[k]===0)sw.click();});
-  c=['v','nx','rt','tw','mm','m4u','sky','hm','hd','vsp','ott','az','mlb','mls','dt','nex'].every(function(k){return C.st[k]===1;});A('সব-উৎস-আবার-চালু',c);
+  c=['v','nx','rt','tw','mm','m4u','sky','hm','hd','vsp','ott','az','mlb','mls','dt','nex','cj'].every(function(k){return C.st[k]===1;});A('সব-উৎস-আবার-চালু',c);
   d.getElementById('srvPri').click();c=C.st.srv.length===3;A('srvPri → ৩',c);
   d.getElementById('srvAll').click();c=C.st.srv.length===18;A('srvAll → ১৮',c);
   /* v1.15.81: বুটে-সার্ভার-টাইল-রিড্র (আগে প্রথম-লোডে কোনো-টাইলেই .on থাকত-না) */

@@ -327,6 +327,18 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
           <div class="fhint">WN (pixeldrain) titles only where the site still hosts them; MQ covers the rest.</div>
         </div></div>
       </div>
+      <div class="card" id="cjCard">
+        <div class="src-hd">
+          <div class="tile" style="background:linear-gradient(135deg,#12302b,#0d1e23);color:#8ce7d0">CJ</div>
+          <div class="s-body"><div class="s-name">CineJoy <span class="badge">4 servers</span></div><div class="s-sub" id="cjSum">Light · Nebula · Sirius · Polaris</div></div>
+          <button class="mini" id="cjTgl" style="margin-left:auto">Show ▾</button>
+        </div>
+        <div class="fzone"><div class="finner">
+          <div class="srvrow"><button class="mini" id="cjAll">All</button><button class="mini" id="cjNone">None</button></div>
+          <div class="srvgrid" id="cjGrid"></div>
+          <div class="fhint">CineJoy has its own verified extraction-proxy pool. Video, audio, init segments and keys go directly to the CDN — never through the addon or a free proxy.</div>
+        </div></div>
+      </div>
     </section>
 
     <!-- ═══ TUNE ═══ -->
@@ -354,6 +366,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
         <div class="pcard" id="pvH"><div class="dot n"></div><div class="pbody"><div class="hd n" id="pvHh"></div><div class="t" id="pvHt"></div></div><div class="q pq" id="pvHq"></div></div>
         <div class="pcard" id="pvL"><div class="dot n"></div><div class="pbody"><div class="hd n" id="pvLh"></div><div class="t" id="pvLt"></div></div><div class="q pq" id="pvLq"></div></div>
         <div class="pcard" id="pvY"><div class="dot n"></div><div class="pbody"><div class="hd n" id="pvYh"></div><div class="t" id="pvYt"></div></div><div class="q pq" id="pvYq"></div></div>
+        <div class="pcard" id="pvCJ"><div class="dot n"></div><div class="pbody"><div class="hd n" id="pvCJh"></div><div class="t" id="pvCJt"></div></div><div class="q pq" id="pvCJq"></div></div>
       </div>
       <div class="anat">
         <div class="an"><i>▥</i><div><b>Resolution badge</b><span>Measured from the real manifest — never guessed.</span></div></div>
@@ -485,6 +498,9 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
   /* ─────────── state (server-contract keys) ─────────── */
   var st={v:1,q:[],sub:1,srv:SRVS.map(function(x){return x[0];}),nx:1,nxq:[],nxl:[],rt:1,rtl:[],rtq:[],tw:1,twq:[],twl:[],mm:1,mmr:0,mmq:[],mml:[],m4u:1,m4ur:0,m4uq:[],m4ul:[],sky:1,skyr:0,hm:1,hmr:0,skyq:[],hmq:[],skyl:[],hml:[],hd:1,hdr:0,hdq:[],hdl:[],vsp:1,vspq:[],vspl:[],ott:1,ottq:[],ottl:[],az:1,azq:[],azl:[],mlb:1,mlbr:0,mls:1,mlsr:0,dt:1,nex:1,nexq:[],rtsrv:[]}; /* rtsrv: খালি=MQ+Pixeldrain-দুটোই (সার্ভার-চুক্তি: খালি=সব) */
 
+  st.cj=1;st.cjq=[];st.cjsrv=[]; /* CineJoy only; excluded servers, empty = all four. */
+  var CJSRV=[['light','Light','Adaptive HLS · direct CDN'],['nebula','Nebula','Adaptive HLS · direct CDN'],['sirius','Sirius','Adaptive HLS · direct CDN'],['polaris','Polaris','HLS · direct CDN']];
+
   /* source definitions: [key, tile, tileBg, tileFg, name, badge, badgeCls, blurb, hasTune] */
   var SRC=[
     ['v','V','linear-gradient(135deg,#152744,#0f1c33)','#9ec1ff','Vidy','Primary','hot','16-server fleet · direct HLS',1],
@@ -504,6 +520,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     ['dt','DT','linear-gradient(135deg,#12202b,#0b131a)','#9fd0ff','Deadtoons','HLS · anime/cartoon','new','api.deadbase.host → watch server → EarnVids embed unpack → master.m3u8 (m3u8-200 proof)',0],
     /* ★ v1.34.322: nexa.mov — মুভি/সিরিজ ৫ সার্ভার + অ্যানিমে ৪ সার্ভার (wasm-সিল প্রোটোকল) */
     ['nex','NEX','linear-gradient(135deg,#2b1a33,#180f22)','#d8b8ff','nexa','HLS · 5+4 servers','new','nexa.mov · Nova/Onyx/Orion/Flux/Sylver + Kyoto/Tokyo/Hokkaido/Fuji · real-URL proof only',1],
+    ['cj','CJ','linear-gradient(135deg,#12302b,#0d1e23)','#8ce7d0','CineJoy','HLS · 4 servers','new','cinejoy.pk · Light / Nebula / Sirius / Polaris · video direct from CDN',1],
   ];
 
   /* ─────────── utils ─────────── */
@@ -574,6 +591,9 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
       if(o.dt===0)st.dt=0;
       if(o.nex===0)st.nex=0;                                /* v1.34.322: nexa */
       if(o.nexq)st.nexq=numL(o.nexq,[2160,1080,720,480,360]);
+      if(o.cj===0)st.cj=0;
+      if(o.cjq)st.cjq=numL(o.cjq,[2160,1080,720,480]);
+      if(Array.isArray(o.cjsrv))st.cjsrv=strL(o.cjsrv.map(function(x){return String(x).toLowerCase();}),CJSRV.map(function(x){return x[0];})).filter(function(x,i,a){return a.indexOf(x)===i;});
       if([0,480,720,1080,2160].indexOf(o.mlsr)>=0)st.mlsr=o.mlsr;
       if(o.az===0)st.az=0;
       if(o.azq)st.azq=numL(o.azq,[2160,1080,720,480,360]);
@@ -665,6 +685,8 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     /* ★ v1.34.322: nexa — নিজস্ব সুইচ + রেজো-ছাঁকনি */
     if(st.nex===0)c.nex=0;
     else if(st.nexq.length)c.nexq=st.nexq.slice();
+    if(st.cj===0)c.cj=0;
+    else{if(st.cjq.length)c.cjq=st.cjq.slice().sort(function(a,b){return b-a;});if(st.cjsrv.length)c.cjsrv=st.cjsrv.slice();}
     var u=base()+(Object.keys(c).length?'/cfg/'+b64u(c):'')+'/manifest.json';
     $('url').value=u;
     $('inst').href='stremio://'+u.replace(/^https?:\/\//,'');
@@ -789,6 +811,18 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
       st.v=0;syncAll();rebuild();
       toast(srcOnAny()?'Vidy fleet off — re-enable in Sources':'Vidy fleet off — turn on another source to get streams');
     };
+  })();
+  (function buildCineJoyServers(){
+    var grid=$('cjGrid');
+    CJSRV.forEach(function(sv){
+      var tile=el('div','srv');tile.dataset.k=sv[0];tile.appendChild(el('div','n',sv[1]));tile.appendChild(el('div','d',sv[2]));
+      tile.onclick=function(){var i=st.cjsrv.indexOf(sv[0]);if(i>=0)st.cjsrv.splice(i,1);else st.cjsrv.push(sv[0]);draw();rebuild();};grid.appendChild(tile);
+    });
+    function draw(){[].forEach.call(grid.querySelectorAll('.srv'),function(t){t.classList.toggle('on',st.cjsrv.indexOf(t.dataset.k)<0);});}
+    srvDraws.push(draw);
+    $('cjTgl').onclick=function(){var card=$('cjCard');card.classList.toggle('open');$('cjTgl').textContent=card.classList.contains('open')?'Hide ▾':'Show ▾';};
+    $('cjAll').onclick=function(){st.cjsrv.length=0;draw();rebuild();};
+    $('cjNone').onclick=function(){st.cjsrv.length=0;CJSRV.forEach(function(s){st.cjsrv.push(s[0]);});draw();rebuild();};
   })();
   function drawSrv(){srvDraws.forEach(function(f){f();});}
 
@@ -939,6 +973,8 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     /* ★ v1.34.322: nexa — wasm-সিল প্রোটোকল, ৫ মুভি/সিরিজ + ৪ অ্যানিমে সার্ভার */
     o=tuneCard('tune-nex','nex','nexa','nexa.mov · 5 movie/series servers (Nova/Onyx/Orion/Flux/Sylver) + 4 anime (Kyoto/Tokyo/Hokkaido/Fuji)');h.appendChild(o.card);
     chipsInto(o.zone,'Resolutions',st.nexq,RES,rebuild,'',1);
+    o=tuneCard('tune-cj','cj','CineJoy','Light / Nebula / Sirius / Polaris · independent extraction pool · direct CDN video');h.appendChild(o.card);
+    chipsInto(o.zone,'Resolutions',st.cjq,RES,rebuild,'all available renditions; servers in the Servers tab',1);
   })();
   /* ─────────── preview — আসল কার্ড-ছাঁচেই (v1.27.16) ─────────── */
   function pvCard(id, on, q, opts){ /* opts={title,ep,src,audio,srv,note} */
@@ -974,6 +1010,8 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     pvCard('pvA',!!st.az,st.azq.length?Math.max.apply(null,st.azq):1080,{title:'Frieren | 2023 |',ep:'S1E1 \u2022 Episode Title',src:'AniZone',audio:audioLabel(st.azl)||'Subbed',note:qsel(st.azq)});
     pvCard('pvP',!!st.sky,st.skyq.length?Math.max.apply(null,st.skyq):2160,{title:'Deadpool & Wolverine | 2024 |',src:'Sky Movies',audio:audioLabel(st.skyl)||'Multi Audio',srv:'HubCloud',note:st.skyq.length?('\u2264'+Math.max.apply(null,st.skyq)+'p'):'All'});
     pvCard('pvH',!!st.hm,st.hmq.length?Math.max.apply(null,st.hmq):1080,{title:'Inception | 2010 |',src:'HindMovie',audio:audioLabel(st.hml)||'Dual Audio',srv:'HubCloud',note:st.hmq.length?('\u2264'+Math.max.apply(null,st.hmq)+'p'):(st.hmr?('cap '+st.hmr+'p'):'All')});
+    var cjOn=CJSRV.filter(function(s){return st.cjsrv.indexOf(s[0])<0;});
+    pvCard('pvCJ',!!(st.cj&&cjOn.length),st.cjq.length?Math.max.apply(null,st.cjq):1080,{title:'Inception | 2010 |',src:'CineJoy',audio:'Auto Audio',srv:cjOn.length?cjOn[0][1]:'',note:qsel(st.cjq)});
     pvCard('pvL',!!st.mlb,st.mlbr||1080,{title:'The Dark Knight | 2008 |',src:'MovieLinkBD',audio:'Dual Audio',srv:'FSL \u00b7 HubCloud',note:st.mlbr?('cap '+st.mlbr+'p'):'All'});
   }
 
@@ -1001,12 +1039,15 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     if(st.vsp===1&&(st.vspq.length||st.vspl.length))f++;
     if(st.ott===1&&(st.ottq.length||st.ottl.length))f++;
     if(st.az===1&&(st.azq.length||st.azl.length))f++;
+    if(st.cj===1&&(st.cjq.length||st.cjsrv.length))f++;
+    $('cjCard').classList.toggle('off',!st.cj);
+    $('cjSum').textContent=st.cj?(4-st.cjsrv.length)+' of 4 servers on — video direct from CDN':'CineJoy off — enable in Sources';
     $('bdTune').textContent=f;
     $('mobCnt').textContent=on+' source'+(on===1?'':'s')+(st.v===1?' · '+(st.srv.length||SRVS.length)+' servers':'')+' armed'; /* v1.16.3: খালি=সব-১৬ (আগে \"0 servers armed\" দেখাত) */
   }
   function summary(){
     var s=$('summ');s.innerHTML='';
-    var QK={v:'q',nx:'nxq',rt:'rtq',tw:'twq',mm:'mmq',m4u:'m4uq',sky:'skyq',hm:'hmq',hd:'hdq',mlb:'mlbr',mls:'mlsr',nex:'nexq',vsp:'vspq',ott:'ottq',az:'azq'};   // ★ v1.28.0: mlbq/mlbl অস্তিত্বহীন কী ছিল
+    var QK={cj:'cjq',v:'q',nx:'nxq',rt:'rtq',tw:'twq',mm:'mmq',m4u:'m4uq',sky:'skyq',hm:'hmq',hd:'hdq',mlb:'mlbr',mls:'mlsr',nex:'nexq',vsp:'vspq',ott:'ottq',az:'azq'};   // ★ v1.28.0: mlbq/mlbl অস্তিত্বহীন কী ছিল
     var LKK={nx:'nxl',rt:'rtl',tw:'twl',mm:'mml',m4u:'m4ul',sky:'skyl',hm:'hml',hd:'hdl',vsp:'vspl',ott:'ottl',az:'azl'};
     SRC.forEach(function(x){
       if(st[x[0]]!==1)return;
@@ -1020,6 +1061,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
       if(ql.length){var _isCap=!((st[QK[x[0]]]||[]).length);s.appendChild(el('div','chip',x[4]+' '+(_isCap?'≤'+ql[0]+'p':ql.slice().sort(function(a,b){return b-a;}).join('/')+'p only')));} // ★ v1.34.25: exact-set হলে 'only', একক-cap হলে '≤'
       if(ll.length)s.appendChild(el('div','chip',x[4]+' '+ll.slice(0,2).join('/')+(ll.length>2?'+'+ll.length:'')));
     });
+    if(st.cj===1&&st.cjsrv.length)s.appendChild(el('div','chip','CineJoy '+(4-st.cjsrv.length)+' of 4 servers'));
     if(st.v===1){if(st.q.length)s.appendChild(el('div','chip','fleet '+st.q.slice().sort(function(a,b){return b-a;}).join('/')+'p only')); if(st.sub===0)s.appendChild(el('div','chip','no subs')); if(st.srv.length&&st.srv.length!==SRVS.length)s.appendChild(el('div','chip',st.srv.length+' servers'));}
     if(st.rt===1&&st.rtsrv.length)s.appendChild(el('div','chip','RareToons '+(st.rtsrv.length>=2?'— no server':(st.rtsrv.indexOf('mq')>=0?'Pixeldrain only':'MQ only')))); /* v1.15.81 */
   }
@@ -1058,7 +1100,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     });
     if(!collapse)return;
     /* v1.15.81: প্রসারিত-কার্ড-গুটিয়ে-ফেলা + টগল-লেবেল-সিঙ্ক (Reset-এর-পরে-আগের-খোলা-অবস্থা-আটকে-থাকত) */
-    [['srvCard','srvTgl'],['rtCard','rtTgl']].forEach(function(p){
+    [['srvCard','srvTgl'],['rtCard','rtTgl'],['cjCard','cjTgl']].forEach(function(p){
       var c=$(p[0]),b=$(p[1]);if(c)c.classList.remove('open');if(b)b.textContent='Show \u25be';
     });
     [].forEach.call(document.querySelectorAll('#tab-tune .card'),function(c){

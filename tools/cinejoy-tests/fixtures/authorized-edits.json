@@ -1,0 +1,183 @@
+[
+  {
+    "file": "server.js",
+    "old": "/* ★ v1.34.322: nexa.mov — নতুন সোর্স",
+    "new": "// CINEJOY-BEGIN: independent source, extraction proxies only; CDN media stays direct.\nconst CINEJOY = require('./tools/vidy-runtime/cinejoy.cjs').create({\n  root: __dirname,\n  getMetadataJSON: endpoint => tmdbGet(endpoint, 2500).then(body => JSON.parse(body))\n});\nfunction cjPFor(type, id, season, episode, req, cfg) {\n  if (cfg && cfg.cj === 0) return null;\n  return CINEJOY.streams({ type, id, season, episode, origin: originOf(req), config: cfg }).catch(() => []);\n}\n// CINEJOY-END\n/* ★ v1.34.322: nexa.mov — নতুন সোর্স",
+    "count": 1
+  },
+  {
+    "file": "server.js",
+    "old": "    /* ★★★ v1.34.175 (মূল-বাগ, মাপা): এই ফাংশন শুধু নাম-ধরা ফিল্ড কপি করে",
+    "new": "    // CINEJOY-BEGIN: only CineJoy keys; cjsrv is an exclusion list (empty = all four).\n    if (o.cj === 0 || o.cj === '0') c.cj = 0;\n    if (o.cjq !== undefined && o.cjq !== null && o.cjq !== '') c.cjq = qToList(o.cjq).filter(x => [480, 720, 1080, 2160].indexOf(x) >= 0);\n    if (Array.isArray(o.cjsrv)) c.cjsrv = [...new Set(o.cjsrv.map(x => String(x).toLowerCase()).filter(x => ['light', 'nebula', 'sirius', 'polaris'].includes(x)))];\n    // CINEJOY-END\n    /* ★★★ v1.34.175 (মূল-বাগ, মাপা): এই ফাংশন শুধু নাম-ধরা ফিল্ড কপি করে",
+    "count": 1
+  },
+  {
+    "file": "server.js",
+    "old": " + nexa (nexa.mov — 5 movie/series servers: Nova/Onyx/Orion/Flux/Sylver; 4 anime: Kyoto/Tokyo/Hokkaido/Fuji) —",
+    "new": " + nexa (nexa.mov — 5 movie/series servers: Nova/Onyx/Orion/Flux/Sylver; 4 anime: Kyoto/Tokyo/Hokkaido/Fuji) + CineJoy (cinejoy.pk — Light/Nebula/Sirius/Polaris; direct CDN playback) —",
+    "count": 1
+  },
+  {
+    "file": "server.js",
+    "old": "/^(?:az|mm|vl)\\|/.test(String(r.bingeGroup",
+    "new": "/^(?:az|mm|vl|cj)\\|/.test(String(r.bingeGroup",
+    "count": 1
+  },
+  {
+    "file": "server.js",
+    "old": "      // ★★ v1.27.5 (ইউজার: \"relay dewar por net speed throttle hocche, seek hocche but interruption\")",
+    "new": "      if (/^cj\\|/.test(String(c.bingeGroup || ''))) continue; // CineJoy CDN signatures stay byte-exact; no video relay.\n      // ★★ v1.27.5 (ইউজার: \"relay dewar por net speed throttle hocche, seek hocche but interruption\")",
+    "count": 1
+  },
+  {
+    "file": "server.js",
+    "old": "      hm: qs.get('hm') === '0' ? 0 : undefined,",
+    "new": "      cj: qs.get('cj') === '0' ? 0 : undefined, cjq: qs.get('cjq') || undefined, cjsrv: qs.get('cjsrv') ? qs.get('cjsrv').split(',') : undefined,\n      hm: qs.get('hm') === '0' ? 0 : undefined,",
+    "count": 1
+  },
+  {
+    "file": "server.js",
+    "old": "    // Small text-only AniZone subtitle relay:",
+    "new": "    if (CINEJOY.handle(req, res, p)) return; // CineJoy status and static manifests only; never media bytes.\n    // Small text-only AniZone subtitle relay:",
+    "count": 1
+  },
+  {
+    "file": "server.js",
+    "old": "      const nexP = nexPFor('movie', m[1], 0, 0, req, cfg, tp);",
+    "new": "      const nexP = nexPFor('movie', m[1], 0, 0, req, cfg, tp);\n      const cjP = cjPFor('movie', m[1], 0, 0, req, cfg);",
+    "count": 1
+  },
+  {
+    "file": "server.js",
+    "old": "      const nexP = nexPFor('series', m[1], m[2], m[3], req, cfg, tp);",
+    "new": "      const nexP = nexPFor('series', m[1], m[2], m[3], req, cfg, tp);\n      const cjP = cjPFor('series', m[1], Number(m[2] || 1), Number(m[3] || 1), req, cfg);",
+    "count": 1
+  },
+  {
+    "file": "server.js",
+    "old": "      const nexP = nexPFor('movie', m[1], 0, 0, req, cfg);",
+    "new": "      const nexP = nexPFor('movie', m[1], 0, 0, req, cfg);\n      const cjP = cjPFor('movie', m[1], 0, 0, req, cfg);",
+    "count": 1
+  },
+  {
+    "file": "server.js",
+    "old": "      const nexP = nexPFor('series', m[1], m[2], m[3], req, cfg);",
+    "new": "      const nexP = nexPFor('series', m[1], m[2], m[3], req, cfg);\n      const cjP = cjPFor('series', m[1], Number(m[2]), Number(m[3]), req, cfg);",
+    "count": 1,
+    "firstOnly": true
+  },
+  {
+    "file": "server.js",
+    "old": "      const nexP = nexPFor('series', m[1], m[2], m[3], req, cfg);\n      /* v1.34.321: asianc.id বাদ (1080p নেই) */\n      if (nxOn) nxPrewarm('series', m[1], 1, 1);",
+    "new": "      const nexP = nexPFor('series', m[1], m[2], m[3], req, cfg);\n      const cjP = cjPFor('series', m[1], 1, 1, req, cfg);\n      /* v1.34.321: asianc.id বাদ (1080p নেই) */\n      if (nxOn) nxPrewarm('series', m[1], 1, 1);",
+    "count": 1
+  },
+  {
+    "file": "server.js",
+    "old": "{ p: nexP, key: 'nex' },]",
+    "new": "{ p: nexP, key: 'nex' }, { p: cjP, key: 'cj' },]",
+    "count": 5
+  },
+  {
+    "file": "server.js",
+    "old": "  if (!NEXBASE) NEXBASE = await startEmbeddedNx();",
+    "new": "  CINEJOY.bindLifecycle(server); // Own pool persistence/drain; existing signal handlers stay intact.\n  CINEJOY.start(); // Independent CineJoy warm pool; no change to existing source startup.\n  if (!NEXBASE) NEXBASE = await startEmbeddedNx();",
+    "count": 1
+  },
+  {
+    "file": "config.html",
+    "old": "  /* source definitions:",
+    "new": "  st.cj=1;st.cjq=[];st.cjsrv=[]; /* CineJoy only; excluded servers, empty = all four. */\n  var CJSRV=[['light','Light','Adaptive HLS · direct CDN'],['nebula','Nebula','Adaptive HLS · direct CDN'],['sirius','Sirius','Adaptive HLS · direct CDN'],['polaris','Polaris','HLS · direct CDN']];\n\n  /* source definitions:",
+    "count": 1
+  },
+  {
+    "file": "config.html",
+    "old": "    ['nex','NEX','linear-gradient(135deg,#2b1a33,#180f22)','#d8b8ff','nexa','HLS · 5+4 servers','new','nexa.mov · Nova/Onyx/Orion/Flux/Sylver + Kyoto/Tokyo/Hokkaido/Fuji · real-URL proof only',1],",
+    "new": "    ['nex','NEX','linear-gradient(135deg,#2b1a33,#180f22)','#d8b8ff','nexa','HLS · 5+4 servers','new','nexa.mov · Nova/Onyx/Orion/Flux/Sylver + Kyoto/Tokyo/Hokkaido/Fuji · real-URL proof only',1],\n    ['cj','CJ','linear-gradient(135deg,#12302b,#0d1e23)','#8ce7d0','CineJoy','HLS · 4 servers','new','cinejoy.pk · Light / Nebula / Sirius / Polaris · video direct from CDN',1],",
+    "count": 1
+  },
+  {
+    "file": "config.html",
+    "old": "      if([0,480,720,1080,2160].indexOf(o.mlsr)>=0)",
+    "new": "      if(o.cj===0)st.cj=0;\n      if(o.cjq)st.cjq=numL(o.cjq,[2160,1080,720,480]);\n      if(Array.isArray(o.cjsrv))st.cjsrv=strL(o.cjsrv.map(function(x){return String(x).toLowerCase();}),CJSRV.map(function(x){return x[0];})).filter(function(x,i,a){return a.indexOf(x)===i;});\n      if([0,480,720,1080,2160].indexOf(o.mlsr)>=0)",
+    "count": 1
+  },
+  {
+    "file": "config.html",
+    "old": "    var u=base()+(Object.keys(c).length?",
+    "new": "    if(st.cj===0)c.cj=0;\n    else{if(st.cjq.length)c.cjq=st.cjq.slice().sort(function(a,b){return b-a;});if(st.cjsrv.length)c.cjsrv=st.cjsrv.slice();}\n    var u=base()+(Object.keys(c).length?",
+    "count": 1
+  },
+  {
+    "file": "config.html",
+    "old": "    </section>\n\n    <!-- ═══ TUNE ═══ -->",
+    "new": "      <div class=\"card\" id=\"cjCard\">\n        <div class=\"src-hd\">\n          <div class=\"tile\" style=\"background:linear-gradient(135deg,#12302b,#0d1e23);color:#8ce7d0\">CJ</div>\n          <div class=\"s-body\"><div class=\"s-name\">CineJoy <span class=\"badge\">4 servers</span></div><div class=\"s-sub\" id=\"cjSum\">Light · Nebula · Sirius · Polaris</div></div>\n          <button class=\"mini\" id=\"cjTgl\" style=\"margin-left:auto\">Show ▾</button>\n        </div>\n        <div class=\"fzone\"><div class=\"finner\">\n          <div class=\"srvrow\"><button class=\"mini\" id=\"cjAll\">All</button><button class=\"mini\" id=\"cjNone\">None</button></div>\n          <div class=\"srvgrid\" id=\"cjGrid\"></div>\n          <div class=\"fhint\">CineJoy has its own verified extraction-proxy pool. Video, audio, init segments and keys go directly to the CDN — never through the addon or a free proxy.</div>\n        </div></div>\n      </div>\n    </section>\n\n    <!-- ═══ TUNE ═══ -->",
+    "count": 1
+  },
+  {
+    "file": "config.html",
+    "old": "  function drawSrv(){srvDraws.forEach(function(f){f();});}",
+    "new": "  (function buildCineJoyServers(){\n    var grid=$('cjGrid');\n    CJSRV.forEach(function(sv){\n      var tile=el('div','srv');tile.dataset.k=sv[0];tile.appendChild(el('div','n',sv[1]));tile.appendChild(el('div','d',sv[2]));\n      tile.onclick=function(){var i=st.cjsrv.indexOf(sv[0]);if(i>=0)st.cjsrv.splice(i,1);else st.cjsrv.push(sv[0]);draw();rebuild();};grid.appendChild(tile);\n    });\n    function draw(){[].forEach.call(grid.querySelectorAll('.srv'),function(t){t.classList.toggle('on',st.cjsrv.indexOf(t.dataset.k)<0);});}\n    srvDraws.push(draw);\n    $('cjTgl').onclick=function(){var card=$('cjCard');card.classList.toggle('open');$('cjTgl').textContent=card.classList.contains('open')?'Hide ▾':'Show ▾';};\n    $('cjAll').onclick=function(){st.cjsrv.length=0;draw();rebuild();};\n    $('cjNone').onclick=function(){st.cjsrv.length=0;CJSRV.forEach(function(s){st.cjsrv.push(s[0]);});draw();rebuild();};\n  })();\n  function drawSrv(){srvDraws.forEach(function(f){f();});}",
+    "count": 1
+  },
+  {
+    "file": "config.html",
+    "old": "  })();\n  /* ─────────── preview",
+    "new": "    o=tuneCard('tune-cj','cj','CineJoy','Light / Nebula / Sirius / Polaris · independent extraction pool · direct CDN video');h.appendChild(o.card);\n    chipsInto(o.zone,'Resolutions',st.cjq,RES,rebuild,'all available renditions; servers in the Servers tab',1);\n  })();\n  /* ─────────── preview",
+    "count": 1
+  },
+  {
+    "file": "config.html",
+    "old": "      </div>\n      <div class=\"anat\">",
+    "new": "        <div class=\"pcard\" id=\"pvCJ\"><div class=\"dot n\"></div><div class=\"pbody\"><div class=\"hd n\" id=\"pvCJh\"></div><div class=\"t\" id=\"pvCJt\"></div></div><div class=\"q pq\" id=\"pvCJq\"></div></div>\n      </div>\n      <div class=\"anat\">",
+    "count": 1
+  },
+  {
+    "file": "config.html",
+    "old": "    pvCard('pvL',!!st.mlb",
+    "new": "    var cjOn=CJSRV.filter(function(s){return st.cjsrv.indexOf(s[0])<0;});\n    pvCard('pvCJ',!!(st.cj&&cjOn.length),st.cjq.length?Math.max.apply(null,st.cjq):1080,{title:'Inception | 2010 |',src:'CineJoy',audio:'Auto Audio',srv:cjOn.length?cjOn[0][1]:'',note:qsel(st.cjq)});\n    pvCard('pvL',!!st.mlb",
+    "count": 1
+  },
+  {
+    "file": "config.html",
+    "old": "    $('bdTune').textContent=f;",
+    "new": "    if(st.cj===1&&(st.cjq.length||st.cjsrv.length))f++;\n    $('cjCard').classList.toggle('off',!st.cj);\n    $('cjSum').textContent=st.cj?(4-st.cjsrv.length)+' of 4 servers on — video direct from CDN':'CineJoy off — enable in Sources';\n    $('bdTune').textContent=f;",
+    "count": 1
+  },
+  {
+    "file": "config.html",
+    "old": "var QK={v:'q',",
+    "new": "var QK={cj:'cjq',v:'q',",
+    "count": 1
+  },
+  {
+    "file": "config.html",
+    "old": "    if(st.v===1){if(st.q.length)",
+    "new": "    if(st.cj===1&&st.cjsrv.length)s.appendChild(el('div','chip','CineJoy '+(4-st.cjsrv.length)+' of 4 servers'));\n    if(st.v===1){if(st.q.length)",
+    "count": 1
+  },
+  {
+    "file": "config.html",
+    "old": "[['srvCard','srvTgl'],['rtCard','rtTgl']]",
+    "new": "[['srvCard','srvTgl'],['rtCard','rtTgl'],['cjCard','cjTgl']]",
+    "count": 1
+  },
+  {
+    "file": "config.test.js",
+    "old": "length===16;A('সোর্স-কার্ড ১৬টি (v/nx/rt/tw/mm/m4u/sky/hm/hd/vsp/ott/az/mlb/mls/dt/nex)'",
+    "new": "length===17;A('সোর্স-কার্ড ১৭টি (v/nx/rt/tw/mm/m4u/sky/hm/hd/vsp/ott/az/mlb/mls/dt/nex/cj)'",
+    "count": 1
+  },
+  {
+    "file": "config.test.js",
+    "old": "'mls','dt','nex'].",
+    "new": "'mls','dt','nex','cj'].",
+    "count": 3
+  },
+  {
+    "file": ".gitignore",
+    "old": ".nexalibs/\n",
+    "new": ".nexalibs/\n\n# CineJoy owns this mutable pool/lock; never share Vidy/HM/MovieBox state.\ncinejoy-data/\n",
+    "count": 1
+  }
+]

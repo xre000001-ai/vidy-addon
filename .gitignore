@@ -17,3 +17,6 @@ mlbd_paths.json
 # v1.34.306: vidly সার্ভার-স্ট্রিম ক্যাশ (রানটাইম) — স্ন্যাপশটে দরকার নেই
 vidly_streams.json
 .nexalibs/
+
+# CineJoy owns this mutable pool/lock; never share Vidy/HM/MovieBox state.
+cinejoy-data/

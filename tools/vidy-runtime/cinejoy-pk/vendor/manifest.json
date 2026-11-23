@@ -1,0 +1,9 @@
+{
+  "source": "https://cinejoy.pk/_app/immutable/chunks/CmLbC6Wk.js",
+  "originalSha256": "6409543ed1cd5070d5a860b22bcb00a6c9acb0eb778d102639b6141faee7bc33",
+  "shimSha256": "8e0bda1d98a7a8f4c6dc13e71f39f2631468c63e2babd0d7268ecbdd30422f6e",
+  "wasmSource": "https://api2.wing.st/crush.wasm",
+  "wasmSha256": "40c923580779e2a850fc5ab3f0046be565ed717883cf4547ed3a87de2450bdcf",
+  "wasmBytes": 67222,
+  "note": "Only the public request-sealing/response-opening prefix is adapted. WASM has no host imports. No website account or secret is used."
+}
