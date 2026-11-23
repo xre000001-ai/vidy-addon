@@ -49,8 +49,15 @@ test('06 Jawan never matches Jawani', () => {
   assert(hm.titleScore('Jawan', 'https://v5.hindmovie.im/jawan-2023-hindi-1080p/') > 0);
   assert.equal(hm.titleScore('Jawan', 'https://v5.hindmovie.im/hai-jawani-toh-ishq-hona-hai-2026-hindi/'), -1);
 });
-test('07 exact Odyssey post outranks Troy The Odyssey', () => {
+test('07 exact post outranks lookalikes; a confirmed cached HTML result need not wait for slow REST', async () => {
   assert(hm.titleScore('The Odyssey', 'https://v5.hindmovie.im/the-odyssey-2026-hindi/') > hm.titleScore('The Odyssey', 'https://v5.hindmovie.im/troy-the-odyssey-2017-hindi/'));
+  let restFinished = false;
+  const source = hm.create({ get: async url => {
+    if (url.includes('/wp-json/')) { await sleep(70); restFinished = true; return reply('[]'); }
+    return reply('<a href="' + postURL + '">Example</a>');
+  }});
+  const out = await source.search('Example');
+  assert.equal(out[0], postURL); assert.equal(restFinished, false);
 });
 test('08 site navigation and unrelated hosts cannot be search results', () => {
   for (const u of ['https://v5.hindmovie.im/movies/', 'https://other.example/example-2020/', 'https://v5.hindmovie.im/tag/example-2020/']) assert.equal(hm.titleScore('Example', u), -1);

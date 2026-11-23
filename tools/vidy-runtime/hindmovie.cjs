@@ -205,15 +205,27 @@ function create(options = {}) {
     const key = norm(title), cached = memoGet(searches, key, 1800000);
     if (cached) return cached;
     const q = encodeURIComponent(title), links = new Set();
-    const rs = await Promise.all([
-      httpGet(base + '/wp-json/wp/v2/search?search=' + q + '&per_page=12', ms),
-      httpGet(base + '/?s=' + q, ms)
-    ]);
-    try { for (const row of JSON.parse(rs[0].t || '[]')) if (row.url) links.add(row.url); } catch (_) {}
-    for (const m of contentOf(rs[1].t).matchAll(/href=["'](https?:\/\/[^"']+)["']/gi)) links.add(m[1]);
-    const out = [...links].filter(u => titleScore(title, u) >= 0).sort((a, b) => titleScore(title, b) - titleScore(title, a));
-    if (out.length) memoPut(searches, key, out);
-    return out;
+    // The HTML search is often already cached (<400ms), while REST can take
+    // another second. A positively matched canonical post is enough to start;
+    // its entire 1080p/4K file list is still collected before returning cards.
+    return new Promise(resolve => {
+      let done = false, pending = 2;
+      const finish = () => {
+        const out = [...links].filter(u => titleScore(title, u) >= 0).sort((a, b) => titleScore(title, b) - titleScore(title, a));
+        if (!done && (!pending || out.length && titleScore(title, out[0]) >= 120)) {
+          done = true; if (out.length) memoPut(searches, key, out); resolve(out);
+        }
+      };
+      const consume = (r, json) => {
+        if (!done) {
+          if (json) { try { for (const row of JSON.parse(r.t || '[]')) if (row.url) links.add(row.url); } catch (_) {} }
+          else for (const m of contentOf(r.t).matchAll(/href=["'](https?:\/\/[^"']+)["']/gi)) links.add(m[1]);
+        }
+        pending--; finish();
+      };
+      Promise.resolve(httpGet(base + '/wp-json/wp/v2/search?search=' + q + '&per_page=12', ms)).then(r => consume(r, true), () => consume({t:''}, true));
+      Promise.resolve(httpGet(base + '/?s=' + q, ms)).then(r => consume(r, false), () => consume({t:''}, false));
+    });
   }
   async function post(url, ms = 4200) {
     const t0 = Date.now(), left = () => Math.max(0, ms - (Date.now() - t0));

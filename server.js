@@ -7879,12 +7879,14 @@ function hmStreams(tmdbId, title, type, s, e, origin, maxh) {
   const inf = HM_INF.get(k);
   if (inf && Date.now() - inf.ts < 60000) return inf.p;
   if (HM_INF.size > 300) HM_INF.clear();
+  const hmStarted = Date.now();
   const upgraded = HM_UPGRADE ? HM_UPGRADE.cards(String(title || ''), type, s, e,
     (u, fn, q) => hmCard(String(title || ''), type === 'series' || type === 'tv' ? '\u29e0 S' + s + 'E' + e : '\u29e0 Movie', q, u, fn),
     11000, { imdbPromise: tmdbToImdb(String(tmdbId), type === 'series' || type === 'tv' ? 'tv' : 'movie').catch(() => '') }) : null;
   const p = (upgraded || hmStreamsRaw(tmdbId, title, type, s, e, origin, maxh)).then(v => {
     HM_INF.delete(k);
     v = (v || []).filter(c => /^(1080|2160)$/.test(String(c.quality || '')) && (!maxh || Number(c.quality) <= maxh));
+    try { diag('hm', 'upgrade "' + String(title || '').slice(0, 44) + '" n=' + v.length + ' @' + (Date.now() - hmStarted) + 'ms'); } catch (_) {}
     if (v.length) { if (HM_RC.size > 500) HM_RC.clear(); HM_RC.set(k, { ts: Date.now(), v: v }); }
     return v;
   }).catch(() => { HM_INF.delete(k); return []; });
