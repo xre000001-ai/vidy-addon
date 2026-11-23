@@ -13,17 +13,18 @@ function immutable(base, ref, file) {
  } else { u.pathname += file; u.searchParams.set('generation', ref); }
  return u.href;
 }
-async function text(response, max) {
+async function text(response, max, signal) {
  if (response.body?.getReader) {
-  const reader = response.body.getReader(), pieces = []; let size = 0;
-  try { for (;;) { const r = await reader.read(); if (r.done) break; size += r.value.length; if (size > max) throw Error('Oversized index response'); pieces.push(Buffer.from(r.value)); } return Buffer.concat(pieces).toString('utf8'); }
-  finally { await reader.cancel().catch(() => {}); }
+  const reader = response.body.getReader(), pieces = []; let size = 0, stop;
+  const stopped = signal && new Promise((_, reject) => { stop = () => reject(signal.reason || Error('Index read aborted')); signal.addEventListener('abort', stop, { once: true }); if (signal.aborted) stop(); });
+  try { for (;;) { const r = await (stopped ? Promise.race([reader.read(), stopped]) : reader.read()); if (r.done) break; size += r.value.length; if (size > max) throw Error('Oversized index response'); pieces.push(Buffer.from(r.value)); } return Buffer.concat(pieces).toString('utf8'); }
+  finally { if (stop) signal.removeEventListener('abort', stop); try { Promise.resolve(reader.cancel()).catch(() => {}); } catch (_) {} }
  }
  const s = await response.text(); if (Buffer.byteLength(s) > max) throw Error('Oversized index response'); return s;
 }
 function create({ seedDir, mirrors, fetch: fetcher = fetch, clock = Date.now, state = {}, shardState = {}, cache = new Map(), timeout = 12000 } = {}) {
  let active = null, closed = false, currentFiles = {}, man = null, aliases = new Map(); const controllers = new Set();
- Object.assign(state, { on: true, n: 0, ts: 0, at: 0, err: '', src: 'none', generation: '', legacy: { n: 0, ts: 0, at: 0, err: '' } });
+ Object.assign(state, { on: true, n: 0, ts: 0, at: 0, err: '', src: 'none', generation: '', refreshing: false, attemptAt: 0, finishedAt: 0, legacy: { n: 0, ts: 0, at: 0, err: '' } });
  Object.assign(shardState, { on: false, shards: C.SHARDS, man: null, at: 0, err: '', loaded: 0, hits: 0, miss: 0, pre: 0, src: 'none' });
  function adopt(next, pieces, src) {
   const nextAliases = new Map(), titles = new Map((next.titles || []).map(x => [x.slug, x]));
@@ -44,8 +45,19 @@ function create({ seedDir, mirrors, fetch: fetcher = fetch, clock = Date.now, st
  } catch (e) { state.err = 'bundled: ' + String(e.message).slice(0, 100); }
  async function get(url, max) {
   if (closed) throw Error('Index closed'); const controller = new AbortController(); controllers.add(controller);
-  try { const r = await fetcher(url, { headers: { 'User-Agent': 'Vidy-DeadToons-Index/4', Accept: 'application/json' }, signal: AbortSignal.any([controller.signal, AbortSignal.timeout(timeout)]) }); if (!r.ok) throw Error('Index HTTP ' + r.status); return await text(r, max); }
-  finally { controllers.delete(controller); }
+  const discard = r => { try { Promise.resolve(r?.body?.cancel()).catch(() => {}); } catch (_) {} };
+  let stop; const stopped = new Promise((_, reject) => { stop = () => reject(controller.signal.reason || Error('Index read aborted')); controller.signal.addEventListener('abort', stop, { once: true }); });
+  // Abort alone is not a deadline: a socket queue/fetch implementation or a
+  // response-body cleanup may never settle. This DT-only timer also rejects
+  // our own wait, releases singleflight and permits the next natural interval.
+  const timer = setTimeout(() => controller.abort(Error('Index request deadline exceeded')), Math.max(1, Number(timeout) || 12000));
+  const work = Promise.resolve().then(() => fetcher(url, { headers: { 'User-Agent': 'Vidy-DeadToons-Index/4', Accept: 'application/json' }, signal: controller.signal })).then(async r => {
+   if (controller.signal.aborted) { discard(r); throw controller.signal.reason; }
+   if (!r.ok) { discard(r); throw Error('Index HTTP ' + r.status); }
+   return text(r, max, controller.signal);
+  });
+  try { return await Promise.race([work, stopped]); }
+  finally { clearTimeout(timer); controller.signal.removeEventListener('abort', stop); controllers.delete(controller); }
  }
  function validate(j) {
   if (j?.ver !== 4 || j.shards !== C.SHARDS || !Array.isArray(j.slugs) || !Number.isInteger(j.n) || j.n < 0 || !Number.isFinite(j.ts) || j.ts < 0 || !/^[a-f0-9]{40}$/.test(j.ref || '') || !/^[a-f0-9]{64}$/.test(j.generation || '') || !Array.isArray(j.titles)) throw Error('Invalid v4 index manifest');
@@ -90,7 +102,7 @@ function create({ seedDir, mirrors, fetch: fetcher = fetch, clock = Date.now, st
  }
  const lookup = slug => { const found = cache.get(C.shard(slug))?.get(slug); if (found) { shardState.hits++; return found; } shardState.miss++; return null; };
  return {
-  refresh() { if (closed) return Promise.resolve(false); if (!active) active = load().finally(() => { active = null; }); return active; }, lookup, linkKey,
+  refresh() { if (closed) return Promise.resolve(false); if (!active) { Object.assign(state, { refreshing: true, attemptAt: clock() }); active = load().finally(() => { active = null; Object.assign(state, { refreshing: false, finishedAt: clock() }); }); } return active; }, lookup, linkKey,
   resolve(names, { type, year, s = 0, e = 0 } = {}) {
    const candidates = new Map();
    for (const name of names || []) for (const entry of aliases.get(titleKey(name))?.values() || []) {

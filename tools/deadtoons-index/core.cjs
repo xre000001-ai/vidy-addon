@@ -68,13 +68,13 @@ function units(cat) {
     const offset = Number.isInteger(se.episodeOffset) && se.episodeOffset >= 0 ? se.episodeOffset : 0;
     for (const raw of eps) {
      const sourceEpisode = Number(raw), e = sourceEpisode - offset;
-     if (!Number.isInteger(sourceEpisode) || !Number.isInteger(e) || e < 1) continue;
-     const u = { slug: c.slug, s, e, sourceEpisode }, k = unitKey(u);
+     if (!Number.isInteger(sourceEpisode) || sourceEpisode < 0 || !Number.isInteger(e) || e < 0) continue;
+     const u = { slug: c.slug, s, e, sourceEpisode, kind: 'episode' }, k = unitKey(u);
      if (!seen.has(k)) { seen.add(k); out.push(u); }
     }
    }
   } else if (c.complete !== false && c.root !== false) {
-   const u = { slug: c.slug, s: 0, e: 0 }, k = unitKey(u); if (!seen.has(k)) { seen.add(k); out.push(u); }
+   const u = { slug: c.slug, s: 0, e: 0, kind: 'movie' }, k = unitKey(u); if (!seen.has(k)) { seen.add(k); out.push(u); }
   }
  }
  return out;

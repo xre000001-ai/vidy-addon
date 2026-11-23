@@ -17,7 +17,7 @@ async function publish({ repo, source, expected = '', push = false, env = proces
   const seenSeasons = new Set();
   for (const se of show.seasons) {
    if (seenSeasons.has(se.s)) throw Error('Duplicate catalog season'); seenSeasons.add(se.s);
-   if (!Number.isInteger(se.s) || se.s < 0 || !Number.isInteger(se.n) || se.n < 0 || !Array.isArray(se.episodes) || se.episodes.some(e => !Number.isInteger(e) || e < 1)) throw Error('Invalid catalog episode inventory');
+   if (!Number.isInteger(se.s) || se.s < 0 || !Number.isInteger(se.n) || se.n < 0 || !Array.isArray(se.episodes) || se.episodes.some(e => !Number.isInteger(e) || e < 0)) throw Error('Invalid catalog episode inventory');
    if (cat.complete && (show.complete !== true || se.complete !== true || new Set(se.episodes).size !== se.n)) throw Error('Unproven complete catalog');
   }
  }

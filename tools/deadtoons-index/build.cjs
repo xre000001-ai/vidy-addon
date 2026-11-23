@@ -19,13 +19,23 @@ async function catalog(client, previous = {}, { now = Date.now, concurrency = 4,
  }
  if (counts.size > 1 || counts.size && !counts.has(listed.size)) { errors++; listComplete = false; }
  const shows = new Map(), showQueue = [], seasonQueue = [], queuedSeasons = new Set(), inflightSeasons = new Set(); let turn = false;
+ function reopenLocalContracts(show) {
+  if (previous.contract === 2) return;
+  // One-time recovery ONLY for419 local shape-validation failures. Genuine
+  // network/429/5xx Retry-After states are never reset or bypassed.
+  if (show.type === 'movie' && show.lastError?.status === 0 && show.lastError.message === 'Invalid show metadata') { show.nextAt = 0; show.attemptAt = 0; }
+  for (const se of show.seasons || []) if (se.lastError?.status === 0 && se.lastError.message === 'Invalid episode inventory') { se.nextAt = 0; se.attemptAt = 0; }
+ }
+ const dueShow = show => !(show.metaComplete !== false && show.checkedAt > 0 && now() - show.checkedAt < ttl) && !(show.nextAt > now());
  for (const a of listed.values()) {
   const old = prior.get(a.slug);
   const show = old ? structuredClone(old) : { slug: a.slug, type: a.type || 'tv', name: a.anime_name || a.slug, seasons: [], root: false, complete: false, metaComplete: false, checkedAt: 0 };
-  shows.set(a.slug, show);
-  if (!(show.metaComplete !== false && show.checkedAt > 0 && now() - show.checkedAt < ttl) && !(show.nextAt > now())) showQueue.push(a.slug);
+  reopenLocalContracts(show); shows.set(a.slug, show);
+  if (dueShow(show)) showQueue.push(a.slug);
  }
- if (!listComplete) for (const old of prior.values()) if (!shows.has(old.slug)) shows.set(old.slug, structuredClone(old));
+ if (!listComplete) for (const old of prior.values()) if (!shows.has(old.slug)) {
+  const show = structuredClone(old); reopenLocalContracts(show); shows.set(show.slug, show); if (dueShow(show)) showQueue.push(show.slug);
+ }
  function enqueueSeasons(show) {
   for (const se of show.seasons || []) {
    if (!se.n) { se.episodes = []; se.complete = true; continue; }
@@ -55,9 +65,10 @@ async function catalog(client, previous = {}, { now = Date.now, concurrency = 4,
     show.attemptAt = now(); metadataRequests++;
     try {
      const a = listed.get(task.slug) || {}, j = await client.request('/anime/' + encodeURIComponent(task.slug));
-     if (!j || !Array.isArray(j.seasons) || j.links != null && !Array.isArray(j.links)) throw Error('Invalid show metadata');
+     const isMovie = (j?.type || a.type || show.type) === 'movie';
+     if (!j || !Array.isArray(j.seasons) && !(isMovie && j.seasons == null) || j.links != null && !Array.isArray(j.links)) throw Error('Invalid show metadata');
      const oldSeasons = new Map((show.seasons || []).map(s => [s.s, s])), seasons = [], seasonNumbers = new Set();
-     for (const raw of j.seasons) {
+     for (const raw of j.seasons || []) {
       const s = Number(raw.season_number), n = Number(raw.episode_count);
       if (!Number.isInteger(s) || s < 0 || !Number.isInteger(n) || n < 0 || n > 10000 || seasonNumbers.has(s)) throw Error('Invalid/duplicate season inventory');
       seasonNumbers.add(s); const old = oldSeasons.get(s), same = old?.n === n;
@@ -77,7 +88,7 @@ async function catalog(client, previous = {}, { now = Date.now, concurrency = 4,
      if (!se || se.n !== sourceCount) continue;
      if (!j || !Array.isArray(j.episodes)) throw Error('Missing explicit episode inventory');
      const episodes = [...new Set(j.episodes.map(e => Number(e.episode_number)))].sort((a, b) => a - b);
-     if (episodes.some(e => !Number.isInteger(e) || e < 1)) throw Error('Invalid episode inventory');
+     if (episodes.some(e => !Number.isInteger(e) || e < 0)) throw Error('Invalid episode inventory');
      // Keep the real IDs even for a temporarily incomplete inventory. Never
      // fabricate 1..count or infer missing episode links from a timeout/404.
      Object.assign(se, { episodes, checkedAt: now(), complete: episodes.length === se.n, failures: 0, nextAt: now() + ttl });
@@ -103,7 +114,7 @@ async function catalog(client, previous = {}, { now = Date.now, concurrency = 4,
   show.complete = show.metaComplete === true && !show.lastError && (show.seasons || []).every(se => se.complete === true && !se.lastError);
  }
  const values = [...shows.values()].sort((a, b) => a.slug.localeCompare(b.slug)), pending = values.filter(s => !s.complete).length;
- return { ver: 4, at: now(), complete: listComplete && errors === 0 && pending === 0, shows: values, stats: { listed: listed.size, declared: counts.size === 1 ? [...counts][0] : null, errors, pending, listComplete, metadataRequests, seasonRequests, queued: showQueue.length + seasonQueue.length } };
+ return { ver: 4, contract: 2, at: now(), complete: listComplete && errors === 0 && pending === 0, shows: values, stats: { listed: listed.size, declared: counts.size === 1 ? [...counts][0] : null, errors, pending, listComplete, metadataRequests, seasonRequests, queued: showQueue.length + seasonQueue.length } };
 }
 const quality = q => /\b4k\b/i.test(q) ? 2160 : Number((String(q || '').match(/(\d{3,4})\s*p/i) || [])[1] || 0);
 function candidates(links) {
@@ -138,11 +149,11 @@ async function slice(client, rows, cat, state = {}, { slice = 0, slices = 4, wan
    if (client.left() < 75000) return; const u = todo[qi++]; if (!u) return;
    const old = states[u.key] || {}, st = { ...old, hosts: { ...(old.hosts || {}) }, attemptAt: now() }; states[u.key] = st; stats.attempted++;
    try {
-    const p = u.e > 0 ? '/anime/' + encodeURIComponent(u.slug) + '/season/' + u.s + '/episode/' + (u.sourceEpisode || u.e) : '/anime/' + encodeURIComponent(u.slug);
+    const p = u.kind === 'episode' ? '/anime/' + encodeURIComponent(u.slug) + '/season/' + u.s + '/episode/' + (u.sourceEpisode ?? u.e) : '/anime/' + encodeURIComponent(u.slug);
     const detail = await client.request(p);
     if (!detail || detail.links != null && !Array.isArray(detail.links) || detail.links === undefined) throw new UpstreamError('Invalid unit metadata');
     stats.metadataOK++; const cands = candidates(detail.links || []); let failed = false, gateErrors = 0, retryAt = 0;
-    st.sourceEpisode = u.sourceEpisode || 0;
+    st.sourceEpisode = u.sourceEpisode ?? 0;
     for (const h of [0, 1]) if (!cands.some(c => c.h === h)) st.hosts[h] = { ...(st.hosts[h] || {}), available: false, checkedAt: now() };
     for (const c of cands) {
      const cached = st.hosts[c.h] || {}, host = { ...cached, linkId: c.id, checkedAt: now(), available: true }; st.hosts[c.h] = host;

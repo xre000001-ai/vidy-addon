@@ -25,3 +25,6 @@ test('419 DT resolution preservation: media/link resolver, identity/episode/card
  const {namedFunction}=require('./extract.cjs'),old=beforeDeadtoons('server.js').toString('utf8'),current=fs.readFileSync(path.join(root,'server.js'),'utf8');
  for(const name of ['dtFileProof','dtDlCands','dtRowsToLinks','dtTitleOk','dtAudio','dtEmbedHls','dtUnpackJs','dtJson','dtJsonPost'])a.equal(namedFunction(current,name),namedFunction(old,name),name);
 });
+
+require('../deadtoons-index/contracts-420.test.cjs');
+require('../deadtoons-index/runtime-deadline-420.test.cjs');

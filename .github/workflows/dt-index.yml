@@ -43,7 +43,7 @@ jobs:
       - id: base
         run: echo "sha=$(git -C .dt-data rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - name: One shared bounded catalog refresh
-        run: node tools/deadtoons-index/cli.cjs catalog --data=.dt-data --out=.dt-plan --budget=${{ github.event_name == 'push' && '180' || '780' }}
+        run: node tools/deadtoons-index/cli.cjs catalog --data=.dt-data --out=.dt-plan --budget=780
       - uses: actions/upload-artifact@v4
         with:
           name: dt-plan
