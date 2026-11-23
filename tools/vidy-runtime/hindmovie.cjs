@@ -4,7 +4,6 @@
 // child processes, pool trainer, or first-card/first-file early return.
 const fs = require('fs');
 const path = require('path');
-const { fetch, ProxyAgent } = require('undici');
 const POOL_FILE = path.join(__dirname, '../../hm_proxy_pool.json');
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36';
 const POOL = new Map(), COOKIES = new Map(), CURSOR = new Map();
@@ -39,6 +38,7 @@ function poolStats() {
 async function request(url, ref, body, proxy, signal) {
   let agent;
   try {
+    const { fetch, ProxyAgent } = require('undici');
     if (proxy) agent = new ProxyAgent(/:\/\//.test(proxy) ? proxy : 'http://' + proxy);
     for (let hop = 0; hop < 5; hop++) {
       const host = new URL(url).hostname, cookies = COOKIES.get(host) || {};
