@@ -4,6 +4,7 @@ Scope: full HindMovie/HDHub4u provider labels; Movies4u/HDHub4u first-tap discov
 
 ```sh
 node --check server.js
+node config.test.js
 node --test tools/source-review-tests/*.test.cjs tools/card-text-tests/*.test.cjs tools/cinejoy-tests/*.test.cjs
 node --test tools/stream-tests/test-first-tap-scheduler.cjs tools/stream-tests/test-hindmovie-budget-review.cjs tools/stream-tests/test-hindmovie-first-tap-review.cjs tools/stream-tests/test-hindmovie-race.cjs
 for f in tools/hdhub/test-*.cjs; do node "$f" || exit 1; done
@@ -28,9 +29,9 @@ The observed G-Direct upstream ignored first, middle and suffix Range requests a
 - Undoing just the nine declared G-Direct function edits reconstructs the previously reviewed server SHA `588192cb70d7bbbbec74611315f50bcb676e09b75e59bc8f22c13d32fbd79639`. Shared GU/cache/relay, Revive Google Drive and the other previously reviewed runtime functions stay unchanged by this exclusion.
 - **Google Drive, GDFlix, FSL/Pixeldrain and other providers are not globally banned.** Their URLs, headers, native subtitles, audio declarations and functional filenames remain meaningful.
 
-## Release evidence and limitations
+## Historical 1.34.416 evidence and limitations
 
-Release version: **1.34.416**. Deployment state is recorded separately; passing these tests alone does not mean a build has been deployed. Engineering report: `/home/user/vidy-source-review/FINAL-REVIEW.md`.
+Previous released baseline: **1.34.416**. Deployment state is recorded separately; passing these tests alone does not mean a build has been deployed. Engineering report: `/home/user/vidy-source-review/FINAL-REVIEW.md`.
 
 The post-exclusion isolated live cohort returned **23/23 HTTP 200 nonempty listings**, including paired first/second taps, combined M4U+HD, CJ/HM controls and the separate Nexa transport. None contained G-Direct. The old exact G-Direct route returned 410.
 
@@ -38,8 +39,10 @@ Sequential real decoder sampling of eight actual returned cards passed **14/16**
 
 The expanded 98-entrypoint sweep remains **95/98**. Three failures also reproduce on untouched c593 and are unmodified: `tools/mlbd-index/test_direct.cjs`, `tools/mlbd-index/test_preserve_base.cjs`, and `tools/mls-index-lab/test-proxy-trainer.cjs`. The originally scoped 46 legacy entrypoints and all eight HD entrypoints pass. No unrelated MLBD/proxy runtime fix, test exemption or baseline hash reset was applied.
 
-## Unreleased repeated-review candidate
+## Repeated-review upgrade — 1.34.417
 
-These unreleased changes are based on commit `31028c6`; it is **not deployed** and does not bump the released version. It adds adversarial filename-separator/standalone-episode/quality checks and narrowly hardens those gates. No GU/relay/proxy/container/audio/subtitle/timeout behavior is rewritten. `rereview-preservation.cjs` reverses each declared local change before checking the exact329-file deployed baseline, then the unchanged original122 inverses and older preservation chains still run. The workflow now triggers for these suites and runs their job independently of the three known legacy failures. Review evidence/report: `/home/user/vidy-triple-review/`.
+These changes retain the stable `31028c6` / 1.34.416 baseline and the reviewed `261a74b` upgrades, now versioned **1.34.417** for promotion. Deployment status is recorded separately; a version bump alone is not deployment proof. The upgrade adds adversarial filename-separator/standalone-episode/quality checks and narrowly hardens those gates. No GU/relay/proxy/container/audio/subtitle/timeout behavior is rewritten. `rereview-preservation.cjs` reverses each declared local change before checking the exact329-file deployed baseline, then the unchanged original122 inverses and older preservation chains still run. The workflow now triggers for these suites and runs their job independently of the three known legacy failures. Review evidence/report: `/home/user/vidy-triple-review/`.
 
-Commit preparation additionally checks the configure page offline: its existing server grid contains **19** servers. Four obsolete 18-server expectations in `config.test.js` were corrected to that fixed existing contract, without changing `config.html` or server configuration. The scoped CI job runs this DOM check as well; config-page/test changes trigger it. The repeated-review combined suite has **333 tests** (55 new), and the separate DOM harness has **84 assertions**. New live-provider/playback/seek probes are deferred at the user’s request; that does not reclassify earlier observed failures as passes. Dependency manifests and the lockfile remain unchanged; the known transitive body-parser audit advisory is a separate dependency-review item.
+Commit preparation additionally checks the configure page offline: its existing server grid contains **19** servers. Four obsolete 18-server expectations in `config.test.js` were corrected to that fixed existing contract, without changing `config.html` or server configuration. The scoped CI job runs this DOM check as well; config-page/test changes trigger it. The repeated-review combined suite has **333 tests** (55 new), and the separate DOM harness has **84 assertions**. New live-provider/playback/seek probes are deferred at the user’s request; that does not reclassify earlier observed failures as passes. Dependency versions and the lockfile remain unchanged (only the package release version is bumped); the known transitive body-parser audit advisory is a separate dependency-review item.
+
+Promotion evidence and stable-version comparisons: `/home/user/vidy-release-1.34.417/`. Earlier `/home/user/vidy-triple-review/` reports remain historical pre-push/deployment snapshots. No older stable snapshot is restored or merged, and existing upgraded CineJoy/HM/Nexa/source/card behavior is retained.
