@@ -7866,7 +7866,7 @@ async function hmPool(items, n, fn) { // ★ mvlink-এ >৩ সমান্ত�
 //   না-আসলেও চেইন শেষ হলে ক্যাশে বসে — পরের রিকোয়েস্টে তাৎক্ষণিক (শূন্য-ফল ক্যাশ-হয়-না।
 // Stable 1.34.415 + HM-only overlay. All other sources and timing stay unchanged.
 const HM_UPGRADE = (() => {
-  try { const h = require('./tools/vidy-runtime/hindmovie.cjs'); h.poolLoad(); console.error('[hm] stable-415-hm1 loaded'); return h; }
+  try { const h = require('./tools/vidy-runtime/hindmovie.cjs'); h.poolLoad(); console.error('[hm] stable-415-hm2 pipelined loaded'); return h; }
   catch (err) { console.error('[hm] upgrade unavailable; using stable HM:', err.message); return null; }
 })();
 const HM_RC = new Map(); const HM_INF = new Map(); const HM_RC_TTL = 20 * 60 * 1000;
@@ -7882,11 +7882,15 @@ function hmStreams(tmdbId, title, type, s, e, origin, maxh) {
   const hmStarted = Date.now();
   const upgraded = HM_UPGRADE ? HM_UPGRADE.cards(String(title || ''), type, s, e,
     (u, fn, q) => hmCard(String(title || ''), type === 'series' || type === 'tv' ? '\u29e0 S' + s + 'E' + e : '\u29e0 Movie', q, u, fn),
-    11000, { imdbPromise: tmdbToImdb(String(tmdbId), type === 'series' || type === 'tv' ? 'tv' : 'movie').catch(() => '') }) : null;
+    11000, { key: String(tmdbId || ''), imdbPromise: tmdbToImdb(String(tmdbId), type === 'series' || type === 'tv' ? 'tv' : 'movie').catch(() => '') }) : null;
   const p = (upgraded || hmStreamsRaw(tmdbId, title, type, s, e, origin, maxh)).then(v => {
     HM_INF.delete(k);
     v = (v || []).filter(c => /^(1080|2160)$/.test(String(c.quality || '')) && (!maxh || Number(c.quality) <= maxh));
-    try { diag('hm', 'upgrade "' + String(title || '').slice(0, 44) + '" n=' + v.length + ' @' + (Date.now() - hmStarted) + 'ms'); } catch (_) {}
+    try {
+      const hs = HM_UPGRADE && typeof HM_UPGRADE.last === 'function' ? HM_UPGRADE.last() : null;
+      diag('hm', 'upgrade2 "' + String(title || '').slice(0, 44) + '" n=' + v.length + ' @' + (Date.now() - hmStarted) + 'ms'
+        + (hs && hs.title === String(title || '') ? ' files=' + hs.picked + ' firstFile=' + hs.firstFileMs + ' discovery=' + hs.discoveryMs + ' firstCard=' + hs.firstCardMs : ''));
+    } catch (_) {}
     if (v.length) { if (HM_RC.size > 500) HM_RC.clear(); HM_RC.set(k, { ts: Date.now(), v: v }); }
     return v;
   }).catch(() => { HM_INF.delete(k); return []; });

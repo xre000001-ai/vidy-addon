@@ -35,6 +35,12 @@ function poolStats() {
   for (const v of POOL.values()) for (const k of Object.keys(v.cap || {})) cap[k] = (cap[k] || 0) + 1;
   return { total: POOL.size, cap };
 }
+// A gdshine JSON extraction error is a completed upstream answer, not an IP
+// block. Do not throw it away and wait for two silent proxies until timeout.
+function extractionError(url, status, text) {
+  if (![400, 404, 409, 410, 413, 422].includes(status) || !/^https:\/\/gdshine\.org\/api\/(?:share|downloads)\//i.test(url)) return false;
+  try { const j = JSON.parse(text); return j.success === false && typeof j.error === 'string' && !!j.error; } catch (_) { return false; }
+}
 async function request(url, ref, body, proxy, signal) {
   let agent;
   try {
@@ -61,22 +67,27 @@ async function request(url, ref, body, proxy, signal) {
         continue;
       }
       const t = await r.text();
-      if (r.status < 200 || r.status >= 300 || !t || /Just a moment|_cf_chl_opt|Attention Required/i.test(t.slice(0, 1500))) return null;
+      if (!t || /Just a moment|_cf_chl_opt|Attention Required/i.test(t.slice(0, 1500))) return null;
+      if ((r.status < 200 || r.status >= 300) && !extractionError(url, r.status, t)) return null;
       return { st: r.status, t, via: proxy || 'direct' };
     }
   } catch (_) {} finally { if (agent) agent.destroy().catch(() => {}); }
   return null;
 }
-function get(url, ms, ref, body) {
+function get(url, ms, ref, body, signal) {
+  if (signal && signal.aborted) return Promise.resolve({ st: 0, t: '' });
   const cap = capOf(url), nodes = poolPick(2, cap), controller = new AbortController();
   return new Promise(resolve => {
     let done = false, pending = nodes.length + 1, directTimer;
     const finish = r => {
       if (done) return;
       done = true; clearTimeout(timer); clearTimeout(directTimer); controller.abort();
+      if (signal) signal.removeEventListener('abort', cancel);
       resolve(r || { st: 0, t: '' });
     };
     const timer = setTimeout(() => finish(null), Math.max(1, ms || 4000));
+    const cancel = () => finish(null);
+    if (signal) signal.addEventListener('abort', cancel, { once: true });
     const run = async proxy => {
       const t0 = Date.now(), r = await request(url, ref, body, proxy, controller.signal);
       if (done) return;
@@ -128,18 +139,24 @@ function contentOf(text) {
 function namesIn(text) {
   return [...new Set([...unhtml(text).matchAll(/([A-Za-z0-9][A-Za-z0-9._()\-\[\] ]{6,220}\.(?:mkv|mp4|avi|webm))/gi)].map(m => m[1].trim()))];
 }
+function mergeFile(old, entry) {
+  return { name: entry.name, id: entry.id || old && old.id || '',
+    sources: [...new Set([...(old && old.sources || []), ...(entry.sources || [])])] };
+}
 function parseFiles(text) {
   const html = contentOf(text), names = namesIn(html), out = new Map();
-  const add = (name, id) => { if (fileOK(name)) { const old = out.get(name); out.set(name, { name, id: id || old && old.id || '' }); } };
+  const add = (name, id, source) => {
+    if (fileOK(name)) out.set(name, mergeFile(out.get(name), { name, id, sources: source ? [source] : [] }));
+  };
   for (const name of names) add(name, '');
-  for (const m of html.matchAll(/(?:hshare\.lol\/?|boldb\.site\/)\?id=([^"'&<>\s]+)/gi)) {
+  // Preserve link provenance. A boldb-only file must not acquire a guessed,
+  // usually dead hshare path (and vice versa). Keep BOTH when both are posted.
+  for (const m of html.matchAll(/https?:\/\/(?:hshare\.(?:lol|ink)|boldb\.site)\/?\?id=([^"'&<>\s]+)/gi)) {
     let id = m[1]; try { id = decodeURIComponent(id); } catch (_) {}
-    if (fileOK(id)) add(id, /hshare/i.test(m[0]) ? id : '');
-    else if (/hshare/i.test(m[0])) {
-      const nearby = namesIn(html.slice(Math.max(0, m.index - 1200), m.index));
-      const name = nearby.pop() || (names.length === 1 ? names[0] : '');
-      if (name) add(name, id);
-    }
+    const hs = /hshare\./i.test(m[0]);
+    const nearby = fileOK(id) ? [] : namesIn(html.slice(Math.max(0, m.index - 1200), m.index));
+    const name = fileOK(id) ? id : nearby.pop() || (names.length === 1 ? names[0] : '');
+    if (name) add(name, hs ? id : '', new URL(m[0]).href);
   }
   return [...out.values()];
 }
@@ -190,15 +207,30 @@ function scanUrls(text) {
   for (const m of html.matchAll(/gdshine\.org\/(?:s|api\/share)\/([A-Za-z0-9_-]{6,})/g)) shorts.add(m[1]);
   return { urls: [...urls], shorts: [...shorts] };
 }
-async function mapLimit(items, concurrency, fn) {
-  let index = 0;
-  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, async () => {
-    while (index < items.length) { const i = index++; await fn(items[i], i); }
-  }));
+function limit(concurrency) {
+  let active = 0;
+  const queue = [];
+  const drain = () => {
+    while (active < concurrency && queue.length) {
+      const { fn, resolve, reject } = queue.shift(); active++;
+      Promise.resolve().then(fn).then(resolve, reject).finally(() => { active--; drain(); });
+    }
+  };
+  return fn => new Promise((resolve, reject) => { queue.push({ fn, resolve, reject }); drain(); });
+}
+// mvlink has returned another title's page under load in the legacy provider.
+// Exact title words (or a title-less SxxExx file under the matched season post)
+// are a cheap parsing guard, NOT a request to verify the media URL.
+function fileTitleMatch(title, filename) {
+  const q = norm(title).replace(/^the /, ''), n = norm(filename).replace(/^the /, '');
+  return !q || (' ' + n + ' ').includes(' ' + q + ' ') || /^(?:s\d{1,2}\s*e\d{1,3}|\d{1,2}x\d{1,3})\b/i.test(n);
 }
 function create(options = {}) {
   const httpGet = options.get || get, base = (options.base || process.env.HMBASE || 'https://v5.hindmovie.im').replace(/\/$/, '');
   const searches = new Map(), plans = new Map(), cache = new Map(), inflight = new Map();
+  // Limit actual mvlink/joshapp page requests, not complete multi-hop files.
+  // Independent hshare/boldb/gdshine chains can proceed while embeds arrive.
+  const embedLimit = limit(3), fileLimit = limit(8);
   let last = {};
   const memoPut = (map, key, value) => { if (map.size > 120) map.delete(map.keys().next().value); map.set(key, { at: Date.now(), value }); };
   const memoGet = (map, key, ttl) => { const c = map.get(key); return c && Date.now() - c.at < ttl ? c.value : null; };
@@ -229,23 +261,71 @@ function create(options = {}) {
       Promise.resolve(httpGet(base + '/?s=' + q, ms)).then(r => consume(r, false), () => consume({t:''}, false));
     });
   }
-  async function post(url, ms = 4200) {
-    const t0 = Date.now(), left = () => Math.max(0, ms - (Date.now() - t0));
-    const r = await httpGet(url, Math.min(3000, left())), html = contentOf(r.t), all = new Map();
-    const add = text => { for (const f of parseFiles(text)) { const old = all.get(f.name); all.set(f.name, { name: f.name, id: f.id || old && old.id || '' }); } };
-    add(html);
-    const embeds = embedsOf(html);
-    await mapLimit(embeds, 3, async ({ url: embed }) => {
-      if (left() < 50) return;
-      const jp = embed.match(/links\.joshapp\.blog\/(\d+)/i);
-      let rr = await httpGet(jp ? 'https://links.joshapp.blog/wp-json/wp/v2/posts/' + jp[1] : embed, left(), url);
-      if (jp && !parseFiles(rr.t).length && left() > 100) rr = await httpGet(embed, left(), url);
-      add(rr.t);
-    });
-    return { url, imdb: (html.match(/imdb\.com\/title\/(tt\d+)/i) || [])[1] || '', files: [...all.values()], embeds };
+  async function loadPost(url, ms) {
+    const t0 = Date.now();
+    const r = await httpGet(url, Math.min(3000, ms));
+    const html = contentOf(r.t);
+    return { url, html, ms: Date.now() - t0, imdb: (html.match(/imdb\.com\/title\/(tt\d+)/i) || [])[1] || '', embeds: embedsOf(html) };
   }
-  async function finalUrls(entry, ms = 6500) {
-    const t0 = Date.now(), left = () => Math.max(0, ms - (Date.now() - t0)), out = new Set(), shortJobs = new Map();
+  async function readEmbed(embed, ms, ref, accept) {
+    const t0 = Date.now(), left = () => Math.max(0, ms - (Date.now() - t0));
+    const jp = embed.match(/links\.joshapp\.blog\/(\d+)/i);
+    if (!jp) {
+      return embedLimit(async () => {
+        if (left() < 50) return '';
+        const r = await httpGet(embed, left(), ref);
+        if (parseFiles(r.t).some(f => accept(f) && f.sources.length)) return r.t;
+        // REST is only a recovery for an empty/wrong mvlink HTML page.
+        const mv = embed.match(/mvlink\.blog\/(\d+)\/?$/i);
+        if (mv && left() > 100) {
+          const rr = await httpGet('https://mvlink.blog/wp-json/wp/v2/posts/' + mv[1], left(), ref);
+          return parseFiles(rr.t).some(f => accept(f) && f.sources.length) ? rr.t : '';
+        }
+        return '';
+      });
+    }
+    // Joshapp HTML is often cached and faster than REST. Race the equivalent
+    // representations; the first complete, usable file list wins. Cancel the
+    // loser rather than waiting the full REST timeout before trying HTML.
+    const controller = new AbortController();
+    return new Promise(resolve => {
+      let done = false, pending = 2;
+      const consume = text => {
+        if (done) return;
+        if (parseFiles(text).some(f => accept(f) && f.sources.length)) { done = true; controller.abort(); resolve(text); }
+        else if (--pending === 0) { done = true; resolve(''); }
+      };
+      for (const target of [embed, 'https://links.joshapp.blog/wp-json/wp/v2/posts/' + jp[1]]) {
+        embedLimit(async () => {
+          if (controller.signal.aborted || left() < 50) return '';
+          const r = await httpGet(target, left(), ref, undefined, controller.signal);
+          return r.t;
+        }).then(consume, () => consume(''));
+      }
+    });
+  }
+  async function post(url, ms = 4200, onFile, loaded, accept = () => true) {
+    const t0 = Date.now(), left = () => Math.max(0, ms - (Date.now() - t0));
+    const p = loaded || await loadPost(url, left()), all = new Map();
+    const add = text => {
+      for (const f of parseFiles(text).filter(f => accept(f) && f.sources.length)) {
+        const old = all.get(f.name), merged = mergeFile(old, f);
+        all.set(f.name, merged);
+        const delta = merged.sources.filter(u => !old || !old.sources.includes(u));
+        if (onFile && delta.length) onFile({ ...merged, sources: delta });
+      }
+    };
+    add(p.html);
+    await Promise.all(p.embeds.map(async ({ url: embed }) => {
+      if (left() < 50) return;
+      try { add(await readEmbed(embed, left(), url, accept)); } catch (_) {}
+    }));
+    return { url, imdb: p.imdb, files: [...all.values()], embeds: p.embeds };
+  }
+  async function finalUrls(entry, ms = 6500, shared) {
+    const t0 = Date.now(), left = () => Math.max(0, ms - (Date.now() - t0));
+    const state = shared || { urls: new Set(), shorts: new Map(), sources: new Map() };
+    const out = state.urls, shortJobs = state.shorts;
     const add = u => { const clean = cleanUrl(u); if (clean) out.add(clean); };
     const fast = short => {
       if (shortJobs.has(short)) return shortJobs.get(short);
@@ -259,49 +339,82 @@ function create(options = {}) {
       })().catch(() => {});
       shortJobs.set(short, job); return job;
     };
-    const sources = [];
-    if (entry.name) sources.push('https://boldb.site/?id=' + encodeURIComponent(entry.name));
-    if (entry.id || entry.name) sources.push('https://hshare.lol/?id=' + encodeURIComponent(entry.id || entry.name));
-    const work = Promise.all(sources.map(async url => {
-      const r = await httpGet(url, Math.min(4500, left()), new URL(url).origin + '/');
-      const scan = scanUrls(r.t); scan.urls.forEach(add);
-      await Promise.all(scan.shorts.map(fast));
-    }));
-    await bounded(work, left(), null);
+    // Old direct callers without provenance retain their legacy fallback.
+    // Discovered plans always carry the exact source URLs from the website.
+    const sources = Array.isArray(entry.sources) ? entry.sources : [
+      ...(entry.name ? ['https://boldb.site/?id=' + encodeURIComponent(entry.name)] : []),
+      ...(entry.id || entry.name ? ['https://hshare.lol/?id=' + encodeURIComponent(entry.id || entry.name)] : [])
+    ];
+    const jobs = sources.map(url => {
+      if (!state.sources.has(url)) state.sources.set(url, (async () => {
+        if (left() < 100) return;
+        const r = await httpGet(url, Math.min(4500, left()), new URL(url).origin + '/');
+        const scan = scanUrls(r.t); scan.urls.forEach(add);
+        await Promise.all(scan.shorts.map(fast));
+      })().catch(() => {}));
+      return state.sources.get(url);
+    });
+    await bounded(Promise.all(jobs), left(), null);
     return [...out];
   }
   function cards(title, type, season, episode, mk, budget = 11000, identity = {}) {
-    const key = [norm(title), type || 'movie', season || 0, episode || 0].join('|');
+    const key = [norm(title), type || 'movie', season || 0, episode || 0, identity.key || identity.imdb || ''].join('|');
     const hit = memoGet(cache, key, 600000);
     if (hit) return Promise.resolve(hit.slice());
     if (inflight.has(key)) return inflight.get(key);
     const t0 = Date.now(), left = () => Math.max(0, budget - (Date.now() - t0)), sink = [];
     const stat = { title, stage: 'search', files: 0, picked: 0, cards: 0, ms: 0 }; last = stat;
+    // Start the identity allowance NOW, not after search. Post HTML, identity,
+    // embeds and already-discovered files overlap without skipping the guard.
+    let expected = identity.imdb || '';
+    const identityWork = identity.imdbPromise ? Promise.resolve(identity.imdbPromise).then(v => { expected = expected || v || ''; return expected; }, () => expected) : Promise.resolve(expected);
+    const identityGate = bounded(identityWork, Math.min(500, budget), '');
+    const accept = f => wanted(f.name) && fileTitleMatch(title, f.name)
+      && (type !== 'series' && type !== 'tv' || episodeMatch(f.name, season, episode));
     const work = (async () => {
       let files = memoGet(plans, key, 1800000);
-      if (!files) {
-        const posts = await search(title, Math.min(3500, left())); stat.posts = posts.length;
-        const expected = identity.imdb || (identity.imdbPromise ? await bounded(identity.imdbPromise, Math.min(500, left()), '') : '');
-        for (const url of posts.slice(0, 2)) {
-          if (left() < 100) break;
-          const p = await post(url, Math.min(4200, left()));
+      const states = new Map();
+      const schedule = (f, imdb, jobs) => {
+        if (!accept(f)) return;
+        if (stat.firstFileMs === undefined) stat.firstFileMs = Date.now() - t0;
+        const job = (async () => {
+          await identityGate;
+          if (expected && imdb && expected !== imdb || left() < 100) return;
+          if (!states.has(f.name)) states.set(f.name, { urls: new Set(), shorts: new Map(), sources: new Map() });
+          const state = states.get(f.name);
+          const urls = await fileLimit(() => left() < 100 ? [] : finalUrls(f, Math.min(6500, left()), state));
+          if (expected && imdb && expected !== imdb) return;
+          for (const url of urls) {
+            if (sink.some(c => c.url === url)) continue;
+            const q = qualityOf(f.name), tag = /workers\.dev\/d\//i.test(url) ? 'Fast' : /workers\.dev\/0:\//i.test(url) ? 'Hub' : 'Mirror';
+            const card = mk ? mk(url, f.name, q, tag) : { url, filename: f.name, quality: q, tag };
+            if (card) { sink.push(card); if (stat.firstCardMs === undefined) stat.firstCardMs = Date.now() - t0; }
+          }
+        })();
+        jobs.push(job.catch(() => {}));
+      };
+      if (files) {
+        const jobs = []; files.forEach(f => schedule(f, '', jobs)); await Promise.all(jobs);
+      } else {
+        const posts = await search(title, Math.min(3500, left())); stat.posts = posts.length; stat.searchMs = Date.now() - t0;
+        // Prefetch candidate metadata together; only drill into a fallback if
+        // the preferred post is mismatched or has no requested files.
+        const heads = posts.slice(0, 2).map(url => loadPost(url, Math.min(3000, left())).catch(() => null));
+        for (let i = 0; i < heads.length; i++) {
+          const head = await heads[i];
+          if (!head || left() < 100 || expected && head.imdb && expected !== head.imdb) continue;
+          const jobs = [];
+          stat.stage = 'discover+resolve';
+          const p = await post(head.url, Math.min(Math.max(0, 4200 - head.ms), left()), f => schedule(f, head.imdb, jobs), head, accept);
+          await identityGate;
           if (expected && p.imdb && expected !== p.imdb) continue;
-          files = p.files.filter(f => wanted(f.name) && (type !== 'series' && type !== 'tv' || episodeMatch(f.name, season, episode)));
-          if (files.length) break;
+          if (p.files.length) {
+            files = p.files; memoPut(plans, key, files); stat.files = files.length; stat.picked = files.length; stat.discoveryMs = Date.now() - t0;
+            await Promise.all(jobs); break;
+          }
         }
-        if (files && files.length) memoPut(plans, key, files);
       }
-      files = files || []; stat.files = files.length; stat.picked = files.length; stat.stage = 'resolve';
-      await mapLimit(files, 3, async f => {
-        if (left() < 100) return;
-        const urls = await finalUrls(f, Math.min(6500, left()));
-        for (const url of urls) {
-          if (sink.some(c => c.url === url)) continue;
-          const q = qualityOf(f.name), tag = /workers\.dev\/d\//i.test(url) ? 'Fast' : /workers\.dev\/0:\//i.test(url) ? 'Hub' : 'Mirror';
-          const card = mk ? mk(url, f.name, q, tag) : { url, filename: f.name, quality: q, tag };
-          if (card) sink.push(card);
-        }
-      });
+      files = files || []; stat.files = files.length; stat.picked = files.length;
     })();
     const result = bounded(work, budget, null).then(() => {
       const out = sink.slice(); stat.cards = out.length; stat.ms = Date.now() - t0; stat.stage = out.length ? 'ok' : 'empty';
@@ -313,4 +426,4 @@ function create(options = {}) {
   }
   return { search, post, finalUrls, cards, cardsCached: cards, last: () => ({ ...last }) };
 }
-module.exports = { ...create(), create, get, poolLoad, poolPick, poolStats, capOf, qualityOf, titleScore, parseFiles, embedsOf, episodeMatch, cleanUrl, hcloudDecode, scanUrls };
+module.exports = { ...create(), create, get, poolLoad, poolPick, poolStats, capOf, extractionError, qualityOf, titleScore, fileTitleMatch, parseFiles, embedsOf, episodeMatch, cleanUrl, hcloudDecode, scanUrls };
