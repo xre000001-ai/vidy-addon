@@ -52,7 +52,7 @@ const DIR = { ok: 0, fail: 0 };
 const HPREF = new Map();   // host → { d: n, px: n }
 function hpOf(host) { let h = HPREF.get(host); if (!h) { h = { d: 0, px: 0 }; HPREF.set(host, h); } return h; }
 function hpBest(host) { const h = HPREF.get(host); if (!h) return 'both'; return (h.d >= 2) ? 'd' : ((h.px >= 2 && h.d === 0) ? 'px' : 'both'); }
-const CAPS = ['site', 'hs', 'gd', 'bb', 'pl'];
+const CAPS = ['site', 'hs', 'gd', 'bb', 'pl', 'jp'];
 
 function poolLoad() {
   try {
@@ -73,7 +73,8 @@ function poolSave() {
 }
 function capOf(url) {
   const u = String(url);
-  if (/mvlink\.|joshapp\./.test(u)) return 'pl';      // পোস্ট-পেজ
+  if (/joshapp\./.test(u)) return 'jp';       /* links.joshapp.blog — আলাদা হোস্ট, আলাদা নোড */
+  if (/mvlink\./.test(u)) return 'pl';      // পোস্ট-পেজ
   if (/hshare\./.test(u)) return 'hs';
   if (/gdshine\.|gdtot\./.test(u)) return 'gd';
   if (/hcloud\.|workers\.dev/.test(u)) return 'bb';
@@ -102,7 +103,7 @@ function poolNote(node, ok, ms, cap) {
   if (ok) { v.ok++; v.ms = ms ? Math.round(ms) : v.ms; if (cap) { v.cap = v.cap || {}; v.cap[cap] = 1; v.ts = Date.now(); } }
 }
 function poolStats() {
-  const s = { total: POOL.size, ok: 0, cap: { site: 0, hs: 0, gd: 0, bb: 0, pl: 0 }, best: '' };
+  const s = { total: POOL.size, ok: 0, cap: { site: 0, hs: 0, gd: 0, bb: 0, pl: 0, jp: 0 }, best: '' };
   let bm = 9e9;
   for (const [k, v] of POOL) {
     if (!v.ok) continue;
@@ -349,7 +350,7 @@ async function post(url, ms) {
     const jobs = [];
     for (const u of uniqMv.slice(0, 4)) {
       const mwp = u.match(/joshapp\.blog\/(\d+)/);
-      if (mwp) jobs.push(get('https://links.joshapp.blog/wp-json/wp/v2/posts/' + mwp[1], Math.min(4000, ms || 4000), u));
+      if (mwp) jobs.push(get('https://links.joshapp.blog/wp-json/wp/v2/posts/' + mwp[1], Math.min(4500, ms || 4000), u));
       jobs.push(get(u, Math.min(4000, ms || 4000), url));
     }
     const rs = await Promise.all(jobs);
