@@ -7108,8 +7108,8 @@ function hmStreams(tmdbId, title, type, s, e, origin, maxh) {
     .then(() => HM_LIB.cardsCached(String(title || ''), type, s, e, (u, fn, q, tag) => hmCard(String(title || ''), '', q, u, fn, tag), Number(process.env.HMCARDS || 11000)))
     .catch(() => []) : Promise.resolve([]);
   const p = Promise.race([
-    libP.then(v => (v && v.length) ? v : new Promise((res, rej) => setTimeout(() => rej(new Error('lib-miss')), Number(process.env.HMLIBWAIT || 9500)))),
-    hmStreamsRaw(tmdbId, title, type, s, e, origin, maxh)
+    libP.then(v => (v && v.length) ? v : new Promise((res, rej) => setTimeout(() => rej(new Error('lib-miss')), Number(process.env.HMLIBWAIT || 11000)))),
+    (HM_LIB ? Promise.resolve([]) : hmStreamsRaw(tmdbId, title, type, s, e, origin, maxh))
   ]).catch(() => libP).then(v => {
     HM_INF.delete(k);
     if (v && v.length) { if (HM_RC.size > 500) HM_RC.clear(); HM_RC.set(k, { ts: Date.now(), v: v }); }
