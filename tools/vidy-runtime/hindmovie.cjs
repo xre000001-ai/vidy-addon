@@ -253,15 +253,18 @@ function create(options = {}) {
     // another second. A positively matched canonical post is enough to start;
     // its entire 1080p/4K file list is still collected before returning cards.
     return new Promise(resolve => {
-      let done = false, pending = 2;
+      let done = false, pending = 2, failed = false;
       const finish = () => {
         const out = [...links].filter(u => titleScore(title, u) >= 0).sort((a, b) => titleScore(title, b) - titleScore(title, a));
         if (!done && (!pending || out.length && titleScore(title, out[0]) >= 120)) {
-          done = true; controller.abort(); if (out.length) memoPut(searches, key, out); resolve(out);
+          done = true; controller.abort();
+          if (!out.length && failed) out.$pend = true;
+          if (out.length) memoPut(searches, key, out); resolve(out);
         }
       };
       const consume = (r, json) => {
         if (!done) {
+          if (!r.st || r.st === 429 || r.st >= 500) failed = true;
           if (json) { try { for (const row of JSON.parse(r.t || '[]')) if (row.url) links.add(row.url); } catch (_) {} }
           else for (const m of contentOf(r.t).matchAll(/href=["'](https?:\/\/[^"']+)["']/gi)) links.add(m[1]);
         }
@@ -275,7 +278,7 @@ function create(options = {}) {
     const t0 = Date.now();
     const r = await httpGet(url, Math.min(3000, ms));
     const html = contentOf(r.t);
-    return { url, html, ms: Date.now() - t0, imdb: (html.match(/imdb\.com\/title\/(tt\d+)/i) || [])[1] || '', embeds: embedsOf(html) };
+    return { url, html, ms: Date.now() - t0, complete: !!r.st, imdb: (html.match(/imdb\.com\/title\/(tt\d+)/i) || [])[1] || '', embeds: embedsOf(html) };
   }
   async function readEmbed(embed, ms, ref, accept, incomplete = () => {}) {
     const t0 = Date.now(), left = () => Math.max(0, ms - (Date.now() - t0));
@@ -329,7 +332,7 @@ function create(options = {}) {
         if (onFile && delta.length) onFile({ ...merged, sources: delta });
       }
     };
-    let complete = true;
+    let complete = p.complete !== false;
     const incomplete = () => { complete = false; };
     add(p.html);
     await Promise.all(p.embeds.map(async ({ url: embed }) => {
@@ -430,19 +433,29 @@ function create(options = {}) {
       if (files) {
         const jobs = []; files.forEach(f => schedule(f, '', jobs)); await Promise.all(jobs);
       } else {
-        const posts = await search(title, Math.min(3500, left())); stat.posts = posts.length; stat.searchMs = Date.now() - t0;
+        let posts = await search(title, Math.min(3500, left())); stat.searchAttempts = 1;
+        // A transient cold-site failure is not a conclusive empty title. Use
+        // otherwise-unused room for ONE retry, inside the SAME route deadline.
+        // A successful empty search is final and causes no additional traffic.
+        if (!posts.length && posts.$pend && !controller.signal.aborted && left() > 100) {
+          stat.searchAttempts++; posts = await search(title, Math.min(3500, left()));
+        }
+        if (posts.$pend) unresolved = true;
+        stat.posts = posts.length; stat.searchMs = Date.now() - t0;
         // Prefetch candidate metadata together; only drill into a fallback if
         // the preferred post is mismatched or has no requested files.
         const heads = posts.slice(0, 2).map(url => loadPost(url, Math.min(3000, left())).catch(() => null));
         for (let i = 0; i < heads.length; i++) {
           const head = await heads[i];
-          if (!head || left() < 100 || expected && head.imdb && expected !== head.imdb) continue;
+          if (!head || left() < 100) { unresolved = true; continue; }
+          if (expected && head.imdb && expected !== head.imdb) continue;
           const jobs = [];
           stat.stage = 'discover+resolve';
           const p = await post(head.url, Math.min(Math.max(0, 4200 - head.ms), left()), f => schedule(f, head.imdb, jobs), head, accept);
           await identityGate;
           if (finished || controller.signal.aborted) return;
           if (expected && p.imdb && expected !== p.imdb) continue;
+          if (!p.complete) unresolved = true;
           if (p.files.length) {
             files = p.files;
             if (p.complete) memoPut(plans, key, files); else unresolved = true;

@@ -19,6 +19,19 @@ function fixture({slowWorker=false,workerDelay=0,slowIdentity=false}={}){
   return reply('');
  }});return {h,calls,signals,state};
 }
+test('HM review: a transient cold search failure gets one useful retry inside the same absolute budget',async()=>{
+ let searches=0;const h=hm.create({get:async(url,ms)=>{
+  if(url.includes('/wp-json/wp/v2/search')||url.includes('/?s=')){searches++;if(searches<=2)return {st:0,t:''};return url.includes('/wp-json/')?reply(JSON.stringify([{url:post}])):reply('');}
+  if(url===post)return reply('<a href="'+source+'">Links</a>');
+  if(url===source)return reply('<a href="'+worker+'">Hub</a>');return reply('');
+ }});const began=Date.now(),out=await h.cards('Example','movie',0,0,null,1000,{imdb:'tt1234567',deadline:began+1000});assert.equal(out.length,1);assert.equal(searches,4);assert.equal(h.last().searchAttempts,2);assert(Date.now()-began<1000);assert(!out.$pend);
+});
+test('HM review: a successful genuinely empty search does not issue a wasteful retry',async()=>{
+ let searches=0;const h=hm.create({get:async()=>{searches++;return reply('');}}),out=await h.cards('Absent','movie',0,0,null,1000);assert.equal(out.length,0);assert.equal(searches,2);assert(!out.$pend);
+});
+test('HM review: repeatedly failed search stays pending, with no more than one retry or fake complete cache',async()=>{
+ let searches=0;const h=hm.create({get:async()=>{searches++;return {st:0,t:''};}}),out=await h.cards('Example','movie',0,0,null,1000);assert.equal(out.length,0);assert.equal(searches,4);assert.equal(out.$pend,true);
+});
 test('HM review: a ready Hub is retained at the same-tap deadline while a Fast API is stalled',async()=>{
  const {h,signals}=fixture({slowWorker:true}),began=Date.now();const out=await h.cards('Example','movie',0,0,null,180,{imdb:'tt1234567'});
  assert.equal(out.length,1,'a ready advertised Hub must not be hidden behind another mirror');assert.equal(out[0].url,worker);assert.equal(out.$pend,true);assert(h.last().firstCardMs<120);assert(Date.now()-began<420);assert.equal(signals.length,1);assert.equal(signals[0]?.aborted,true,'stop the unfinished metadata request at the source deadline');

@@ -7926,8 +7926,8 @@ function hmStreams(tmdbId, title, type, s, e, origin, maxh, request = {}) {
     if (pending) v.$pend = true;
     try {
       const hs = HM_UPGRADE && typeof HM_UPGRADE.last === 'function' ? HM_UPGRADE.last() : null;
-      diag('hm', 'upgrade3 "' + String(title || '').slice(0, 44) + '" n=' + v.length + ' @' + (Date.now() - hmStarted) + 'ms'
-        + (hs && hs.title === String(title || '') ? ' files=' + hs.picked + ' firstFile=' + hs.firstFileMs + ' discovery=' + hs.discoveryMs + ' firstCard=' + hs.firstCardMs + ' pending=' + !!hs.pending : ''));
+      diag('hm', 'upgrade4 "' + String(title || '').slice(0, 44) + '" n=' + v.length + ' @' + (Date.now() - hmStarted) + 'ms'
+        + (hs && hs.title === String(title || '') ? ' files=' + hs.picked + ' firstFile=' + hs.firstFileMs + ' discovery=' + hs.discoveryMs + ' firstCard=' + hs.firstCardMs + ' pending=' + !!hs.pending + ' searchAttempts=' + (hs.searchAttempts || 0) + ' searchMs=' + (hs.searchMs || 0) : ''));
     } catch (_) {}
     if (v.length && !pending) { if (HM_RC.size > 500) HM_RC.clear(); HM_RC.set(k, { ts: Date.now(), v: v }); }
     return v;
