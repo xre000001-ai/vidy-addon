@@ -4,6 +4,7 @@
 // child processes, pool trainer, or first-card/first-file early return.
 const fs = require('fs');
 const path = require('path');
+const { AsyncLocalStorage, AsyncResource } = require('node:async_hooks');
 const POOL_FILE = path.join(__dirname, '../../hm_proxy_pool.json');
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36';
 const POOL = new Map(), COOKIES = new Map(), CURSOR = new Map();
@@ -216,7 +217,9 @@ function limit(concurrency) {
       Promise.resolve().then(fn).then(resolve, reject).finally(() => { active--; drain(); });
     }
   };
-  return fn => new Promise((resolve, reject) => { queue.push({ fn, resolve, reject }); drain(); });
+  // Queued work must keep its own request's deadline, not the context of the
+  // unrelated request that happened to release the previous limiter slot.
+  return fn => new Promise((resolve, reject) => { queue.push({ fn: AsyncResource.bind(fn), resolve, reject }); drain(); });
 }
 // mvlink has returned another title's page under load in the legacy provider.
 // Exact title words (or a title-less SxxExx file under the matched season post)
@@ -226,7 +229,14 @@ function fileTitleMatch(title, filename) {
   return !q || (' ' + n + ' ').includes(' ' + q + ' ') || /^(?:s\d{1,2}\s*e\d{1,3}|\d{1,2}x\d{1,3})\b/i.test(n);
 }
 function create(options = {}) {
-  const httpGet = options.get || get, base = (options.base || process.env.HMBASE || 'https://v5.hindmovie.im').replace(/\/$/, '');
+  const networkGet = options.get || get, base = (options.base || process.env.HMBASE || 'https://v5.hindmovie.im').replace(/\/$/, '');
+  const context = new AsyncLocalStorage();
+  const httpGet = (url, ms, ref, body, signal) => {
+    const scope = context.getStore(), remaining = scope ? scope.deadline - Date.now() : Infinity;
+    if (remaining <= 0 || scope?.signal.aborted || signal?.aborted) return Promise.resolve({ st: 0, t: '' });
+    const combined = scope ? (signal ? AbortSignal.any([scope.signal, signal]) : scope.signal) : signal;
+    return networkGet(url, Math.max(1, Math.min(ms || 4000, remaining)), ref, body, combined);
+  };
   const searches = new Map(), plans = new Map(), cache = new Map(), inflight = new Map();
   // Limit actual mvlink/joshapp page requests, not complete multi-hop files.
   // Independent hshare/boldb/gdshine chains can proceed while embeds arrive.
@@ -238,7 +248,7 @@ function create(options = {}) {
     if (!norm(title)) return [];
     const key = norm(title), cached = memoGet(searches, key, 1800000);
     if (cached) return cached;
-    const q = encodeURIComponent(title), links = new Set();
+    const q = encodeURIComponent(title), links = new Set(), controller = new AbortController();
     // The HTML search is often already cached (<400ms), while REST can take
     // another second. A positively matched canonical post is enough to start;
     // its entire 1080p/4K file list is still collected before returning cards.
@@ -247,7 +257,7 @@ function create(options = {}) {
       const finish = () => {
         const out = [...links].filter(u => titleScore(title, u) >= 0).sort((a, b) => titleScore(title, b) - titleScore(title, a));
         if (!done && (!pending || out.length && titleScore(title, out[0]) >= 120)) {
-          done = true; if (out.length) memoPut(searches, key, out); resolve(out);
+          done = true; controller.abort(); if (out.length) memoPut(searches, key, out); resolve(out);
         }
       };
       const consume = (r, json) => {
@@ -257,8 +267,8 @@ function create(options = {}) {
         }
         pending--; finish();
       };
-      Promise.resolve(httpGet(base + '/wp-json/wp/v2/search?search=' + q + '&per_page=12', ms)).then(r => consume(r, true), () => consume({t:''}, true));
-      Promise.resolve(httpGet(base + '/?s=' + q, ms)).then(r => consume(r, false), () => consume({t:''}, false));
+      Promise.resolve(httpGet(base + '/wp-json/wp/v2/search?search=' + q + '&per_page=12', ms, undefined, undefined, controller.signal)).then(r => consume(r, true), () => consume({t:''}, true));
+      Promise.resolve(httpGet(base + '/?s=' + q, ms, undefined, undefined, controller.signal)).then(r => consume(r, false), () => consume({t:''}, false));
     });
   }
   async function loadPost(url, ms) {
@@ -267,20 +277,23 @@ function create(options = {}) {
     const html = contentOf(r.t);
     return { url, html, ms: Date.now() - t0, imdb: (html.match(/imdb\.com\/title\/(tt\d+)/i) || [])[1] || '', embeds: embedsOf(html) };
   }
-  async function readEmbed(embed, ms, ref, accept) {
+  async function readEmbed(embed, ms, ref, accept, incomplete = () => {}) {
     const t0 = Date.now(), left = () => Math.max(0, ms - (Date.now() - t0));
     const jp = embed.match(/links\.joshapp\.blog\/(\d+)/i);
     if (!jp) {
       return embedLimit(async () => {
-        if (left() < 50) return '';
+        if (left() < 50) { incomplete(); return ''; }
         const r = await httpGet(embed, left(), ref);
         if (parseFiles(r.t).some(f => accept(f) && f.sources.length)) return r.t;
         // REST is only a recovery for an empty/wrong mvlink HTML page.
         const mv = embed.match(/mvlink\.blog\/(\d+)\/?$/i);
         if (mv && left() > 100) {
           const rr = await httpGet('https://mvlink.blog/wp-json/wp/v2/posts/' + mv[1], left(), ref);
-          return parseFiles(rr.t).some(f => accept(f) && f.sources.length) ? rr.t : '';
+          if (parseFiles(rr.t).some(f => accept(f) && f.sources.length)) return rr.t;
+          if (!r.st || !rr.st) incomplete();
+          return '';
         }
+        if (!r.st || left() <= 100) incomplete();
         return '';
       });
     }
@@ -289,18 +302,19 @@ function create(options = {}) {
     // loser rather than waiting the full REST timeout before trying HTML.
     const controller = new AbortController();
     return new Promise(resolve => {
-      let done = false, pending = 2;
-      const consume = text => {
+      let done = false, pending = 2, failed = false;
+      const consume = result => {
+        const text = result.t || '';
+        if (!result.st) failed = true;
         if (done) return;
         if (parseFiles(text).some(f => accept(f) && f.sources.length)) { done = true; controller.abort(); resolve(text); }
-        else if (--pending === 0) { done = true; resolve(''); }
+        else if (--pending === 0) { done = true; if (failed) incomplete(); resolve(''); }
       };
       for (const target of [embed, 'https://links.joshapp.blog/wp-json/wp/v2/posts/' + jp[1]]) {
         embedLimit(async () => {
-          if (controller.signal.aborted || left() < 50) return '';
-          const r = await httpGet(target, left(), ref, undefined, controller.signal);
-          return r.t;
-        }).then(consume, () => consume(''));
+          if (controller.signal.aborted || left() < 50) return { st: 0, t: '' };
+          return httpGet(target, left(), ref, undefined, controller.signal);
+        }).then(consume, () => consume({ st: 0, t: '' }));
       }
     });
   }
@@ -315,26 +329,34 @@ function create(options = {}) {
         if (onFile && delta.length) onFile({ ...merged, sources: delta });
       }
     };
+    let complete = true;
+    const incomplete = () => { complete = false; };
     add(p.html);
     await Promise.all(p.embeds.map(async ({ url: embed }) => {
-      if (left() < 50) return;
-      try { add(await readEmbed(embed, left(), url, accept)); } catch (_) {}
+      if (left() < 50) { incomplete(); return; }
+      try { add(await readEmbed(embed, left(), url, accept, incomplete)); } catch (_) { incomplete(); }
     }));
-    return { url, imdb: p.imdb, files: [...all.values()], embeds: p.embeds };
+    return { url, imdb: p.imdb, files: [...all.values()], embeds: p.embeds, complete };
   }
   async function finalUrls(entry, ms = 6500, shared) {
     const t0 = Date.now(), left = () => Math.max(0, ms - (Date.now() - t0));
     const state = shared || { urls: new Set(), shorts: new Map(), sources: new Map() };
     const out = state.urls, shortJobs = state.shorts;
-    const add = u => { const clean = cleanUrl(u); if (clean) out.add(clean); };
+    const add = u => {
+      const clean = cleanUrl(u);
+      if (clean && !out.has(clean)) { out.add(clean); state.onURL?.(clean); }
+    };
     const fast = short => {
       if (shortJobs.has(short)) return shortJobs.get(short);
       const job = (async () => {
-        if (left() < 100) return;
+        if (left() < 100) { state.pending = true; return; }
         const a = await httpGet('https://gdshine.org/api/share/' + short, Math.min(2400, left()), 'https://gdshine.org/');
+        if (!a.st || a.st === 429 || a.st >= 500) state.pending = true;
         let id = ''; try { id = JSON.parse(a.t).data.file.id; } catch (_) {}
-        if (!id || left() < 100) return;
+        if (!id) return;
+        if (left() < 100) { state.pending = true; return; }
         const b = await httpGet('https://gdshine.org/api/downloads/' + encodeURIComponent(id) + '/via-worker', Math.min(2600, left()), 'https://gdshine.org/', '{}');
+        if (!b.st || b.st === 429 || b.st >= 500) state.pending = true;
         try { const data = JSON.parse(b.t).data || {}; for (const k of ['copyUrl', 'downloadUrl', 'url']) if (data[k]) add(data[k]); } catch (_) {}
       })().catch(() => {});
       shortJobs.set(short, job); return job;
@@ -347,22 +369,29 @@ function create(options = {}) {
     ];
     const jobs = sources.map(url => {
       if (!state.sources.has(url)) state.sources.set(url, (async () => {
-        if (left() < 100) return;
+        if (left() < 100) { state.pending = true; return; }
         const r = await httpGet(url, Math.min(4500, left()), new URL(url).origin + '/');
+        if (!r.st || r.st === 429 || r.st >= 500) state.pending = true;
         const scan = scanUrls(r.t); scan.urls.forEach(add);
         await Promise.all(scan.shorts.map(fast));
       })().catch(() => {}));
       return state.sources.get(url);
     });
-    await bounded(Promise.all(jobs), left(), null);
+    const complete = await bounded(Promise.all(jobs).then(() => true), left(), false);
+    if (!complete) state.pending = true;
     return [...out];
   }
   function cards(title, type, season, episode, mk, budget = 11000, identity = {}) {
+    // The caller may have spent part of the route budget on metadata already.
+    const absolute = Number(identity.deadline);
+    if (Number.isFinite(absolute) && absolute > 0) budget = Math.min(budget, Math.max(0, absolute - Date.now()));
+    if (!(budget > 0)) return Promise.resolve([]);
     const key = [norm(title), type || 'movie', season || 0, episode || 0, identity.key || identity.imdb || ''].join('|');
     const hit = memoGet(cache, key, 600000);
     if (hit) return Promise.resolve(hit.slice());
     if (inflight.has(key)) return inflight.get(key);
-    const t0 = Date.now(), left = () => Math.max(0, budget - (Date.now() - t0)), sink = [];
+    const t0 = Date.now(), deadline = t0 + budget, left = () => Math.max(0, deadline - Date.now()), sink = [], controller = new AbortController();
+    let finished = false, unresolved = false;
     const stat = { title, stage: 'search', files: 0, picked: 0, cards: 0, ms: 0 }; last = stat;
     // Start the identity allowance NOW, not after search. Post HTML, identity,
     // embeds and already-discovered files overlap without skipping the guard.
@@ -371,7 +400,13 @@ function create(options = {}) {
     const identityGate = bounded(identityWork, Math.min(500, budget), '');
     const accept = f => wanted(f.name) && fileTitleMatch(title, f.name)
       && (type !== 'series' && type !== 'tv' || episodeMatch(f.name, season, episode));
-    const work = (async () => {
+    const emit = (f, imdb, url) => {
+      if (finished || controller.signal.aborted || left() <= 0 || expected && imdb && expected !== imdb || sink.some(c => c.url === url)) return;
+      const q = qualityOf(f.name), tag = /workers\.dev\/d\//i.test(url) ? 'Fast' : /workers\.dev\/0:\//i.test(url) ? 'Hub' : 'Mirror';
+      const card = mk ? mk(url, f.name, q, tag) : { url, filename: f.name, quality: q, tag };
+      if (card) { sink.push(card); if (stat.firstCardMs === undefined) stat.firstCardMs = Date.now() - t0; }
+    };
+    const work = context.run({ signal: controller.signal, deadline }, () => (async () => {
       let files = memoGet(plans, key, 1800000);
       const states = new Map();
       const schedule = (f, imdb, jobs) => {
@@ -379,17 +414,16 @@ function create(options = {}) {
         if (stat.firstFileMs === undefined) stat.firstFileMs = Date.now() - t0;
         const job = (async () => {
           await identityGate;
-          if (expected && imdb && expected !== imdb || left() < 100) return;
-          if (!states.has(f.name)) states.set(f.name, { urls: new Set(), shorts: new Map(), sources: new Map() });
-          const state = states.get(f.name);
-          const urls = await fileLimit(() => left() < 100 ? [] : finalUrls(f, Math.min(6500, left()), state));
           if (expected && imdb && expected !== imdb) return;
-          for (const url of urls) {
-            if (sink.some(c => c.url === url)) continue;
-            const q = qualityOf(f.name), tag = /workers\.dev\/d\//i.test(url) ? 'Fast' : /workers\.dev\/0:\//i.test(url) ? 'Hub' : 'Mirror';
-            const card = mk ? mk(url, f.name, q, tag) : { url, filename: f.name, quality: q, tag };
-            if (card) { sink.push(card); if (stat.firstCardMs === undefined) stat.firstCardMs = Date.now() - t0; }
-          }
+          if (left() < 100) { unresolved = true; return; }
+          if (!states.has(f.name)) states.set(f.name, { urls: new Set(), shorts: new Map(), sources: new Map(), onURL: url => emit(f, imdb, url) });
+          const state = states.get(f.name);
+          const urls = await fileLimit(() => {
+            if (left() < 100) { state.pending = true; return []; }
+            return finalUrls(f, Math.min(6500, left()), state);
+          });
+          if (state.pending) unresolved = true;
+          for (const url of urls) emit(f, imdb, url);
         })();
         jobs.push(job.catch(() => {}));
       };
@@ -407,19 +441,27 @@ function create(options = {}) {
           stat.stage = 'discover+resolve';
           const p = await post(head.url, Math.min(Math.max(0, 4200 - head.ms), left()), f => schedule(f, head.imdb, jobs), head, accept);
           await identityGate;
+          if (finished || controller.signal.aborted) return;
           if (expected && p.imdb && expected !== p.imdb) continue;
           if (p.files.length) {
-            files = p.files; memoPut(plans, key, files); stat.files = files.length; stat.picked = files.length; stat.discoveryMs = Date.now() - t0;
+            files = p.files;
+            if (p.complete) memoPut(plans, key, files); else unresolved = true;
+            stat.files = files.length; stat.picked = files.length; stat.discoveryMs = Date.now() - t0;
             await Promise.all(jobs); break;
           }
         }
       }
-      files = files || []; stat.files = files.length; stat.picked = files.length;
-    })();
-    const result = bounded(work, budget, null).then(() => {
-      const out = sink.slice(); stat.cards = out.length; stat.ms = Date.now() - t0; stat.stage = out.length ? 'ok' : 'empty';
-      if (out.length) memoPut(cache, key, out);
-      else plans.delete(key);
+      if (!finished) { files = files || []; stat.files = files.length; stat.picked = files.length; }
+    })());
+    const result = bounded(work.then(() => true, () => false), budget, null).then(complete => {
+      finished = true; controller.abort();
+      const out = sink.slice(), pending = complete !== true || unresolved;
+      // Keep ready mirrors in THIS response, but never freeze an incomplete
+      // result in a ten-minute positive cache or silently label it complete.
+      if (pending) out.$pend = true;
+      stat.cards = out.length; stat.ms = Date.now() - t0; stat.pending = pending; stat.stage = out.length ? 'ok' : 'empty';
+      if (out.length && !pending) memoPut(cache, key, out);
+      else if (!out.length) plans.delete(key);
       inflight.delete(key); return out;
     });
     inflight.set(key, result); return result;

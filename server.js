@@ -7859,10 +7859,36 @@ function hmCard(T, epLine, h, url, fn) {
     bingeGroup: 'hm|' + String(T).toLowerCase() + '::'
   };
 }
-function hmRace(p, ms) { // v1.17.46: কোল্ড-চেইন ৫–১২s — রেসপন্স আটকাবে না, পেছনে ক্যাশ ভরতে থাকবে
-  // ★ v1.27.19 (প্রোড-/_diag প্রমাণ: My Demon S1E1 এ hm কার্ড 7509ms-এ আসতো, রেস 6600ms-এ কেটে যাওয়ায় ০ কার্ড)
-  //   6600 -> 8200। hmStreams নিজেই HM_RC-ক্যাশ ভরে, তাই পরের ট্যাপে তাৎক্ষণিক।
-  return Promise.race([Promise.resolve(p).catch(() => []), new Promise(r => setTimeout(() => r([]), ms || 9400))]);
+function hmForegroundWindow() {
+  // HindMovie alone may use the spare room inside the existing 12s route cap.
+  // Keep at least 1.5s for final labels/serialization; never raise global SCUT.
+  const outer = Number(process.env.SDL || 12000), requested = Number(process.env.HM_WINDOW_MS);
+  const ceiling = Math.max(0, Math.min(10800, (Number.isFinite(outer) ? outer : 12000) - 1500));
+  return Math.min(ceiling, Number.isFinite(requested) && requested > 0 && requested <= 10800 ? requested : 10500);
+}
+function hmPFor(type, id, season, episode, req, cfg, requestStart, metadataP, titleP) {
+  if (cfg && cfg.hm === 0) return null;
+  const foreground = !(cfg && (cfg.__bg || cfg.__slow));
+  const deadline = foreground ? requestStart + hmForegroundWindow() - 80 : 0;
+  if (foreground && deadline <= Date.now()) return Promise.resolve([]);
+  const imdb = /^tt\d+$/.test(String(id)) ? String(id) : '', tmdb = imdb ? 0 : Number(String(id).replace(/^tmdb/, '')) || 0;
+  const candidates = [Promise.resolve(metadataP).then(v => typeof v === 'string' ? { id: tmdb, name: v } : { id: Number(v && v.id) || tmdb, name: v && (v.name || v.title) || '' })];
+  // HindMovie needs an exact title + identity, not Vidy's TMDB-source switch.
+  // Reuse the already-running IMDb title lookup; do not wait for another
+  // provider's potentially long Cinemeta -> TMDB search chain to finish.
+  if (imdb) candidates.push(Promise.resolve(titleP || suggName(imdb)).then(name => ({ id: 0, name })));
+  const work = Promise.any(candidates.map(p => p.then(info => {
+    if (!String(info.name || '').trim()) throw Error('hm-metadata-empty');
+    return info;
+  }))).then(info => {
+    if (foreground && deadline <= Date.now()) return [];
+    return hmStreams(info.id, info.name, type, season, episode, originOf(req), cfg && cfg.hmr || 0, { imdb, deadline });
+  }).catch(() => []);
+  return hmRace(work, foreground ? Math.max(1, deadline - Date.now() + 30) : 9400);
+}
+function hmRace(p, ms) {
+  let timer;
+  return Promise.race([Promise.resolve(p).catch(() => []), new Promise(r => { timer = setTimeout(() => r([]), ms || 9400); })]).finally(() => clearTimeout(timer));
 }
 async function hmPool(items, n, fn) { // ★ mvlink-এ >৩ সমান্তরালে গেলে সাইট ভুল-পেজ ফেরায় (মাপা) — তাই সীমিত
   const out = new Array(items.length); let i = 0;
@@ -7880,8 +7906,8 @@ const HM_UPGRADE = (() => {
   catch (err) { console.error('[hm] upgrade unavailable; using stable HM:', err.message); return null; }
 })();
 const HM_RC = new Map(); const HM_INF = new Map(); const HM_RC_TTL = 20 * 60 * 1000;
-function hmStreams(tmdbId, title, type, s, e, origin, maxh) {
-  const k = [type || '', tmdbId || String(title || '').toLowerCase(), s || 0, e || 0, maxh || 0].join('|');
+function hmStreams(tmdbId, title, type, s, e, origin, maxh, request = {}) {
+  const k = [type || '', tmdbId || request.imdb || String(title || '').toLowerCase(), s || 0, e || 0, maxh || 0].join('|');
   if (!NOCACHE) {
     const c = HM_RC.get(k);
     if (c && Date.now() - c.ts < HM_RC_TTL) { if (DBG) console.error('[hm] RC-hit n=' + c.v.length); return Promise.resolve(c.v); }
@@ -7892,16 +7918,18 @@ function hmStreams(tmdbId, title, type, s, e, origin, maxh) {
   const hmStarted = Date.now();
   const upgraded = HM_UPGRADE ? HM_UPGRADE.cards(String(title || ''), type, s, e,
     (u, fn, q) => hmCard(String(title || ''), type === 'series' || type === 'tv' ? '\u29e0 S' + s + 'E' + e : '\u29e0 Movie', q, u, fn),
-    11000, { key: String(tmdbId || ''), imdbPromise: tmdbToImdb(String(tmdbId), type === 'series' || type === 'tv' ? 'tv' : 'movie').catch(() => '') }) : null;
+    11000, { key: String(tmdbId || ''), imdbPromise: request.imdb ? Promise.resolve(request.imdb) : tmdbToImdb(String(tmdbId), type === 'series' || type === 'tv' ? 'tv' : 'movie').catch(() => ''), imdb: request.imdb || '', deadline: request.deadline }) : null;
   const p = (upgraded || hmStreamsRaw(tmdbId, title, type, s, e, origin, maxh)).then(v => {
     HM_INF.delete(k);
+    const pending = !!(v && v.$pend);
     v = (v || []).filter(c => /^(1080|2160)$/.test(String(c.quality || '')) && (!maxh || Number(c.quality) <= maxh));
+    if (pending) v.$pend = true;
     try {
       const hs = HM_UPGRADE && typeof HM_UPGRADE.last === 'function' ? HM_UPGRADE.last() : null;
-      diag('hm', 'upgrade2 "' + String(title || '').slice(0, 44) + '" n=' + v.length + ' @' + (Date.now() - hmStarted) + 'ms'
-        + (hs && hs.title === String(title || '') ? ' files=' + hs.picked + ' firstFile=' + hs.firstFileMs + ' discovery=' + hs.discoveryMs + ' firstCard=' + hs.firstCardMs : ''));
+      diag('hm', 'upgrade3 "' + String(title || '').slice(0, 44) + '" n=' + v.length + ' @' + (Date.now() - hmStarted) + 'ms'
+        + (hs && hs.title === String(title || '') ? ' files=' + hs.picked + ' firstFile=' + hs.firstFileMs + ' discovery=' + hs.discoveryMs + ' firstCard=' + hs.firstCardMs + ' pending=' + !!hs.pending : ''));
     } catch (_) {}
-    if (v.length) { if (HM_RC.size > 500) HM_RC.clear(); HM_RC.set(k, { ts: Date.now(), v: v }); }
+    if (v.length && !pending) { if (HM_RC.size > 500) HM_RC.clear(); HM_RC.set(k, { ts: Date.now(), v: v }); }
     return v;
   }).catch(() => { HM_INF.delete(k); return []; });
   HM_INF.set(k, { ts: Date.now(), p: p });
@@ -16341,7 +16369,7 @@ async function withSources(cardsP, srcs, cfg, t0, mkey, lookupP) {
       try { const _e = SRC_STATS.get(x.key); if (process.env.SOURCE_DEADCAP === '1' && x.key !== 'mls' && x.key !== 'hd' && !(BGX || SLOWX) && _e && _e.calls >= 6 && !_e.cards && (_e.streak0 || 0) >= Number(process.env.DEADCAPN || 6)) { _base = Math.min(_base, Number(process.env.DEADCAP || 4500)); _deadKey = true; } } catch (eD) { }
       const base = srcCapFor(x.key, _base);
       const capP = new Promise(r => { _tm = setInterval(() => {
-        const lim = _capSlow || Math.min(BGX ? Number(process.env.SCUTBG || 11000) : Number(process.env.SCUT || 8600), base + _LK.ms);   // ★ v1.34.175: slow-মোডে পূর্ণ বাজেট
+        const lim = x.key === 'hm' && !LONGX ? hmForegroundWindow() : (_capSlow || Math.min(BGX ? Number(process.env.SCUTBG || 11000) : Number(process.env.SCUT || 8600), base + _LK.ms));   // ★ v1.34.175: slow-মোডে পূর্ণ বাজেট
         if (Date.now() - t0 >= lim) { clearInterval(_tm);
           // ★★ v1.34.163: **মৃত-সোর্সের ক্যাপ ⇒ risultati partial নয়** — নাহলে প্রতিটি উত্তর
           //   `$partial` হতো (কারণ hd/hm/mlb/rt সবসময় ক্যাপ হয়) ⇒ ক্যাশ ১৮০সে + প্রতি ট্যাপে
@@ -16377,7 +16405,9 @@ async function withSources(cardsP, srcs, cfg, t0, mkey, lookupP) {
     const nxCutP = new Promise(r => setTimeout(() => r(true), Math.max(0, Math.min(uniLeft0, nxFirstWait - (Date.now() - t0)))));
     // ★ v1.26.1: প্রতিটা সোর্স-প্রমিসের ফল **যে-সময়েই আসুক** স্ট্যাশে জমা (কাটা পড়লেও)
     if (SKEY) live.forEach(x => { try { x.p.then(v => stashPut(SKEY, x.key, v)).catch(() => { }); } catch (e) { } });
-    outsP = Promise.all(live.map(x => Promise.race([
+    // Only HM receives this extra request-scoped room. Every other provider
+    // still uses its exact previous cap/collection race, including CineJoy.
+    outsP = Promise.all(live.map(x => x.key === 'hm' && !LONGX ? track(x) : Promise.race([
       track(x),
       new Promise(r => setTimeout(() => r(null), uniLeft0)),
       (x.key === 'nx' ? nxCutP : _cutP).then(() => null)
@@ -20349,7 +20379,7 @@ const server = http.createServer((req, res) => FG_CONTEXT.run({ active: true }, 
       const m4uP = !(cfg && cfg.m4u === 0) ? m4uStreams(Number(m[1]), '', 'movie', 0, 0, originOf(req), cfg && cfg.m4ur || 0).catch(() => []) : null; // v1.15.40-local: Movies4u
       const skyP = !(cfg && cfg.sky === 0) ? skyStreams(Number(m[1]), '', 'movie', 0, 0, originOf(req), cfg && cfg.skyr || 0).catch(() => []) : null;
       const hdP = !(cfg && cfg.hd === 0) ? Promise.all([tmdbToImdb(String(m[1]), 'movie').catch(() => ''), tp.catch(() => '')]).then(([im, nm0]) => hdStreams(im || '', nm0 || '', 'movie', 0, 0, originOf(req), (cfg && cfg.hdq && cfg.hdq.length ? Math.max.apply(null, cfg.hdq) : (cfg && cfg.hdr || 0)))).catch(() => []) : null; // v1.17.49: HDHub4u (tmdb → imdb → search.php)
-      const hmP = !(cfg && cfg.hm === 0) ? tp.then(n => hmRace(hmStreams(Number(m[1]), n, 'movie', 0, 0, originOf(req), cfg && cfg.hmr || 0))).catch(() => []) : null; // v1.17.46: HindMovie (live search) // v1.15.50: Arctic-স্বাধীন (SkymoviesHD)
+      const hmP = !(cfg && cfg.hm === 0) ? hmPFor('movie', m[1], 0, 0, req, cfg, t0, tp) : null; // HindMovie-only absolute request budget
       const bfP = BF_ENABLED && !(cfg && cfg.bf === 0) ? bfStreams(Number(m[1]), '', 'movie', 0, 0, originOf(req), cfg && cfg.bfr || 0, '', cfg && cfg.bfexo === 0 ? 0 : 1).catch(() => []) : null; // BollyFlix
       const vspP = !(cfg && cfg.vsp === 0) ? vspStreams(Number(m[1]), 'movie', 0, 0, cfg && cfg.vspq || []).catch(() => []) : null; // v1.15.71: Vidsrc
       const ottP = !(cfg && cfg.ott === 0) ? ottStreams(Number(m[1]), 'movie', 0, 0, cfg && cfg.ottq || []).catch(() => []) : null; // v1.15.72: AsianTV
@@ -20381,7 +20411,7 @@ cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'movie', s: 0, e: 0 }
       const mmP = !(cfg && cfg.mm === 0) ? mmStreams(Number(m[1]), '', 'series', Number(m[2] || 1), Number(m[3] || 1), originOf(req), cfg && cfg.mmr || 0, cfg && cfg.mmrelay === 1).catch(() => []) : null; // v1.15.28: Multimovies (cfg.mm toggle)
       const m4uP = !(cfg && cfg.m4u === 0) ? m4uStreams(Number(m[1]), '', 'series', Number(m[2] || 1), Number(m[3] || 1), originOf(req), cfg && cfg.m4ur || 0).catch(() => []) : null; // v1.15.40-local
       const skyP = !(cfg && cfg.sky === 0) ? skyStreams(Number(m[1]), '', 'series', Number(m[2] || 1), Number(m[3] || 1), originOf(req), cfg && cfg.skyr || 0).catch(() => []) : null;
-      const hmP = !(cfg && cfg.hm === 0) ? tp.then(n => hmRace(hmStreams(Number(m[1]), n, 'series', Number(m[2] || 1), Number(m[3] || 1), originOf(req), cfg && cfg.hmr || 0))).catch(() => []) : null; // v1.17.46: HindMovie // v1.15.50: Arctic-স্বাধীন (SkymoviesHD)
+      const hmP = !(cfg && cfg.hm === 0) ? hmPFor('series', m[1], Number(m[2] || 1), Number(m[3] || 1), req, cfg, t0, tp) : null; // HindMovie-only absolute request budget
       const hdP = !(cfg && cfg.hd === 0) ? Promise.all([tmdbToImdb(String(m[1]), 'tv').catch(() => ''), tp.catch(() => '')]).then(([im, nm0]) => hdStreams(im || '', nm0 || '', 'tv', Number(m[2] || 1), Number(m[3] || 1), originOf(req), (cfg && cfg.hdq && cfg.hdq.length ? Math.max.apply(null, cfg.hdq) : (cfg && cfg.hdr || 0)))).catch(() => []) : null; // v1.17.51: HDHub4u-সিরিজ
       const bfP = BF_ENABLED && !(cfg && cfg.bf === 0) ? bfStreams(Number(m[1]), '', 'series', Number(m[2] || 1), Number(m[3] || 1), originOf(req), cfg && cfg.bfr || 0, '', cfg && cfg.bfexo === 0 ? 0 : 1).catch(() => []) : null; // BollyFlix
       const vspP = !(cfg && cfg.vsp === 0) ? vspStreams(Number(m[1]), 'tv', Number(m[2] || 1), Number(m[3] || 1), cfg && cfg.vspq || []).catch(() => []) : null; // v1.15.71: Vidsrc
@@ -20416,7 +20446,7 @@ cards => { unifyCards(cards, { tmdbId: Number(m[1]), type: 'series', s: Number(m
       const mmP = !(cfg && cfg.mm === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? mmStreams(info.id, info.name || '', 'movie', 0, 0, originOf(req), cfg && cfg.mmr || 0, cfg && cfg.mmrelay === 1).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.28: Multimovies (cfg.mm toggle)
       const m4uP = !(cfg && cfg.m4u === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? m4uStreams(info.id, info.name || '', 'movie', 0, 0, originOf(req), cfg && cfg.m4ur || 0).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.40-local
       const skyP = !(cfg && cfg.sky === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? skyStreams(info.id, info.name || '', 'movie', 0, 0, originOf(req), cfg && cfg.skyr || 0).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.50: Arctic-স্বাধীন (SkymoviesHD)
-      const hmP = !(cfg && cfg.hm === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? hmRace(hmStreams(info.id, info.name || '', 'movie', 0, 0, originOf(req), cfg && cfg.hmr || 0)).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.17.46: HindMovie  v1.15.50: Arctic-স্বাধীন (SkymoviesHD)
+      const hmP = !(cfg && cfg.hm === 0) ? hmPFor('movie', m[1], 0, 0, req, cfg, t0, infoP, nmP) : null; // HindMovie-only absolute request budget
       const hdP = !(cfg && cfg.hd === 0) ? hdStreams(m[1], '', 'movie', 0, 0, originOf(req), (cfg && cfg.hdq && cfg.hdq.length ? Math.max.apply(null, cfg.hdq) : (cfg && cfg.hdr || 0))).catch(() => []) : null; // v1.17.49: HDHub4u (imdb-ইনডেক্স-সার্চ; TMDB-অপেক্ষা-নেই)
       const bfP = BF_ENABLED && !(cfg && cfg.bf === 0) ? Promise.all([raceObjP(infoP, 1500), raceObjP(nmP, 1500)]).then(([info, nm]) => ((info && info.id > 0) || nm) ? bfStreams((info && info.id) || 0, (info && info.name) || nm || '', 'movie', 0, 0, originOf(req), cfg && cfg.bfr || 0, m[1], cfg && cfg.bfexo === 0 ? 0 : 1).catch(() => []) : []).catch(() => []) : null; // BollyFlix
       const vspP = !(cfg && cfg.vsp === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? vspStreams(info.id, 'movie', 0, 0, cfg && cfg.vspq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.71: Vidsrc
@@ -20448,7 +20478,7 @@ cards => { if (DBG) console.error('[rt] RID=' + t0 + ' cards-ready @' + (Date.no
       const mmP = !(cfg && cfg.mm === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? mmStreams(info.id, info.name || '', 'series', Number(m[2]), Number(m[3]), originOf(req), cfg && cfg.mmr || 0, cfg && cfg.mmrelay === 1).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.28: Multimovies (cfg.mm toggle)
       const m4uP = !(cfg && cfg.m4u === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? m4uStreams(info.id, info.name || '', 'series', Number(m[2]), Number(m[3]), originOf(req), cfg && cfg.m4ur || 0).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.40-local
       const skyP = !(cfg && cfg.sky === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? skyStreams(info.id, info.name || '', 'series', Number(m[2]), Number(m[3]), originOf(req), cfg && cfg.skyr || 0).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.50: Arctic-স্বাধীন (SkymoviesHD)
-      const hmP = !(cfg && cfg.hm === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? hmRace(hmStreams(info.id, info.name || '', 'series', Number(m[2]), Number(m[3]), originOf(req), cfg && cfg.hmr || 0)).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.17.46: HindMovie  v1.15.50: Arctic-স্বাধীন (SkymoviesHD)
+      const hmP = !(cfg && cfg.hm === 0) ? hmPFor('series', m[1], Number(m[2]), Number(m[3]), req, cfg, t0, infoP, nmP) : null; // HindMovie-only absolute request budget
       const hdP = !(cfg && cfg.hd === 0) ? (infoP ? infoP.then(info => hdStreams(m[1], (info && info.name) || '', 'tv', Number(m[2]), Number(m[3]), originOf(req), (cfg && cfg.hdq && cfg.hdq.length ? Math.max.apply(null, cfg.hdq) : (cfg && cfg.hdr || 0)))) : hdStreams(m[1], '', 'tv', Number(m[2]), Number(m[3]), originOf(req), (cfg && cfg.hdq && cfg.hdq.length ? Math.max.apply(null, cfg.hdq) : (cfg && cfg.hdr || 0)))).catch(() => []) : null; // v1.17.51: HDHub4u-সিরিজ      const bfP = BF_ENABLED && !(cfg && cfg.bf === 0) ? Promise.all([raceObjP(infoP, 1500), raceObjP(nmP, 1500)]).then(([info, nm]) => ((info && info.id > 0) || nm) ? bfStreams((info && info.id) || 0, (info && info.name) || nm || '', 'series', Number(m[2]), Number(m[3]), originOf(req), cfg && cfg.bfr || 0, m[1], cfg && cfg.bfexo === 0 ? 0 : 1).catch(() => []) : []).catch(() => []) : null; // BollyFlix
       const vspP = !(cfg && cfg.vsp === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? vspStreams(info.id, 'tv', Number(m[2]), Number(m[3]), cfg && cfg.vspq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.71: Vidsrc
       const ottP = !(cfg && cfg.ott === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? ottStreams(info.id, 'tv', Number(m[2]), Number(m[3]), cfg && cfg.ottq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.72: AsianTV
@@ -20481,7 +20511,7 @@ cards => { Promise.all([raceObjP(infoP, 1500), raceObjP(nmP, 1500)]).then(([info
       const mmP = !(cfg && cfg.mm === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? mmStreams(info.id, info.name || '', 'series', 1, 1, originOf(req), cfg && cfg.mmr || 0, cfg && cfg.mmrelay === 1).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.28: Multimovies (cfg.mm toggle)
       const m4uP = !(cfg && cfg.m4u === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? m4uStreams(info.id, info.name || '', 'series', 1, 1, originOf(req), cfg && cfg.m4ur || 0).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.40-local
       const skyP = !(cfg && cfg.sky === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? skyStreams(info.id, info.name || '', 'series', 1, 1, originOf(req), cfg && cfg.skyr || 0).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.50: Arctic-স্বাধীন (SkymoviesHD)
-      const hmP = !(cfg && cfg.hm === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? hmRace(hmStreams(info.id, info.name || '', 'series', 1, 1, originOf(req), cfg && cfg.hmr || 0)).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.17.46: HindMovie  v1.15.50: Arctic-স্বাধীন (SkymoviesHD)
+      const hmP = !(cfg && cfg.hm === 0) ? hmPFor('series', m[1], 1, 1, req, cfg, t0, infoP, nmP) : null; // HindMovie-only absolute request budget
       const hdP = !(cfg && cfg.hd === 0) ? (infoP ? infoP.then(info => hdStreams(m[1], (info && info.name) || '', 'tv', 1, 1, originOf(req), (cfg && cfg.hdq && cfg.hdq.length ? Math.max.apply(null, cfg.hdq) : (cfg && cfg.hdr || 0)))) : hdStreams(m[1], '', 'tv', 1, 1, originOf(req), (cfg && cfg.hdq && cfg.hdq.length ? Math.max.apply(null, cfg.hdq) : (cfg && cfg.hdr || 0)))).catch(() => []) : null; // v1.17.51: HDHub4u-সিরিজ      const bfP = BF_ENABLED && !(cfg && cfg.bf === 0) ? Promise.all([raceObjP(infoP, 1500), raceObjP(nmP, 1500)]).then(([info, nm]) => ((info && info.id > 0) || nm) ? bfStreams((info && info.id) || 0, (info && info.name) || nm || '', 'series', 1, 1, originOf(req), cfg && cfg.bfr || 0, m[1], cfg && cfg.bfexo === 0 ? 0 : 1).catch(() => []) : []).catch(() => []) : null; // BollyFlix
       const vspP = !(cfg && cfg.vsp === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? vspStreams(info.id, 'tv', 1, 1, cfg && cfg.vspq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.71: Vidsrc
       const ottP = !(cfg && cfg.ott === 0) ? (infoP ? infoP.then(info => (info && info.id > 0) ? ottStreams(info.id, 'tv', 1, 1, cfg && cfg.ottq || []).catch(() => []) : []) : Promise.resolve([])).catch(() => []) : null; // v1.15.72: AsianTV

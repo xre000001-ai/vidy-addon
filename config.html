@@ -1011,7 +1011,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
     pvCard('pvP',!!st.sky,st.skyq.length?Math.max.apply(null,st.skyq):2160,{title:'Deadpool & Wolverine | 2024 |',src:'Sky Movies',audio:audioLabel(st.skyl)||'Multi Audio',srv:'HubCloud',note:st.skyq.length?('\u2264'+Math.max.apply(null,st.skyq)+'p'):'All'});
     pvCard('pvH',!!st.hm,st.hmq.length?Math.max.apply(null,st.hmq):1080,{title:'Inception | 2010 |',src:'HindMovie',audio:audioLabel(st.hml)||'Dual Audio',srv:'HubCloud',note:st.hmq.length?('\u2264'+Math.max.apply(null,st.hmq)+'p'):(st.hmr?('cap '+st.hmr+'p'):'All')});
     var cjOn=CJSRV.filter(function(s){return st.cjsrv.indexOf(s[0])<0;});
-    pvCard('pvCJ',!!(st.cj&&cjOn.length),st.cjq.length?Math.max.apply(null,st.cjq):1080,{title:'Inception | 2010 |',src:'CineJoy',audio:'Auto Audio',srv:cjOn.length?cjOn[0][1]:'',note:qsel(st.cjq)});
+    pvCard('pvCJ',!!(st.cj&&cjOn.length),st.cjq.length?Math.max.apply(null,st.cjq):1080,{title:'Inception | 2010 |',src:'CineJoy',audio:'Original Audio',srv:cjOn.length?cjOn[0][1]:'',note:qsel(st.cjq)});
     pvCard('pvL',!!st.mlb,st.mlbr||1080,{title:'The Dark Knight | 2008 |',src:'MovieLinkBD',audio:'Dual Audio',srv:'FSL \u00b7 HubCloud',note:st.mlbr?('cap '+st.mlbr+'p'):'All'});
   }
 

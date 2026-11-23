@@ -10,7 +10,7 @@ const { safeURL } = require('./cinejoy-pk/src/policy.cjs');
 const { Metadata, requestIdentity, bounded } = require('./cinejoy-pk/src/metadata.cjs');
 const { PKError, classify, publicError } = require('./cinejoy-pk/src/errors.cjs');
 const manifests = require('./cinejoy-pk/src/manifests.cjs');
-const REVISION = 'cinejoy-pk-integration-2';
+const REVISION = 'cinejoy-pk-integration-3';
 const LANGUAGE = {
   en: ['English', 'eng'], eng: ['English', 'eng'], hi: ['Hindi', 'hin'], hin: ['Hindi', 'hin'],
   bn: ['Bengali', 'ben'], ben: ['Bengali', 'ben'], ta: ['Tamil', 'tam'], tam: ['Tamil', 'tam'],
@@ -54,7 +54,9 @@ function cardsFor(result, sample, origin, config) {
       const raw = String(s).toLowerCase().split(/[-_]/)[0];
       return LANGUAGE[raw]?.[0] || (Object.values(LANGUAGE).find(v => v[0].toLowerCase() === raw)?.[0]) || '';
     }).filter(Boolean))];
-    const audio = langs.length === 1 ? langs[0] : langs.length === 2 ? 'Dual Audio' : langs.length > 2 ? 'Multi Audio' : 'Auto Audio';
+    // Label only: these feeds use original/default audio when no language
+    // group is declared. Captions never identify audio; do not alter tracks.
+    const audio = langs.length === 1 ? langs[0] : langs.length === 2 ? 'Dual Audio' : langs.length > 2 ? 'Multi Audio' : 'Original Audio';
     const ep = sample.type === 'tv' ? ' \u23e3 S' + sample.season + 'E' + sample.episode + '\n' : '';
     const title = '\u29c9 ' + sample.title + (sample.year ? ' | ' + sample.year + ' |' : ' |') + '\n' + ep + ' \u2318 CineJoy \u2317 ' + audio + ' \u2022 ' + result.server;
     const headers = { 'User-Agent': UA, Referer: 'https://cinejoy.pk/', Origin: 'https://cinejoy.pk' };

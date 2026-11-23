@@ -20,6 +20,10 @@ function resolution(variant) {
   if (w >= 1800 || h >= 1000) return 1080;
   if (w >= 1200 || h >= 700) return 720;
   if (w >= 800 || h >= 450) return 480;
+  // Known SD dimensions are not adaptive/unknown. Include letterboxed rungs
+  // so a 360-tier variant cannot bypass the existing global quality floor.
+  if (w >= 600 || h >= 330) return 360;
+  if (w >= 400 || h >= 230) return 240;
   return 0;
 }
 function validate(text) {
@@ -58,7 +62,7 @@ function selections(result, origin) {
   if (!variants.length) {
     // A source-declared leaf URL is used verbatim, including its signed query.
     // Its explicit 1080p/720p/etc path is a declaration, not a measured-dimensions claim.
-    const q = Number((new URL(base).pathname.match(/\/(2160|1080|720|480)p\.m3u8$/i) || [])[1]) || 0;
+    const q = Number((new URL(base).pathname.match(/\/(2160|1080|720|480|360|240)p\.m3u8$/i) || [])[1]) || 0;
     return [{ url: mediaURL(base), quality: q, audio: [], dimensions: null, codecs: '' }];
   }
   const lines = text.split(/\r?\n/).map(s => s.trim()), output = [], seen = new Set();
