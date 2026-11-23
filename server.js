@@ -12,6 +12,15 @@ const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
 const VERSION = '1.34.428';
+/* ★ v1.34.428: HM লাইব্রেরি **সবার আগে** লোড (HM_RC-এর আগে) + স্ট্যাটাস এক্সপোর্ট, যাতে
+   /_health-এ hm.lib/last দেখা যায়। আগে ডিক্লারেশন পরে থাকায় ReferenceError-এ চুপচাপ
+   ফলব্যাক হচ্ছিল (প্রোডে HM=0-এর কারণ)। */
+let HM_LIB = null, HM_LIB_ERR = '';
+try {
+  HM_LIB = require('./tools/vidy-runtime/hindmovie.cjs');
+  const n = HM_LIB.poolLoad();
+  console.error('[hm.lib] loaded, pool=' + n);
+} catch (e) { HM_LIB_ERR = String((e && e.message) || e); console.error('[hm.lib] FAIL ' + HM_LIB_ERR); }
 let LR = { at: 0, path: '', sr: [], el: 0, total: 0, pend: false };   // ★ v1.34.139: শেষ /stream-এর সোর্স-টাইমিং (/_health.lastreq)
 
 // ================= v1.28.3-L1: লিক-ডিটেক্টর (LEAK=1) =================
@@ -7084,14 +7093,6 @@ async function hmPool(items, n, fn) { // ★ mvlink-এ >৩ সমান্ত�
 // ★ v1.27.16: টাইটেল-ভিত্তিক কার্ড-ক্যাশ + in-flight শেয়ারিং।
 //   মাপা: hm-চেইন কোল্ড অবস্থায় 8-10s (রেসপব্স-কাটআফ 6.6s) — তাই প্রথম রিকোয়েস্টে কার্ড
 //   না-আসলেও চেইন শেষ হলে ক্যাশে বসে — পরের রিকোয়েস্টে তাৎক্ষণিক (শূন্য-ফল ক্যাশ-হয়-না।
-/* ★ v1.34.427: **HM লাইব্রেরি** (tools/vidy-runtime/hindmovie.cjs) — পুল-রাউটিং + প্ল্যান-ক্যাশ +
-   প্রতি-ফাইলে Hub+Fast। লোড না হলে আগের ইনলাইন পথই চলবে (নিরাপদ ফলব্যাক)। */
-let HM_LIB = null;
-try {
-  HM_LIB = require('./tools/vidy-runtime/hindmovie.cjs');
-  const n = HM_LIB.poolLoad();
-  console.error('[hm.lib] loaded, pool=' + n);
-} catch (e) { console.error('[hm.lib] not loaded: ' + (e && e.message)); }
 const HM_RC = new Map(); const HM_INF = new Map(); const HM_RC_TTL = 20 * 60 * 1000;
 function hmStreams(tmdbId, title, type, s, e, origin, maxh) {
   const k = [type || '', tmdbId || String(title || '').toLowerCase(), s || 0, e || 0, maxh || 0].join('|');
@@ -17234,7 +17235,10 @@ const server = http.createServer((req, res) => {
       RT_INFLIGHT.set(kRT, pr);
       res = w;
     }
-    if (p === '/_health') { const _vf = [...VIDY_OK.values()].filter(v => v.ts && Date.now() - v.ts < Number(process.env.PXFRESH || 240000)).length; return sendJson(res, 200, { ok: 1, cg: CG_ST, cgDead: CG_DEAD.size, cgSrc: Object.fromEntries([...CG_SRC].map(([k, v]) => [k, { ok: v.ok, fail: v.fail, down: v.down > Date.now() ? Math.round((v.down - Date.now()) / 1000) : 0 }])), version: VERSION, cache: CACHE_ST, bg: BG_ST, pwhy: PART_WHY, up: Math.round(process.uptime()), deploy: 'v' + VERSION, mmpool: { size: MM_POOL.length, bench: MM_SITE.size, cooling: [...MM_COOL.values()].filter(t => t > Date.now()).length, race: MM_RACE_ST }, pool: POOL.length, pxbench: POOL.filter(c => PX_SITE.has(c.px)).length, pxbf: PX_BF.size, memo: memo.size, gw: (typeof GW !== 'undefined' ? GW.size : -1), nx: NEXBASE ? 1 : 0, nxpool: NXBENCH, nxwaves: NXWAVES, nxsize: NXSIZE, tw: TWBASE ? 1 : 0, rt: RTBASE ? 1 : 0, mls: (process.env.MLSD !== '0') ? 1 : 0, vsp: VSP_POOL.length, vy: VIDY_OK.size, vyfresh: _vf, vhg: (typeof VHG !== 'undefined' ? VHG : 0), pxpl: (typeof PXPL !== 'undefined' ? PXPL.size : 0), rtmq: RT_MQ_ST, dti: (typeof DT_IDX !== 'undefined' ? DT_IDX : 0), dtst: (typeof DT_ST !== 'undefined' ? DT_ST : 0), dtsh: (typeof DT_SH !== 'undefined' ? { on: DT_SH.on, src: DT_SH.src, pre: DT_SH.pre, loaded: DT_SH.loaded, hits: DT_SH.hits, miss: DT_SH.miss, cache: (typeof DT_SH_CACHE !== 'undefined' ? DT_SH_CACHE.size : 0), err: DT_SH.err, units: (DT_SH.man && DT_SH.man.units) || null, slugs: (DT_SH.man && DT_SH.man.slugs || []).length } : 0), lastreq: { el: LR.el, n: LR.total, pend: LR.pend, p: LR.path, sr: (LR.sr || []).map(x => x[0] + ':' + x[1] + '@' + x[2]) } }); } // v1.34.95, v1.34.105 // ★ v1.21.9: vy=verified vidy নোড, vyfresh=৪মিন-তাজা // v1.15.71: vsp=Vidsrc-পুল-আকার // v1.15.18: pxbench=সাইট-প্রমাণিত-বেঞ্চ (v1.15.8: nxpool=MB-বেঞ্চ)
+    if (p === '/_health') { const _vf = [...VIDY_OK.values()].filter(v => v.ts && Date.now() - v.ts < Number(process.env.PXFRESH || 240000)).length;
+      /* ★ v1.34.429: HM লাইব্রেরির স্বাস্থ্য ও শেষ-রান — প্রোডে HM=0 কেন, একনজরে */
+      const _hml = (HM_LIB && HM_LIB.last) ? HM_LIB.last() : null;
+      return sendJson(res, 200, { ok: 1, cg: CG_ST, hmlib: { ok: !!HM_LIB, err: HM_LIB_ERR || '', pool: (HM_LIB && HM_LIB.poolStats) ? HM_LIB.poolStats() : null, last: _hml ? { title: _hml.title, posts: _hml.posts, files: _hml.files, picked: _hml.picked, urls: _hml.urls, cards: _hml.cards, ms: _hml.ms, stage: _hml.stage, tSearch: _hml.tSearch, tPost: _hml.tPost } : null }, cgDead: CG_DEAD.size, cgSrc: Object.fromEntries([...CG_SRC].map(([k, v]) => [k, { ok: v.ok, fail: v.fail, down: v.down > Date.now() ? Math.round((v.down - Date.now()) / 1000) : 0 }])), version: VERSION, cache: CACHE_ST, bg: BG_ST, pwhy: PART_WHY, up: Math.round(process.uptime()), deploy: 'v' + VERSION, mmpool: { size: MM_POOL.length, bench: MM_SITE.size, cooling: [...MM_COOL.values()].filter(t => t > Date.now()).length, race: MM_RACE_ST }, pool: POOL.length, pxbench: POOL.filter(c => PX_SITE.has(c.px)).length, pxbf: PX_BF.size, memo: memo.size, gw: (typeof GW !== 'undefined' ? GW.size : -1), nx: NEXBASE ? 1 : 0, nxpool: NXBENCH, nxwaves: NXWAVES, nxsize: NXSIZE, tw: TWBASE ? 1 : 0, rt: RTBASE ? 1 : 0, mls: (process.env.MLSD !== '0') ? 1 : 0, vsp: VSP_POOL.length, vy: VIDY_OK.size, vyfresh: _vf, vhg: (typeof VHG !== 'undefined' ? VHG : 0), pxpl: (typeof PXPL !== 'undefined' ? PXPL.size : 0), rtmq: RT_MQ_ST, dti: (typeof DT_IDX !== 'undefined' ? DT_IDX : 0), dtst: (typeof DT_ST !== 'undefined' ? DT_ST : 0), dtsh: (typeof DT_SH !== 'undefined' ? { on: DT_SH.on, src: DT_SH.src, pre: DT_SH.pre, loaded: DT_SH.loaded, hits: DT_SH.hits, miss: DT_SH.miss, cache: (typeof DT_SH_CACHE !== 'undefined' ? DT_SH_CACHE.size : 0), err: DT_SH.err, units: (DT_SH.man && DT_SH.man.units) || null, slugs: (DT_SH.man && DT_SH.man.slugs || []).length } : 0), lastreq: { el: LR.el, n: LR.total, pend: LR.pend, p: LR.path, sr: (LR.sr || []).map(x => x[0] + ':' + x[1] + '@' + x[2]) } }); } // v1.34.95, v1.34.105 // ★ v1.21.9: vy=verified vidy নোড, vyfresh=৪মিন-তাজা // v1.15.71: vsp=Vidsrc-পুল-আকার // v1.15.18: pxbench=সাইট-প্রমাণিত-বেঞ্চ (v1.15.8: nxpool=MB-বেঞ্চ)
     if (p === '/_mem') { /* ★ v1.28.1: মেমোরি-ডিয়াগনস্টিক — OOM-ক্ষতির কারন খুঁজতে (প্রমাণ: ব্যাটারি-চালাকালে node 896MB-তে kernel-OOM-kill) */
       const m = process.memoryUsage(); const sz = o => { try { return o instanceof Map ? o.size : (Array.isArray(o) ? o.length : -1); } catch (e) { return -1; } };
       // ★ v1.28.3-M4: সীমা + purge-পরিসংখ্যান (কতবার, কোন স্তরে) — প্রোডে "মেমরি ফুল" কেন, একনজরে
