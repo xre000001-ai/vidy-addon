@@ -64,7 +64,7 @@ async function request(url, ref, body, proxy, signal) {
       if (r.status < 200 || r.status >= 300 || !t || /Just a moment|_cf_chl_opt|Attention Required/i.test(t.slice(0, 1500))) return null;
       return { st: r.status, t, via: proxy || 'direct' };
     }
-  } catch (_) {} finally { if (agent) agent.close().catch(() => {}); }
+  } catch (_) {} finally { if (agent) agent.destroy().catch(() => {}); }
   return null;
 }
 function get(url, ms, ref, body) {
