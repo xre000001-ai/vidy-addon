@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.418';
+const VERSION = '1.34.419';
 // CINEJOY-BEGIN: independent source, extraction proxies only; CDN media stays direct.
 const CINEJOY = require('./tools/vidy-runtime/cinejoy.cjs').create({
   root: __dirname,
@@ -5065,13 +5065,19 @@ const DT_BY_SLUG = new Map();
 // ★★ v1.34.146: **শার্ড-ভিত্তিক পূর্ণ-সাইট ইনডেক্স** (বিল্ডার dt-index3.mjs) — manifest + প্রতি-শো shard।
 //   লক্ষ্য: পুরো সাইট কপি ⇒ যেকোনো টাইটেলের যেকোনো এপিসোড প্রথম ট্যাপেই। এক-ফাইল JSON কয়েক MB হতো
 //   (অ্যাডনে লোড-ভারী) ⇒ ১৬টি শার্ড, প্রতিটি ~৮০–১২০KB, LRU-ক্যাশে রাখা।
-const DT_SHARD_URL = String(process.env.DTSHARD || DT_IDX_URL.replace(/dt_index\.json.*$/, 'dti'));
+const DT_SHARD_URL = String(process.env.DTSHARD || (process.env.DTIDX ? DT_IDX_URL.replace(/dt_index\.json.*$/, 'dti') : 'https://raw.githubusercontent.com/xre000001-ai/vidy-addon/deadtoons-index/dti'));
 const DT_SH = { on: false, shards: 16, man: null, at: 0, err: '', loaded: 0, hits: 0, miss: 0, pre: 0, src: '' };
 // ★★ v1.34.147: raw.githubusercontent ফ্লেকি (মাপা: boot-এ `fetch failed` ⇒ ইনডেক্স-প্রথম পথ চুপচাপ বাদ) ⇒
 //   **jsDelivr মিরর** ফলব্যাক, আর boot-এর পর **সব শার্ড ব্যাকগ্রাউন্ডে প্রিফেচ** ⇒ ট্যাপে নেটওয়ার্ক-নির্ভরতা শূন্য।
-const DT_SH_MIRRORS = [DT_SHARD_URL, DT_SHARD_URL.replace('https://raw.githubusercontent.com/', 'https://cdn.jsdelivr.net/gh/').replace('/main/', '@main/')];
+const DT_SH_MIRRORS = [DT_SHARD_URL, DT_SHARD_URL.replace(/^https:\/\/raw\.githubusercontent\.com\/([^/]+)\/([^/]+)\/([^/]+)\//, 'https://cdn.jsdelivr.net/gh/$1/$2@$3/')];
 const DT_SH_CACHE = new Map();       // shardNo -> Map(slug -> rows[])
 const DT_SH_INFLIGHT = new Map();
+// Ready from bundled, deduplicated rows before listening. Background refresh
+// validates an entire immutable generation and swaps it only when complete.
+const DT_INDEX = require('./tools/deadtoons-index/runtime.cjs').create({
+  seedDir: __dirname, mirrors: DT_SH_MIRRORS, fetch: (...args) => fetch(...args),
+  state: DT_IDX, shardState: DT_SH, cache: DT_SH_CACHE
+});
 // ★ v1.34.137: Deadtoons-এর পথ কোথায় আটকায় — প্রোডে দৃশ্যমান কাউন্টার (locally ৭-কার্ড, prode ০ ⇒ কারণ জানতে)
 const DT_ST = { hit: 0, noMatch: 0, cands: 0, idxReady: 0, proofOk: 0, proofFail: 0, fast: 0, watch: 0, last: '' };
 function dtIxSlugOf(t) { return String(t || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, ''); }
@@ -5088,38 +5094,7 @@ function dtRowsToLinks(rows, SE, EP) {
   return links;
 }
 // শার্ডে ওই slug আছে কি — থাকলে true; না থাকলে shard-টি ব্যাকগ্রাউন্ডে লোড করে false
-function dtShardFor(slug) {
-  if (!DT_SH.on) return null;
-  const no = dtShNo(slug);
-  const m = DT_SH_CACHE.get(no);
-  if (m) { DT_SH_CACHE.delete(no); DT_SH_CACHE.set(no, m); }        // LRU টাচ
-  if (m && m.has(slug)) { DT_SH.hits++; return m.get(slug); }
-  if (m && DT_SH.man && !(DT_SH.man.slugs || []).length) { DT_SH.miss++; return null; }
-  const man = DT_SH.man;
-  if (man && Array.isArray(man.slugs) && man.slugs.indexOf(slug) < 0) { DT_SH.miss++; return null; }  // manifest-এ নেই ⇒ সার্চ-পথে
-  if (!DT_SH_INFLIGHT.has(no)) {
-    const pr = (async () => {
-      for (const base of DT_SH_MIRRORS) {
-        try {
-          const r = await fetch(base + '/s' + String(no).padStart(2, '0') + '.json?cb=' + Math.floor(Date.now() / 600000), { headers: { 'User-Agent': UA, Accept: 'application/json' }, signal: AbortSignal.timeout(12000) });
-          if (r.ok) return await r.json();
-        } catch (e) { }
-      }
-      return null;
-    })().then(j => {
-        if (!j) return null;
-        const mm = new Map();
-        for (const k of Object.keys(j)) mm.set(k, j[k] || []);
-        DT_SH_CACHE.set(no, mm); DT_SH.loaded++;
-        while (DT_SH_CACHE.size > 40) DT_SH_CACHE.delete(DT_SH_CACHE.keys().next().value);
-        if (mm.has(slug)) return mm.get(slug);
-        return null;
-      }).catch(() => null).finally(() => DT_SH_INFLIGHT.delete(no));
-    DT_SH_INFLIGHT.set(no, pr);
-  }
-  // ৩৫০ms পর্যন্ত অপেক্ষা (প্রথম-ট্যাপেই কার্ড — shard ~৮০–১২০KB)
-  return Promise.race([DT_SH_INFLIGHT.get(no), new Promise(r => setTimeout(() => r(undefined), 350))]);
-}
+function dtShardFor(slug) { return DT_INDEX.lookup(slug); }
 function dtIdxByTitle(names, type, SE, EP) {   // টাইটেল ⇒ ইনডেক্স-সারি (সার্চ ছাড়াই)
   try {
     if (!DT_BY_SLUG.size) return null;
@@ -5144,13 +5119,9 @@ function dtIdxByTitle(names, type, SE, EP) {   // টাইটেল ⇒ ইন�
   } catch (e) { }
   return null;
 }
-async function dtIdxLoad() {
-  if (!DT_IDX_URL) return;
-  try {
-    const r = await fetch(DT_IDX_URL + (DT_IDX_URL.indexOf('?') < 0 ? '?' : '&') + 'cb=' + Math.floor(Date.now() / 60000), { headers: { 'User-Agent': UA, 'Accept': 'application/json' }, signal: AbortSignal.timeout(45000) });   // ★ v1.34.142: ৯সে → ৪৫সে — ইনডেক্স ৫৮৩KB → ~১.২MB হলো (কভারেজ ২৬ → ১০৭৩ শো), আর প্রোডে `err: operation was aborted due to timeout` ⇒ পুরোনো ৩৭১৭-এন্ট্রিই আটকে ছিল
-    if (!r.ok) { DT_IDX.err = 'http_' + r.status; return; }
-    const j = await r.json();
-    const L = (j && j.links) || {};
+function dtIdxAdopt(j) {
+    if (!j || !j.links || typeof j.links !== 'object' || Array.isArray(j.links)) throw new Error('Invalid DT legacy index');
+    const L = j.links;
     let add = 0, dup = 0;
     for (const k of Object.keys(L)) {
       const e = L[k]; if (!e || !e.u) continue;
@@ -5166,59 +5137,20 @@ async function dtIdxLoad() {
       if (!DT_BY_SLUG.has(sk)) DT_BY_SLUG.set(sk, []);
       DT_BY_SLUG.get(sk).push({ id: String(k), s: Number(e.s || 0), e: Number(e.e || 0), h: String(e.h || ''), q: String(e.q || '') });
     }
-    DT_IDX.n = Object.keys(L).length; DT_IDX.ts = Number(j.ts || 0); DT_IDX.at = Date.now(); DT_IDX.err = '';
-    if (DBG || add) console.error('[dtidx] index=' + DT_IDX.n + ' added=' + add + ' kept-live=' + dup + ' ts=' + new Date(DT_IDX.ts).toISOString().slice(0, 16));
-  } catch (e) { DT_IDX.err = String((e && e.message) || e).slice(0, 40); }
+    DT_INDEX.noteLegacy({ n: Object.keys(L).length, ts: Number(j.ts || 0), at: Date.now(), err: '' });
 }
-function dtShPrefetch() {   // ★ v1.34.147: সব শার্ড একবারে নয় — ক্রমান্বয়ে, নীরবে (ট্যাপ কখনো আটকে থাকে না)
-  let i = 0;
-  const step = () => {
-    if (!DT_SH.on || i >= (DT_SH.shards || 16)) return;
-    const no = i++;
-    if (DT_SH_CACHE.has(no) || DT_SH_INFLIGHT.has(no)) return setTimeout(step, 4000);
-    dtShardFor(' warm');
-    const pr = (async () => {
-      for (const base of DT_SH_MIRRORS) {
-        try {
-          const r = await fetch(base + '/s' + String(no).padStart(2, '0') + '.json?cb=' + Math.floor(Date.now() / 600000), { headers: { 'User-Agent': UA, Accept: 'application/json' }, signal: AbortSignal.timeout(15000) });
-          if (r.ok) return await r.json();
-        } catch (e) { }
-      }
-      return null;
-    })();
-    DT_SH_INFLIGHT.set(no, pr);
-    pr.then(j => {
-      if (j) {
-        const mm = new Map();
-        for (const k of Object.keys(j)) mm.set(k, j[k] || []);
-        DT_SH_CACHE.set(no, mm); DT_SH.pre++;
-      }
-    }).catch(() => { }).finally(() => { DT_SH_INFLIGHT.delete(no); setTimeout(step, 4000); });   // ★ v1.34.148: ১.২সে → ৪সে (বুটে ইভেন্ট-লুপ চাপ কম)
-  };
-  setTimeout(step, 2500);
-}
-async function dtShLoad() {
-  if (!DT_SHARD_URL) return;
+async function dtIdxLoad() {
+  if (!DT_IDX_URL) return;
   try {
-    let j = null, lastErr = '';
-    for (const base of DT_SH_MIRRORS) {
-      try {
-        const r = await fetch(base + '/manifest.json?cb=' + Math.floor(Date.now() / 600000), { headers: { 'User-Agent': UA, Accept: 'application/json' }, signal: AbortSignal.timeout(20000) });
-        if (!r.ok) { lastErr = 'http_' + r.status; continue; }
-        j = await r.json(); DT_SH.src = base.indexOf('jsdelivr') >= 0 ? 'jsdelivr' : 'raw';
-        if (j && Array.isArray(j.slugs)) break;
-      } catch (e) { lastErr = String((e && e.message) || e).slice(0, 30); }
-    }
-    if (!j || !Array.isArray(j.slugs)) { DT_SH.err = lastErr || 'bad-manifest'; return; }
-    if (!j || !Array.isArray(j.slugs)) { DT_SH.err = 'bad-manifest'; return; }
-    const wasOn = DT_SH.on;
-    DT_SH.man = j; DT_SH.shards = Number(j.shards || 16); DT_SH.on = true; DT_SH.at = Date.now(); DT_SH.err = '';
-    DT_IDX.n = Number(j.n || 0); DT_IDX.ts = Number(j.ts || 0); DT_IDX.at = Date.now();
-    DT_IDX.src = 'shards';
-    if (DBG && !wasOn) console.error('[dtidx] shards on(' + DT_SH.src + '): n=' + DT_IDX.n + ' units=' + JSON.stringify(j.units) + ' slugs=' + j.slugs.length);
-    if (!wasOn) dtShPrefetch();
-  } catch (e) { DT_SH.err = String((e && e.message) || e).slice(0, 40); }
+    const r = await fetch(DT_IDX_URL + (DT_IDX_URL.includes('?') ? '&' : '?') + 'cb=' + Math.floor(Date.now() / 60000), { headers: { 'User-Agent': UA, Accept: 'application/json' }, signal: AbortSignal.timeout(45000) });
+    if (!r.ok) { DT_INDEX.noteLegacy({ err: 'http_' + r.status, at: Date.now() }); return; }
+    dtIdxAdopt(await r.json());
+  } catch (e) { DT_INDEX.noteLegacy({ err: String(e?.message || e).slice(0, 100), at: Date.now() }); }
 }
+// Legacy title aliases/links are also available without waiting for a network GET.
+try { dtIdxAdopt(JSON.parse(require('fs').readFileSync(require('path').join(__dirname, 'dt_index.json'), 'utf8'))); } catch (_) {}
+function dtShPrefetch() { return DT_INDEX.refresh(); }
+async function dtShLoad() { return DT_INDEX.refresh(); }
 dtShLoad();   // ★ v1.34.146: পূর্ণ-সাইট শার্ড (ব্যর্থ হলে পুরোনো এক-ফাইল ইনডেক্সই চলবে)
 dtIdxLoad();                                            // boot-এ (নেটওয়ার্ক-ব্যর্থ হলে চুপচাপ — লাইভ-পথই আগের মতো)
 setInterval(() => { dtShLoad().catch(() => { }); dtIdxLoad().catch(() => { }); }, Number(process.env.DTIXMS || 10 * 60e3)).unref?.();   // ★ v1.34.144: ৩০মিন → ১০মিন — CI প্রতি ঘণ্টায় পাস বাড়ায় (pass=1 ⇒ E2…), তাজা কভারেজ দ্রুত পৌঁছাক
@@ -5234,6 +5166,7 @@ function dtJsonPost(p, body, ms) {
 // ★ ১৫সে-অপেক্ষা একবারই; প্রতি link_server_id-তে একাধিক অনুরোধ একই জবে যোগ দেয়।
 function dtUnlockOne(lsid, short) {
   if (DT_UNLOCK.has(String(lsid))) return Promise.resolve(DT_UNLOCK.get(String(lsid)).url);
+  if (/^dti:/.test(String(lsid))) return Promise.resolve(null); // A final index ID is never an upstream gate link_server_id.
   if (DT_UNLOCK_JOBS.has(String(lsid))) return DT_UNLOCK_JOBS.get(String(lsid));
   const job = (async () => {
     const t0 = Date.now();
@@ -5506,16 +5439,17 @@ async function dtTask(nameP, infoP, type, s, e, origin) {
     const name = names[0]; NAME = name;
     const year = (INFO && (INFO.year || INFO.releaseInfo)) ? (parseInt(String(INFO.year || INFO.releaseInfo), 10) || 0) : 0;
     const SE = Number(s || 0), EP = Number(e || 0);
-    const ck = 'dt|' + mlsNorm(names.join('~')) + '|' + (year || '') + '|' + (type === 'series' ? 'S' + SE + 'E' + EP : 'm') + '|ix' + DT_IDX.n;   // ★ v1.34.143: ইনডেক্স-প্রজন্ম কী-তে — নইলে কভারেজ বাড়ার পরেও পুরোনো খালি ফল ৩০মিন আটকে থাকে (মাপা: `dt:0@107ms`)
+    const ck = 'dt|' + mlsNorm(names.join('~')) + '|' + (year || '') + '|' + (type === 'series' ? 'S' + SE + 'E' + EP : 'm') + '|ix' + (DT_IDX.generation || 'legacy-' + DT_IDX.legacy.ts);   // DT-only content generation: same-count changes invalidate DT cards.
     const hit = DT_C.get(ck);
     if (hit && Date.now() - hit.ts < 30 * 60 * 1000) { if (DBG) console.error('[dt] cache-hit n=' + hit.cards.length); return hit.cards.slice(); }
     // ★★ v1.34.145: ইনডেক্সে শো-টি থাকলে সোজা সেখানকার প্রমাণিত লিঙ্ক — Deadbase সার্চ+ডিটেইল বাদ
     let det = null, used = null;
-    // ★★ v1.34.146: শার্ড-ইনডেক্স আগে (৩৫০ms-বাজেট) — slug manifest-এ থাকলে সার্চ+ডিটেইল একেবারেই লাগে না
+    // v1.34.419: validated index/title lookup is memory-only; unknown titles retain the existing live fallback.
     let _shT = null;
     try {
       if (DT_SH.on && DT_SH.man) {
-        const slugTry = names.map(dtIxSlugOf).find(k => k && k.length >= 3 && (DT_SH.man.slugs || []).indexOf(k) >= 0);
+        const indexMatch = DT_INDEX.resolve(names, { type, year, s: SE, e: EP });
+        const slugTry = indexMatch && indexMatch.slug;
         if (DBG) console.error('[dt] shard-lookup names=' + JSON.stringify(names) + ' slugs=' + JSON.stringify(names.map(dtIxSlugOf)) + ' try=' + slugTry);
         if (slugTry) {
           let rows = await dtShardFor(slugTry);
@@ -5532,9 +5466,10 @@ async function dtTask(nameP, infoP, type, s, e, origin) {
                 if (!id) continue;
                 const hh = Number(r[2]);
                 const url = /^https?:/i.test(id) ? id : (hh === 0 ? 'https://pixeldrain.com/u/' + id : 'https://hubcloud.pw/drive/' + id);
-                if (!DT_UNLOCK.has(id)) DT_UNLOCK.set(id, { url, ts: Date.now(), idx: 1 });
+                const key = DT_INDEX.linkKey(hh, id);
+                if (!DT_UNLOCK.has(key)) DT_UNLOCK.set(key, { url, ts: Date.now(), idx: 1 });
               }
-              const links = dtRowsToLinks(want.map(r => ({ h: Number(r[2]), q: Number(r[3]) || 0, id: String(r[4]) })), SE, EP);
+              const links = dtRowsToLinks(want.map(r => ({ h: Number(r[2]), q: Number(r[3]) || 0, id: DT_INDEX.linkKey(Number(r[2]), String(r[4])) })), SE, EP);
               if (links.length) { _shT = { slug: slugTry, links, n: want.length }; }
             }
           }
@@ -5645,13 +5580,13 @@ async function dtTask(nameP, infoP, type, s, e, origin) {
     const dlReady = dlCands.filter(c => DT_UNLOCK.has(String(c.id)));
     const dlStage = (async () => {
       if (!dlReady.length) return;
-      const prs = await Promise.all(dlReady.map(c => dtFileProof(DT_UNLOCK.get(String(c.id)).url, 4000)));
-      prs.forEach((pr, i) => {
-        if (!pr) { DT_ST.proofFail++; DT_UNLOCK.delete(String(dlReady[i].id)); return; }
+      await Promise.all(dlReady.map(async cand => {
+        const pr = await dtFileProof(DT_UNLOCK.get(String(cand.id)).url, 4000);
+        if (!pr) { DT_ST.proofFail++; DT_UNLOCK.delete(String(cand.id)); return; }
         DT_ST.proofOk++;
-        cards.push(mkDlCard(dlReady[i], pr));
-        if (DBG) console.error('[dt] file-card ' + dlReady[i].q + 'p ' + dlReady[i].srv + ' ' + mlsMB(pr.size) + ' @' + (Date.now() - T0) + 'ms');
-      });
+        cards.push(mkDlCard(cand, pr));
+        if (DBG) console.error('[dt] file-card ' + cand.q + 'p ' + cand.srv + ' ' + mlsMB(pr.size) + ' @' + (Date.now() - T0) + 'ms');
+      }));
     })();
     // (৪) প্রতি watch-server ⇒ resolve ⇒ embed ⇒ unpack ⇒ HLS-প্রমাণ (সমান্তরাল) — baki somoye
     const dtWatchStage = () => Promise.all(svs.map(async sv => {
@@ -5700,7 +5635,8 @@ async function dtTask(nameP, infoP, type, s, e, origin) {
     const watchP = dtWatchStage();
     await Promise.race([
       (async () => { for (let i = 0; i < 44; i++) { if (cards.length) return true; if (Date.now() - T0 > 5200) return false; await new Promise(r => setTimeout(r, 120)); } return false; })(),
-      new Promise(r => setTimeout(() => r(false), 5400))
+      new Promise(r => setTimeout(() => r(false), 5400)),
+      Promise.all([dlStage, watchP]).then(() => true) // Do not idle5.2s when every started stage already finished.
     ]);
     const idxCards = cards.length;
     if (idxCards && Date.now() - T0 < 5800) {
@@ -5708,7 +5644,7 @@ async function dtTask(nameP, infoP, type, s, e, origin) {
       if (DBG) console.error('[dt] fast-return cards=' + idxCards + ' (dl=' + cards.filter(c => c._dl).length + ' hls=' + cards.filter(c => !c._dl).length + ') @' + (Date.now() - T0) + 'ms');
       cards.$pend = 1;
       if (cards.length) DT_C.set(ck, { ts: Date.now() - 20 * 60e3, cards: cards.slice() }); // ★ v1.34.143: খালি ফল ক্যাশ নয়
-      watchP.then(() => {
+      Promise.all([dlStage, watchP]).then(() => {
         const cur = DT_C.get(ck);
         const old = (cur && cur.cards) ? cur.cards.slice() : [];
         const seen = new Set(old.map(x => x.url));
@@ -5749,7 +5685,7 @@ async function dtTask(nameP, infoP, type, s, e, origin) {
         .then(u => (u ? dtFileProof(u, 8000) : null))
         .then(pr => { if (DBG) console.error('[dt] dlbg ' + c.srv + ' ' + c.q + 'p proof=' + (pr ? 'ok' : 'null')); return (pr ? mkDlCard(c, pr) : null); }).catch(() => null))).then(list => {
         const add = list.filter(Boolean);
-        if (!add.length) { DT_C.set(ck, { ts: Date.now() - 25 * 60e3, cards: cards.slice() }); diag('dt', 'dl-bg none ready=' + dlReady.length + ' tried=' + dlBg.length); return; } // ★ v1.34.22: ৫মিন-পুরনো ts ⇒ শীঘ্রই পুনঃচেষ্টা
+        if (!add.length) { if (cards.length) DT_C.set(ck, { ts: Date.now() - 25 * 60e3, cards: cards.slice() }); diag('dt', 'dl-bg none ready=' + dlReady.length + ' tried=' + dlBg.length); return; } // ★ v1.34.22: ৫মিন-পুরনো ts ⇒ শীঘ্রই পুনঃচেষ্টা
         const cur = DT_C.get(ck);
         const old = (cur && cur.cards) ? cur.cards.slice() : [];
         for (const c of cards) if (!old.some(x => x.url === c.url)) old.push(c);

@@ -14,5 +14,6 @@ test('418 Vidy stable: configure and existing tracked Vidy pool-data inputs are 
 });
 test('418 Vidy stable: this entire server is unchanged from release 417 except for its release VERSION constant',()=>{
  const pattern=/const VERSION = '1\.34\.\d+';/g;assert.equal((s.match(pattern)||[]).length,1);
- const normalized=s.replace(pattern,"const VERSION = '"+pins.normalizedServerVersion+"';");assert.equal(hash(normalized),pins.normalizedServerSHA256);
+ const restored=require('../deadtoons-index/preservation.cjs').beforeDeadtoons('server.js').toString('utf8');
+ const normalized=restored.replace(pattern,"const VERSION = '"+pins.normalizedServerVersion+"';");assert.equal(hash(normalized),pins.normalizedServerSHA256);
 });

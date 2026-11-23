@@ -1,43 +1,129 @@
 name: dt-index
-# ★ Deadtoons **সম্পূর্ণ সাইট-কপি** ইনডেক্স (ইউজার: "puro website ta copy korba") — শুধু GitHub-এ বিল্ড হয়।
-#   ৫টি স্লাইস-জব সমান্তরালে চলে (প্রতিটি নিজের শার্ডই লেখে ⇒ সংঘর্ষ নেই), প্রতি ঘণ্টায়।
+# All site/gate work is background-only. Source and generated data are isolated.
 on:
   schedule:
     - cron: '11 * * * *'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/dt-index.yml'
+      - 'dt-index3.mjs'
+      - 'tools/deadtoons-index/**'
+      - 'tools/source-review-tests/deadtoons-419.test.cjs'
   workflow_dispatch:
     inputs:
-      want:
-        description: 'hosts per unit (1 = HubCloud-first full sweep, 2 = add Pixeldrain mirror)'
-        default: '1'
       budget:
-        description: 'seconds of work per job'
-        default: '2700'
+        description: 'Background work seconds per slice (90..2400)'
+        default: '2100'
 permissions:
-  contents: write
-concurrency: dt-index
+  contents: read
+concurrency:
+  group: dt-index
+  cancel-in-progress: false
 jobs:
-  build:
+  prepare:
     runs-on: ubuntu-latest
-    timeout-minutes: 58
-    strategy:
-      fail-fast: false
-      max-parallel: 5
-      matrix:
-        slice: [0, 1, 2, 3, 4]
+    timeout-minutes: 20
+    outputs:
+      data_sha: ${{ steps.base.outputs.sha }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: build slice ${{ matrix.slice }} (GitHub-side only)
+      - name: Offline index and exact preservation checks
+        run: node --test tools/source-review-tests/deadtoons-419.test.cjs
+      - uses: actions/checkout@v4
+        with:
+          ref: deadtoons-index
+          path: .dt-data
+          persist-credentials: false
+      - id: base
+        run: echo "sha=$(git -C .dt-data rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: One shared bounded catalog refresh
+        run: node tools/deadtoons-index/cli.cjs catalog --data=.dt-data --out=.dt-plan --budget=${{ github.event_name == 'push' && '180' || '780' }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dt-plan
+          path: .dt-plan/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 2
+  build:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        slice: [0, 1, 2, 3]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.data_sha }}
+          path: .dt-data
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: dt-plan
+          path: .dt-plan
+      - name: Cooldown-respecting incremental slice
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-        run: >-
-          node dt-index3.mjs
-          --budget=${{ github.event.inputs.budget || '2700' }}
-          --want=${{ github.event.inputs.want || '1' }}
-          --slice=${{ matrix.slice }} --slices=5
-          --scan=30 --conc=56 --max=20000 --publish
-      - name: after
-        run: node -e "try{const m=require('./dti/manifest.json');console.log('after n='+m.n+' units='+JSON.stringify(m.units))}catch(e){console.log('no manifest in this workspace (slice '+${{ matrix.slice }}+')')}"
+          DT_BUDGET: ${{ inputs.budget || (github.event_name == 'push' && '180' || '2100') }}
+        run: node tools/deadtoons-index/cli.cjs slice --data=.dt-data --plan=.dt-plan --out=.dt-result --slice=${{ matrix.slice }} --slices=4 --want=2 --concurrency=6
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dt-slice-${{ matrix.slice }}
+          path: .dt-result/result.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 2
+  publish:
+    needs: [prepare, build]
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - uses: actions/checkout@v4
+        with:
+          ref: deadtoons-index
+          fetch-depth: 1
+          path: .dt-data
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: dt-plan
+          path: .dt-plan
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dt-slice-*
+          path: .dt-results
+      - name: Validate all owners and aggregate actual global coverage
+        run: node tools/deadtoons-index/cli.cjs merge --data=.dt-data --plan=.dt-plan --results=.dt-results --out=.dt-output --slices=4
+      - name: Atomic immutable-snapshot publication, fail visibly on error
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node tools/deadtoons-index/cli.cjs publish --data=.dt-data --out=.dt-output --push=1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dt-publication
+          path: .dt-output/publication.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 2
