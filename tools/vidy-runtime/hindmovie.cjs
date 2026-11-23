@@ -87,9 +87,11 @@ function get(url, ms, ref, body) {
       }
       if (r) finish(r); else if (--pending === 0) finish(null);
     };
-    // Verified proxies always start first; direct is only a delayed backup.
+    // Verified proxies always start first. Queue the direct hedge afterwards,
+    // without accumulating 200ms of idle wait at each of the six HM hops.
+    // Request/source budgets and full mirror collection are unchanged.
     for (const proxy of nodes) run(proxy);
-    directTimer = setTimeout(() => run(null), nodes.length ? 200 : 0);
+    directTimer = setTimeout(() => run(null), nodes.length ? 25 : 0);
   });
 }
 function bounded(p, ms, fallback) {
