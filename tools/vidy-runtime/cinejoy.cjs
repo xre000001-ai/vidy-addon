@@ -10,7 +10,7 @@ const { safeURL } = require('./cinejoy-pk/src/policy.cjs');
 const { Metadata, requestIdentity, bounded } = require('./cinejoy-pk/src/metadata.cjs');
 const { PKError, classify, publicError } = require('./cinejoy-pk/src/errors.cjs');
 const manifests = require('./cinejoy-pk/src/manifests.cjs');
-const REVISION = 'cinejoy-pk-integration-4';
+const REVISION = 'cinejoy-pk-integration-5';
 const LANGUAGE = {
   en: ['English', 'eng'], eng: ['English', 'eng'], hi: ['Hindi', 'hin'], hin: ['Hindi', 'hin'],
   bn: ['Bengali', 'ben'], ben: ['Bengali', 'ben'], ta: ['Tamil', 'tam'], tam: ['Tamil', 'tam'],
@@ -152,10 +152,12 @@ class CineJoy {
     const tried = new Set(), firstBudget = Math.min(4000, Math.max(20, Math.floor((deadline - Date.now()) / 2)));
     while (!signal.aborted && Date.now() < deadline && attempts < 2) {
       if (!this.engine.pool.ready(server).some(n => !tried.has(n.id))) {
-        // Another CineJoy server/trainer may hold a fresh endpoint. Wait only for that lease;
-        // never serve a raw candidate, expired proof, foreign pool or direct extraction fallback.
+        // A fresh endpoint may be leased, or OUR already-running verification
+        // can make one ready on this tap. Keep the same absolute deadline and
+        // require a fresh server-specific proof before taking any serving lease.
         const busyFresh = this.engine.pool.ready(server, { includeBusy: true }).some(n => !tried.has(n.id) && this.engine.pool.busy.has(n.id));
-        if (!busyFresh) throw last || new PKError('NO_READY_PROXY');
+        const warming = this.refiller?.warming?.(server, tried);
+        if (!busyFresh && !warming) throw last || new PKError('NO_READY_PROXY');
         await wait(Math.min(100, Math.max(1, deadline - Date.now())), signal); continue;
       }
       attempts++;
@@ -203,6 +205,11 @@ class CineJoy {
       this.refiller.controller.abort(new PKError('LOCAL_FOREGROUND', 'Yield CineJoy refill to foreground'));
       this.event({ type: 'refill-yield' });
     }
+    let pending = false;
+    const incomplete = error => !['content', 'cancelled'].includes(classify(error));
+    // Non-enumerable source metadata preserves the plain stream-array/JSON
+    // contract while the existing collector can still read cards.$pend.
+    const mark = cards => { if (pending) Object.defineProperty(cards, '$pend', { value: true }); return cards; };
     try {
       const sample = await this.metadata.load(identity, ctrl.signal);
       // Lease the scarcest server's endpoints first, then restore public card order.
@@ -213,10 +220,10 @@ class CineJoy {
           const cards = cardsFor(result, sample, origin, config);
           this.event({ type: 'served', server, cards: cards.length, ms: Date.now() - began, proxyId: result.proxyId });
           return cards;
-        } catch (e) { this.event({ type: 'source-error', server, code: e.code || e.name, ms: Date.now() - began }); return []; }
+        } catch (e) { pending = incomplete(e) || pending; this.event({ type: 'source-error', server, code: e.code || e.name, ms: Date.now() - began }); return []; }
       }));
-      return c.servers.flatMap(server => lists[order.indexOf(server)]);
-    } catch (e) { this.event({ type: 'metadata-error', code: e.code || e.name, ms: Date.now() - began }); return []; }
+      return mark(c.servers.flatMap(server => lists[order.indexOf(server)]));
+    } catch (e) { pending = incomplete(e) || pending; this.event({ type: 'metadata-error', code: e.code || e.name, ms: Date.now() - began }); return mark([]); }
     finally { demand?.release(); clearTimeout(timer); this.controllers.delete(ctrl); this.requests--; }
   }
   handle(req, res, pathname) {

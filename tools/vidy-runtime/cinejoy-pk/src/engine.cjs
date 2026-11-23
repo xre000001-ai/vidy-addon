@@ -48,10 +48,11 @@ class Engine{
     return {...api,master:master.response,manifest:{url:master.response.url,text:master.text,parsed:master.parsed},viaProxy:true,proxyId:lease.id,ms:Date.now()-began,lane:index,delivery:DELIVERY};
    }catch(e){e.stage=e.stage||stage;Object.assign(attempt,{success:false,endedMs:Date.now()-began,error:publicError(e)});this.pool.fail(lease.id,server,e);this.event({type:'serve-failed',server,proxyId:lease.id,lane:index,...publicError(e)});throw e;}
    finally{
-    if(attempt.success||maxLanes>1){try{if(session)await session.close();}finally{lease.release();}}
+    if(!attempt.success&&maxLanes>1){try{if(session)await session.close();}finally{lease.release();}}
     else{
-     // A single-lane primary's failed CONNECT may take seconds to tear down.
-     // Allow a distinct adapter retry now, but retain its lease and track cleanup.
+     // A ready API+manifest result must not wait for winner socket teardown.
+     // Single-lane failure also leaves room for its distinct verified backup.
+     // Track both cleanups; keep the lease until close finishes and drain on stop.
      const cleanup=(async()=>{try{if(session)await session.close();}finally{lease.release();}})();
      this.cleanups.add(cleanup);cleanup.then(()=>this.cleanups.delete(cleanup),()=>this.cleanups.delete(cleanup));
     }

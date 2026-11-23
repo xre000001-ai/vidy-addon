@@ -280,45 +280,55 @@ function create(options = {}) {
     const html = contentOf(r.t);
     return { url, html, ms: Date.now() - t0, complete: !!r.st, imdb: (html.match(/imdb\.com\/title\/(tt\d+)/i) || [])[1] || '', embeds: embedsOf(html) };
   }
-  async function readEmbed(embed, ms, ref, accept, incomplete = () => {}) {
+  async function readEmbed(embed, ms, ref, accept, incomplete = () => {}, onFiles = () => {}) {
     const t0 = Date.now(), left = () => Math.max(0, ms - (Date.now() - t0));
-    const jp = embed.match(/links\.joshapp\.blog\/(\d+)/i);
-    if (!jp) {
+    const jp = embed.match(/links\.joshapp\.blog\/(\d+)/i), mv = embed.match(/mvlink\.blog\/(\d+)\/?$/i);
+    if (!jp && !mv) {
       return embedLimit(async () => {
         if (left() < 50) { incomplete(); return ''; }
         const r = await httpGet(embed, left(), ref);
         if (parseFiles(r.t).some(f => accept(f) && f.sources.length)) return r.t;
-        // REST is only a recovery for an empty/wrong mvlink HTML page.
-        const mv = embed.match(/mvlink\.blog\/(\d+)\/?$/i);
-        if (mv && left() > 100) {
-          const rr = await httpGet('https://mvlink.blog/wp-json/wp/v2/posts/' + mv[1], left(), ref);
-          if (parseFiles(rr.t).some(f => accept(f) && f.sources.length)) return rr.t;
-          if (!r.st || !rr.st) incomplete();
-          return '';
-        }
         if (!r.st || left() <= 100) incomplete();
         return '';
       });
     }
-    // Joshapp HTML is often cached and faster than REST. Race the equivalent
-    // representations; the first complete, usable file list wins. Cancel the
-    // loser rather than waiting the full REST timeout before trying HTML.
-    const controller = new AbortController();
+    // Both representations name the exact advertised post ID. A 50ms HTML
+    // head start avoids extra traffic on an already-fast mvlink page. If REST
+    // wins, start its validated file work NOW but keep the canonical HTML alive:
+    // it may advertise additional files/provenance. This is not first-file/card
+    // early return and cannot pin a partial REST-only plan as complete.
+    const controller = new AbortController(), rest = jp
+      ? 'https://links.joshapp.blog/wp-json/wp/v2/posts/' + jp[1]
+      : 'https://mvlink.blog/wp-json/wp/v2/posts/' + mv[1];
     return new Promise(resolve => {
-      let done = false, pending = 2, failed = false;
-      const consume = result => {
+      let done = false, pending = 2, failed = false, restStarted = false, restTimer, htmlDone = false, restText = '';
+      const finish = text => { done = true; clearTimeout(restTimer); controller.abort(); resolve(text); };
+      const consume = (result, isRest) => {
+        if (done) return;
         const text = result.t || '';
         if (!result.st) failed = true;
-        if (done) return;
-        if (parseFiles(text).some(f => accept(f) && f.sources.length)) { done = true; controller.abort(); resolve(text); }
-        else if (--pending === 0) { done = true; if (failed) incomplete(); resolve(''); }
+        if (!isRest) htmlDone = true;
+        if (parseFiles(text).some(f => accept(f) && f.sources.length)) {
+          if (mv) onFiles(text);
+          // Preserve Joshapp's equivalent-response race and mvlink's original
+          // canonical-HTML authority. Only a REST-first mvlink keeps collecting.
+          if (!mv || !isRest || htmlDone) { finish(text); return; }
+          restText = text;
+        }
+        if (--pending === 0) { if (failed) incomplete(); finish(restText); }
+        else startRest();
       };
-      for (const target of [embed, 'https://links.joshapp.blog/wp-json/wp/v2/posts/' + jp[1]]) {
-        embedLimit(async () => {
-          if (controller.signal.aborted || left() < 50) return { st: 0, t: '' };
-          return httpGet(target, left(), ref, undefined, controller.signal);
-        }).then(consume, () => consume({ st: 0, t: '' }));
-      }
+      const run = (target, isRest) => embedLimit(async () => {
+        if (controller.signal.aborted || left() < 50) return { st: 0, t: '' };
+        return httpGet(target, left(), ref, undefined, controller.signal);
+      }).then(r => consume(r, isRest), () => consume({ st: 0, t: '' }, isRest));
+      const startRest = () => {
+        if (done || restStarted) return;
+        restStarted = true; clearTimeout(restTimer); run(rest, true);
+      };
+      run(embed, false);
+      if (mv) restTimer = setTimeout(startRest, Math.min(50, left()));
+      else startRest();
     });
   }
   async function post(url, ms = 4200, onFile, loaded, accept = () => true) {
@@ -337,7 +347,7 @@ function create(options = {}) {
     add(p.html);
     await Promise.all(p.embeds.map(async ({ url: embed }) => {
       if (left() < 50) { incomplete(); return; }
-      try { add(await readEmbed(embed, left(), url, accept, incomplete)); } catch (_) { incomplete(); }
+      try { add(await readEmbed(embed, left(), url, accept, incomplete, add)); } catch (_) { incomplete(); }
     }));
     return { url, imdb: p.imdb, files: [...all.values()], embeds: p.embeds, complete };
   }

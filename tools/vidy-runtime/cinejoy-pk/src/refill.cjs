@@ -10,6 +10,14 @@ class Refiller{
  due(node,server,now=this.engine.pool.clock()){
   const p=this.engine.pool;return (node.servers[server]?.coolUntil||0)<=now&&(!p.fresh(node,server,now)||now-node.servers[server].proof.at>=this.youngMs());
  }
+ warming(server,exclude=new Set()){
+  // This is readiness observation, never a foreground-triggered trainer.
+  // Only a live task in OUR current batch may justify bounded waiting. The
+  // same candidate can still verify later servers in that task's server loop.
+  if(!SERVERS.includes(server)||this.closed||!this.pending||!this.controller||this.controller.signal.aborted)return false;
+  const pool=this.engine.pool,now=pool.clock();
+  return [...this.active.values()].some(task=>!exclude.has(task.node.id)&&!task.controller.signal.aborted&&(task.node.globalCoolUntil||0)<=now&&!pool.fresh(task.node,server,now)&&this.due(task.node,server,now));
+ }
  protected(node,server){
   const pool=this.engine.pool;if(!pool.fresh(node,server))return false;
   // Leave the last available serving endpoint to traffic. Do not suppress the

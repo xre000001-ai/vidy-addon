@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL, URLSearchParams } = require('url');
 
-const VERSION = '1.34.417';
+const VERSION = '1.34.418';
 // CINEJOY-BEGIN: independent source, extraction proxies only; CDN media stays direct.
 const CINEJOY = require('./tools/vidy-runtime/cinejoy.cjs').create({
   root: __dirname,
