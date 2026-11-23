@@ -27,14 +27,20 @@ function fixture(names = [file], handler) {
 }
 
 test('01 stable server is byte-identical outside its HindMovie section', () => {
-  const s = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
+  const { beforeReview } = require('../cinejoy-tests/review-preservation.cjs');
+  let s = beforeReview('server.js').toString('utf8');
+  for (const edit of require('../cinejoy-tests/fixtures/authorized-edits.json').filter(x => x.file === 'server.js').reverse()) {
+    assert.equal(s.split(edit.new).length - 1, edit.count, 'Exact original CineJoy inverse');
+    s = s.split(edit.new).join(edit.old);
+  }
   const a = s.indexOf('// ─── v1.17.46: HindMovie'), b = s.indexOf("// VidBolt's Orion provider", a);
   assert(a >= 0 && b > a);
   const hash = crypto.createHash('sha256').update(s.slice(0, a) + s.slice(b)).digest('hex');
   assert.equal(hash, 'b4f8e491ed7189b42b66920c38a5dad21ba8ed3463eaecef7165e571a606dc70');
 });
-test('02 stable dependency files and version have not changed', () => {
-  const hash = n => crypto.createHash('sha256').update(fs.readFileSync(path.join(root, n))).digest('hex');
+test('02 original stable dependencies and version survive the exact later-release inverses', () => {
+  const { beforeReview } = require('../cinejoy-tests/review-preservation.cjs');
+  const hash = n => crypto.createHash('sha256').update(beforeReview(n)).digest('hex');
   assert.equal(hash('package.json'), 'b9abffd6f3cd13bd5eff6096940d12f03620878e49860bcf4da0459eb7dd9893');
   assert.equal(hash('package-lock.json'), '6aadd82e64f09c0785c8b6cc9bff1e0d1f7daafca9a28ce3eee4456fb333be21');
 });

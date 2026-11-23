@@ -3,7 +3,7 @@ const fs=require('fs'),vm=require('vm'),assert=require('assert');
 const src=fs.readFileSync('server.js','utf8');
 const block=src.slice(src.indexOf('const HD_BASE ='),src.indexOf('// ★★ v1.27.2 (ইউজার: "Movies4u',src.indexOf('const HD_BASE =')));
 const ctx={URL,AbortSignal,fetch,process,console,setTimeout,clearTimeout,DBG:false,NOCACHE:true,UA:'test',_shrink(){},racePool:async()=>{throw Error('unused')},pdProbe:async()=>({alive:true,total:1000})};
-vm.runInNewContext(block+`\nglobalThis.api={hdTitleOk,hdEpMap,hdPackWraps,hdEpInPack,hdCards,hdCardsBack,hdSearch,hdStreams,hdSeries,HD_C,HD_BASE, setMocks:(text,drive)=>{hdText=text;hdTextFast=text;hdDrive=drive;}}`,ctx);
+vm.runInNewContext(block+`\nglobalThis.api={hdTitleOk,hdEpMap,hdPackWraps,hdEpInPack,hdCards,hdCardsBack,hdSearch,hdStreams,hdSeries,HD_C,HD_BASE, setMocks:(text,drive)=>{hdText=text;hdTextFast=text;hdProbe=async()=>({ok:true});hdWkGate=async()=>({ok:true});hdDrive=drive;}}`,ctx);
 const a=ctx.api; assert.equal(a.HD_BASE,'https://hdhubinfo.com');
 assert(a.hdTitleOk('The BatMan (2022) WEB-DL [Hindi & English] 1080p | Full Movie','The Batman'));
 assert(a.hdTitleOk('[18+] Game of Thrones (Season 1) BluRay [Hindi] 1080p','Game of Thrones'));

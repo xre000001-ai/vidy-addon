@@ -6,8 +6,9 @@ const path = require('node:path');
 const assert = require('node:assert/strict');
 const root = path.resolve(__dirname, '../..');
 const edits = require('./fixtures/authorized-edits.json');
+const { beforeSourceReview } = require('../source-review-tests/preservation.cjs');
 function beforeCardText(file) {
-  let value = fs.readFileSync(path.join(root, file));
+  let value = beforeSourceReview(file);
   const undo = edits.filter(e => e.file === file).reverse();
   if (undo.length) {
     let text = value.toString('utf8');

@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { beforeCardText } = require('./preservation.cjs');
+const { beforeSourceReview } = require('../source-review-tests/preservation.cjs');
 const baseline = require('./fixtures/baseline-sha256.json');
 const edits = require('./fixtures/authorized-edits.json');
 const root = path.resolve(__dirname, '../..');
@@ -29,7 +30,7 @@ test('card-text preservation: all 312 previously tracked files reconstruct the e
 test('card-text preservation: the other 309 files, including providers, extraction, pools, media delivery, settings and dependencies, are literally unchanged', () => {
   for (const [file, expected] of Object.entries(baseline.sha256)) {
     if (scope.has(file)) continue;
-    assert.equal(hash(fs.readFileSync(path.join(root, file))), expected, file);
+    assert.equal(hash(beforeSourceReview(file)), expected, file);
   }
   for (const file of ['config.html', 'package.json', 'package-lock.json', 'nexa.js', 'nexa-cap.js',
     'tools/vidy-runtime/cinejoy.cjs', 'tools/vidy-runtime/hindmovie.cjs',

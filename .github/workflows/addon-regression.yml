@@ -30,5 +30,8 @@ jobs:
       - run: node --check server.js
       - run: |
           for f in tools/stream-tests/*.cjs tools/mls-index-lab/test-*.cjs tools/mls-index-lab/test_*.js tools/mlbd-index/test_*.cjs; do node "$f" || exit 1; done
+      - run: node --test tools/source-review-tests/*.test.cjs tools/card-text-tests/*.test.cjs tools/cinejoy-tests/*.test.cjs
+      - run: |
+          for f in tools/hdhub/test-*.cjs; do timeout 45s node "$f" || exit 1; done
       - run: python -m unittest discover -s tools/mls-index-lab -p 'test*.py' -q
       - run: python -m unittest discover -s tools/mlbd-index -p 'test*.py' -q

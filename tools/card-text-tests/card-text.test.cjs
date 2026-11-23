@@ -144,7 +144,14 @@ test('card text: filename and generated v1/v2 clutter disappear for every source
 test('card text: unrelated cards differ only by removing the old generated description line, with no reordering or new field changes', t => {
   const now = open(t), old = open(t, [], {}, beforeCardText('server.js').toString('utf8'));
   const a = now.send(alternatives()).streams, b = old.send(alternatives()).streams;
-  assert.deepEqual(a, oldWithoutGeneratedLines(b));
+  const expected = oldWithoutGeneratedLines(b);
+  // This later source review separately authorizes only the full HM/HD labels.
+  // Keep the complete card/order comparison, plus the independent non-text one.
+  for (const c of expected) for (const field of ['title', 'description']) {
+    if (/^hm\|/.test(c.bingeGroup)) c[field] = c[field].replace(/⌘ Hm(?= ⌗| •|$)/g, '⌘ HindMovie');
+    if (/^hd\|/.test(c.bingeGroup)) c[field] = c[field].replace(/⌘ Hd(?= ⌗| •|$)/g, '⌘ HDHub4u');
+  }
+  assert.deepEqual(a, expected);
   assert.deepEqual(nonText(a), nonText(b));
 });
 
