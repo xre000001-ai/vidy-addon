@@ -1,0 +1,515 @@
+'use strict';
+/* tools/vidy-runtime/hindmovie.cjs — HindMovie: স্বাধীন verified-pool মডিউল (v1.34.427, নতুন করে লেখা)
+ *
+ * ইউজারের নিয়ম: "HM স্বাধীন সোর্স — পুল ছাড়া বেশি কোড লাগে না, 1st tap-এ সব স্ট্রিম (৬–৯সে)"
+ * সাইট-স্ট্রাকচার (মাপা):
+ *   v5.hindmovie.im/<post-slug>/            ← সার্চ (wp-json) বা ?s=
+ *     └── mvlink.blog/<id> | links.joshapp.blog/<id>   ← পোস্ট-পেজ (এম্বেড-লিংক)
+ *           └── hshare.lol/?id=<filename>              ← ফাইল-পেজ, ফাইলনাম + ৪ বাটন
+ *                 ├── gdshine.org/api/share/<short> → …workers.dev/d/…      (Fast)
+ *                 └── hubcloud (hcloud.ink / …workers.dev/0:/…)             (Hub)
+ *
+ * নীতি:
+ *   • প্রতি পোস্টের **প্রতিটি ফাইল** (৬টি) × **দুটি পথ** = ১২ কার্ড — কিছুই বাদ নয়
+ *   • প্রতিটি নেটওয়ার্ক-কল verified-pool নোড দিয়ে (always-ready), ডিরেক্ট সমান্তরাল ব্যাকআপ
+ *   • verify (Range-probe) নেই: HM মৃত হোস্ট ব্যবহার করে না (ইউজার-নির্দেশ)
+ *   • প্ল্যান-ক্যাশ: একবার সফল হলে post+file তালিকা ৩০মিন ধরে রাখি ⇒ পরের ট্যাপ ~২সে
+ */
+
+const fs = require('fs');
+const path = require('path');
+const http = require('http');
+const https = require('https');
+const zlib = require('zlib');
+
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
+const POOL_FILE = path.join(__dirname, '..', '..', 'hm_proxy_pool.json');
+const TRACE = process.env.HMTRACE === '1';
+
+/* ── পুল ───────────────────────────────────────────────────────────── */
+const COOKIES = new Map();   // host → { name: value }
+function cookieHeader(host) {
+  const c = COOKIES.get(host);
+  if (!c) return '';
+  return Object.entries(c).map(([k, v]) => k + '=' + v).join('; ');
+}
+function cookieSet(host, setCookie) {
+  if (!setCookie) return;
+  const arr = Array.isArray(setCookie) ? setCookie : [setCookie];
+  let c = COOKIES.get(host);
+  if (!c) { c = {}; COOKIES.set(host, c); }
+  for (const sc of arr) {
+    const kv = String(sc).split(';')[0];
+    const i = kv.indexOf('=');
+    if (i > 0) c[kv.slice(0, i).trim()] = kv.slice(i + 1).trim();
+  }
+}
+const POOL = new Map();     // "ip:port" → { ok, att, ms, ts, cap:{site,hs,gd,bb,pl} }
+const DIR = { ok: 0, fail: 0 };
+const CAPS = ['site', 'hs', 'gd', 'bb', 'pl'];
+
+function poolLoad() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(POOL_FILE, 'utf8'));
+    for (const [k, v] of Object.entries(raw)) {
+      if (!v || !(v.ok > 0)) continue;
+      POOL.set(k, { ok: v.ok || 0, att: v.att || 0, ms: v.ms || 0, ts: v.ts || 0, cap: v.cap || {} });
+    }
+  } catch (e) { if (TRACE) console.error('[hm.pool] load fail ' + e.message); }
+  return POOL.size;
+}
+function poolSave() {
+  try {
+    const out = {};
+    for (const [k, v] of POOL) out[k] = v;
+    fs.writeFileSync(POOL_FILE, JSON.stringify(out));
+  } catch (e) { }
+}
+function capOf(url) {
+  const u = String(url);
+  if (/mvlink\.|joshapp\./.test(u)) return 'pl';      // পোস্ট-পেজ
+  if (/hshare\./.test(u)) return 'hs';
+  if (/gdshine\.|gdtot\./.test(u)) return 'gd';
+  if (/hcloud\.|workers\.dev/.test(u)) return 'bb';
+  return 'site';
+}
+function poolPick(n, cap) {
+  const AGE = Number(process.env.HMAGE || 7 * 24 * 3600e3);
+  const arr = [];
+  for (const [k, v] of POOL) {
+    if (!(v.ok > 0)) continue;
+    if (Date.now() - (v.ts || 0) > AGE) continue;
+    const c = v.cap || {};
+    const sc = (c[cap] ? 100 : 0) + (cap === 'site' && c.site ? 10 : 0);
+    arr.push([k, v, sc]);
+  }
+  arr.sort((a, b) => (b[2] - a[2]) || (((b[1].ok || 0) / Math.max(1, b[1].att || 1)) - ((a[1].ok || 0) / Math.max(1, a[1].att || 1))) || ((a[1].ms || 9e9) - (b[1].ms || 9e9)));
+  return arr.slice(0, Math.max(1, n)).map(x => x[0]);
+}
+function poolNote(node, ok, ms, cap) {
+  const v = POOL.get(node);
+  if (!v) return;
+  v.att = (v.att || 0) + 1;
+  if (ok) { v.ok++; v.ms = ms ? Math.round(ms) : v.ms; if (cap) { v.cap = v.cap || {}; v.cap[cap] = 1; v.ts = Date.now(); } }
+}
+function poolStats() {
+  const s = { total: POOL.size, ok: 0, cap: { site: 0, hs: 0, gd: 0, bb: 0, pl: 0 }, best: '' };
+  let bm = 9e9;
+  for (const [k, v] of POOL) {
+    if (!v.ok) continue;
+    s.ok++;
+    for (const c of Object.keys(v.cap || {})) if (s.cap[c] !== undefined) s.cap[c]++;
+    if ((v.ms || 9e9) < bm) { bm = v.ms || 9e9; s.best = k; }
+  }
+  return s;
+}
+function dirStats() { return { ok: DIR.ok, fail: DIR.fail, poolFirst: true }; }
+
+/* ── HTTP: এক কল (ডিরেক্ট বা প্রক্সি) ───────────────────────────────── */
+function parseProxy(px) {
+  if (!px) return null;
+  const s = String(px);
+  if (s.includes('://')) { try { const u = new URL(s); return { host: u.hostname, port: Number(u.port) || 80, auth: u.username ? (u.username + ':' + u.password) : '' }; } catch (e) { return null; } }
+  const i = s.lastIndexOf(':');
+  if (i < 0) return null;
+  return { host: s.slice(0, i), port: Number(s.slice(i + 1)) || 80, auth: '' };
+}
+
+function once(url, ms, ref, px, depth, post) {
+  depth = depth || 0;
+  return new Promise(resolve => {
+    let done = false, req = null;
+    const t0 = Date.now();
+    const fin = (r) => { if (done) return; done = true; clearTimeout(timer); try { if (req) req.destroy(); } catch (e) { } resolve(r); };
+    const timer = setTimeout(() => fin(null), Math.max(2600, ms) + 400);
+    let u;
+    try { u = new URL(url); } catch (e) { clearTimeout(timer); return fin(null); }
+    const goDirect = () => {
+      const mod = u.protocol === 'https:' ? https : http;
+      try {
+        req = mod.request({
+          hostname: u.hostname, port: u.port || (u.protocol === 'https:' ? 443 : 80), path: u.pathname + u.search, method: post ? 'POST' : 'GET',
+          headers: { 'user-agent': UA, 'accept': 'text/html,application/json,*/*', 'accept-encoding': 'identity', 'accept-language': 'en-US,en;q=0.9', ...(cookieHeader(u.hostname) ? { cookie: cookieHeader(u.hostname) } : {}), ...(ref ? { referer: ref } : {}), ...(post ? { 'content-type': 'application/json', 'content-length': Buffer.byteLength(post) } : {}) },
+          timeout: Math.max(1000, ms)
+        }, res => collect(res, 'd'));
+        req.on('error', () => fin(null));
+        req.end(post || undefined);
+      } catch (e) { fin(null); }
+    };
+    const goProxy = (p) => {
+      const P = parseProxy(p);
+      if (!P) return fin(null);
+      const authH = P.auth ? { 'proxy-authorization': 'Basic ' + Buffer.from(P.auth).toString('base64') } : {};
+      /* ★ HTTPS-টার্গেটের জন্য **CONNECT টানেল** দরকার — নইলে প্রক্সি 400/501 দেয় (মাপা) */
+      if (u.protocol === 'https:') {
+        try {
+          const creq = http.request({
+            host: P.host, port: P.port, method: 'CONNECT', path: u.hostname + ':443',
+            headers: { host: u.hostname + ':443', 'user-agent': UA, ...authH }, timeout: Math.max(1500, ms)
+          });
+          creq.on('connect', (cres, socket) => {
+            if (cres.statusCode !== 200) { try { socket.destroy(); } catch (e) { } return fin(null); }
+            try {
+              req = https.request({
+                hostname: u.hostname, path: u.pathname + u.search, method: 'GET', socket, agent: false,
+                headers: { host: u.hostname, 'user-agent': UA, accept: 'text/html,application/json,*/*', 'accept-encoding': 'identity', 'accept-language': 'en-US,en;q=0.9', ...(cookieHeader(u.hostname) ? { cookie: cookieHeader(u.hostname) } : {}), ...(ref ? { referer: ref } : {}) },
+                timeout: Math.max(1500, ms)
+              }, res => collect(res, p));
+              req.on('error', () => fin(null));
+              req.end();
+            } catch (e) { fin(null); }
+          });
+          creq.on('error', () => fin(null));
+          creq.on('timeout', () => { try { creq.destroy(); } catch (e) { } fin(null); });
+          creq.end();
+        } catch (e) { fin(null); }
+        return;
+      }
+      try {
+        req = http.request({
+          host: P.host, port: P.port, path: url, method: 'GET',
+          headers: { host: u.host, 'user-agent': UA, 'accept': '*/*', 'accept-encoding': 'identity', connection: 'close', ...authH },
+          timeout: Math.max(1200, ms)
+        }, res => collect(res, p));
+        req.on('error', () => fin(null));
+        req.end();
+      } catch (e) { fin(null); }
+    };
+    const follow = (nu, d) => {
+      once(nu, Math.max(1500, ms - (Date.now() - t0)), ref, px, d).then(r => fin(r), () => fin(null));
+    };
+    const collect = (res, via) => {
+      const chunks = []; let size = 0;
+      const enc = String(res.headers['content-encoding'] || '').toLowerCase();
+      let stream = res;
+      if (enc === 'gzip') stream = res.pipe(zlib.createGunzip());
+      else if (enc === 'deflate') stream = res.pipe(zlib.createInflate());
+      else if (enc === 'br') stream = res.pipe(zlib.createBrotliDecompress());
+      stream.on('data', d => { size += d.length; if (size < 3.2e6) chunks.push(d); else { try { res.destroy(); } catch (e) { } } });
+      const st = res.statusCode || 0;
+      try { cookieSet(u.hostname, res.headers['set-cookie']); } catch (e) { }
+      const GOOD = st >= 200 && st < 400;
+      /* ★ v1.34.427: `end`-এর **ভেতরে** বডি বানাই (আগে হ্যান্ডলার বসানোর আগেই বানিয়ে ফেলছিলাম
+         ⇒ সবসময় ০ বাইট — মাপা বাগ)। আর বৈধ-নয় স্টেটাস (400/403/5xx) ⇒ ব্যর্থ, রেস চলবে। */
+      stream.on('end', () => {
+        const body = Buffer.concat(chunks).toString('utf8');
+        /* ★ v1.34.427: **রিডাইরেক্ট ফলো** (৩ ধাপ) — `hshare.lol/?id=…` → `302 /r.php?d=…`
+           (মাপা: রিডাইরেক্ট ফলো না করায় finalUrls সবসময় ০ হচ্ছিল) */
+        const loc = res.headers.location;
+        if (st >= 300 && st < 400 && loc && depth < 3) {
+          let next = loc;
+          try { next = new URL(loc, url).toString(); } catch (e) { }
+          if (TRACE) console.error('[hm.redir] ' + st + ' → ' + next.slice(0, 70));
+          return follow(next, depth + 1);
+        }
+        if (TRACE) console.error('[hm.' + (via === 'd' ? 'd' : 'px') + '] ' + st + ' ' + body.length + 'b ' + url.slice(0, 60));
+        fin(GOOD ? { st, t: body, via, ms: Date.now() - t0, h: res.headers } : null);
+      });
+      stream.on('error', () => fin(null));
+      res.on('aborted', () => fin(null));
+    };
+    /* একক-প্রয়াস: px থাকলে প্রক্সি দিয়ে, নাহলে ডিরেক্ট। রেস সামলায় get() */
+    if (px) goProxy(px); else goDirect();
+  });
+}
+
+/* ── HTTP: পুল-ফার্স্ট রেস (একটাই অ্যাক্সেস-পয়েন্ট) ───────────────── */
+function get(url, ms, ref, post) {
+  return new Promise(resolve => {
+    let done = false;
+    const t0 = Date.now();
+    const fin = r => { if (!done) { done = true; resolve(r || { st: 0, t: '', via: '', ms: Date.now() - t0 }); } };
+    const cap = capOf(url);
+    const nodes = poolPick(Number(process.env.HMPXN || 1), cap);
+    let pendingProxy = nodes.length;
+    let directStarted = false;
+    const startDirect = () => {
+      if (directStarted) return; directStarted = true;
+      once(url, ms, ref, null, 0, post).then(r => { if (r) { DIR.ok++; fin(r); } else { DIR.fail++; } }, () => { DIR.fail++; });
+    };
+    for (const p of nodes) {
+      once(url, Math.max(2400, ms), ref, p, 0, post).then(r => {
+        if (r && r.st > 0) { poolNote(p, true, r.ms, cap); fin(r); }
+        else { poolNote(p, false, 0, cap); }
+      }, () => { poolNote(p, false, 0, cap); });
+    }
+    /* ডিরেক্ট-IP ব্যাকআপ: নোড না থাকলে সাথে সাথে, থাকলে HMDIRBACK পরে (সমান্তরাল) */
+    setTimeout(startDirect, nodes.length ? Number(process.env.HMDIRBACK || 450) : 0);
+    setTimeout(() => fin(null), Math.max(2600, ms) + 800);
+  });
+}
+
+/* ── হোস্ট-আবিষ্কার (ডোমেইন বদলায়) ──────────────────────────────── */
+let BASE = '';
+const CAND = String(process.env.HMBASE || 'https://v5.hindmovie.im,https://hindmovie.vin,https://hindmovie.im').split(',');
+async function discover(force) {
+  if (BASE && !force) return BASE;
+  const probe = CAND.map(async u => {
+    const r = await get(u.replace(/\/$/, '') + '/wp-json/', 2600);
+    return (r && r.st >= 200 && r.st < 400) ? u.replace(/\/$/, '') : null;
+  });
+  const out = await Promise.all(probe);
+  BASE = out.find(Boolean) || CAND[0];
+  if (TRACE) console.error('[hm.base] ' + BASE);
+  return BASE;
+}
+
+/* ── সার্চ ──────────────────────────────────────────────────────── */
+const SEARCH_MEM = new Map();
+async function search(title, ms) {
+  const q = String(title || '').trim();
+  if (!q) return [];
+  const ck = q.toLowerCase();
+  const c = SEARCH_MEM.get(ck);
+  if (c && Date.now() - c.ts < Number(process.env.HMSMEM || 1800000)) return c.v;
+  const B = await discover();
+  const out = [];
+  const push = u => {
+    const s = String(u || '');
+    if (!/^https:\/\/(?:[a-z0-9-]+\.)?hindmovie\.[a-z]{2,6}\/[a-z0-9][a-z0-9-]*\/?$/i.test(s)) return;
+    if (!out.includes(s)) out.push(s);
+  };
+  const [r1, r2] = await Promise.all([
+    get(B + '/wp-json/wp/v2/search?search=' + encodeURIComponent(q) + '&per_page=8', Math.min(3800, ms || 4000)),
+    get(B + '/?s=' + encodeURIComponent(q), Math.min(3800, ms || 4000))
+  ]);
+  try { const a = JSON.parse(r1.t); if (Array.isArray(a)) a.forEach(x => push(x.url)); } catch (e) { }
+  for (const m of (r2.t || '').match(/href="(https:\/\/(?:[a-z0-9-]+\.)?hindmovie\.[a-z]{2,6}\/[a-z0-9][a-z0-9-]*\/)"/gi) || []) push(m.slice(6, -1));
+  if (TRACE) console.error('[hm.search] ' + out.length + ' @' + (r1.ms || r2.ms));
+  if (out.length) { if (SEARCH_MEM.size > 200) SEARCH_MEM.clear(); SEARCH_MEM.set(ck, { ts: Date.now(), v: out }); }
+  return out;
+}
+
+/* ── পোস্ট-পেজ → ফাইল-নাম (hshare) ─────────────────────────────────── */
+const FILE_OK = /\.(mkv|mp4|avi|webm)$/i;
+function parseFiles(html) {
+  const names = new Set();
+  // hshare লিংকের id= প্যারামিটারেই ফাইলনাম থাকে
+  for (const m of (html || '').matchAll(/hshare\.lol\/?\?id=([^"'&<>]+)/gi)) {
+    let n = m[1];
+    try { n = decodeURIComponent(n); } catch (e) { }
+    n = n.replace(/[#?].*$/, '');
+    if (FILE_OK.test(n)) names.add(n);
+  }
+  // সরাসরি ফাইলনাম-প্যাটার্নও
+  for (const m of (html || '').matchAll(/([A-Za-z0-9][A-Za-z0-9._()\-\[\] ]{6,120}\.(?:mkv|mp4))/gi)) {
+    const n = m[1].trim();
+    if (n.length > 8) names.add(n);
+  }
+  return [...names];
+}
+function embedsOf(html) {
+  const out = [];
+  for (const m of (html || '').matchAll(/(?:href|src|data-[a-z]+)="(https?:\/\/(?:mvlink\.blog|links\.joshapp\.blog)\/[^"'<>]+)"/gi)) out.push(m[1]);
+  for (const m of (html || '').matchAll(/https?:\/\/(?:mvlink\.blog|links\.joshapp\.blog)\/[a-z0-9]+/gi)) out.push(m[0]);
+  return [...new Set(out)];
+}
+async function post(url, ms) {
+  const r = await get(url, ms || 4000);
+  const html = r.t || '';
+  if (!html || html.length < 800) return { url, title: '', mv: [], files: [] };
+  const title = (html.match(/<title[^>]*>([^<]{3,160})<\/title>/i) || [])[1] || '';
+  const mv = embedsOf(html);
+  let files = parseFiles(html);
+  // mvlink পোস্ট-পেজে ফাইলনাম/এম্বেড থাকতে পারে — সমান্তরালে দেখি
+  if (!files.length && mv.length) {
+    const rs = await Promise.all(mv.slice(0, 3).map(u => get(u, Math.min(3500, ms || 4000), url)));
+    for (const rr of rs) files = files.concat(parseFiles(rr.t || ''));
+  }
+  const uniq = [...new Set(files)];
+  if (TRACE) console.error('[hm.post] mv=' + mv.length + ' files=' + uniq.length + ' ' + url.slice(-40));
+  return { url, title, mv, files: uniq };
+}
+
+/* ── ফাইলনাম → {Fast, Hub} চূড়ান্ত লিংক ───────────────────────────── */
+function qualityOf(name) {
+  const n = String(name || '');
+  if (/2160|4k/i.test(n)) return '2160';
+  if (/1080/i.test(n)) return '1080';
+  if (/720/i.test(n)) return '720';
+  if (/480/i.test(n)) return '480';
+  return 'MKV';
+}
+function audioOf(name) {
+  const n = String(name || '').toLowerCase();
+  const langs = [];
+  if (/hindi/.test(n)) langs.push('Hindi');
+  if (/english/.test(n)) langs.push('English');
+  if (/tamil/.test(n)) langs.push('Tamil');
+  if (/telugu/.test(n)) langs.push('Telugu');
+  if (!langs.length) return '';
+  const dual = /dual|multi/.test(n);
+  return (dual ? 'Multi ' : '') + langs.join('-');
+}
+
+async function finalUrls(name, ms, kind) {
+  const out = [];
+  const B = Number(ms || 6000);
+  const t0 = Date.now();
+  const left = () => Math.max(1200, B - (Date.now() - t0));
+  const hs = 'https://hshare.lol/?id=' + encodeURIComponent(name);
+  /* ১) ফাইল-পেজ (২ রিডাইরেক্ট + কুকি) → gdshine short + hcloud লিংক */
+  const r = await get(hs, Math.min(7000, left()), 'https://hshare.lol/');
+  const h = r.t || '';
+  if (!h) return out;
+  const shorts = [...new Set([...h.matchAll(/gdshine\.org\/(?:s|api\/share)\/([A-Za-z0-9_\-]{6,})/g)].map(m => m[1]))];
+  const hcs = [...new Set([...h.matchAll(/hcloud\.ink\/redirect\.php\?url=([^"'<>&\s]+)/g)].map(m => m[1]))];
+  if (TRACE) console.error('[hm.file] ' + name.slice(-30) + ' shorts=' + shorts.length + ' hc=' + hcs.length);
+
+  const jobs = [];
+  /* ২) Fast পথ: /api/share/<short> → file.id → POST /api/downloads/<id>/via-worker → copyUrl */
+  for (const short of shorts.slice(0, 2)) {
+    jobs.push((async () => {
+      const a = await get('https://gdshine.org/api/share/' + short, Math.min(6000, left()), 'https://gdshine.org/');
+      let fid = '';
+      try { const j = JSON.parse(a.t || '{}'); fid = j && j.data && j.data.file && j.data.file.id || ''; } catch (e) { }
+      if (!fid) return;
+      const p2 = await get('https://gdshine.org/api/downloads/' + fid + '/via-worker', Math.min(6000, left()), 'https://gdshine.org/', '{}');
+      try {
+        const j2 = JSON.parse(p2.t || '{}');
+        const d = j2 && j2.data || {};
+        for (const k of ['copyUrl', 'downloadUrl', 'url', 'directUrl']) if (d[k] && /^https?:/.test(d[k])) out.push(d[k]);
+      } catch (e) { }
+      for (const m of (p2.t || '').matchAll(/https?:\/\/[^"'\\ ]*workers\.dev\/d\/[^"'\\ ]+/g)) out.push(m[0]);
+    })());
+  }
+  /* ৩) Hub পথ: hcloud → **ডাবল-base64** → সরাসরি workers.dev/0:/… (মাপা: বাইরের decode-ই
+     `https://hcloud.ink/direct/index.php?url=<b64(workers.dev/0:/…)>` দেয়, তাই HTTP কল লাগেই না) */
+  for (const enc of hcs.slice(0, 2)) {
+    const dec = s => { try { return Buffer.from(String(s).replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((String(s).length + 3) % 4), 'base64').toString('utf8'); } catch (e) { return ''; } };
+    let cur = dec(enc);
+    for (let i = 0; i < 4 && cur; i++) {
+      /* ডিকোডে প্যাডিং-আবর্জনা লেগে থাকে ⇒ ফাইল-এক্সটেনশনে কেটে নিই (মাপা) */
+      const cut = s => { const m = String(s).match(/https?:\/\/[^\s"'<>]*?\.(?:mkv|mp4|avi|webm)/i); return m ? m[0] : ''; };
+      const direct = (cur.match(/https?:\/\/[^\s"'<>]*workers\.dev\/0:\/[^\s"'<>]+/g) || []).map(cut).filter(Boolean);
+      if (direct.length) { direct.forEach(u => out.push(u)); break; }
+      const m2 = cur.match(/[?&]url=([^\s"'<>&]+)/);
+      if (!m2) break;
+      const nxt = dec(m2[1]);
+      if (!nxt || nxt === cur) break;
+      cur = nxt;
+    }
+    /* না পেলে HTTP পথেও চেষ্টা */
+    if (!out.some(u => /workers\.dev\/0:\//.test(u))) {
+      const a2 = await get('https://hcloud.ink/redirect.php?url=' + enc, Math.min(5000, left()), 'https://hcloud.ink/');
+      for (const m3 of (a2.t || '').matchAll(/https?:\/\/[^"'\\ ]*workers\.dev\/0:\/[^"'\\ ]+/g)) out.push(m3[0]);
+    }
+  }
+  /* ৪) পেজে সরাসরি লিংক থাকলে */
+  for (const m of h.matchAll(/https?:\/\/[^"'\\ ]*workers\.dev\/(?:0:\/|d\/)[^"'\\ ]+/g)) out.push(m[0]);
+  await Promise.all(jobs);
+  const clean1 = u => { const s = String(u).replace(/\\\//g, '/').replace(/&amp;/g, '&').trim(); const m = s.match(/^https?:\/\/[^\s"'<>]*?\.(?:mkv|mp4|avi|webm)/i); return m ? m[0] : s; };
+  const uniq = [...new Set(out.map(clean1))]
+    .filter(u => /^https?:\/\//.test(u) && !/\/d\/$/.test(u));
+  return uniq;
+}
+
+/* ── প্ল্যান-ক্যাশ + কার্ড-মেমো ─────────────────────────────────────── */
+const PLAN = new Map();   // title|type|s|e → { ts, posts, files }
+const CARDS = new Map();  // একই key → { ts, v }
+const LAST = {};
+
+function keyOf(title, type, s, e) {
+  return (String(title || '').toLowerCase() + '|' + (type || 'movie') + '|' + (s || 0) + '|' + (e || 0));
+}
+
+/* মূল কাজ: সব ফাইল × সব পথ → কার্ড (প্রথম ফল পেলেও বাকিগুলো শেষ করে) */
+async function cardsInner(title, type, s, e, mk, budget, sink, onFirst) {
+  const T0 = Date.now();
+  const B = Number(budget || process.env.HMCARDS || 11000);
+  const left = () => Math.max(600, B - (Date.now() - T0));
+  LAST.title = String(title || ''); LAST.at = T0; LAST.posts = 0; LAST.files = 0; LAST.urls = 0; LAST.cards = 0; LAST.stage = 'start';
+
+  const pk = keyOf(title, type, s, e);
+  const plan = PLAN.get(pk);
+  const planOk = plan && Date.now() - plan.ts < Number(process.env.HMPLAN || 1800000) && plan.files.length;
+
+  let files = [];
+  let posts = [];
+  if (planOk) { files = plan.files.slice(); LAST.stage = 'plan'; if (TRACE) console.error('[hm.plan] ' + files.length); }
+  else {
+    posts = await search(title, Math.min(4000, left()));
+    LAST.posts = posts.length; LAST.stage = posts.length ? 'posts' : 'no-posts';
+    if (!posts.length) { LAST.ms = Date.now() - T0; return sink; }
+    const want = posts.slice(0, type === 'series' ? 3 : 2);
+    const got = new Set();
+    const collect = [];
+    await Promise.all(want.map(async u => {
+      const p = await post(u, Math.min(4200, left()));
+      for (const f of (p.files || [])) if (!got.has(f)) { got.add(f); collect.push(f); }
+    }));
+    files = collect;
+    if (files.length) { if (PLAN.size > 120) PLAN.clear(); PLAN.set(pk, { ts: Date.now(), posts: posts.length, files: files.slice(0, 24) }); }
+  }
+  LAST.files = files.length;
+  if (!files.length) { LAST.stage = 'no-files'; LAST.ms = Date.now() - T0; return sink; }
+
+  /* ★ সাইট-স্ট্রাকচার: প্রতিটি ফাইলের **দুটি পথই** (Hub+Fast) — ৬ ফাইল ⇒ ১২ কার্ড */
+  const expire = () => { const p = PLAN.get(pk); if (p) p.ts = 0; };
+  const perQ = Number(process.env.HMQCAP || 6);
+  const qSeen = {};
+  const queue = files.filter(f => {
+    const q = qualityOf(f);
+    qSeen[q] = (qSeen[q] || 0) + 1;
+    return qSeen[q] <= perQ;
+  });
+  // ভালো কোয়ালিটি আগে, তারপর বাকি — কিন্তু সবগুলোই যাবে
+  queue.sort((a, b) => (Number(qualityOf(b)) || 0) - (Number(qualityOf(a)) || 0));
+
+  let idx = 0, announced = false;
+  const workers = [];
+  const run = async () => {
+    while (idx < queue.length) {
+      if (left() < 700) break;
+      const f = queue[idx++];
+      let us = [];
+      try { us = await finalUrls(f, Math.min(6000, Math.max(2200, left())), 'movie'); } catch (e) { us = []; }
+      if (!us.length) continue;
+      LAST.urls += us.length;
+      for (const u of us) {
+        if (!/^https?:\/\//.test(u)) continue;
+        const kindTag = /workers\.dev\/d\//.test(u) ? 'Fast' : (/workers\.dev\/0:\//.test(u) ? 'Hub' : 'Mirror');
+        const q = qualityOf(f);
+        const card = mk ? mk(u, f, q, kindTag, { name: f, kind: 'movie' }) : { url: u, filename: f, quality: q, tag: kindTag };
+        if (!card) continue;
+        if (!sink.some(x => x && x.url === u)) sink.push(card);
+      }
+      if (sink.length && !announced) { announced = true; if (onFirst) onFirst(); }
+      if (TRACE) console.error('[hm.file] ' + f.slice(-34) + ' → ' + us.length + ' @' + (Date.now() - T0));
+    }
+  };
+  for (let k = 0; k < Number(process.env.HMWRK || 6); k++) workers.push(run());
+  await Promise.all(workers);
+
+  LAST.cards = sink.length; LAST.ms = Date.now() - T0;
+  LAST.stage = sink.length ? 'ok' : 'urls-but-no-cards';
+  if (!sink.length) expire();
+  return sink;
+}
+
+/* বাইরের API: প্রথম কার্ড এলেই ফেরত, বাকিগুলো পেছনে ভরে (মেমোতে) */
+function cards(title, type, s, e, mk, budget) {
+  const k = keyOf(title, type, s, e);
+  const c = CARDS.get(k);
+  if (c && Date.now() - c.ts < Number(process.env.HMCARDTTL || 600000)) return Promise.resolve(c.v);
+  const sink = [];
+  return new Promise(resolve => {
+    let done = false;
+    const fin = () => {
+      if (done) return; done = true;
+      const v = sink.slice();
+      if (v.length) { if (CARDS.size > 200) CARDS.clear(); CARDS.set(k, { ts: Date.now(), v }); }
+      resolve(v);
+    };
+    cardsInner(title, type, s, e, mk, budget, sink, fin).then(() => { setTimeout(() => { if (sink.length) { if (CARDS.size > 200) CARDS.clear(); CARDS.set(k, { ts: Date.now(), v: sink.slice() }); } }, 0); fin(); }).catch(() => fin());
+    setTimeout(fin, Math.max(2000, Number(budget || process.env.HMCARDS || 11000)) + 1600);
+  });
+}
+
+module.exports = {
+  poolLoad, poolSave, poolStats, dirStats, capOf, poolPick,
+  discover, search, post, finalUrls, cardsInner, cards,
+  cardsCached: cards,
+  warm: (t, ty, s, e, mk, b) => cardsInner(t, ty, s, e, mk, b || 20000, []).catch(() => []),
+  qualityOf, audioOf, last: () => LAST, get
+};
