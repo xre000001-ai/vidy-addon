@@ -27,10 +27,10 @@ class Pool{
  unlock(){if(!this.owner)return;try{const old=JSON.parse(fs.readFileSync(this.file+'.lock','utf8'));if(old.owner===this.owner)fs.unlinkSync(this.file+'.lock');}catch(_){}this.owner=null;}
  writable(){if(this.readOnly||this.closed)throw new PKError('LOCAL_READONLY','Pool is read-only or closed');}
  add(values,source='candidate-feed'){
-  this.writable();let added=0;
+  this.writable();let added=0,count=Object.keys(this.nodes).length;
   for(const value of values){try{const proxy=normalizeProxy(typeof value==='string'?value:value.proxy||value.px),id=proxyId(proxy);if(this.nodes[id]){const s=this.nodes[id].sources;if(!s.includes(source)&&s.length<8)s.push(source);continue;}
-    if(Object.keys(this.nodes).length>=5000)break;
-    this.nodes[id]={id,proxy,sources:[source],discoveredAt:this.clock(),globalCoolUntil:0,servers:{}};added++;
+    if(count>=5000)break;
+    this.nodes[id]={id,proxy,sources:[source],discoveredAt:this.clock(),globalCoolUntil:0,servers:{}};added++;count++;
    }catch(e){if(!/^POLICY/.test(e.code||''))throw e;}
   }return added;
  }
@@ -58,14 +58,16 @@ class Pool{
   let retry=Number(error?.retryAfter)*1000;if(!Number.isFinite(retry))retry=Date.parse(error?.retryAfter)-now;
   const cooldown=type==='rate-limit'?Math.min(300000,Math.max(1000,retry||60000)):Math.min(300000,this.failureCoolMs*Math.min(4,b.consecutiveFailures));
   b.coolUntil=now+cooldown;
-  if(type==='transport'||type==='rate-limit'&&error?.stage==='api')n.globalCoolUntil=Math.max(n.globalCoolUntil||0,now+Math.min(cooldown,120000));
+  // A CDN-specific timeout after a working API is not evidence every source is blocked.
+  if(type==='transport'&&error?.stage!=='hls'||type==='rate-limit'&&error?.stage==='api')n.globalCoolUntil=Math.max(n.globalCoolUntil||0,now+Math.min(cooldown,120000));
   return type;
  }
- ready(server){
-  const now=this.clock();return Object.values(this.nodes).filter(n=>{
-   const b=n.servers[server],p=b?.proof;
-   return p&&p.proxyId===n.id&&p.server===server&&p.api===true&&p.playlist===true&&p.media===true&&Number.isFinite(p.at)&&p.at<=now+5000&&now-p.at<this.freshMs&&(b.coolUntil||0)<=now&&(n.globalCoolUntil||0)<=now&&!this.busy.get(n.id);
-  }).sort((a,b)=>{
+ fresh(node,server,now=this.clock()){
+  const b=node.servers[server],p=b?.proof;
+  return !!(p&&p.proxyId===node.id&&p.server===server&&p.api===true&&p.playlist===true&&p.media===true&&Number.isFinite(p.at)&&p.at<=now+5000&&now-p.at<this.freshMs&&(b.coolUntil||0)<=now&&(node.globalCoolUntil||0)<=now);
+ }
+ ready(server,{includeBusy=false}={}){
+  const now=this.clock();return Object.values(this.nodes).filter(n=>this.fresh(n,server,now)&&(includeBusy||!this.busy.get(n.id))).sort((a,b)=>{
    const score=n=>(n.servers[server].ewmaMs||99999)+(now-n.servers[server].proof.at)/1000*15+(n.servers[server].consecutiveFailures||0)*1000;
    return score(a)-score(b);
   });

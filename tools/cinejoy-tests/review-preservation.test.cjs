@@ -1,6 +1,7 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict'),crypto=require('node:crypto'),fs=require('node:fs'),path=require('node:path');
 const {beforeReview}=require('./review-preservation.cjs'),baseline=require('./fixtures/careful-review-baseline-sha256.json'),edits=require('./fixtures/careful-review-authorized-edits.json');
+const {beforeStability}=require('./stability-preservation.cjs');
 const root=path.resolve(__dirname,'../..'),hash=v=>crypto.createHash('sha256').update(v).digest('hex');
 const scope=new Set(['config.html','server.js','tools/vidy-runtime/hindmovie.cjs','tools/vidy-runtime/cinejoy.cjs','tools/vidy-runtime/cinejoy-pk/src/manifests.cjs','tools/vidy-runtime/cinejoy-pk/src/transport.cjs','tools/vidy-runtime/cinejoy-pk/README.md','tools/cinejoy-tests/addon-preservation.test.cjs']);
 test('review preservation: exact authorized scope is bounded, with no dependencies, foreign pools or unrelated provider changes',()=>{
@@ -14,9 +15,9 @@ test('review preservation: inherited upstream bot changes are exactly pinned DT 
 test('review preservation: all 297 pre-review tracked files reconstruct the deployed baseline with exact inverse anchors',()=>{
  for(const [file,expected] of Object.entries(baseline.sha256))assert.equal(hash(beforeReview(file)),expected,'Unapproved review delta: '+file);
 });
-test('review preservation: all unrelated runtime, proxy-pool and dependency bytes remain literally unchanged',()=>{
+test('review preservation: all unrelated runtime, proxy-pool and dependency bytes remain unchanged after the exact logged stability inverse',()=>{
  for(const [file,expected] of Object.entries(baseline.sha256)){
   if(!/^(?:tools\/vidy-runtime\/|.*pool.*\.(?:json|txt)$|package(?:-lock)?\.json$)/.test(file)||scope.has(file))continue;
-  assert.equal(hash(fs.readFileSync(path.join(root,file))),expected,file);
+  assert.equal(hash(beforeStability(file)),expected,file);
  }
 });

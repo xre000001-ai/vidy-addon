@@ -10,7 +10,7 @@ const { safeURL } = require('./cinejoy-pk/src/policy.cjs');
 const { Metadata, requestIdentity, bounded } = require('./cinejoy-pk/src/metadata.cjs');
 const { PKError, classify, publicError } = require('./cinejoy-pk/src/errors.cjs');
 const manifests = require('./cinejoy-pk/src/manifests.cjs');
-const REVISION = 'cinejoy-pk-integration-3';
+const REVISION = 'cinejoy-pk-integration-4';
 const LANGUAGE = {
   en: ['English', 'eng'], eng: ['English', 'eng'], hi: ['Hindi', 'hin'], hin: ['Hindi', 'hin'],
   bn: ['Bengali', 'ben'], ben: ['Bengali', 'ben'], ta: ['Tamil', 'tam'], tam: ['Tamil', 'tam'],
@@ -109,7 +109,7 @@ class CineJoy {
     try { this.init(); this.started = true; this.initialError = null; }
     catch (e) { this.initialError = publicError(e); this.log('[cinejoy] startup: ' + this.initialError.code); return; }
     if (this.env.CINEJOY_REFILL !== '0') {
-      const refill = () => { if (!this.closed && this.requests === 0) this.refiller.run().catch(e => this.event({ type: 'refill-error', code: e.code || e.name })); };
+      const refill = () => { if (!this.closed && (this.requests === 0 || this.refiller.enterForeground)) (this.refiller.tick ? this.refiller.tick() : this.refiller.run()).catch(e => this.event({ type: 'refill-error', code: e.code || e.name })); };
       refill(); this.refillTimer = setInterval(refill, 60000); this.refillTimer.unref?.();
     }
     if (this.env.CINEJOY_DISCOVERY !== '0') {
@@ -154,11 +154,7 @@ class CineJoy {
       if (!this.engine.pool.ready(server).some(n => !tried.has(n.id))) {
         // Another CineJoy server/trainer may hold a fresh endpoint. Wait only for that lease;
         // never serve a raw candidate, expired proof, foreign pool or direct extraction fallback.
-        const now = this.engine.pool.clock();
-        const busyFresh = Object.values(this.engine.pool.nodes).some(n => {
-          const b = n.servers[server], p = b?.proof;
-          return !tried.has(n.id) && this.engine.pool.busy.has(n.id) && p && now - p.at < this.engine.pool.freshMs && p.at <= now && !(b.coolUntil > now) && !(n.globalCoolUntil > now);
-        });
+        const busyFresh = this.engine.pool.ready(server, { includeBusy: true }).some(n => !tried.has(n.id) && this.engine.pool.busy.has(n.id));
         if (!busyFresh) throw last || new PKError('NO_READY_PROXY');
         await wait(Math.min(100, Math.max(1, deadline - Date.now())), signal); continue;
       }
@@ -198,11 +194,12 @@ class CineJoy {
     const configured = Number(this.env.CINEJOY_BUDGET_MS), budget = Number.isFinite(configured) && configured >= 100 && configured <= 8000 ? configured : 7800;
     const began = Date.now(), deadline = began + budget, ctrl = new AbortController(); this.controllers.add(ctrl); this.requests++;
     const timer = setTimeout(() => ctrl.abort(new PKError('LOCAL_DEADLINE')), budget); timer.unref?.();
-    // Yield a refresh only after every requested server can actually extract.
-    // Never cancel the cold/partial-pool verification that must create its first
-    // usable proofs; repeated app requests would otherwise prevent warming.
-    const canYieldRefill = c.servers.every(server => this.engine.pool.ready(server).length > 0);
-    if (canYieldRefill && this.refiller?.controller && !this.refiller.controller.signal.aborted) {
+    // The refiller can yield just a refresh holding a needed valid proof, while
+    // leaving cold verification and unrelated work alive during repeated traffic.
+    const demand = this.refiller?.enterForeground?.(c.servers);
+    if (demand?.yielded) this.event({ type: 'refill-yield', tasks: demand.yielded });
+    // Retain the original contract for explicitly injected legacy refiller stubs.
+    if (!this.refiller?.enterForeground && c.servers.every(server => this.engine.pool.ready(server).length > 0) && this.refiller?.controller && !this.refiller.controller.signal.aborted) {
       this.refiller.controller.abort(new PKError('LOCAL_FOREGROUND', 'Yield CineJoy refill to foreground'));
       this.event({ type: 'refill-yield' });
     }
@@ -220,7 +217,7 @@ class CineJoy {
       }));
       return c.servers.flatMap(server => lists[order.indexOf(server)]);
     } catch (e) { this.event({ type: 'metadata-error', code: e.code || e.name, ms: Date.now() - began }); return []; }
-    finally { clearTimeout(timer); this.controllers.delete(ctrl); this.requests--; }
+    finally { demand?.release(); clearTimeout(timer); this.controllers.delete(ctrl); this.requests--; }
   }
   handle(req, res, pathname) {
     if (manifests.serve(req, res, pathname)) return true;

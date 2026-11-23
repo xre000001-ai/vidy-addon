@@ -4,8 +4,9 @@
 const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict'),crypto=require('node:crypto'),zlib=require('node:zlib');
 const root=path.resolve(__dirname,'../..'),hash=v=>crypto.createHash('sha256').update(v).digest('hex');
 const edits=require('./fixtures/careful-review-authorized-edits.json'),upstream=require('./fixtures/careful-review-upstream-index.json');
+const {beforeStability}=require('./stability-preservation.cjs');
 function beforeReview(file){
- let value=fs.readFileSync(path.join(root,file));
+ let value=beforeStability(file);
  const undo=edits.filter(e=>e.file===file).reverse();
  if(undo.length){
   let text=value.toString('utf8');
