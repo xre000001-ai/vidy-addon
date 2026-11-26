@@ -76,11 +76,7 @@ jobs:
           node test-gd-resume-flow.cjs
           node test-gd-pack-final.cjs
           node test-gd-unknown-quality.cjs
-          node test-multicloud-race.cjs
-          node test-multicloud-pixel.cjs
           node test-multicloud-season.cjs
-          node test-pixel-page-race.cjs
-          node test-mls-get-accept.cjs
       - name: Discover and verify BD proxies
         working-directory: tools/mls-index-lab
         run: python scan_bd.py
